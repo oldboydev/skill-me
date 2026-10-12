@@ -26,12 +26,12 @@ Sem aplicação no repositório. Primeiro commit remoto em main contém somente 
 
 ## Observable
 
-| Surface | Decision | Landing |
-| --- | --- | --- |
-| Issue/PR | Problema e aceite na issue; plano e provas versionados; resumo no PR | 1, 2 |
-| Agente | Grok lê AGENTS; Claude importa o mesmo arquivo; revisor não escreve | 3 |
-| CLI | Reutilizar contrato e saídas do motor aprovado; erro bloqueia entrega | 4, 5 |
-| CI | Check obrigatório separado, sem IA nem release | 6, 7 |
+| Surface  | Decision                                                              | Landing |
+| -------- | --------------------------------------------------------------------- | ------- |
+| Issue/PR | Problema e aceite na issue; plano e provas versionados; resumo no PR  | 1, 2    |
+| Agente   | Grok lê AGENTS; Claude importa o mesmo arquivo; revisor não escreve   | 3       |
+| CLI      | Reutilizar contrato e saídas do motor aprovado; erro bloqueia entrega | 4, 5    |
+| CI       | Check obrigatório separado, sem IA nem release                        | 6, 7    |
 
 ## Swept
 

@@ -1,0 +1,4 @@
+node_modules/
+
+# Relatórios de runtime; histórico autoritativo fica no Git comum.
+.checks/code-review/
