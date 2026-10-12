@@ -10,7 +10,7 @@ Sources:
 
 ## Out of scope
 
-Sem aplicação no repositório. Primeiro commit remoto em main contém somente README e requer autorização específica; o restante será entregue por PR.
+Sem aplicação no repositório. Primeiro commit remoto em main contém somente README, autorizado explicitamente pelo proprietário e publicado em 1c67990a2e983e9359b7253c9144709192094de7; o restante será entregue por PR.
 Sem aplicação, merge, deploy, publicação ou alteração de configuração global.
 
 ## Landing
@@ -19,6 +19,7 @@ Sem aplicação, merge, deploy, publicação ou alteração de configuração gl
 - AGENTS contém política única; CLAUDE importa AGENTS. Grok usa AGENTS nativamente.
 - CI separado com helpers já usados nos pilotos; em Sheldon todos os workflows antigos permanecem.
 - Testes node:test rodam em runner próprio; Vitest preserva os testes anteriores e não coleta os novos de Node.
+- Bootstrap único aprovado: main recebeu somente README; ruleset 24907375 ativo e Auto-add skill-me 122605050 no Project 3. Toda a governança segue pela branch/PR.
 
 ## Checks
 
@@ -42,6 +43,7 @@ Proof: npm run test:governance — quatro provas comportamentais de filtro/diff/
 **C6** — Workflows atuais do Sheldon, scripts de release, aliases de qualidade e fontes de aplicação permanecem preservados.
 Proof: git diff --exit-code 1c67990a2e983e9359b7253c9144709192094de7 -- .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/publish-npm.yml .github/workflows/build-ocr-runtime.yml scripts/release apps packages.
 Proof: comparação dos aliases originais em package.json; novos aliases não substituem os anteriores.
+No skill-me, repositório originalmente vazio, preservar a ausência de aplicação/release e manter package.json private: true, sem scripts de deploy/publicação; o guard contra a base continua aplicável.
 
 **C7** — Repo/issue vinculados ao Project existente; ruleset active exige PR e CI strict sem bypass/force/delete.
 Proof: gh project/issue/ruleset — consultar a configuração efetiva e citar IDs/checks/status.

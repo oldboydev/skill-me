@@ -5,7 +5,7 @@
 ## Intent
 
 Adotar a governança dos dois pilotos sem duplicar Project ou trocar o implementador.
-Sem aplicação no repositório. Primeiro commit remoto em main contém somente README e requer autorização específica; o restante será entregue por PR.
+Sem aplicação no repositório. O proprietário autorizou explicitamente o primeiro commit remoto em main contendo somente README; bootstrap publicado em 1c67990a2e983e9359b7253c9144709192094de7. O restante será entregue por PR.
 
 ## Criteria
 
@@ -38,7 +38,7 @@ Sem aplicação no repositório. Primeiro commit remoto em main contém somente 
 - validation: 1, 4, 5.
 - failure modes: 5, 6.
 - idempotency and retry: 5; Project existente é reutilizado.
-- authorization: 2, 7; sem push direto main, exceto bootstrap pendente do skill-me.
+- authorization: 2, 7; sem push direto main, exceto bootstrap único do skill-me já autorizado e concluído.
 - concurrency and ordering: existente no motor aprovado; lock e consulta remota final.
 - data lifecycle: existente no motor; histórico no Git comum e runtime ignorado.
 - external-dependency failure: 5, 6.
@@ -66,4 +66,4 @@ Base local: 1c67990a2e983e9359b7253c9144709192094de7. Workflows antigos serão c
 
 ## Unresolved
 
-Bootstrap remoto do skill-me: bloqueia publicação até autorização específica. Toda preparação local pode continuar.
+Nenhuma decisão bloqueante pendente. Resposta humana: “Sim, inicializar somente o README e concluir pelo PR”. Main inicial publicada com README somente; ruleset 24907375 ativo exige PR e CI strict sem bypass. Novas issues entram no Project 3 pelo workflow Auto-add skill-me 122605050.
