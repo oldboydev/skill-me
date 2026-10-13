@@ -94,3 +94,9 @@ Claude corrigiu os quatro achados e as variantes concretas do mesmo alcance em `
 - Paridade dos cinco arquivos comuns contra base4242520: semdiff. Quatro arquivos reais de configuração novamente conferidos por SHA256/tamanho: todosinalterados. O histórico formal ainda contém três tentativas, semreset; max4 apenasissue3 autorizado. Mainremota continua4242520.
 
 Estas são provas do autor/orquestrador, não PASS independente do novo produto. A verificação6 pertence ao produto anterior. A próxima rodada independente7 é scoped sobre9f98068..HEAD, executando todasasprovas novamente e reavaliando o alcance dos arquivoscompartilhados. ApósPASS, a revisão formal4 precisa aprovar a mesma entrega antes de push/PR. MacOS eCIremota ainda não observados neste ponto. Nenhum push/PR/merge/publicação realizado até este registro.
+
+## Sétima verificação e quarta revisão formal
+
+Rodada7 independente: PASS18/18 na HEAD5c39d08, 334PASS/zeroFAIL/1skipPOSIX; relatório preservado em ed72b3cba86bda5bac0a7fdab61efc3882db1e0f. A revisão formal4 confirmou os quatro achados anteriores corrigidos e retornou changes_requested/verificationinsufficient com dois novos P2 bloqueantes: cabeçalho opcional PE de tamanho zero deixa um launcher encontrado como presenceunknown; atribuição aumentada __version__ += no Hermes publica versão literal anterior e pode liberar suporte indevidamente verified.
+
+Os defeitos concretos e variantes do mesmo alcance serão corrigidos por Claude, com provas RED/GREEN. A autorização do proprietário “pode fazer as revisoes necessarias” cobre a rodada independente8 e formal5. O override apenas da issue3 passa para max5; padrões max2, critérios e histórico integral permanecem. Não houve push/PR/merge/publicação até este registro.
