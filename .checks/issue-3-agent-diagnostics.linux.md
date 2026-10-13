@@ -70,3 +70,9 @@ Claude corrigiu os três casos em `a698b00ba31ef9cd958f108803cce96dabf56ae5` e o
 - Quatro configurações ativas: hash/tamanho iguais ao baseline anterior à implementação. Core5/AGENTS/task/configuração dos limites e relatório independente preservados.
 
 Essas provas não substituem uma nova verificação independente do código corrigido nem concedem ready formal. A rodada5 e as duas tentativas formais autorizadas terminaram; nenhuma verificação6 ou revisão formal3 foi iniciada. A entrega está preparada para a decisão específica do proprietário sobre ambas, exclusivamente para a issue3. Não houve push das correções, PR, merge ou publicação.
+
+## Autorização das revisões necessárias — 13/10/2026
+
+Após a explicação das lacunas do planejamento e dos limites atingidos, o proprietário autorizou nesta conversa: “pode fazer as revisoes necessarias”. Autoriza concluir as verificações independentes e revisões formais necessárias da issue #3, corrigindo defeitos concretos dentro do escopo e preservando critérios, rigor e histórico. A autorização anterior de abertura do PR após aprovação permanece válida; merge e publicação continuam fora do escopo.
+
+A próxima verificação independente é a rodada6, sobre as correções posteriores ao PASS da rodada5. A configuração registra inicialmente teto formal3 apenas em roundOverrides["3"], com referência a esta autorização; os perfis padrão permanecem com teto2. Caso outra tentativa seja necessária, a mesma autorização permite atualizar somente a exceção desta issue, dentro dos limites do motor e sem reiniciar contadores. As autorizações anteriores e seus resultados permanecem no histórico.
