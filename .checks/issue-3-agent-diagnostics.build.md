@@ -2680,3 +2680,212 @@ recebeu os números acima; nenhum teste lê este arquivo.
   `…-green-targets.txt`, `…-npm-test.txt`. Preservados sem alteração:
   `.checks/code-review/formal3-shared-projection-regression.md` (encaminhamento) e
   `.checks/code-review/probe-formal3-shared-features.txt` (probe da raiz).
+
+## 23. Correção dos dois achados bloqueantes da revisão formal4 (13/10/2026)
+
+Encaminhamento: `.checks/code-review/formal4-fixes.md`; resposta formal em
+`.checks/code-review/issue-3-formal4-response.json` (HEAD `ed72b3c`, `changes_requested`). Autor: Claude;
+Codex local só revisa. Dois achados P2 bloqueantes, ambos novos nesta rodada (os quatro achados das rodadas
+anteriores já estavam corrigidos, conforme o próprio `summary` da resposta). Decisão registrada no Landing
+(`.checks/issue-3-agent-diagnostics.md`, "Landing da correção formal4"). Sem commit, push, stash, PR,
+Verifier ou agentes nesta rodada; `.tasks`, `.verified.md`, `.linux.md`, `code-review.config.json`, core
+vendorizado e `.git` não tocados — só os dois arquivos de ownership, testes afetados, Landing e esta seção.
+
+### Achado 1 — metadado PE malformado vira `unknown`, não `present`
+
+`src/doctor/version-sources/pe.mjs:136`. Um candidato Claude já encontrado e legível (MZ/PE/COFF presentes)
+com `SizeOfOptionalHeader` zero faz `readExact` devolver um Buffer vazio; `optional.readUInt16LE(0)` lança
+`RangeError`. `readPeVersionFromHandle` só trata `PE_TRUNCATED`; a exceção sobe inteira ao `catch` de
+`resolveOneAgent` (`agent-resolution.mjs:138`), que vira `presence: "unknown"` com `reasonCode:
+error.code ?? "unknown_error"` — o mesmo tratamento dado a uma falha real de E/S, embora o candidato já
+tivesse sido encontrado e lido. O achado pedia revisar o MESMO leitor contra buffers curtos, Magic
+desconhecido, tabelas de recursos com offsets inválidos e `VS_FIXEDFILEINFO` curto, sem generalizar um
+parser novo.
+
+Cinco pontos de leitura sem limite contra o tamanho real do buffer já obtido foram corrigidos, todos em
+`pe.mjs`:
+
+1. `optional` (COFF `SizeOfOptionalHeader`, não confiável) podia ter menos de 2 bytes (Magic) ou menos que
+   o necessário para `NumberOfRvaAndSizes`/`DataDirectory[2]` nos offsets corretos de PE32 (92/96) ou PE32+
+   (108/112) — três `if (optional.length < …)` antes das leituras correspondentes, devolvendo
+   `launcher_not_recognized`.
+2. `Magic` fora de `{0x010b (PE32), 0x020b (PE32+)}` agora é recusado explicitamente
+   (`launcher_not_recognized`) em vez de cair silenciosamente no ramo PE32 por `=== 0x020b` ser falso —
+   evita interpretar os offsets errados do optional header de um formato não reconhecido.
+3. `directoryEntries` (tabela de recursos) agora recusa um `directoryOffset` além do buffer antes de ler o
+   cabeçalho do diretório, e cada entrada além do buffer interrompe o laço — um offset corrompido vindo da
+   própria tabela (não confiável) devolve diretório vazio, nunca um offset negativo ou fora de alcance lido
+   por engano.
+4. O ponteiro para `IMAGE_RESOURCE_DATA_ENTRY` (`dataEntryOffset`, a entrada de idioma já localizada) ganhou
+   um `if` de alcance explícito antes das duas leituras de `resourceDataRva`/`resourceDataSize`, devolvendo
+   `version_unreadable` (estrutura localizada, conteúdo corrompido).
+5. `readFixedFileInfo` recusa um `versionInfoBuffer` mais curto que os 16 bytes necessários
+   (`dwSignature`+`dwStrucVersion`+`dwFileVersionMS`+`dwFileVersionLS`) antes de qualquer leitura.
+
+Nenhuma mudança em `agent-resolution.mjs`: com `pe.mjs` nunca lançando para estes casos,
+`resolveOneAgent` já devolve `presence: "present"` com o `reasonCode` que `readPeVersion` retornar — o
+comportamento pedido pelo achado (C3) sai de graça da raiz corrigida. `EACCES`/erro real de E/S continuam
+subindo (o `catch` de `readPeVersion` só absorve `PE_TRUNCATED`).
+
+### Achado 2 — atribuição aumentada do `__version__` do Hermes publica a versão anterior
+
+`src/doctor/python-source.mjs:217`. O tokenizer já reconhecia os 13 operadores de atribuição aumentada
+(`+= -= *= /= //= %= **= &= |= ^= >>= <<= @=`, `MULTI_CHAR_OPERATORS`), mas `findAssignments` não marcava a
+ocorrência como ligação do nome: nenhum dos três ramos (`=` direto, `: T = ...` anotado, `:=`/
+`isOtherBindingTarget`) reconhece `name OP= valor`, então a instrução inteira ficava invisível para quem
+consome `findAssignments`. Com `__init__.py` contendo `__version__ = "0.21.4"` seguido de
+`__version__ += "-dev"`, `extractSourceLiteralVersion` (`launcher-link/hermes.mjs:54`) via só UM site (o da
+primeira atribuição) e publicava `0.21.4`/`source_literal` como se fosse a única ligação — com um
+`plugins.py` reconhecido ao lado (`VALID_HOOKS` completo), isso liberava `verified` para uma versão efetiva
+(`0.21.4-dev`) fora do perfil publicado (viola C3/AC1 e C5/AC2). Alcance compartilhado confirmado: a mesma
+`findAssignments` sustenta `extractTopLevelStringSet` (`contract-evidence.mjs:79`), usada por
+`extractHermesValidHooks`/`extractHermesShellUnsupportedHooks` via `sites.length !== 1`.
+
+Correção mínima: um novo ramo em `findAssignments` reconhece `next.value` entre os mesmos 13 operadores
+(novo `AUGMENTED_ASSIGNMENT_OPERATORS`) com `token.depth === 0`, empurrando um site sem `moduleLevel`/
+`valueIndex` — a mesma forma já usada para `:=` (ligação ambígua, sem avaliar o valor; o valor de uma
+atribuição aumentada depende do valor anterior, nunca um literal novo determinável por esta leitura léxica).
+Nenhum parser novo: o operador já era tokenizado, só faltava o `if` que marca a ligação.
+
+Efeito em cascata, sem alteração própria: `extractSourceLiteralVersion` passa a ver `sites.length` maior que
+`literals.length` (o site da atribuição aumentada nunca tem `moduleLevel`) e devolve
+`version_source_ambiguous`, nunca o literal da primeira atribuição; `extractTopLevelStringSet` passa a ver
+`sites.length !== 1` para `VALID_HOOKS`/`SHELL_UNSUPPORTED_HOOKS` com o mesmo operador, invalidando a
+confirmação da tabela — provado com um operador (`%=`, `**=`) fora do padrão textual já coberto por
+`runtimeMutationPattern` (`[-&^|+]=`), para isolar a ligação em `findAssignments` do atalho textual
+preexistente.
+
+Falsos positivos provados sem efeito: texto igual dentro de comentário ou string (não é código, já filtrado
+pelo tokenizer), e atribuição aumentada de OUTRO nome (`OTHER_VAR += ...`, filtrado por nome em
+`findAssignments`). Caso limite documentado, não corrigido como exceção: `obj.__version__ += "-dev"` conta
+como a mesma ligação por nome (leitura léxica, não um parser — já valia para `obj.__version__ = ...` com
+`=` simples antes desta correção) e também produz `version_source_ambiguous`; distinguir atributo de nome de
+módulo exigiria rastrear o token `.` antes do nome, fora do escopo mínimo deste achado.
+
+### Ordem seguida e evidência de execução real
+
+Leitura do encaminhamento, de `pe.mjs` e de `python-source.mjs`/`hermes.mjs`/`contract-evidence.mjs` →
+testes novos nos quatro arquivos afetados → RED com `src/` intacto em HEAD `ed72b3c` → correção → GREEN nos
+mesmos quatro arquivos → Landing → `npm test` completo uma única execução após a última alteração →
+documentação lida por teste.
+
+RED (`src/doctor/python-source.mjs` e `src/doctor/version-sources/pe.mjs` sem alteração via `git stash`
+restrito a esses dois arquivos, testes desta rodada já presentes; saída completa em
+`.checks/code-review/formal4-red.txt`):
+
+```
+node --test tests/doctor/version-metadata.unit.test.mjs tests/doctor/agent-resolution.unit.test.mjs \
+  tests/doctor/contract-evidence.unit.test.mjs tests/doctor/capability-evidence.cli.test.mjs
+tests 79, pass 67, fail 11
+exit=1
+```
+
+As 11 falhas, uma a uma:
+
+- 5 `RangeError [ERR_OUT_OF_RANGE]` reais em `version-metadata.unit.test.mjs` (SizeOfOptionalHeader zero,
+  SizeOfOptionalHeader curto não-zero, offset de diretório de tipo além da seção, ponteiro de data entry
+  além da seção, VS_FIXEDFILEINFO curto) — a prova literal do achado 1, não uma falha de asserção.
+- 1 em `agent-resolution.unit.test.mjs` no nível de `resolveAgents`: `agents.claude.presence` observado
+  `"unknown"` contra o esperado `"present"` — a prova literal do sintoma do achado 1 na fronteira real
+  (não só na camada de `pe.mjs`).
+- 2 em `agent-resolution.unit.test.mjs` para o achado 2: o parametrizado dos 13 operadores (para no
+  primeiro, `+=`) e o de comentário/string/outra variável/atributo (falha no caso de atributo, que dependia
+  do mesmo ramo novo).
+- 1 em `capability-evidence.cli.test.mjs`: a primeira asserção do teste (`hermes.version`) já observou
+  `"0.21.4"` contra o esperado `null` — a mesma publicação indevida do literal anterior, agora na fronteira
+  real da CLI com os três agentes e contrato sintético instalados; o teste para aí (as asserções seguintes
+  de `reasonCode`/linhas locais não chegaram a rodar nesta execução RED).
+- 2 em `contract-evidence.unit.test.mjs`: `extractHermesValidHooks`/`extractHermesShellUnsupportedHooks`
+  com um operador (`%=`/`**=`) fora do padrão textual de `runtimeMutationPattern` continuavam reconhecendo a
+  tabela (deveriam devolver `null`) — a prova do alcance compartilhado.
+
+Os demais 67 casos (todos os pré-existentes nos quatro arquivos, incluindo os outros 2 novos desta rodada
+que já valiam sem a correção: Magic desconhecido com buffer completo, que o código antigo já rejeitava por
+outro caminho sem crash, e o controle PE32 válido) continuavam verdes — nenhuma regressão de fora do
+escopo introduzida pelos testes novos.
+
+GREEN dos mesmos quatro alvos depois da correção (`.checks/code-review/formal4-green.txt`):
+
+```
+tests 79, pass 78, fail 0, skipped 1
+exit=0
+```
+
+O único ajuste entre RED e GREEN não relacionado à correção em si: o teste de atribuição aumentada
+encadeada por `;` (achado 2, caso "escopo/semicolons") esperava inicialmente `version_source_ambiguous`;
+a execução mostrou `version_unreadable`, porque o filtro de literais de `extractSourceLiteralVersion` já
+exige que o valor literal termine a instrução com uma quebra de linha real (`endsStatement`) — encadeado por
+`;`, o próprio literal da primeira atribuição não passa nesse filtro, então nem chega a comparar
+`literals.length` com `sites.length`. Comportamento preexistente, independente desta correção; a asserção do
+teste foi corrigida para o valor real, com o motivo registrado no comentário do teste.
+
+`npm test` completo, uma única execução após a última alteração de código, testes e documentação lida por
+teste (saída completa em `.checks/code-review/formal4-npm-test.txt`):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 330, pass 329, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a seção 22 (319 → 330): 11 testes novos (7 em
+`version-metadata.unit.test.mjs`: SizeOfOptionalHeader zero, SizeOfOptionalHeader curto, Magic desconhecido,
+offset de diretório de tipo inválido, ponteiro de data entry inválido, VS_FIXEDFILEINFO curto, controle
+PE32 válido; 3 em `agent-resolution.unit.test.mjs`: regressão de presença SizeOfOptionalHeader=0, os 13
+operadores aumentados, comentário/string/outra-variável/atributo; 1 em `capability-evidence.cli.test.mjs`).
+Os dois casos novos de `contract-evidence.unit.test.mjs` foram adicionados dentro de testes já existentes
+(`unrecognized`/casos de `null`), sem criar `test()` novo — por isso não entram no delta de contagem de
+testes, mas aparecem no RED/GREEN acima. O único skip continua
+`agent-resolution-C2 realpath/symlink real … (POSIX)`, condicional ao executor. Depois dessa execução, só
+esta seção do build e o Landing (`.checks/issue-3-agent-diagnostics.md`) receberam os números acima; nenhum
+teste lê estes dois arquivos.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24. Nenhum agente, hook, binário nativo ou intérprete Python real foi
+  executado; todas as fixtures PE/Python são sintéticas (`tests/doctor/helpers/synthetic-pe.mjs`,
+  `hermesVersionWith`). Linux/macOS e CI remota não foram executados nesta rodada — nenhuma alegação é feita
+  sobre esses ambientes.
+- O controle "Magic desconhecido" (`version-metadata.unit.test.mjs`) não demonstra uma regressão RED:
+  verificado diretamente contra o código anterior (`git stash` só de `pe.mjs`), o resultado já era
+  `{version: null, reasonCode: "launcher_not_recognized"}` para esse valor específico de Magic — não por
+  reconhecer o formato como inválido, mas porque os bytes no offset 92 (posição de `NumberOfRvaAndSizes` do
+  ramo PE32, para o qual a leitura equivocada caiu) nunca são escritos pela fixture sintética de 240 bytes
+  (layout PE32+) e ficam zerados por `Buffer.alloc`; `numberOfRvaAndSizes = 0` aciona o teto
+  `numberOfRvaAndSizes <= RESOURCE_DATA_DIRECTORY_INDEX` já existente antes de qualquer leitura fora de
+  alcance. É coincidência da fixture, não uma garantia geral do código anterior para qualquer Magic
+  desconhecido — um buffer PE32+ real teria bytes não nulos nessa posição (dentro de `SizeOfStackReserve`/
+  `SizeOfStackCommit`, de 8 bytes cada no layout real), podendo produzir um `numberOfRvaAndSizes` não-zero e
+  caminhos de leitura diferentes, inclusive um `RangeError` dependendo do valor. A asserção continua válida
+  como prova de que o Magic desconhecido é rejeitado de forma estável depois desta correção; não isola uma
+  regressão por si só. A combinação com `SizeOfOptionalHeader` zero/curto, que de fato demonstra o
+  `RangeError` do Magic desconhecido, não foi construída separadamente para não duplicar o mesmo par de
+  guardas já provado isoladamente nos dois testes de `SizeOfOptionalHeader`.
+- `obj.__version__ += "-dev"` (e `obj.__version__ = "x"`, já existente antes desta correção) produz
+  `version_source_ambiguous` mesmo quando a atribuição real é a um atributo de objeto não relacionado ao
+  `__version__` do módulo — resultado conservador (nunca publica a versão errada), mas não distingue os dois
+  casos; distinguir exigiria rastrear o token `.` antes do nome, fora do escopo lexical mínimo deste achado
+  (documentado no Landing, linha do achado 2).
+- O teste de PE32 genuíno (`buildMinimalPe({ pe32: true })`, novo nesta rodada) prova que o ramo PE32 já
+  suportado por `pe.mjs` (offsets 92/96) continua lendo a versão depois dos novos limites; não existia
+  fixture PE32 antes desta rodada (só PE32+), então não há um GREEN anterior para comparar — é controle, não
+  regressão.
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/version-sources/pe.mjs` (cinco limites de alcance, achado 1);
+  `src/doctor/python-source.mjs` (`AUGMENTED_ASSIGNMENT_OPERATORS`, novo ramo em `findAssignments`, achado
+  2).
+- Testes: `tests/doctor/version-metadata.unit.test.mjs` (7 novos, achado 1),
+  `tests/doctor/agent-resolution.unit.test.mjs` (3 novos: 1 achado 1 nível `resolveAgents`, 2 achado 2),
+  `tests/doctor/capability-evidence.cli.test.mjs` (1 novo, achado 2, fronteira da CLI),
+  `tests/doctor/contract-evidence.unit.test.mjs` (2 casos novos dentro de testes existentes, alcance
+  compartilhado do achado 2). Helpers: `tests/doctor/helpers/synthetic-pe.mjs` (seis novas funções de
+  corrupção + opção `pe32` em `buildMinimalPe`), `tests/doctor/helpers/fixture-agents.mjs` (`hermesInitSource`
+  opcional em `installAllAgents`).
+- Documentação/checklist: `.checks/issue-3-agent-diagnostics.md` (nova subseção "Landing da correção
+  formal4"), esta seção.
+- Evidência (ignorada pelo Git): `.checks/code-review/formal4-red.txt`, `…-green.txt`, `…-npm-test.txt`.
+  Preservado sem alteração: `.checks/code-review/formal4-fixes.md` (encaminhamento) e
+  `.checks/code-review/issue-3-formal4-response.json` (resposta formal).

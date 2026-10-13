@@ -42,12 +42,18 @@ function defaultFsAdapter() {
   };
 }
 
+// Um offset de diretório corrompido (vindo direto do header do PE, não
+// confiável) pode apontar além da seção de recursos já lida. Nenhum campo é
+// lido antes de confirmar que cabe no buffer; fora do alcance é tratado como
+// diretório vazio (nenhuma entrada), nunca como RangeError.
 function directoryEntries(view, directoryOffset) {
+  if (directoryOffset < 0 || directoryOffset + 16 > view.length) return [];
   const numberOfIdEntries = view.readUInt16LE(directoryOffset + 14);
   const entriesStart = directoryOffset + 16;
   const entries = [];
   for (let index = 0; index < numberOfIdEntries; index += 1) {
     const entryOffset = entriesStart + index * 8;
+    if (entryOffset + 8 > view.length) break;
     const rawOffset = view.readUInt32LE(entryOffset + 4);
     entries.push({
       id: view.readUInt32LE(entryOffset),
@@ -83,6 +89,11 @@ function readFixedFileInfo(versionInfoBuffer) {
   // alinhamento até múltiplo de 4, então VS_FIXEDFILEINFO.
   const keyEnd = 6 + 32;
   const valueOffset = Math.ceil(keyEnd / 4) * 4;
+  // `Size` do IMAGE_RESOURCE_DATA_ENTRY vem do próprio header, não confiável:
+  // um VS_FIXEDFILEINFO anunciado mais curto que os 16 bytes lidos abaixo
+  // (dwSignature + dwStrucVersion + dwFileVersionMS/LS) é malformado, nunca
+  // um RangeError.
+  if (versionInfoBuffer.length < valueOffset + 16) return null;
   const signature = versionInfoBuffer.readUInt32LE(valueOffset);
   if (signature !== 0xfeef04bd) return null;
   const fileVersionMs = versionInfoBuffer.readUInt32LE(valueOffset + 8);
@@ -133,11 +144,30 @@ async function readPeVersionFromHandle(handle) {
       sizeOfOptionalHeader,
       optionalHeaderOffset,
     );
+    // SizeOfOptionalHeader vem do COFF, não confiável: um valor zero ou
+    // curto demais para o Magic (PE32/PE32+) não é um PE lido pela metade,
+    // é um formato que esta leitura não reconhece.
+    if (optional.length < 2) {
+      return { version: null, reasonCode: "launcher_not_recognized" };
+    }
     const magic = optional.readUInt16LE(0);
+    if (magic !== 0x010b && magic !== 0x020b) {
+      return { version: null, reasonCode: "launcher_not_recognized" };
+    }
     const isPe32Plus = magic === 0x020b;
     const dataDirOffset = isPe32Plus ? 112 : 96;
-    const numberOfRvaAndSizes = optional.readUInt32LE(isPe32Plus ? 108 : 92);
+    const numberOfRvaAndSizesOffset = isPe32Plus ? 108 : 92;
+    // Mesmo com Magic reconhecido, um optional header mais curto que os
+    // campos usados abaixo (NumberOfRvaAndSizes e o DataDirectory de
+    // recursos) é a mesma situação: formato não reconhecido, não RangeError.
+    if (optional.length < numberOfRvaAndSizesOffset + 4) {
+      return { version: null, reasonCode: "launcher_not_recognized" };
+    }
+    const numberOfRvaAndSizes = optional.readUInt32LE(numberOfRvaAndSizesOffset);
     if (numberOfRvaAndSizes <= RESOURCE_DATA_DIRECTORY_INDEX) {
+      return { version: null, reasonCode: "launcher_not_recognized" };
+    }
+    if (optional.length < dataDirOffset + RESOURCE_DATA_DIRECTORY_INDEX * 8 + 8) {
       return { version: null, reasonCode: "launcher_not_recognized" };
     }
     const resourceRva = optional.readUInt32LE(
@@ -185,6 +215,13 @@ async function readPeVersionFromHandle(handle) {
     const dataEntryOffset = findVersionDataEntryOffset(resourceSection);
     if (dataEntryOffset === null) {
       return { version: null, reasonCode: "launcher_not_recognized" };
+    }
+    // `dataEntryOffset` vem do offset de uma entrada de idioma na própria
+    // tabela de recursos (não confiável): a estrutura foi encontrada, mas o
+    // ponteiro para o IMAGE_RESOURCE_DATA_ENTRY pode apontar além da seção
+    // já lida.
+    if (dataEntryOffset < 0 || dataEntryOffset + 8 > resourceSection.length) {
+      return { version: null, reasonCode: "version_unreadable" };
     }
     const resourceDataRva = resourceSection.readUInt32LE(dataEntryOffset);
     const resourceDataSize = resourceSection.readUInt32LE(dataEntryOffset + 4);

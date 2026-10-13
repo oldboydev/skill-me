@@ -111,6 +111,11 @@ test("contract-evidence-C5 só a atribuição literal em código, no nível do m
     "atribuição em cadeia": 'HOOKS = VALID_HOOKS = {"pre_tool_call"}\n',
     "reatribuição condicional em código": 'VALID_HOOKS = {"pre_tool_call"}\nif DEBUG:\n    VALID_HOOKS = {"post_tool_call"}\n',
     "atribuição por expressão (:=)": 'VALID_HOOKS = {"pre_tool_call"}\n(VALID_HOOKS := {"post_tool_call"})\n',
+    // formal4 P2 (nº2, alcance compartilhado): atribuição aumentada fora do
+    // padrão textual de mutação já coberto acima ("-&^|+="), provando que é a
+    // ligação em findAssignments — não só o regex de runtimeMutationPattern —
+    // que invalida a confirmação da tabela.
+    "atribuição aumentada (%=) depois do literal": 'VALID_HOOKS = {"pre_tool_call"}\nVALID_HOOKS %= {"post_tool_call"}\n',
     "dict vazio": "VALID_HOOKS = {}\n",
     "string com prefixo": 'VALID_HOOKS = {r"pre_tool_call"}\n',
     "string de três aspas": 'VALID_HOOKS = {"""pre_tool_call"""}\n',
@@ -192,6 +197,9 @@ test("contract-evidence-C5/G3 SHELL_UNSUPPORTED_HOOKS ausente, ilegível ou não
   assert.equal(unrecognizedForm.shellUnsupportedHooks, null);
 
   assert.equal(extractHermesShellUnsupportedHooks('SHELL_UNSUPPORTED_HOOKS -= {"x"}\nSHELL_UNSUPPORTED_HOOKS = {"x"}\n'), null);
+  // Mesmo achado do teste acima para VALID_HOOKS: operador fora do padrão
+  // textual de mutação ("-&^|+="), só pego pela ligação em findAssignments.
+  assert.equal(extractHermesShellUnsupportedHooks('SHELL_UNSUPPORTED_HOOKS = {"x"}\nSHELL_UNSUPPORTED_HOOKS **= 2\n'), null);
 });
 
 test("contract-evidence-C5 plugins.py ausente, ilegível, acima de 1 MiB ou mutado nunca vira found", async () => {

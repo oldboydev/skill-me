@@ -175,7 +175,7 @@ export const KNOWN_GOOD_VERSION_TEXT = {
 // versão real (não uma string copiada da saída esperada) e seu layout real
 // (claude num diretório de bin, codex num prefixo npm global, hermes num venv
 // próprio). Retorna todos os diretórios que precisam entrar no PATH.
-export function installAllAgents(dir, { sentinelPath, hermesContractSource }) {
+export function installAllAgents(dir, { sentinelPath, hermesContractSource, hermesInitSource }) {
   writeClaude(dir, { version: KNOWN_GOOD_VERSIONS.claude, overlayBytes: 2 * 1024 * 1024 });
   const codex = writeCodex(dir, { version: KNOWN_GOOD_VERSIONS.codex, sentinelPath });
   const venvRoot = path.join(dir, "hermes-venv");
@@ -183,6 +183,7 @@ export function installAllAgents(dir, { sentinelPath, hermesContractSource }) {
     version: KNOWN_GOOD_VERSIONS.hermes,
     sentinelPath,
     contractSource: hermesContractSource,
+    ...(hermesInitSource !== undefined ? { initSource: hermesInitSource } : {}),
   });
   const pathDirs = [dir];
   if (codex.binDir !== dir) pathDirs.push(codex.binDir);

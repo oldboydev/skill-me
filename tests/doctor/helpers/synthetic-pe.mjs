@@ -67,6 +67,11 @@ export function buildMinimalPe({
   // encontrar. Testes podem passar outro valor para provar isso de verdade
   // (ver version-metadata.unit.test.mjs).
   languageId = 0x0409,
+  // PE32 de verdade (Magic 0x010b, ImageBase de 4 bytes, DataDirectory a
+  // partir de 96), não só o Magic trocado num layout de PE32+: prova que o
+  // ramo PE32 de pe.mjs (offsets 92/96) lê a mesma estrutura de recursos que
+  // o PE32+ (offsets 108/112, o padrão desta fixture).
+  pe32 = false,
 }) {
   const versionInfo = buildVersionInfoBlock(version);
   const dataEntryOffset = 24 + 24 + 24; // level0 + level1 + level2
@@ -100,17 +105,24 @@ export function buildMinimalPe({
 
   const peSignature = Buffer.from("PE\0\0", "ascii");
 
+  // PE32 não tem BaseOfData/ImageBase de 8 bytes do PE32+: o optional header
+  // fica 16 bytes mais curto antes do bloco comum (SectionAlignment em
+  // diante), então NumberOfRvaAndSizes/DataDirectory ficam 16 bytes antes.
+  const optionalHeaderSize = pe32 ? 96 + 16 * 8 : 240;
+  const dataDirOffset = pe32 ? 96 : 112;
+  const numberOfRvaAndSizesOffset = pe32 ? 92 : 108;
+
   const coff = Buffer.alloc(20);
   coff.writeUInt16LE(machine, 0);
   coff.writeUInt16LE(1, 2); // NumberOfSections
   coff.writeUInt32LE(0, 4); // TimeDateStamp
   coff.writeUInt32LE(0, 8); // PointerToSymbolTable
   coff.writeUInt32LE(0, 12); // NumberOfSymbols
-  coff.writeUInt16LE(240, 16); // SizeOfOptionalHeader (PE32+, 16 data dirs)
+  coff.writeUInt16LE(optionalHeaderSize, 16); // SizeOfOptionalHeader (16 data dirs)
   coff.writeUInt16LE(0x0022, 18); // Characteristics
 
-  const optional = Buffer.alloc(240);
-  optional.writeUInt16LE(0x020b, 0); // Magic: PE32+
+  const optional = Buffer.alloc(optionalHeaderSize);
+  optional.writeUInt16LE(pe32 ? 0x010b : 0x020b, 0); // Magic
   optional.writeUInt8(14, 2); // MajorLinkerVersion
   optional.writeUInt8(0, 3); // MinorLinkerVersion
   optional.writeUInt32LE(0, 4); // SizeOfCode
@@ -118,14 +130,18 @@ export function buildMinimalPe({
   optional.writeUInt32LE(0, 12); // SizeOfUninitializedData
   optional.writeUInt32LE(0, 16); // AddressOfEntryPoint (não iniciável)
   optional.writeUInt32LE(0, 20); // BaseOfCode
-  optional.writeBigUInt64LE(0x140000000n, 24); // ImageBase
+  if (pe32) {
+    optional.writeUInt32LE(0, 24); // BaseOfData (só PE32)
+    optional.writeUInt32LE(0x400000, 28); // ImageBase (4 bytes)
+  } else {
+    optional.writeBigUInt64LE(0x140000000n, 24); // ImageBase (8 bytes)
+  }
   optional.writeUInt32LE(FILE_ALIGNMENT, 32); // SectionAlignment
   optional.writeUInt32LE(FILE_ALIGNMENT, 36); // FileAlignment
   optional.writeUInt32LE(HEADERS_SIZE + rsrcRaw.length, 56); // SizeOfImage
   optional.writeUInt32LE(HEADERS_SIZE, 60); // SizeOfHeaders
   optional.writeUInt16LE(3, 68); // Subsystem: console
-  optional.writeUInt32LE(16, 108); // NumberOfRvaAndSizes
-  const dataDirOffset = 112;
+  optional.writeUInt32LE(16, numberOfRvaAndSizesOffset); // NumberOfRvaAndSizes
   // DataDirectory[2] = Resource Table
   optional.writeUInt32LE(RSRC_RVA, dataDirOffset + 2 * 8);
   optional.writeUInt32LE(rsrcVirtualSize, dataDirOffset + 2 * 8 + 4);
@@ -178,5 +194,54 @@ export const FIXEDFILEINFO_SIGNATURE_FILE_OFFSET =
 export function corruptFixedFileInfoSignature(buffer) {
   const corrupted = Buffer.from(buffer);
   corrupted.writeUInt32LE(0, FIXEDFILEINFO_SIGNATURE_FILE_OFFSET);
+  return corrupted;
+}
+
+// SizeOfOptionalHeader fica no COFF header: dosHeader(64) + peSignature(4) +
+// 16 até o campo (word), ver `coff.writeUInt16LE(240, 16)` acima.
+const COFF_SIZE_OF_OPTIONAL_HEADER_FILE_OFFSET = 64 + 4 + 16;
+
+export function corruptSizeOfOptionalHeader(buffer, size) {
+  const corrupted = Buffer.from(buffer);
+  corrupted.writeUInt16LE(size, COFF_SIZE_OF_OPTIONAL_HEADER_FILE_OFFSET);
+  return corrupted;
+}
+
+export function corruptOptionalHeaderMagic(buffer, magic) {
+  const corrupted = Buffer.from(buffer);
+  corrupted.writeUInt16LE(magic, OPTIONAL_HEADER_FILE_OFFSET);
+  return corrupted;
+}
+
+// Offset do campo `offset` (mascarado com o bit de diretório) da única
+// entrada do nível de tipo (RT_VERSION, id=16): header do diretório (16
+// bytes) + id (4 bytes) dentro da primeira entrada.
+const RESOURCE_TYPE_ENTRY_OFFSET_FILE_OFFSET = RESOURCE_SECTION_FILE_OFFSET + 16 + 4;
+
+export function corruptResourceTypeEntryOffset(buffer, rawOffset) {
+  const corrupted = Buffer.from(buffer);
+  corrupted.writeUInt32LE((0x80000000 | rawOffset) >>> 0, RESOURCE_TYPE_ENTRY_OFFSET_FILE_OFFSET);
+  return corrupted;
+}
+
+// Offset do campo `offset` da única entrada do nível de idioma — o mesmo
+// valor que `findVersionDataEntryOffset` devolve como ponteiro para o
+// IMAGE_RESOURCE_DATA_ENTRY. level0(24) + level1(24) + header do nível de
+// idioma (16) + id (4) dentro da primeira entrada.
+const RESOURCE_DATA_ENTRY_POINTER_FILE_OFFSET = RESOURCE_SECTION_FILE_OFFSET + 24 + 24 + 16 + 4;
+
+export function corruptResourceDataEntryPointer(buffer, rawOffset) {
+  const corrupted = Buffer.from(buffer);
+  corrupted.writeUInt32LE(rawOffset >>> 0, RESOURCE_DATA_ENTRY_POINTER_FILE_OFFSET);
+  return corrupted;
+}
+
+// Campo `Size` do IMAGE_RESOURCE_DATA_ENTRY: level0+level1+level2 (72) até o
+// início da struct, +4 até `Size` (depois de `OffsetToData`).
+const VERSION_DATA_ENTRY_SIZE_FILE_OFFSET = RESOURCE_SECTION_FILE_OFFSET + 24 + 24 + 24 + 4;
+
+export function corruptVersionDataEntrySize(buffer, size) {
+  const corrupted = Buffer.from(buffer);
+  corrupted.writeUInt32LE(size >>> 0, VERSION_DATA_ENTRY_SIZE_FILE_OFFSET);
   return corrupted;
 }

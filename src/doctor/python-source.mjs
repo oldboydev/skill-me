@@ -18,6 +18,11 @@ const MULTI_CHAR_OPERATORS = [
   "->", ":=", "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "@=",
   "**", "//", "<<", ">>",
 ];
+// `name OP= valor` liga `name` ao resultado de uma operação com seu valor
+// anterior: nunca um literal novo determinável por esta leitura léxica.
+const AUGMENTED_ASSIGNMENT_OPERATORS = new Set([
+  "+=", "-=", "*=", "/=", "//=", "%=", "**=", "&=", "|=", "^=", ">>=", "<<=", "@=",
+]);
 const WORD = /[\p{L}\p{N}_]+/uy;
 
 // Antes do Python 3.12 a aspa externa não pode aparecer dentro de um campo
@@ -193,8 +198,9 @@ function isOtherBindingTarget(tokens, first, k) {
 // instrução começando no próprio nome, na coluna 0 e fora de colchetes têm
 // `moduleLevel` e `valueIndex` (primeiro token do valor); `name=` dentro de
 // uma chamada é argumento nomeado, não ligação. As demais (cadeia `x = name
-// = ...`, `:=`, indentadas e as de isOtherBindingTarget) entram sem
-// `moduleLevel`: o valor lido no nível do módulo pode não ser o efetivo.
+// = ...`, `:=`, atribuição aumentada `name OP= ...`, indentadas e as de
+// isOtherBindingTarget) entram sem `moduleLevel`: o valor lido no nível do
+// módulo pode não ser o efetivo.
 export function findAssignments(tokens, name) {
   const sites = [];
   let first = 0;
@@ -214,7 +220,11 @@ export function findAssignments(tokens, name) {
         return;
       }
     }
-    if (isOp(next, ":=") || isOtherBindingTarget(tokens, first, k)) {
+    if (
+      isOp(next, ":=") ||
+      (next?.type === "op" && AUGMENTED_ASSIGNMENT_OPERATORS.has(next.value) && token.depth === 0) ||
+      isOtherBindingTarget(tokens, first, k)
+    ) {
       sites.push({ moduleLevel: false, valueIndex: null });
     }
   });

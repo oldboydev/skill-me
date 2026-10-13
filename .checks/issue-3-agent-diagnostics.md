@@ -164,6 +164,43 @@ verificada (252 → 271): 19 testes novos (11 em `config-projection.unit.test.mj
 `configuration-trust.cli.test.mjs`). Paridade do motor comum reconfirmada nesta data sem diff: `git diff
 --exit-code 4242520 -- scripts/code-review/{cli.mjs,review.mjs,review.test.mjs,schema.json,README.md}`.
 
+### Landing da correção formal4 — metadado PE malformado e atribuição aumentada do Hermes
+
+Quarta revisão formal (`.checks/code-review/issue-3-formal4-response.json`, HEAD `ed72b3c`,
+`changes_requested`): `.checks/code-review/formal4-fixes.md`. Dois achados P2 bloqueantes, ambos em leitores
+de dados não confiáveis (binário PE do Claude; texto Python do Hermes) já cobertos por C3/AC1 e C5/AC2 acima,
+não uma categoria nova de critério. Autor: Claude; Codex local só revisa. Nenhum critério da task muda;
+`.verified.md` não é editado por este autor.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| Metadado PE malformado é formato não reconhecido, nunca exceção (achado 1) | `pe.mjs` não confiava nos campos do próprio header para decidir até onde ler o buffer seguinte: `SizeOfOptionalHeader` zero ou curto demais para os campos usados, `Magic` fora de `{0x010b, 0x020b}`, um offset de diretório de recursos além da seção já lida, o ponteiro de `IMAGE_RESOURCE_DATA_ENTRY` além da seção, e um `VS_FIXEDFILEINFO` anunciado mais curto que os 16 bytes lidos — todos liam fora do buffer (RangeError) em vez de reconhecer o formato como inválido. A exceção subia inteira a `resolveOneAgent`, que a traduz em `presence: unknown` (mesmo tratamento de falha de E/S real) — um candidato já encontrado e lido virava indistinguível de "não dá para saber se existe". Cada ponto ganhou um limite explícito contra o tamanho real do buffer já lido (nunca um teto novo de alocação, que já existe para `resourceSize`): curto demais ou Magic desconhecido vira `launcher_not_recognized` (mesmo motivo já usado para MZ/PE/COFF ausentes); estrutura localizada mas com offset/tamanho fora do alcance vira `version_unreadable` (mesmo motivo já usado para `VS_FIXEDFILEINFO` com assinatura errada). Nenhum parser novo: os mesmos offsets fixos, só com um `if` de alcance antes de cada leitura nova. EACCES/erro real de E/S continuam subindo sem alteração (o catch de `readPeVersion` só absorve `PE_TRUNCATED`, do próprio `readExact`) | Ampliar o catch de `resolveOneAgent` para também tratar RangeError como `launcher_not_recognized` (esconderia um RangeError de um bug diferente, não relacionado a este parser, atrás do mesmo motivo); validar `numberOfSections`/tamanho da tabela de seções (fora do alcance deste achado, sem leitura fora de buffer demonstrada) |
+| Atribuição aumentada (+=, -=, ...) é ligação ambígua do nome, igual a := (achado 2) | `findAssignments` (`python-source.mjs`) já tokenizava os 13 operadores de atribuição aumentada (`tokenizePython`/`MULTI_CHAR_OPERATORS`), mas nenhum ramo marcava a ocorrência como ligação do nome: `__version__ = "0.21.4"` seguido de `__version__ += "-dev"` deixava a segunda instrução invisível para `extractSourceLiteralVersion` (`launcher-link/hermes.mjs`), que publicava o literal da primeira atribuição como se fosse o único — com um perfil de versão compatível e VALID_HOOKS/SHELL_UNSUPPORTED_HOOKS instalados ao lado (`contract-evidence.mjs`, mesma função `findAssignments`), isso liberava verified para uma versão efetiva (0.21.4-dev) fora do perfil publicado. `findAssignments` agora reconhece `name OP= valor` (os mesmos 13 operadores) no mesmo ramo de :=: ligação sem moduleLevel/valueIndex, sem avaliar o valor. Com isso, `extractSourceLiteralVersion` enxerga duas ligações do nome (literals.length < sites.length) e devolve version_source_ambiguous, nunca o literal anterior; `extractTopLevelStringSet` (contratos) enxerga sites.length !== 1 e invalida a confirmação da tabela pela mesma ligação, sem alteração própria. Leitura léxica, não um parser: `obj.__version__ += ...` conta como a mesma ligação por nome (igual a `obj.__version__ = ...` já contava antes desta correção) — ambíguo é o resultado seguro; comentário, string e outra variável continuam sem efeito (filtro por nome e por código real já existente) | Interpretar o operador para decidir se o valor muda de verdade (ex.: distinguir += de string vs. número) — exigiria avaliar a expressão, que esta leitura léxica nunca faz; exceção só para `obj.__version__` (distinguir atributo de nome de módulo exigiria rastrear o token "." antes do nome, fora do escopo de uma leitura lexical por nome) |
+
+Regressão RED contra `ed72b3c` (produto no estado anterior a esta correção, testes desta rodada já
+presentes), saída completa em `.checks/code-review/formal4-red.txt`:
+
+```
+node --test tests/doctor/version-metadata.unit.test.mjs tests/doctor/agent-resolution.unit.test.mjs \
+  tests/doctor/contract-evidence.unit.test.mjs tests/doctor/capability-evidence.cli.test.mjs
+  -> tests 79, pass 67, fail 11
+EXIT_CODE=1
+```
+
+As 11 falhas (5 RangeError reais em `version-metadata.unit.test.mjs`, 1 regressão de presença em
+`agent-resolution.unit.test.mjs` nível `resolveAgents`, 2 casos de atribuição aumentada do Hermes no mesmo
+arquivo, 1 na fronteira da CLI em `capability-evidence.cli.test.mjs`, 2 no contrato
+VALID_HOOKS/SHELL_UNSUPPORTED_HOOKS em `contract-evidence.unit.test.mjs`) são exatamente os casos novos
+desta rodada; os demais 67 continuavam verdes (nenhuma regressão de fora do escopo). GREEN dos mesmos quatro
+alvos depois da correção (`.checks/code-review/formal4-green.txt`): 78 pass, 0 fail, 1 skip (mesmo skip
+condicional ao executor já registrado desde a rodada 3). `npm test` completo uma única execução após a
+última alteração de código/testes/documentação (`.checks/code-review/formal4-npm-test.txt`):
+`test:governance` 6/6, `test:code-review` 10/10, `test:doctor` 330 testes/329 pass/1 skip. Delta de
+`test:doctor` contra a seção 22 do build (319 → 330): 11 testes novos (7 em `version-metadata.unit.test.mjs`,
+3 em `agent-resolution.unit.test.mjs`, 1 em `capability-evidence.cli.test.mjs`); os dois casos novos em
+`contract-evidence.unit.test.mjs` foram adicionados dentro de testes "unrecognized" já existentes, sem criar
+test() novo.
+
 ## Checks
 
 ### S1 - Saber quais agentes foram encontrados sem iniciar os agentes · 6 arquivos · ~26 KB · ~7k

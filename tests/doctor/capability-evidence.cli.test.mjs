@@ -286,6 +286,52 @@ test("capability-evidence-C5 __version__ só em comentário: versão nula e nenh
   }
 });
 
+// Achado formal4 P2 (nº2): `__version__ += "-dev"` ao lado de uma tabela de
+// contrato válida publicava 0.21.4 (literal da primeira atribuição) e
+// liberava "verified" para uma versão efetiva (0.21.4-dev) fora do perfil
+// publicado. Instala os três agentes (alcance compartilhado: a mesma leitura
+// léxica serve Hermes e os contratos VALID_HOOKS/SHELL_UNSUPPORTED_HOOKS) com
+// contrato sintético válido. O controle sem reatribuição é o teste "Hermes
+// com VALID_HOOKS da própria instalação" acima, que continua verified.
+test("capability-evidence-C5 formal4-P2 Hermes com __version__ += \"-dev\": version_source_ambiguous e nenhuma linha verified, mesmo com VALID_HOOKS válido", () => {
+  const scratch = makeScratch("doctor-c5-versao-reatribuicao-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs } = installAllAgents(dir, {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      hermesContractSource: hermesPluginsSource(),
+      hermesInitSource: '__version__ = "0.21.4"\n__version__ += "-dev"\n',
+    });
+    const env = { PATH: pathEnv(pathDirs), ...emptyHomeEnv(scratch) };
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.presence, "present");
+    assert.equal(hermes.version, null);
+    assert.notEqual(hermes.version, "0.21.4", "a versão efetiva (0.21.4-dev) nunca pode ser publicada como 0.21.4");
+    assert.equal(hermes.versionSource, null);
+    assert.equal(hermes.reasonCode, "version_source_ambiguous");
+    const rows = localRows(hermes);
+    assert.equal(rows.length, 5);
+    for (const row of rows) {
+      assert.equal(row.support, "unverified", row.mechanism);
+      assert.equal(row.reasonCode, "version_unresolved", row.mechanism);
+      assert.equal(row.runtimeVerification, "not_performed", row.mechanism);
+    }
+    for (const id of ["claude", "codex"]) {
+      const agent = report.agents.find((a) => a.id === id);
+      for (const row of localRows(agent)) assert.notEqual(row.support, "verified", `${id}/${row.mechanism}`);
+    }
+    const { status: textStatus, stdout } = runDoctor([], { env });
+    assert.equal(textStatus, 0);
+    assert.match(stdout, /version_source_ambiguous/);
+    assert.doesNotMatch(stdout, /0\.21\.4/);
+    assert.doesNotMatch(stdout, /local_contract_lists_events/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 test("capability-evidence-C5 launcher ausente no PATH consultado: CLI local unavailable/executable_not_found, demais superfícies continuam não inspecionadas", () => {
   const scratch = makeScratch("doctor-c5-indisponivel-");
   try {

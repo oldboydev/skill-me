@@ -16,7 +16,7 @@ import test from "node:test";
 import { resolveAgents } from "../../src/doctor/agent-resolution.mjs";
 import { resolveCodexVersion } from "../../src/doctor/launcher-link/codex.mjs";
 import { resolveHermesVersion } from "../../src/doctor/launcher-link/hermes.mjs";
-import { buildMinimalPe } from "./helpers/synthetic-pe.mjs";
+import { buildMinimalPe, corruptSizeOfOptionalHeader } from "./helpers/synthetic-pe.mjs";
 import {
   addDir,
   addFile,
@@ -545,6 +545,26 @@ test("agent-resolution-C3 Windows: codex.exe e claude.cmd de formato não reconh
   assert.equal(agents.claude.reasonCode, "launcher_not_recognized");
 });
 
+// Achado formal4 P2 (nº1): candidato Claude legível (MZ/PE/COFF presentes)
+// com SizeOfOptionalHeader=0 lançava RangeError dentro de pe.mjs; esse erro
+// chegava ao catch de resolveOneAgent e virava presence=unknown, como se o
+// candidato não tivesse sido encontrado — contrariando C3 (já encontrado e
+// lido). Regressão: antes desta correção este teste falhava com
+// presence="unknown"/reasonCode="unknown_error"; agora preserva presence
+// "present" com o motivo de formato não reconhecido.
+test("agent-resolution-formal4-P2 Windows: claude.exe com SizeOfOptionalHeader=0 continua present/launcher_not_recognized, nunca unknown", async () => {
+  const tree = buildFsTree();
+  const dir = "C:\\apps\\agentes";
+  addFile(tree, dir, "claude.exe", corruptSizeOfOptionalHeader(peBytes(V1), 0));
+  const agents = byId(
+    await resolveAgents({ pathDirs: [dir], platform: "win32", fs: createFakeFsAdapter(tree), env: {} }),
+  );
+  assert.equal(agents.claude.presence, "present");
+  assert.notEqual(agents.claude.presence, "unknown");
+  assert.equal(agents.claude.version, null);
+  assert.equal(agents.claude.reasonCode, "launcher_not_recognized");
+});
+
 test("agent-resolution-C2 Windows: o primeiro diretório do PATH com qualquer candidato vence, mesmo de formato não reconhecido", async () => {
   const tree = buildFsTree();
   const first = "C:\\primeiro";
@@ -973,6 +993,63 @@ test("agent-resolution-C3 __version__ em código: literal no nível do módulo �
     assert.equal(result.version, null, label);
     assert.equal(result.reasonCode, "version_source_ambiguous", label);
   }
+});
+
+// Achado formal4 P2 (nº2): `__version__ += "-dev"` não era reconhecida como
+// ligação por findAssignments (o tokenizer já reconhecia o operador, mas
+// nada marcava a ocorrência como ligação do nome) — a segunda instrução
+// ficava invisível para extractSourceLiteralVersion, que publicava o literal
+// da primeira atribuição como se fosse o único e, com uma tabela de contrato
+// válida ao lado, liberava "verified" para uma versão efetiva diferente da
+// publicada. Regressão: antes desta correção os casos abaixo publicavam
+// "0.21.4" (o literal da primeira atribuição); agora toda atribuição
+// aumentada marca uma ligação ambígua sem avaliar o valor, igual a `:=` e à
+// reatribuição indentada já cobertas acima.
+test("agent-resolution-formal4-P2 Hermes: __version__ com atribuição aumentada (+=, -=, ...) nunca publica o literal anterior; vira version_source_ambiguous", async () => {
+  const AUGMENTED_OPERATORS = ["+=", "-=", "*=", "/=", "//=", "%=", "**=", "&=", "|=", "^=", ">>=", "<<=", "@="];
+  for (const op of AUGMENTED_OPERATORS) {
+    const result = await hermesVersionWith(`__version__ = "0.21.4"\n__version__ ${op} "-dev"\n`);
+    assert.equal(result.version, null, op);
+    assert.notEqual(result.version, "0.21.4", op);
+    assert.equal(result.reasonCode, "version_source_ambiguous", op);
+  }
+});
+
+test("agent-resolution-formal4-P2 Hermes: atribuição aumentada em comentário/string/outra variável não afeta __version__; só a ligação real do próprio nome conta", async () => {
+  const unaffected = {
+    "comentário": '__version__ = "0.21.4"\n# __version__ += "-dev"\n',
+    "dentro de string": `__version__ = "0.21.4"\nX = '__version__ += "-dev"'\n`,
+    "outra variável": '__version__ = "0.21.4"\nOTHER_VAR += "-dev"\n',
+  };
+  for (const [label, initSource] of Object.entries(unaffected)) {
+    const result = await hermesVersionWith(initSource);
+    assert.equal(result.version, "0.21.4", label);
+    assert.equal(result.versionSource, "source_literal", label);
+  }
+
+  // Esta leitura é léxica, não um parser Python: `obj.__version__` traz o
+  // mesmo nome de token que o `__version__` do módulo. Na dúvida, a
+  // ocorrência conta como ligação (mesma regra já aplicada a
+  // `obj.__version__ = ...` com "=" simples, que também gera ambiguidade) —
+  // ambíguo é o resultado seguro, nunca publicar 0.21.4 como se a atribuição
+  // ao atributo não existisse.
+  const attributeResult = await hermesVersionWith('__version__ = "0.21.4"\nobj.__version__ += "-dev"\n');
+  assert.equal(attributeResult.version, null);
+  assert.equal(attributeResult.reasonCode, "version_source_ambiguous");
+
+  // Comportamento já existente (independente desta correção): o filtro de
+  // literais em extractSourceLiteralVersion só aceita um valor cujo token
+  // seguinte seja uma quebra de linha real (endsStatement); encadeado por
+  // ";" o próprio literal da primeira atribuição não passa nesse filtro, e
+  // a segunda ligação (a atribuição aumentada) nunca chega a ser lida como
+  // literal — version_unreadable, não version_source_ambiguous.
+  const semicolonResult = await hermesVersionWith('__version__ = "0.21.4"; __version__ += "-dev"\n');
+  assert.equal(semicolonResult.version, null);
+  assert.equal(semicolonResult.reasonCode, "version_unreadable");
+
+  const indentedResult = await hermesVersionWith('__version__ = "0.21.4"\nif DEV:\n    __version__ += "-dev"\n');
+  assert.equal(indentedResult.version, null);
+  assert.equal(indentedResult.reasonCode, "version_source_ambiguous");
 });
 
 test("agent-resolution-C3 launcher Python do Hermes que cita o import de hermes_cli só em docstring não é vínculo", async () => {
