@@ -1,6 +1,7 @@
 # Issue 3 — Diagnóstico local de agentes e cobertura observável
 
-> Implementar com **tlc-implement**, profile `light`, depois da aprovação deste plano.
+> Plano aprovado em 13/10/2026: “ok atualize com a main e pode implementar”.
+> Implementar com **tlc-implement**, profile `light`.
 > Cada critério vira um check com prova referenciada pelo número. Grok ou Claude
 > implementa; Codex local revisa conforme AGENTS.md. Nada em `Unresolved` é decidido
 > silenciosamente durante a implementação.
@@ -18,7 +19,7 @@ configuração e funcionamento real são informações distintas. O comando não
 sessões, executa skills, instala hooks nem corrige configurações.
 
 18 critérios em 3 fatias observáveis · 2 contratos externos novos · 0 decisões
-técnicas bloqueantes. Aprovação do plano ainda pendente; Planning não equivale a Ready.
+técnicas bloqueantes. Plano aprovado; a entrega está em In Progress.
 
 ### Recorte e tamanho
 
@@ -211,7 +212,8 @@ preservação e governança já aplicáveis; não criam serviço de coleta.
 ## Decided
 
 Detalhes abaixo foram escolhidos no planejamento pelo mandato do proprietário
-“os detalhes isso vc vai fazer”. A aprovação do plano ainda é a etapa de Ready.
+“os detalhes isso vc vai fazer”. A etapa de Ready foi autorizada pelo pedido explícito
+de implementação em 13/10/2026.
 
 | Decision | Shape | Alternative rejected |
 | --- | --- | --- |
@@ -294,7 +296,14 @@ Leitura de fontes instaladas e fontes oficiais não equivale a teste de captura.
 
 | # | Kind | Question | Until answered |
 | --- | --- | --- | --- |
-| — | — | None — nenhuma decisão técnica bloqueante; detalhes delegados e registrados acima | Aprovação humana do plano continua pendente conforme AGENTS.md; sem isso, manter Planning e não iniciar implementação |
+| — | — | None — nenhuma decisão técnica bloqueante; detalhes delegados e registrados acima | Plano e implementação aprovados pelo proprietário em 13/10/2026 |
+
+### Aprovação e atualização da base
+
+Proprietário: “ok atualize com a main e pode implementar”. Plano publicado em
+`bbee3a5` aprovado sem mudança nos 18 critérios. A branch recebeu `origin/main`
+`4242520` em `c43d4ca`, incluindo as novas boas práticas de AGENTS.md. O aceite
+autoriza a implementação do diagnóstico; não autoriza merge, deploy ou publicação.
 
 ### Verificações da etapa de planejamento
 
