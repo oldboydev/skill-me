@@ -169,3 +169,9 @@ Claude corrigiu o finding formal7 em5f1b844, o conflito de módulo/pacote fonte 
 - O autor não realizou mutaçãoGit/stash, nem executouPython/agentes/hooks/configurações reais. As proteções de import são estáticas e conservadoras; não modelam .pth, site do usuário, reflexão ou alterações dinâmicas de sys.path. A limitação de desempenho numa única linha Python muito longa permanece comunicada. O aditivo de nomes compilados foi registrado depois do código; ele amplia candidatos na decisão conservadora já registrada na seção30, sem uma nova decisão irreversível. Não se alega cronologia anterior para esse aditivo.
 
 Estas são provas complementares do autor/orquestrador. A rodada12 independente será scoped sobre1673f0aba8bf8104de874be86dc089f72d1a1479..HEAD, com todas as provas reexecutadas e blast do encaminhamento/sharedfixtures. Só apósPASS a formal8 será executada; o histórico7 e override8 exclusivoissue3 permanecem preservados. macOS/CIremota ainda não observados. Nenhum push/PR/merge/publicação até este registro.
+
+## Décima segunda verificação independente
+
+Rodada12 FAIL na HEAD8b052343b027ad60f4f08a0580bcbfe5cb289855:14/18 critériosPASS; C2/C3/C5/C8 reprovados por umP2 concreto no delta de nomes compilados. A suíte completa independente executou395PASS/0FAIL/2skipPOSIX, exit0, mas probeCLI noWindows comhermes_cli.PYD nocwd mostrouversão0.21.4/source_literal,5verified,configured/trusted indevidos. CPythonv3.13 normaliza o sufixo final para minúsculas noWindows; a regex do doctor era case-sensitive. Relatório/probe preservados; nenhuma execuçãoPython ou alteração de produto pelo verificador.
+
+A correção mínima segue aoClaude comRED/GREEN/camada+CLI e controlesPOSIX. A autorização humana das revisões necessárias cobre independente13 scoped sobre esteFAIL; a formal8 ainda não foi iniciada e o histórico7/max8 permanece intacto. Nenhum push/PR/merge/publicação até este registro.
