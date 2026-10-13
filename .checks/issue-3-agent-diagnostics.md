@@ -325,7 +325,13 @@ desserializa de uma TABELA — `features = true`/`features = false` soltos (sem 
 em silêncio (a checagem antiga era um teste de truthiness: `true` passava sem validação, `false` pulava
 o bloco inteiro). O `doctor` agora exige `[features]` como objeto antes de ler qualquer chave interna;
 `[features]` vazio continua válido.
-Ver `.checks/issue-3-agent-diagnostics.build.md` seções 18-19.
+**Resíduo final do mesmo achado** (`.checks/code-review/formal3-final-residuals.md`, item 1): a
+checagem de objeto também aceitava um `Date`/`TomlDate` solto (`features = 1979-05-27`) — `smol-toml`
+devolve esse datetime/date TOML como `TomlDate extends Date`, sem propriedade própria enumerável
+(`Object.entries` vazio, indistinguível de `[features]` vazio de verdade). `isPlainObject` agora também
+confere o protótipo (`null`, das tabelas reais do `smol-toml`, ou `Object.prototype`, de um objeto de
+`JSON.parse` — nunca o protótipo de uma classe como `Date`).
+Ver `.checks/issue-3-agent-diagnostics.build.md` seções 18-20.
 **Corrigido na revisão formal3 (achado 3)**: `timeout` (`Command`/`McpTool`, `Option<u64>`) e
 `additionalContextLimit` (`Command`, `Option<usize>`) tinham sinal e integralidade conferidos, mas
 nunca o teto superior (2^64-1) — um `timeout` de `18446744073709551616` (2^64, inválido) em
@@ -341,6 +347,14 @@ lexical com `1`; o `doctor` agora exige, pelo texto-fonte, um token puramente de
 true` (opção já existente no pacote) preserva o inteiro TOML exato sem o antigo limite de precisão
 de double (que rejeitava um `i64::MAX` legítimo como `config_malformed`) e mantém um FLOAT TOML
 (`1.0`) como `Number`, nunca `BigInt` — recusado pelo mesmo motivo do `1.0` em JSON.
+**Resíduo final do mesmo achado** (`.checks/code-review/formal3-final-residuals.md`, item 2): um token
+puramente decimal ainda deixava passar `timeout: -0` em `hooks.json` — a própria fonte do parser
+(`de.rs::parse_number`, `serde_json` 1.0.149, linhas 509-526, baixada do publisher crates.io com
+checksum igual ao `Cargo.lock` da tag `rust-v0.162.1`) roteia um token negativo de magnitude zero para
+`ParserNumber::F64(-0.0)`, nunca para o inteiro ("Convert into a float if we underflow, or on `-0`");
+nem `-0 < 0` (`false` em JS) nem `BigInt("-0")` (`0n`) revelam essa armadilha, só o texto-fonte exato.
+`isValidOptionalU64Field` agora recusa especificamente o token `"-0"`. O mesmo valor em `config.toml`
+(`BigInt`, sem essa conversão do parser JSON) continua um inteiro válido.
 Proof: `node --test --test-name-pattern="config-projection-C8" tests/doctor/config-projection.unit.test.mjs`
 Proof: `node --test tests/doctor/config-sources.unit.test.mjs`
 Proof: `node --test tests/doctor/config-reader.unit.test.mjs`

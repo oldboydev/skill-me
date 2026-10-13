@@ -311,6 +311,25 @@ test("config-projection-C8 Codex: [features] vazio (tabela sem chaves) continua 
   assert.equal(result.configuration, "configured");
 });
 
+// Resíduo final (.checks/code-review/formal3-final-residuals.md, item 1):
+// `features = 1979-05-27` é um escalar TOML datetime/date, não uma tabela —
+// smol-toml devolve uma instância de `TomlDate extends Date` (dist/date.js),
+// que satisfaz `typeof value === "object" && !Array.isArray(value)` e tem
+// `Object.entries` vazio, como uma tabela `{}` de verdade. `FeaturesToml`
+// desserializa de um MAPA (lib.rs:838-871); um datetime solto no lugar da
+// tabela falha a deserialização do documento, igual a `features = true`.
+test("config-projection-C8 Codex: features=1979-05-27 (datetime TOML solto, não tabela) invalida o documento, mesmo com hooks nativos válidos", () => {
+  const result = projectConfig({
+    rawText:
+      'features = 1979-05-27\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "features_hooks_flag_invalid_type");
+  assert.deepEqual(result.fields, {});
+});
+
 test("config-projection-C8 arquivo sem seção hooks fica not_configured, mesmo com outras chaves", () => {
   const result = projectConfig({
     rawText: JSON.stringify({ theme: "dark" }),
@@ -1104,9 +1123,8 @@ test("config-projection-C8 Codex: timeout como float do TOML (1.0) invalida o do
 // expoente para `ParserNumber::F64`, nunca para o visitor inteiro de
 // `u64`/`usize` — `1.0`/`1e0`/`1e2` em JSON são recusados mesmo com valor
 // matemático inteiro, porque `JSON.parse`/`Number.isInteger` apagam essa
-// distinção lexical (viram o mesmo `Number` que `1`). `-0` não tem ponto nem
-// expoente: continua um inteiro válido (zero).
-test("config-projection-C8 Codex: timeout como token decimal/exponencial do JSON (1.0, 1e0, 1e2) invalida; -0 continua válido (zero)", () => {
+// distinção lexical (viram o mesmo `Number` que `1`).
+test("config-projection-C8 Codex: timeout como token decimal/exponencial do JSON (1.0, 1e0, 1e2) invalida", () => {
   for (const literal of ["1.0", "1e0", "1e2", "30.0", "3e1"]) {
     const result = codexHandlerRawJson(
       `{"type":"command","command":"echo ok","timeout":${literal}}`,
@@ -1114,10 +1132,34 @@ test("config-projection-C8 Codex: timeout como token decimal/exponencial do JSON
     assert.equal(result.configuration, "invalid", literal);
     assert.equal(result.reasonCode, "hooks_structure_invalid", literal);
   }
-  const negativeZero = codexHandlerRawJson(
-    '{"type":"command","command":"echo ok","timeout":-0}',
-  );
-  assert.equal(negativeZero.configuration, "configured");
+});
+
+// Resíduo final (.checks/code-review/formal3-final-residuals.md, item 2):
+// `de.rs::parse_number` (serde_json 1.0.149, fonte baixada do publisher
+// crates.io com checksum igual ao `Cargo.lock` da tag rust-v0.162.1 —
+// `.checks/code-review/native-codex-0.162.1/serde-json-1.0.149/src/de.rs:
+// 509-526`) roteia um token negativo de magnitude zero ("-0") para
+// `ParserNumber::F64(-0.0)`, não para o inteiro — o comentário da própria
+// fonte ("Convert into a float if we underflow, or on `-0`") confirma que
+// esse token nunca alcança o visitor de `u64`/`usize`. O JS não preserva essa
+// distinção lexical sozinho: `-0 < 0` é `false` e `BigInt("-0")` é `0n`,
+// então só o texto-fonte exato decide. O MESMO valor "-0" em TOML (BigInt,
+// sem fonte JSON) continua um inteiro nativo válido — é zero, dentro do teto
+// i64 — porque o parser do TOML/Rust real nunca faz essa conversão para
+// float; só o token JSON tem essa regra.
+test("config-projection-C8 Codex: timeout=-0 em hooks.json (JSON) invalida — token negativo de magnitude zero é float para o parser, nunca inteiro", () => {
+  const result = codexHandlerRawJson('{"type":"command","command":"echo ok","timeout":-0}');
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "hooks_structure_invalid");
+});
+
+test("config-projection-C8 Codex: timeout=-0 em config.toml (TOML, inteiro BigInt) continua configured — mesmo valor, formato diferente", () => {
+  const result = projectConfig({
+    rawText: '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\ntimeout = -0\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assert.equal(result.configuration, "configured");
 });
 
 test("config-projection-C8 Codex: null em async (bool) ou input (Map) não é Option — invalida o documento, nunca configured", () => {

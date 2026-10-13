@@ -4,8 +4,20 @@ import { inspectNativeHooks, CODEX_INTEGER_SOURCE } from "./hooks-shape.mjs";
 
 export const ONE_MIB_BYTES = 1024 * 1024;
 
+// `typeof value === "object" && !Array.isArray(value)` sozinho também aceita
+// um `Date`/`TomlDate` (smol-toml devolve `TomlDate extends Date` para um
+// datetime/date TOML — dist/date.js; um `Date` não tem propriedade própria
+// enumerável, então `Object.entries` nele é sempre `[]`, como uma tabela
+// vazia). Não é uma tabela TOML/objeto JSON real: `FeaturesToml` desserializa
+// de um MAPA de verdade (lib.rs:838–871), e um `Date` precisa ser recusado
+// como qualquer outro escalar TOML solto (bool/número/string). Tabelas reais
+// do smol-toml usam `Object.create(null)` (dist/parse.js); objetos de
+// `JSON.parse` usam `Object.prototype`. O protótipo por isso precisa ser um
+// dos dois — nunca o protótipo de uma classe como `Date`.
 function isPlainObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === null || proto === Object.prototype;
 }
 
 // `timeout` (Command e McpTool) e `additionalContextLimit` (Command) são

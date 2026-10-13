@@ -2247,3 +2247,149 @@ e residual 2 em JSON, ambos na fronteira real da CLI). Paridade dos cinco arquiv
   `.checks/code-review/formal3-residual-fixes.md` (encaminhamentos), `.checks/code-review/
   probe-formal3-after-initial.txt` (probe da raiz), `.checks/code-review/native-codex-0.162.1/Cargo.lock`
   (fonte primária de versões).
+
+## 20. Correção dos dois resíduos finais concretos dos achados 1 e 2 da revisão formal3 (13/10/2026)
+
+Após a seção 19, a raiz (Codex) rodou `probe-formal3-native-cli.mjs` de novo contra o produto corrigido
+(`.checks/code-review/probe-formal3-after-residual.txt`) e registrou dois casos concretos ainda
+`complete`/`configured` em `.checks/code-review/formal3-final-residuals.md`. Autor: Claude; Codex raiz
+só revisa. Mesmo escopo da issue #3, achados 1 e 2 já corrigidos nas seções 18-19 — nenhum achado novo,
+nenhuma mudança de critério. `.verified.md`, `.tasks`, AGENTS.md, core vendorizado e
+`code-review.config.json` não tocados. Sem commit/stash/push/PR/review/spawn nesta rodada.
+
+### Os dois resíduos
+
+1. **`features = 1979-05-27` (datetime TOML solto) no lugar de `[features]`**: a correção da seção 19
+   testa `isPlainObject(parsed.features)` com `typeof value === "object" && !Array.isArray(value)` —
+   essa condição também é verdadeira para um `Date`. `smol-toml` devolve um datetime/date TOML como
+   `TomlDate extends Date` (`node_modules/smol-toml/dist/date.js`); um `Date` não tem propriedade
+   própria enumerável, então `Object.entries(date)` é sempre `[]`, indistinguível de uma tabela vazia
+   de verdade. `FeaturesToml` desserializa de um MAPA (lib.rs:838-871), nunca de um `Date` — o caso
+   precisa do mesmo resultado que `features = true`/`features = false` (seção 19), mas a checagem só
+   olhava "é objeto, não é array", sem considerar o protótipo.
+2. **`timeout = -0` em `hooks.json`**: a correção da seção 19 exige um token puramente decimal
+   (`PLAIN_INTEGER_TOKEN`, `/^-?\d+$/`) via o texto-fonte exato do `JSON.parse`. O literal `-0` casa
+   com esse regex (não tem ponto nem expoente) e `BigInt("-0")` é `0n`, dentro do teto — então passava
+   como inteiro válido. A fonte real do parser (`serde_json` 1.0.149, `de.rs::parse_number`, obtida do
+   publisher crates.io com checksum idêntico ao `Cargo.lock` da tag `rust-v0.162.1`, preservada em
+   `.checks/code-review/native-codex-0.162.1/serde-json-1.0.149/src/de.rs`) mostra que um token
+   negativo cuja magnitude é zero NUNCA produz o inteiro: `neg = (significand as i64).wrapping_neg()`
+   é `0` nesse caso, e o comentário da própria fonte na linha 519 ("Convert into a float if we
+   underflow, or on `-0`") confirma que o parser roteia esse caso para `ParserNumber::F64(-0.0)`, não
+   para `ParserNumber::I64`/`U64` — o visitor de `Option<u64>` nunca recebe esse valor como inteiro.
+   `-0 < 0` é `false` em JS e `BigInt("-0")` é `0n`: nenhum dos dois revela essa armadilha: só o
+   texto-fonte exato ("-0" literal, e não qualquer outro token) decide.
+
+### Decisão e correção
+
+1. **Protótipo do container de `[features]`**: `isPlainObject` (`config-projection.mjs`) agora também
+   confere `Object.getPrototypeOf(value)`: `null` (tabelas reais do `smol-toml`, que usa
+   `Object.create(null)` em `dist/parse.js`) ou `Object.prototype` (objetos de `JSON.parse`) são
+   aceitos; qualquer outro protótipo — de `Date`/`TomlDate` ou de qualquer outra classe — é recusado
+   como container de `[features]`, igual a um bool/número/string soltos. Os dois únicos pontos de
+   chamada de `isPlainObject` neste arquivo (`hooksFileEnvelopeReasonCode` na raiz de `hooks.json`, e
+   o container de `parsed.features`) só recebem `Object.prototype`/`null` em qualquer caso válido hoje
+   coberto por teste, então a checagem mais estrita não muda nenhum resultado existente.
+2. **Token lexical `-0` do JSON**: `isValidOptionalU64Field` (`hooks-shape.mjs`) agora recusa
+   especificamente o texto-fonte `"-0"`, depois de confirmar que o token já é puramente decimal — um
+   caso lexical único (um segundo zero à esquerda, como `"-00"`, já é rejeitado pelo próprio
+   `JSON.parse` antes de chegar aqui, então `"-0"` é a única forma possível dessa armadilha). Qualquer
+   outro token negativo (`"-5"`) já era recusado pelo `value < 0` existente; este é o único caso em
+   que um `Number` não negativo (`-0` em JS não é `< 0`) esconde um token que o parser real trata como
+   float. O mesmo valor em `config.toml` (`BigInt`, sem essa conversão do parser JSON) não passa por
+   este ramo — `typeof value === "bigint"` decide antes, e continua válido (confirmado por teste
+   dedicado, abaixo).
+
+### Ordem seguida e evidência de execução real
+
+Leitura da fonte baixada do publisher (`de.rs:460-528`, trecho citado acima) e do contrato de datas do
+`smol-toml` já instalado (`dist/date.js`, `dist/parse.js` — confirmação por execução real de
+`parse('timeout = -0\n', { integersAsBigInt: true })`, que devolve `0n`) → adição/atualização dos
+testes próprios desta rodada, confirmando RED no produto da seção 19 → correção dos dois pontos →
+GREEN nos mesmos testes, mais os já existentes preservados → `test:doctor` completo isolado →
+`npm test` completo uma única vez, após as últimas alterações.
+
+RED real (produto no estado da seção 19, antes desta correção), confirmado por execução direta dos
+testes (saída completa em `.checks/code-review/formal3-final-red.txt`):
+
+```
+features=1979-05-27 (TOML, [[hooks.PreToolUse]] válido ao lado)  -> configured/hooks_configured (esperado: invalid/features_hooks_flag_invalid_type)
+timeout=-0 (JSON, hooks.json)                                     -> configured/hooks_configured (esperado: invalid/hooks_structure_invalid)
+  (mesmos dois casos reproduzidos na fronteira da CLI: configuration-trust.cli.test.mjs)
+tests 109, pass 105, fail 4
+EXIT_CODE=1
+```
+
+GREEN real, mesmos quatro testes (camada pura + CLI) após a implementação, mais os existentes
+preservados (saída completa em `.checks/code-review/formal3-final-green-targets.txt`):
+
+```
+node --test tests/doctor/config-projection.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs tests/doctor/config-reader.unit.test.mjs
+  -> tests 128, pass 128, fail 0
+EXIT_CODE=0
+```
+
+`test:doctor` completo isolado (saída em `.checks/code-review/formal3-final-doctor.txt`):
+
+```
+node --test "tests/doctor/**/*.test.mjs"
+  -> tests 308, pass 307, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+`npm test` completo, uma única execução após as alterações finais (saída completa em
+`.checks/code-review/formal3-final-npm-test.txt`):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 308, pass 307, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a seção 19 (304 → 308): 4 testes novos, todos em
+`config-projection.unit.test.mjs` e `configuration-trust.cli.test.mjs` — `features=1979-05-27`
+(datetime TOML solto, camada pura), `timeout=-0` em JSON (camada pura, substituindo a asserção antiga
+e incorreta "`-0` continua válido" do mesmo teste), `timeout=-0` em `config.toml` (caracterização de
+controle: o MESMO valor continua `configured` no formato TOML, camada pura), e `timeout=-0` em
+`hooks.json` na fronteira da CLI (`configuration-trust.cli.test.mjs`); o teste CLI existente de
+`features=true`/`timeout=1.0` ganhou um terceiro caso (`features=1979-05-27`) sem virar um teste novo.
+Paridade dos cinco arquivos comuns de `scripts/code-review/` contra a base (`4242520`) não reconferida
+nesta rodada (nenhum arquivo do core foi tocado). O único skip continua
+`agent-resolution-C2 realpath/symlink real … (POSIX)`.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0. Nenhum agente, hook, intérprete, binário Rust ou script
+  de instalação foi executado, importado ou alterado nesta rodada — a citação de `de.rs` vem de leitura
+  de texto da fonte baixada do publisher (`.crate` do crates.io, checksum conferido contra o
+  `Cargo.lock` antes da extração), nunca de uma execução do parser nativo.
+- A consulta de `docs.rs`/GitHub versionado para `serde_json` 1.0.149 continua indisponível na
+  ferramenta da raiz (mesma limitação registrada em `formal3-number-token-note.md`); o publisher
+  crates.io supriu essa lacuna para este resíduo específico.
+- `TomlDate`/`Date` é o único tipo de container TOML excluído por protótipo nesta correção; outras
+  classes hipotéticas que `smol-toml` não devolve hoje (ou que outro agente/formato viesse a produzir)
+  não foram enumeradas — a regra é "protótipo nulo ou `Object.prototype`", não uma lista fechada de
+  exclusões.
+- Não foi alterado — nem precisou ser — o `isPlainObject` duplicado em `hooks-shape.mjs` (função
+  idêntica, usada para a forma de `hooks`/grupos/handlers, não para o container de `[features]`):
+  nenhum caso de teste conhecido ou do probe da raiz exercita um `Date` nesse caminho (um `Date` solto
+  em `hooks`/`PreToolUse` já falha por outro motivo — `Array.isArray`/forma de grupo — antes de chegar
+  a `isPlainObject` ali). Ficou fora do escopo autorizado (só os dois resíduos concretos do briefing).
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/config-projection.mjs` (`isPlainObject` confere protótipo), `src/doctor/
+  hooks-shape.mjs` (`isValidOptionalU64Field` recusa o token `"-0"`).
+- Testes: `tests/doctor/config-projection.unit.test.mjs` (3 novos — datetime TOML, `-0` JSON inválido,
+  `-0` TOML válido de controle —, 1 teste existente com a asserção antiga de `-0` removida/renomeado),
+  `tests/doctor/configuration-trust.cli.test.mjs` (1 novo — `timeout=-0` em `hooks.json` — e 1 teste
+  existente estendido com o caso do datetime TOML).
+- Documentação/checklist: `docs/agent-compatibility.md` (frases "Resíduo final corrigido" aditivas nas
+  células de achado 1 e 2 do Codex), `.checks/issue-3-agent-diagnostics.md` (frases "Resíduo final do
+  mesmo achado" aditivas na entrada C8), esta seção.
+- Evidência: `.checks/code-review/formal3-final-red.txt`, `…-green-targets.txt`, `…-doctor.txt`,
+  `…-npm-test.txt`. Preservados sem alteração: `.checks/code-review/formal3-final-residuals.md`
+  (encaminhamento), `.checks/code-review/probe-formal3-after-residual.txt` (probe da raiz),
+  `.checks/code-review/native-codex-0.162.1/serde-json-1.0.149/src/de.rs` (fonte primária do publisher,
+  já presente antes desta rodada).

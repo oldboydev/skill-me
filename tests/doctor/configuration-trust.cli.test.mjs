@@ -831,12 +831,16 @@ test("configuration-trust-C8 handler command do Codex com timeout de tipo errado
 });
 
 // Achados residuais da revisão formal3 (.checks/code-review/formal3-residual-
-// fixes.md, itens 1 e 3): `features=true` em config.toml e `timeout=1.0` em
-// config.toml invalidam o documento na fronteira real da CLI, com os mesmos
-// motivos já provados na camada pura.
-test("configuration-trust-C8 features=true (bool solto) e timeout=1.0 (float TOML) ficam invalid/partial no relatório real", () => {
+// fixes.md, itens 1 e 3; .checks/code-review/formal3-final-residuals.md,
+// item 1 para o datetime): `features=true` (bool solto), `features=
+// 1979-05-27` (datetime solto, mesmo defeito de container que o bool — ver
+// isPlainObject em config-projection.mjs) e `timeout=1.0` em config.toml
+// invalidam o documento na fronteira real da CLI, com os mesmos motivos já
+// provados na camada pura.
+test("configuration-trust-C8 features=true (bool solto), features=1979-05-27 (datetime solto) e timeout=1.0 (float TOML) ficam invalid/partial no relatório real", () => {
   for (const rawText of [
     'features = true\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\n',
+    'features = 1979-05-27\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\n',
     '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\ntimeout = 1.0\n',
   ]) {
     const scratch = makeScratch("doctor-c8-residual-toml-");
@@ -1089,5 +1093,33 @@ test("configuration-trust-C8 hooks.json do Codex com timeout=1.0/1e0 (token deci
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
+  }
+});
+
+// Resíduo final (.checks/code-review/formal3-final-residuals.md, item 2):
+// `timeout=-0` em hooks.json é o mesmo token "float de magnitude zero" que o
+// serde_json real recusa para `Option<u64>` (de.rs::parse_number, ver
+// config-projection.unit.test.mjs para a citação completa da fonte) —
+// precisa invalidar na fronteira real da CLI, não só na camada pura.
+test("configuration-trust-C8 hooks.json do Codex com timeout=-0 fica invalid/partial no relatório real", () => {
+  const scratch = makeScratch("doctor-c8-timeout-negative-zero-");
+  try {
+    const home = path.join(scratch, "home");
+    writeCodexHooksJson(
+      home,
+      '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo ok","timeout":-0}]}]}}',
+    );
+    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "invalid");
+    assert.equal(codex.configReasonCode, "hooks_structure_invalid");
+
+    const text = runDoctor([], { env: homeEnv(home) });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /hooks_structure_invalid/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 });

@@ -85,7 +85,24 @@ function isValidOptionalU64Field(handler, field) {
   if (typeof value === "bigint") return value >= 0n && value <= CODEX_TOML_I64_MAX;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return false;
   const source = handler[CODEX_INTEGER_SOURCE]?.[field];
-  return typeof source === "string" && PLAIN_INTEGER_TOKEN.test(source) && BigInt(source) <= CODEX_U64_MAX;
+  if (typeof source !== "string" || !PLAIN_INTEGER_TOKEN.test(source)) return false;
+  // serde_json (`de.rs::parse_number`, linhas 509–526 da fonte baixada do
+  // publisher crates.io com checksum igual ao `Cargo.lock` da tag
+  // rust-v0.162.1 — `.checks/code-review/native-codex-0.162.1/serde-json-
+  // 1.0.149/src/de.rs`): um token negativo de magnitude zero sempre faz
+  // `neg = (significand as i64).wrapping_neg()` devolver `0`, e o comentário
+  // da própria fonte ("Convert into a float if we underflow, or on `-0`")
+  // roteia esse caso para `ParserNumber::F64`, nunca para o inteiro — o
+  // campo `Option<u64>` nunca aceita esse token, mesmo sendo matematicamente
+  // zero. `-0` do JS (`-0 < 0` é `false`) e `BigInt("-0")` (`0n`) não
+  // distinguem esse caso de `"0"`; só o texto-fonte decide. Um segundo zero à
+  // esquerda ("-00") já é rejeitado pelo próprio parser JSON antes deste
+  // ponto, então "-0" é a única forma lexical dessa armadilha. Qualquer OUTRO
+  // token negativo ("-5") já é recusado pelo `value < 0` acima — este é o
+  // único caso em que um valor não negativo (`-0` é `0` em JS) esconde um
+  // token que o parser real trata como float.
+  if (source === "-0") return false;
+  return BigInt(source) <= CODEX_U64_MAX;
 }
 
 // Campo com `#[serde(default)]` mas tipo NÃO `Option<T>` (`async: bool` do
