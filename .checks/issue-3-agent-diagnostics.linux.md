@@ -153,3 +153,8 @@ Claude corrigiu capturas em case e targets agrupados de with/as em 8871230a5b1cd
 - Root repetiu a API de ligações dos exemploscase/with:2sites/pass:true em ambos. Nenhuma mutaçãoGit/stash pelo autor, execução dePython/agentes/hooks ou configuração real. Estado formal contém seis tentativas, override7 exclusivoissue3 e perfisdefault2 preservados.
 
 Estas são provas complementares do autor/orquestrador. A verificação11 será scoped sobre aa4169b..HEAD e reexecutará todas as provas. ApósPASS, formal7 ainda precisa conceder ready para abertura do PR autorizada. Limites anteriores de alias/reflexão/custo de linha única seguem comunicados; macOS/CIremota ainda não observados. Nenhum push/PR/merge/publicação até este registro.
+## Décima primeira verificação e sétima revisão formal
+
+Rodada11 independente PASS18/18 na HEAD276138c,375PASS/0FAIL/2skipWindows, fonte física CPython conferida; relatório preservado em1673f0aba8bf8104de874be86dc089f72d1a1479. Formal7 confirmou a correção das capturas e retornou changes_requested/insufficient com umP2: launcherHermes viaenv recebe versão/catálogo/confiança do prefixo do launcher, embora o Python selecionado peloPATH possa pertencer a outrovenv.
+
+Claude corrigirá o vínculo estático, deixando-o inconclusivo quando o intérprete não estiver demonstrado, com presença preservada e provas do mesmo alcance. A autorização das revisões necessárias cobre independente12 e formal8. Override8 exclusivamenteissue3; padrõesmax2 e histórico7tentativas preservados. Nenhum push/PR/merge/publicação até este registro.
