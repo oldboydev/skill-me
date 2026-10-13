@@ -54,6 +54,10 @@ do Codex com o JSON válido `null` (ou outro primitivo/array no lugar do objeto 
 
 ## Estados e vocabulário (critérios 5-12)
 
+No Hermes, a fonte textual de versão e a de catálogo também precisam ser selecionadas pelo importador. Uma extensão `__init__` concorrente no pacote deixa a versão inconclusiva. Um subpacote ou extensão `plugins` de maior precedência deixa o catálogo `shadowed` e o suporte `unverified/contract_source_shadowed`, preservando uma versão corretamente identificada. Falha de acesso nessa seleção segue o resultado `unreadable`; não interrompe o inventário dos demais agentes.
+
+Sem `HOME`/`USERPROFILE` e sem override válido, o escopo de usuário tem localização desconhecida (`config_location_unknown`). Os escopos conhecidos continuam sujeitos à precedência existente, e o diagnóstico preserva os três agentes. Arquivos não regulares, incluindo FIFO e link para FIFO no POSIX, são recusados sem esperar por escritor; a leitura inconclusiva preserva o restante do relatório.
+
 - `support` na CLI local, decidido nesta ordem: launcher ausente no PATH
   consultado → `unavailable/executable_not_found` (a única ausência que a
   leitura comprova; IDE, desktop e cloud continuam

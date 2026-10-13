@@ -100,6 +100,27 @@ export function buildFsTree() {
   return { dirs: new Map(), files: new Map() };
 }
 
+// injectFault acima aplica ao primeiro método que consultar aquele caminho
+// exato, qualquer que seja ele — não isola um método quando outro já
+// consulta o mesmo caminho antes (ex.: stat(dir) checado antes de
+// listDir(dir) para o mesmo diretório, achado 1 da conferência root do
+// delta formal8, .checks/code-review/formal8-root-feedback.md). Este
+// wrapper falha só o método nomeado para um caminho exato, preservando o
+// comportamento real do adaptador para os demais métodos e caminhos.
+export function wrapFsMethodFault(fs, method, path, code) {
+  return {
+    ...fs,
+    async [method](target, ...rest) {
+      if (target === path) {
+        const error = new Error(`${code}: falha simulada em ${method}(${path})`);
+        error.code = code;
+        throw error;
+      }
+      return fs[method](target, ...rest);
+    },
+  };
+}
+
 // A chave de arquivo usa o separador que o próprio dirPath já contém
 // (backslash se simular Windows, "/" por padrão), para casar exatamente
 // com o que src/doctor/launcher-link/path-helpers.mjs (joinPath/

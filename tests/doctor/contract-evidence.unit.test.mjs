@@ -19,7 +19,7 @@ import {
   hermesPluginsLookalikeSources,
   hermesPluginsSource,
 } from "./helpers/hermes-contract-source.mjs";
-import { addFile, buildFsTree, createFakeFsAdapter } from "./helpers/fake-fs-adapter.mjs";
+import { addFile, buildFsTree, createFakeFsAdapter, wrapFsMethodFault } from "./helpers/fake-fs-adapter.mjs";
 import {
   AUGMENTED_OPERATORS,
   GROUPED_AUGMENTED_TARGETS,
@@ -779,4 +779,72 @@ test("contract-evidence-formal8-2 sufixo maiúsculo (.PYD) em plugins/__init__ o
     const noPlatformControl = await readContractEvidence({ agentId: "hermes", packageDir: PKG_DIR, fs });
     assert.equal(noPlatformControl.state, "found", `${label}/sem platform`);
   }
+});
+
+// --- Achado 1 da conferência root do delta formal8
+// (.checks/code-review/formal8-root-feedback.md): isHermesPluginsModuleSelected
+// (achado 2 do formal8, acima) ficava ANTES do try/catch de readHermesContract
+// que já existe para readBoundedText. stat/listDir negados (EACCES/EIO)
+// *nessa checagem de precedência* (não na leitura do próprio plugins.py,
+// já coberta pelo teste "plugins.py ausente, ilegível...") escapavam como
+// rejeição não capturada por nenhum caller — runDiagnostics perdia o
+// relatório inteiro em vez de só este contrato virar "unreadable", como já
+// acontece para falha de leitura. Reprodução mínima confirmada pelo root:
+// readContractEvidence({agentId:'hermes', packageDir:'/fixture/hermes_cli',
+// platform:'linux', fs:{stat: async () => { throw erroEACCES }}}) rejeita.
+test("contract-evidence-formal8-root-1 stat negado (EACCES/EIO) no diretório plugins/ durante a checagem de precedência vira unreadable, nunca uma rejeição", async () => {
+  for (const code of ["EACCES", "EIO"]) {
+    const fs = fsWithPlugins(hermesPluginsSource());
+    fs.injectFault(PKG_DIR + "/plugins", code);
+    const result = await readContractEvidence({ agentId: "hermes", packageDir: PKG_DIR, fs, platform: "linux" });
+    assert.equal(result.state, "unreadable", code);
+    assert.equal(result.errorCode, code, code);
+    assert.deepEqual(result.source, { kind: "hermes_valid_hooks", path: PLUGINS_PATH }, code);
+  }
+});
+
+// Mesma checagem, segunda chamada de fs (listDir): packageDir é sempre
+// consultado por hasCompiledSibling para o módulo plugins[.ABI].so/.pyd,
+// mesmo quando plugins/ não existe (pluginsDirStats fica null, ENOENT
+// engolido como "nada aqui" — só o controle abaixo prova que ENOENT
+// continua tratado assim, nunca como rejeição). wrapFsMethodFault isola
+// listDir(packageDir) sem afetar stat(pluginsDir), chamado antes no mesmo
+// caminho-prefixo: injectFault por si só não distingue método, só caminho.
+test("contract-evidence-formal8-root-1 listDir negado (EACCES/EIO) em packageDir durante a checagem de precedência vira unreadable, nunca uma rejeição", async () => {
+  for (const code of ["EACCES", "EIO"]) {
+    const fs = wrapFsMethodFault(fsWithPlugins(hermesPluginsSource()), "listDir", PKG_DIR, code);
+    const result = await readContractEvidence({ agentId: "hermes", packageDir: PKG_DIR, fs, platform: "linux" });
+    assert.equal(result.state, "unreadable", code);
+    assert.equal(result.errorCode, code, code);
+  }
+});
+
+// listDir negado no PRÓPRIO diretório plugins/ (ramo só alcançado quando
+// plugins/ existe como diretório — aqui, um namespace sem nenhum __init__,
+// mesmo layout do teste formal8-2 "só namespace" acima). stat(pluginsDir)
+// precisa continuar respondendo normal (isDirectory: true) para o fluxo
+// chegar ao listDir isolado abaixo.
+test("contract-evidence-formal8-root-1 listDir negado (EACCES/EIO) no diretório plugins/ (namespace) durante a checagem de precedência vira unreadable, nunca uma rejeição", async () => {
+  for (const code of ["EACCES", "EIO"]) {
+    const tree = treeWithPluginsModule();
+    addFile(tree, PLUGINS_DIR, "helper.py", "# não é __init__\n");
+    const fs = wrapFsMethodFault(createFakeFsAdapter(tree), "listDir", PLUGINS_DIR, code);
+    const result = await readContractEvidence({ agentId: "hermes", packageDir: PKG_DIR, fs, platform: "linux" });
+    assert.equal(result.state, "unreadable", code);
+    assert.equal(result.errorCode, code, code);
+  }
+});
+
+// Controle: sem nenhum fault injetado, a mesma checagem de precedência vê
+// ENOENT em stat(plugins/) e listDir(packageDir) — continua "found", nunca
+// "unreadable" nem rejeição. Mesmo fixture exato dos três testes acima.
+test("contract-evidence-formal8-root-1 controle: ausência real (ENOENT) na checagem de precedência continua found, nunca unreadable", async () => {
+  const result = await readContractEvidence({
+    agentId: "hermes",
+    packageDir: PKG_DIR,
+    fs: fsWithPlugins(hermesPluginsSource()),
+    platform: "linux",
+  });
+  assert.equal(result.state, "found");
+  assert.ok(result.validHooks.includes("pre_tool_call"));
 });

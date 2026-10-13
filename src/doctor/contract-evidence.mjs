@@ -215,16 +215,23 @@ async function readHermesContract(packageDir, fs, platform) {
     kind: HERMES_CONTRACT_SOURCE_KIND,
     path: joinGeneric(detectSeparator(packageDir), packageDir, "plugins.py"),
   };
-  // `plugins.py` só é a fonte de hermes_cli.plugins quando nada de maior
-  // precedência existe: sem essa checagem, um catálogo preterido podia
-  // conceder confiança que o módulo efetivo não sustenta (revisão formal8,
-  // achado 2). Nenhuma leitura de conteúdo acontece quando preterido — só a
-  // listagem/stat já usados por isHermesPluginsModuleSelected.
-  if (!(await isHermesPluginsModuleSelected(packageDir, fs, platform))) {
-    return { state: "shadowed", source };
-  }
   let read;
   try {
+    // `plugins.py` só é a fonte de hermes_cli.plugins quando nada de maior
+    // precedência existe: sem essa checagem, um catálogo preterido podia
+    // conceder confiança que o módulo efetivo não sustenta (revisão formal8,
+    // achado 2). Nenhuma leitura de conteúdo acontece quando preterido — só a
+    // listagem/stat já usados por isHermesPluginsModuleSelected.
+    //
+    // Precisa ficar DENTRO desta mesma barreira de erro (conferência root do
+    // delta formal8, achado 1, .checks/code-review/formal8-root-feedback.md):
+    // stat/listDir negados aqui (EACCES/EIO) são a mesma classe de falha de
+    // leitura que já vira "unreadable" logo abaixo. Fora do try, a rejeição
+    // escapava sem captura por nenhum caller (runDiagnostics incluso),
+    // derrubando o relatório inteiro por uma única checagem de precedência.
+    if (!(await isHermesPluginsModuleSelected(packageDir, fs, platform))) {
+      return { state: "shadowed", source };
+    }
     read = await readBoundedText(source.path, { fs, maxBytes: ONE_MIB_BYTES });
   } catch (error) {
     return { state: "unreadable", source, errorCode: error.code ?? "unknown_error" };
