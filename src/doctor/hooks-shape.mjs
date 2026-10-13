@@ -58,13 +58,20 @@ export const CODEX_INTEGER_SOURCE = Symbol("codexIntegerSource");
 // dígitos, sem `.`/`e`/`E`) é um inteiro nativo de verdade.
 const PLAIN_INTEGER_TOKEN = /^-?\d+$/;
 
-// TOML tipa inteiro como `i64` assinado (spec TOML, "64-bit signed long"); um
-// literal além de `i64::MAX` nunca é um inteiro TOML válido, mesmo que o
-// campo Rust de destino seja `u64`/`usize` — o toml-rs real falha ao
-// desserializar o PRÓPRIO documento TOML antes de alcançar a conversão para
-// o campo (o teto do formato decide primeiro, nunca o teto do campo). Teto
-// menor que `CODEX_U64_MAX`, então só se aplica à origem TOML (`BigInt`).
-const CODEX_TOML_I64_MAX = 9223372036854775807n; // 2^63 - 1
+// Faixa de inteiro que o carregador de `config.toml` do Codex 0.162.1 aceita:
+// `read_config_from_path` (config/src/loader/layer_io.rs:154–160) desserializa
+// o arquivo inteiro em `toml::Value` antes da configuração tipada, e o
+// `ValueVisitor` do toml 0.9.11 (src/value.rs:442–446) só produz
+// `Value::Integer(i64)` — um u64 acima de `i64::MAX` é recusado e i128/u128
+// não têm visitor. É uma restrição desse pipeline via `toml::Value`, não de
+// todo deserializer TOML tipado (o `ValueDeserializer` do mesmo crate visita
+// u64/i128/u128 quando o destino os aceita). Por isso o documento falha antes
+// do campo `u64`/`usize`: o teto aqui é menor que `CODEX_U64_MAX` e só se
+// aplica à origem TOML (`BigInt`). `parseCodexToml` (config-projection.mjs)
+// impõe a faixa a todo o documento; `isValidOptionalU64Field` mantém o teto
+// para não depender dessa ordem quando recebe um `BigInt`.
+export const CODEX_TOML_I64_MIN = -9223372036854775808n; // -2^63
+export const CODEX_TOML_I64_MAX = 9223372036854775807n; // 2^63 - 1
 
 // `null` é o `None` do `Option<T>`, como a ausência da chave. Um valor
 // presente precisa ser um inteiro não negativo dentro do teto nativo.

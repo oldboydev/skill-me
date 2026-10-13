@@ -1,6 +1,11 @@
 import { parseDocument } from "yaml";
 import { parse as parseToml } from "smol-toml";
-import { inspectNativeHooks, CODEX_INTEGER_SOURCE } from "./hooks-shape.mjs";
+import {
+  inspectNativeHooks,
+  CODEX_INTEGER_SOURCE,
+  CODEX_TOML_I64_MIN,
+  CODEX_TOML_I64_MAX,
+} from "./hooks-shape.mjs";
 
 export const ONE_MIB_BYTES = 1024 * 1024;
 
@@ -55,8 +60,42 @@ function parseCodexHooksJson(rawText) {
 // valor: `BigInt` é sempre um inteiro nativo exato; `Number` nessa posição só
 // pode ser um float (sem fonte de texto JSON para provar o contrário), logo
 // inválido. Escopo só do Codex: é o único agente com `format: "toml"`.
+//
+// Sem essa opção, o `smol-toml` recusava todo inteiro fora da faixa segura do
+// double; com ela, não recusa nem o que o carregador real recusa. O Codex
+// desserializa o documento inteiro em `toml::Value` antes de qualquer campo
+// tipado (ver `CODEX_TOML_I64_MAX` em hooks-shape.mjs), então um inteiro fora
+// de i64 em QUALQUER posição — inclusive numa chave que o doctor ignora —
+// derruba o arquivo: vira `config_malformed`, como os demais erros de parse.
+// A mensagem não cita chave nem valor. Float continua `Number` e não entra
+// nesta faixa.
 function parseCodexToml(rawText) {
-  return parseToml(rawText, { integersAsBigInt: true });
+  const document = parseToml(rawText, { integersAsBigInt: true });
+  if (hasIntegerOutsideTomlI64(document)) {
+    throw new Error("inteiro TOML fora da faixa i64 aceita pelo Codex");
+  }
+  return document;
+}
+
+// Pilha explícita, sem recursão nem `push(...lista)`: abaixo de 1 MiB o
+// `smol-toml` aceita chaves pontilhadas com dezenas de milhares de níveis
+// (`maxDepth` só limita arrays/tabelas inline) e arrays com centenas de
+// milhares de itens; o limite de 1 MiB da leitura limita o número de nós, não
+// a profundidade. Mesmo padrão de `hasNullDeep` (hooks-shape.mjs), mantido à
+// parte para não alterar a checagem de `input` do McpTool nesta correção.
+function hasIntegerOutsideTomlI64(document) {
+  const stack = [document];
+  while (stack.length > 0) {
+    const value = stack.pop();
+    if (typeof value === "bigint") {
+      if (value < CODEX_TOML_I64_MIN || value > CODEX_TOML_I64_MAX) return true;
+    } else if (Array.isArray(value)) {
+      for (const item of value) stack.push(item);
+    } else if (isPlainObject(value)) {
+      for (const item of Object.values(value)) stack.push(item);
+    }
+  }
+  return false;
 }
 
 // `HooksFile` (hook_config.rs, rust-v0.162.1) é a raiz exclusiva de

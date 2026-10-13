@@ -863,6 +863,79 @@ test("configuration-trust-C8 features=true (bool solto), features=1979-05-27 (da
   }
 });
 
+// Regressão global do achado 3 (.checks/code-review/formal3-toml-document-
+// range.md; reprodução da raiz em .checks/code-review/probe-formal3-before-
+// global-range.txt): um inteiro fora da faixa i64 numa chave que o doctor
+// ignora, ao lado de hooks nativos válidos, aparecia complete/configured. O
+// carregador do Codex recusa o documento inteiro (fontes citadas em
+// config-projection.unit.test.mjs); a chave e o valor não podem aparecer no
+// relatório.
+const CODEX_VALID_HOOKS_TOML = '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\n';
+
+test("configuration-trust-C8 config.toml do Codex com inteiro fora de i64 em chave ignorada ou aninhada fica invalid/config_malformed/partial no relatório real, sem expor chave nem valor", () => {
+  const cases = [
+    ["ignored_count", "9223372036854775808", `ignored_count = 9223372036854775808\n${CODEX_VALID_HOOKS_TOML}`],
+    ["ignored_count", "9223372036854775809", `ignored_count = -9223372036854775809\n${CODEX_VALID_HOOKS_TOML}`],
+    [
+      "nested_secret",
+      "9223372036854775808",
+      `${CODEX_VALID_HOOKS_TOML}\n[profiles.nested_secret]\nvalues = [[1, { n = 9223372036854775808 }]]\n`,
+    ],
+  ];
+  for (const [key, digits, rawText] of cases) {
+    const scratch = makeScratch("doctor-c8-toml-i64-documento-");
+    try {
+      const home = path.join(scratch, "home");
+      const env = homeEnv(home);
+      writeAgentConfig(home, "codex", rawText);
+      const { status, stdout, report } = runDoctorJson([], { env });
+      assert.equal(status, 0, rawText);
+      assert.equal(report.status, "partial", rawText);
+      assert.equal(report.agents.length, 3, rawText);
+      const codex = report.agents.find((a) => a.id === "codex");
+      assert.equal(codex.configuration, "invalid", rawText);
+      assert.equal(codex.configReasonCode, "config_malformed", rawText);
+      assert.equal(codex.trust, "unknown", rawText);
+      for (const id of ["claude", "hermes"]) {
+        assert.equal(report.agents.find((a) => a.id === id).configuration, "not_configured", id);
+      }
+      assert.doesNotMatch(stdout, new RegExp(key), rawText);
+      assert.doesNotMatch(stdout, new RegExp(digits), rawText);
+
+      const text = runDoctor([], { env });
+      assert.equal(text.status, 0, rawText);
+      assert.match(text.stdout, /config_malformed/);
+      assert.doesNotMatch(text.stdout, new RegExp(key), rawText);
+      assert.doesNotMatch(text.stdout, new RegExp(digits), rawText);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+});
+
+test("configuration-trust-C8 config.toml do Codex com extremos nativos do i64, float e datetime em posições gerais (e timeout=i64::MAX) continua configured/complete no relatório real", () => {
+  const scratch = makeScratch("doctor-c8-toml-i64-extremos-");
+  try {
+    const home = path.join(scratch, "home");
+    writeAgentConfig(
+      home,
+      "codex",
+      "ignored_min = -9223372036854775808\nignored_max = 9223372036854775807\nratio = 1.5\n" +
+        "when = 1979-05-27T07:32:00Z\nvalues = [[-9223372036854775808, { n = 9223372036854775807, f = 2.5 }]]\n" +
+        `${CODEX_VALID_HOOKS_TOML}timeout = 9223372036854775807\n`,
+    );
+    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    assert.equal(report.status, "complete");
+    assert.equal(report.agents.length, 3);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "configured");
+    assert.equal(codex.configReasonCode, "hooks_configured");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 function writeCodexHooksJson(home, content) {
   const dir = path.join(home, ".codex");
   mkdirSync(dir, { recursive: true });

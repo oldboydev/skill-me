@@ -1068,6 +1068,14 @@ test("config-projection-C8 Codex: additionalContextLimit no teto do usize (2^64-
 // double antigo), então `9223372036854775807` (i64::MAX, válido e nativo)
 // precisa ficar `configured`; qualquer coisa acima, mesmo um `u64::MAX`
 // matematicamente válido para o CAMPO, nunca é um `i64` TOML válido.
+// Regressão global do mesmo achado (.checks/code-review/formal3-toml-
+// document-range.md): o motivo dos dois casos acima do teto mudou de
+// `hooks_structure_invalid` para `config_malformed`, sem mudar `invalid`. A
+// camada anterior do carregador real decide primeiro: `read_config_from_path`
+// (layer_io.rs:154–160, Codex 0.162.1) desserializa o arquivo inteiro em
+// `toml::Value` ANTES da configuração tipada, e o `ValueVisitor` do toml
+// 0.9.11 (value.rs:442–446) recusa ali o inteiro acima de `i64::MAX` — o
+// documento falha antes de existir um handler para classificar.
 test("config-projection-C8 Codex: timeout no teto do i64 TOML (i64::MAX) continua configured; acima dele é invalid mesmo dentro do u64 do campo", () => {
   const atI64Max = projectConfig({
     rawText: '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\ntimeout = 9223372036854775807\n',
@@ -1082,7 +1090,7 @@ test("config-projection-C8 Codex: timeout no teto do i64 TOML (i64::MAX) continu
     agentId: "codex",
   });
   assert.equal(aboveI64Max.configuration, "invalid");
-  assert.equal(aboveI64Max.reasonCode, "hooks_structure_invalid");
+  assert.equal(aboveI64Max.reasonCode, "config_malformed");
 
   // u64::MAX (2^64-1) é válido para o CAMPO Rust, mas excede o teto do
   // próprio formato TOML (i64): o formato decide primeiro, nunca configured.
@@ -1092,7 +1100,7 @@ test("config-projection-C8 Codex: timeout no teto do i64 TOML (i64::MAX) continu
     agentId: "codex",
   });
   assert.equal(u64MaxInToml.configuration, "invalid");
-  assert.equal(u64MaxInToml.reasonCode, "hooks_structure_invalid");
+  assert.equal(u64MaxInToml.reasonCode, "config_malformed");
 });
 
 test("config-projection-C8 Codex: timeout pequeno e dentro da faixa segura em config.toml continua configured", () => {
@@ -1160,6 +1168,113 @@ test("config-projection-C8 Codex: timeout=-0 em config.toml (TOML, inteiro BigIn
     agentId: "codex",
   });
   assert.equal(result.configuration, "configured");
+});
+
+// Regressão global do achado 3 (.checks/code-review/formal3-toml-document-
+// range.md): `integersAsBigInt: true` vale para o documento INTEIRO, mas a
+// faixa i64 só era conferida em `timeout`/`additionalContextLimit`. Sem essa
+// opção o `smol-toml` recusava esses valores; com ela, um inteiro fora de i64
+// numa chave que o doctor ignora passava adiante como `configured`. O
+// carregador do Codex 0.162.1 desserializa o arquivo inteiro em `toml::Value`
+// (layer_io.rs:154–160) e o `ValueVisitor` do toml 0.9.11 (value.rs:442–446)
+// só aceita inteiro que caiba em i64 — em qualquer posição: raiz, tabela,
+// array ou mapa inline aninhados, inclusive `[hooks.state]`, cujo conteúdo o
+// doctor não interpreta. O hexadecimal prova que a faixa vale para o valor,
+// não para uma forma lexical.
+const CODEX_VALID_HOOKS_TOML = '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\n';
+
+function projectCodexToml(rawText) {
+  return projectConfig({ rawText, format: "toml", agentId: "codex", platform: "linux" });
+}
+
+test("config-projection-C8 Codex: inteiro fora da faixa i64 em qualquer posição de config.toml invalida o documento (config_malformed), mesmo ao lado de hooks válidos", () => {
+  const cases = [
+    ["raiz ignorada, i64::MAX+1", `ignored_count = 9223372036854775808\n${CODEX_VALID_HOOKS_TOML}`],
+    ["raiz ignorada, i64::MIN-1", `ignored_count = -9223372036854775809\n${CODEX_VALID_HOOKS_TOML}`],
+    ["raiz ignorada, hexadecimal u64::MAX", `ignored_mask = 0xffffffffffffffff\n${CODEX_VALID_HOOKS_TOML}`],
+    ["tabela aninhada", `${CODEX_VALID_HOOKS_TOML}\n[profiles.default.limits]\nmax = 9223372036854775808\n`],
+    ["array aninhado", `values = [1, [2, [3, -9223372036854775809]]]\n${CODEX_VALID_HOOKS_TOML}`],
+    ["mapa inline dentro de array", `items = [{ deep = { n = 9223372036854775808 } }]\n${CODEX_VALID_HOOKS_TOML}`],
+    ["[hooks.state] não interpretado", `${CODEX_VALID_HOOKS_TOML}\n[hooks.state]\ncounter = -9223372036854775809\n`],
+  ];
+  for (const [label, rawText] of cases) {
+    const result = projectCodexToml(rawText);
+    assertShape(result);
+    assert.equal(result.configuration, "invalid", label);
+    assert.equal(result.reasonCode, "config_malformed", label);
+    assert.deepEqual(result.fields, {}, label);
+  }
+});
+
+test("config-projection-C8 Codex: extremos nativos do i64, floats e datetimes TOML em posições gerais (e timeout=i64::MAX) continuam configured", () => {
+  const rawText = [
+    "ignored_min = -9223372036854775808",
+    "ignored_max = 9223372036854775807",
+    "ignored_hex = 0x7fffffffffffffff",
+    "ratio = 1.5",
+    "huge_float = 1e300",
+    "not_a_number = nan",
+    "unbounded = -inf",
+    "when = 1979-05-27T07:32:00Z",
+    "values = [-9223372036854775808, [9223372036854775807, 2.5, 1979-05-27]]",
+    "items = [{ deep = { n = -9223372036854775808, f = 3.0 } }]",
+    "[profiles.default.limits]",
+    "max = 9223372036854775807",
+    `${CODEX_VALID_HOOKS_TOML}timeout = 9223372036854775807`,
+    "[hooks.state]",
+    "counter = -9223372036854775808",
+    "",
+  ].join("\n");
+  const result = projectCodexToml(rawText);
+  assertShape(result);
+  assert.equal(result.configuration, "configured");
+  assert.equal(result.reasonCode, "hooks_configured");
+  assert.equal(result.fields.hasHooksSection, true);
+});
+
+// O percurso da faixa precisa ser iterativo: abaixo de 1 MiB, o `smol-toml`
+// aceita um array com 150.000 itens e uma chave pontilhada de 100.000 níveis
+// (seu `maxDepth` só limita arrays/tabelas inline). Recursão de chamada
+// estouraria a pilha no documento profundo e espalhar 150.000 itens como
+// argumentos estouraria o teto do V8 — nos dois casos o `RangeError` viraria
+// `config_malformed` para um documento cujos inteiros estão todos na faixa.
+// O controle válido só preserva o resultado que esse documento já tinha antes
+// da checagem de faixa; não afirma como o Codex nativo trata essa profundidade
+// (nenhum Rust foi executado).
+test("config-projection-C8 Codex: checagem da faixa i64 percorre sem recursão um array de 150.000 inteiros e uma chave de 100.000 níveis", () => {
+  const wideValues = new Array(150000).fill("1").join(",");
+  const deepKey = new Array(100000).fill("a").join(".");
+  const inRange = `values = [${wideValues},9223372036854775807]\n${deepKey} = -9223372036854775808\n${CODEX_VALID_HOOKS_TOML}`;
+  assert.ok(Buffer.byteLength(inRange, "utf8") < ONE_MIB_BYTES, "fixture precisa caber abaixo de 1 MiB");
+  const valid = projectCodexToml(inRange);
+  assert.equal(valid.configuration, "configured");
+  assert.equal(valid.reasonCode, "hooks_configured");
+
+  for (const rawText of [
+    `values = [${wideValues},9223372036854775808]\n${CODEX_VALID_HOOKS_TOML}`,
+    `${deepKey} = -9223372036854775809\n${CODEX_VALID_HOOKS_TOML}`,
+  ]) {
+    const result = projectCodexToml(rawText);
+    assert.equal(result.configuration, "invalid");
+    assert.equal(result.reasonCode, "config_malformed");
+    assert.deepEqual(result.fields, {});
+  }
+});
+
+// A faixa é do carregador TOML do Codex: JSON do Claude e YAML do Hermes não
+// passam por `parseCodexToml`, então o mesmo inteiro numa chave ignorada não
+// muda o resultado que esses agentes já tinham.
+test("config-projection-C8 inteiro fora de i64 em chave ignorada não altera a projeção de Claude (JSON) e Hermes (YAML)", () => {
+  const claudeHooks = '"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"x"}]}]}';
+  assert.deepEqual(
+    projectConfig({ rawText: `{"ignored_count":9223372036854775808,${claudeHooks}}`, format: "json", agentId: "claude" }),
+    projectConfig({ rawText: `{${claudeHooks}}`, format: "json", agentId: "claude" }),
+  );
+  const hermesHooks = 'hooks:\n  pre_tool_call:\n    - command: "x"\n';
+  assert.deepEqual(
+    projectConfig({ rawText: `ignored_count: 9223372036854775808\n${hermesHooks}`, format: "yaml", agentId: "hermes" }),
+    projectConfig({ rawText: hermesHooks, format: "yaml", agentId: "hermes" }),
+  );
 });
 
 test("config-projection-C8 Codex: null em async (bool) ou input (Map) não é Option — invalida o documento, nunca configured", () => {

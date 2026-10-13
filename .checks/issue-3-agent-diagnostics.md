@@ -355,6 +355,15 @@ checksum igual ao `Cargo.lock` da tag `rust-v0.162.1`) roteia um token negativo 
 nem `-0 < 0` (`false` em JS) nem `BigInt("-0")` (`0n`) revelam essa armadilha, só o texto-fonte exato.
 `isValidOptionalU64Field` agora recusa especificamente o token `"-0"`. O mesmo valor em `config.toml`
 (`BigInt`, sem essa conversão do parser JSON) continua um inteiro válido.
+**Regressão global do mesmo achado** (`.checks/code-review/formal3-toml-document-range.md`):
+`integersAsBigInt: true` vale para o documento inteiro, mas a faixa `i64` só era conferida em
+`timeout`/`additionalContextLimit` — um inteiro fora dela numa chave ignorada, ao lado de hooks válidos,
+aparecia `configured`/`complete`. O carregador do Codex 0.162.1 desserializa o arquivo inteiro em
+`toml::Value` (`layer_io.rs:154–160`) e o `ValueVisitor` do `toml` 0.9.11 (`value.rs:442–446`) só aceita
+inteiro em `i64`; é uma restrição desse pipeline, não de todo deserializer TOML tipado. `parseCodexToml`
+agora recusa um inteiro fora de `[-2^63, 2^63-1]` em qualquer posição como `invalid/config_malformed`;
+o `timeout` TOML acima de `i64::MAX` passou de `hooks_structure_invalid` para `config_malformed`.
+Extremos de `i64`, floats e datetimes continuam válidos; `hooks.json` não muda.
 Proof: `node --test --test-name-pattern="config-projection-C8" tests/doctor/config-projection.unit.test.mjs`
 Proof: `node --test tests/doctor/config-sources.unit.test.mjs`
 Proof: `node --test tests/doctor/config-reader.unit.test.mjs`

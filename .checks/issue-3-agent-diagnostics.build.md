@@ -2393,3 +2393,156 @@ nesta rodada (nenhum arquivo do core foi tocado). O único skip continua
   (encaminhamento), `.checks/code-review/probe-formal3-after-residual.txt` (probe da raiz),
   `.checks/code-review/native-codex-0.162.1/serde-json-1.0.149/src/de.rs` (fonte primária do publisher,
   já presente antes desta rodada).
+
+## 21. Correção da regressão global de faixa de inteiros do parser TOML (achado 3 da revisão formal3) (13/10/2026)
+
+Encaminhamento: `.checks/code-review/formal3-toml-document-range.md`; reprodução da raiz pela CLI em
+`.checks/code-review/probe-formal3-before-global-range.txt` (HEAD `0485f628f90fcc7916478e1cb93db320568fd36f`).
+Autor: Claude; Codex raiz só revisa. Consequência direta da opção de parser introduzida na seção 19,
+mesmo achado 3 — nenhum achado novo, nenhuma mudança de critério, nenhuma ampliação para o schema
+inteiro de configurações. `.tasks`, `.verified.md`, `.linux`, `code-review.config.json`, core vendorizado
+e `.git` não tocados. Sem commit/stash/push/PR/review/Verifier/spawn nesta rodada.
+
+### O defeito
+
+A seção 19 passou o parser do `config.toml` para `smol-toml` com `integersAsBigInt: true`, que vale para
+o documento INTEIRO, mas conferiu a faixa `i64` só em `timeout`/`additionalContextLimit`
+(`isValidOptionalU64Field`). Sem essa opção, o `smol-toml` recusava qualquer inteiro fora da faixa segura
+do double; com ela, não recusa nem o que o carregador real recusa. A raiz reproduziu dois falsos
+positivos pela CLI: `ignored_count = 9223372036854775808` ou `ignored_count = -9223372036854775809` ao
+lado de hooks nativos válidos → `complete`/`configured`.
+
+### Fonte da restrição
+
+Conferida pela raiz sem executar Rust; trechos em `.checks/code-review/native-codex-0.162.1/`:
+
+- `config-layer-io.rs` (`codex-rs/config/src/loader/layer_io.rs`, tag `rust-v0.162.1`),
+  `read_config_from_path:154–160`: `toml::from_str::<TomlValue>(&contents)` desserializa o arquivo
+  inteiro ANTES da configuração tipada.
+- `Cargo.lock`: `codex-config` usa `toml 0.9.11+spec-1.1.0`; o `.crate` do publisher crates.io tem
+  checksum igual ao do `Cargo.lock`.
+- `toml-0.9.11/src/value.rs:442–446`: o `ValueVisitor` aceita `visit_u64` só se `i64::try_from` funcionar
+  e não implementa `visit_i128`/`visit_u128`; `src/de/deserializer/value.rs:95–103` encaminha o inteiro
+  como i64 → u64 → i128 → u128. A faixa aceita por ESSE pipeline é exatamente `[-2^63, 2^63-1]`.
+
+Nota de correção (sem reescrever as seções anteriores): a seção 19 e o comentário anterior de
+`CODEX_TOML_I64_MAX` diziam que "o toml-rs real falha ao desserializar o próprio documento"
+genericamente. A restrição é do pipeline do carregador via `toml::Value`, não de todo deserializer TOML
+tipado — o `ValueDeserializer` do mesmo crate visita u64/i128/u128 quando o destino os aceita. O
+comentário em `hooks-shape.mjs` e a documentação desta rodada usam a formulação restrita.
+
+### Decisão e correção
+
+- `parseCodexToml` (`src/doctor/config-projection.mjs`) agora percorre o documento decodificado inteiro
+  e lança se encontrar um `BigInt` fora de `[CODEX_TOML_I64_MIN, CODEX_TOML_I64_MAX]`; o `catch` de
+  `projectConfig` já existente classifica isso como `invalid/config_malformed`, igual aos demais erros
+  de parse. A mensagem do erro não cita chave nem valor, e a projeção nunca inclui a mensagem. Só um
+  `BigInt` é conferido: float continua `Number` e datetime continua `TomlDate`, os dois fora da regra.
+- `hasIntegerOutsideTomlI64`: pilha explícita, sem recursão de chamada e sem `push(...lista)`. Abaixo de
+  1 MiB, o `smol-toml` aceita chaves pontilhadas com 100.000 níveis (o `maxDepth` só limita arrays e
+  tabelas inline) e arrays com 150.000 itens; o limite de 1 MiB da leitura limita o número de nós, não a
+  profundidade. Atravessa só arrays e objetos simples (`isPlainObject` existente do arquivo, protótipo
+  `null` das tabelas do `smol-toml`).
+- `src/doctor/hooks-shape.mjs`: o teto existente `CODEX_TOML_I64_MAX` passa a ser exportado e ganha
+  `CODEX_TOML_I64_MIN` ao lado, sem duplicar a constante. O comentário cita a fonte exata e restringe a
+  afirmação ao pipeline via `toml::Value`. `isValidOptionalU64Field` não mudou: continua com o teto, para
+  não depender da ordem do chamador quando recebe um `BigInt`.
+- Consequência na classificação: `timeout` TOML acima de `i64::MAX` (`9223372036854775808` e
+  `18446744073709551615`) passou de `invalid/hooks_structure_invalid` para `invalid/config_malformed`.
+  O documento falha na camada anterior do carregador real (`toml::Value`), antes de existir um handler
+  para classificar. O teste correspondente foi atualizado com essa justificativa e continua exigindo
+  `invalid`. O caso JSON acima de `u64::MAX` continua `hooks_structure_invalid` (teste existente sem
+  alteração).
+- Preservados: os dois extremos de `i64` em posições gerais, `timeout = 9223372036854775807` em TOML,
+  `timeout` `u64::MAX` em `hooks.json`, floats (`1.5`, `1e300`, `nan`, `-inf`) e datetimes em posições
+  gerais, além de Claude (JSON) e Hermes (YAML), que não passam por `parseCodexToml`.
+
+Dívida registrada: `hasIntegerOutsideTomlI64` segue o mesmo padrão de pilha explícita de `hasNullDeep`
+(`hooks-shape.mjs`, `input` do McpTool). Não foi consolidada num helper comum para não alterar a
+checagem de `input` fora do alcance autorizado desta correção.
+
+### Ordem seguida e evidência de execução real
+
+Leitura do encaminhamento e dos trechos de fonte citados → testes novos e atualizados → RED com `src/`
+intacto em HEAD → correção → GREEN nos mesmos alvos → checagem dos mutantes do percurso →
+documentação → `npm test` completo uma única vez após a última alteração de código, testes e documentação
+lida por teste.
+
+RED (`src/` sem alteração, HEAD `0485f62`; saída completa em
+`.checks/code-review/formal3-document-range-red.txt`):
+
+```
+node --test --test-name-pattern="faixa i64|fora de i64|fora da faixa i64|teto do i64 TOML|extremos nativos do i64" \
+  tests/doctor/config-projection.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+✖ timeout acima do i64 TOML                  -> hooks_structure_invalid (esperado: config_malformed)
+✖ fora da faixa i64 em qualquer posição      -> configured (esperado: invalid/config_malformed)
+✔ extremos/floats/datetimes (controle)
+✖ percurso sem recursão (150.000/100.000)    -> configured no caso fora da faixa (esperado: invalid)
+✔ Claude/Hermes inalterados (controle)
+✖ CLI: fora de i64 em chave ignorada/aninhada -> complete (esperado: partial)
+✔ CLI: extremos válidos (controle)
+tests 7, pass 3, fail 4
+EXIT_CODE=1
+```
+
+Cada teste com laço para no primeiro caso que falha (`ignored_count = 9223372036854775808` na camada
+pura e na CLI; o array de 150.000 itens com `i64::MAX+1` no teste do percurso). Os demais casos do
+mesmo laço foram provados no GREEN.
+
+GREEN (mesmos alvos, após a correção; saída em `.checks/code-review/formal3-document-range-green.txt`):
+
+```
+tests 7, pass 7, fail 0, skipped 0
+EXIT_CODE=0
+```
+
+Mutantes do percurso (`.checks/code-review/formal3-document-range-walk-mutants.mjs`, anexado ao log
+GREEN, sem alterar `src/`): no documento de controle com 150.000 itens e 100.000 níveis, um percurso
+recursivo e um percurso com `stack.push(...lista)` lançam `RangeError: Maximum call stack size
+exceeded`. Pelo `catch` de `projectConfig`, isso viraria `config_malformed` e reprovaria o controle
+`configured`. O teste distingue as duas implementações plausíveis.
+
+`npm test` completo, uma única execução após a última alteração de código, testes e documentação lida
+por teste (saída completa em `.checks/code-review/formal3-document-range-npm-test.txt`):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 314, pass 313, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a seção 20 (308 → 314): 6 testes novos (4 em
+`config-projection.unit.test.mjs`, 2 em `configuration-trust.cli.test.mjs`); o teste do teto do `timeout`
+TOML foi atualizado sem mudar a contagem. Os 7 testes desta rodada aparecem como `✔` no log. O único
+skip continua `agent-resolution-C2 realpath/symlink real … (POSIX)`. Depois dessa execução, só esta seção
+do build recebeu os números acima; nenhum teste lê este arquivo.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0. Nenhum Rust, binário do Codex, agente, hook ou
+  intérprete foi executado. As fontes nativas foram lidas como texto, e a conferência do checksum é da
+  raiz.
+- O controle de 100.000 níveis só preserva o resultado que esse documento já tinha antes da checagem de
+  faixa. Não afirma como o Codex nativo trata essa profundidade.
+- A faixa é imposta ao `BigInt` devolvido pelo `smol-toml` 1.9.1 com `integersAsBigInt: true`, já
+  instalado; o comportamento de não recusar fora de `i64` foi observado nesta versão, não é garantia
+  documentada da biblioteca.
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/config-projection.mjs` (`parseCodexToml` + `hasIntegerOutsideTomlI64`),
+  `src/doctor/hooks-shape.mjs` (exporta `CODEX_TOML_I64_MIN`/`CODEX_TOML_I64_MAX` e restringe o
+  comentário da fonte).
+- Testes: `tests/doctor/config-projection.unit.test.mjs` (4 novos: posições fora da faixa, controles
+  válidos, percurso sem recursão, Claude/Hermes inalterados; 1 atualizado: motivo do `timeout` TOML acima
+  de `i64::MAX`), `tests/doctor/configuration-trust.cli.test.mjs` (2 novos: falsos positivos da raiz +
+  caso aninhado sem vazar chave/valor; controle válido `complete`).
+- Documentação/checklist: `docs/agent-compatibility.md` (frase "Regressão global da mesma correção",
+  aditiva na célula do Codex), `.checks/issue-3-agent-diagnostics.md` (frase aditiva na entrada C8),
+  esta seção.
+- Evidência (ignorada pelo Git): `.checks/code-review/formal3-document-range-red.txt`,
+  `…-green.txt`, `…-walk-mutants.mjs`, `…-npm-test.txt`. Preservados sem alteração:
+  `.checks/code-review/formal3-toml-document-range.md` (encaminhamento),
+  `.checks/code-review/probe-formal3-before-global-range.txt` (probe da raiz) e
+  `.checks/code-review/native-codex-0.162.1/` (fontes).
