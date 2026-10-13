@@ -227,13 +227,15 @@ test("mid-read-mutation-C15/G3 resolveCodexVersion: shim do launcher mutado dura
 
 // C15/G3 — consumidor real de source_literal (Hermes): __init__.py muda de
 // tamanho entre o stat() e a leitura efetiva. O shim/launcher permanece
-// estável neste teste para isolar o consumidor de source_literal.
+// estável neste teste para isolar o consumidor de source_literal. O shebang
+// absoluto fixa o intérprete do venv (revisão formal7): com
+// `#!/usr/bin/env python3` o vínculo pararia antes de ler o __init__.py.
 test("mid-read-mutation-C15/G3 resolveHermesVersion: __init__.py mutado durante a leitura fica version null/version_changed_during_read (source_literal)", async () => {
   const launcherPath = "/fixture/hermes-venv/bin/hermes";
   const libDir = "/fixture/hermes-venv/lib";
   const initPath = "/fixture/hermes-venv/lib/python3.12/site-packages/hermes_cli/__init__.py";
   const shimContent = Buffer.from(
-    "#!/usr/bin/env python3\nfrom hermes_cli import main\nimport sys\nsys.exit(main())\n",
+    "#!/fixture/hermes-venv/bin/python3\nfrom hermes_cli import main\nimport sys\nsys.exit(main())\n",
   );
   const initContent = Buffer.from('__version__ = "0.21.4"\n');
   const fs = {

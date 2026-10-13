@@ -3393,3 +3393,85 @@ aparece em nenhum dos dois formatos.
   tokenizer levou 1.092 ms e `findAssignments`, 4 ms.
 - O teste de CLI repete o corpo do teste formal5 para não alterar testes já entregues. Fica registrada a dívida.
 - A execução foi só em Windows 11 Pro, com Node 24.21.0.
+
+## 29. Intérprete fixado pelo launcher Hermes — revisão formal7 (13/10/2026)
+
+Encaminhamento: `.checks/code-review/formal7-fixes.md`. É o único finding (P2) de
+`.checks/code-review/issue-3-formal7-response.json` e bloqueava C2/C3, C5 e C8; não é um critério novo. Autor: Claude; o
+Codex local só revisa. Arquivos alterados: `src/doctor/launcher-link/hermes.mjs`, os testes de resolução, de mutação, de
+presença e de configuração, os helpers `fixture-agents.mjs` e `fixture-manifest.mjs`,
+`docs/agent-compatibility.md`, o Landing e esta seção. `agent-resolution.mjs` ficou intacto. Não houve operação Git,
+stash, agente, hook, execução de Python nem configuração real.
+
+**Fontes**, lidas só como texto: POSIX `env` (o utilitário é localizado como em XBD 8) e XBD 8.3 `PATH` ("If the
+pathname being sought contains any <slash> characters, the search through the path prefixes shall not be performed");
+`exec`/`execvp` (o mesmo, com <slash>); `distlib/scripts.py` (pypa/distlib `master` 454a87c, sha256 `ad59b803…`), com
+`_build_shebang` (shebang direto até 127 bytes, ou 512 no macOS, e sem espaço; senão o trampolim
+`'''exec' <exe> "$0" "$@"`), `enquote_executable` (aspas só com espaço) e `SCRIPT_TEMPLATE`; a documentação do
+módulo `venv` (`bin`/`Scripts`, `lib/pythonX.Y/site-packages`/`Lib\site-packages`, `sys.prefix` do venv); e o `call`
+do Windows (`%~dp1`: unidade e caminho). O manual do GNU env devolveu 403 e não é citado. A regra adotada não depende
+dele, porque opções do `env` não são interpretadas.
+
+**Decisão.** `hermesInterpreterPath` substitui `referencesHermesCli` e o fallback `interpreterPrefix ||
+launcherPrefix`. O pacote só é procurado no prefixo de um intérprete que o texto do launcher fixa. Formas aceitas:
+
+- `#!<caminho absoluto de Python>` sozinho;
+- `#!<env absoluto> <caminho absoluto de Python>`, com um único operando e sem `=`;
+- o trampolim `#!/bin/sh` do distlib;
+- no `.cmd`/`.bat`, `"%~dp0python.exe" -m hermes_cli %*` numa linha que começa um comando.
+
+Fora disso o resultado é `launcher_not_recognized`, sem `packageDir`. O mesmo vale quando o intérprete fica na raiz
+(`#!/bin/python3`): o prefixo vazio caía no launcher pelo mesmo `||`, e esse resíduo apareceu na auditoria do fallback.
+`launcher_not_recognized` é o código já usado quando o vínculo não é demonstrável (`hermes.exe`, intérprete sem
+pacote). `version_source_ambiguous` continua significando vários candidatos no prefixo. A presença continua `present`.
+
+**Fixtures.** A premissa anterior estava errada. As fixtures positivas usavam `#!/usr/bin/env python3` (POSIX),
+`python -m hermes_cli` (`.cmd`) e, nos testes de camada, código Python dentro de `hermes.cmd`. Nenhuma fixava o
+intérprete, e os testes passavam só porque o leitor presumia o prefixo do launcher. `writeHermes` agora segue
+`_build_shebang`: shebang absoluto de `<venv>/bin/python3.12`, ou o trampolim para caminho com espaço, o que mantém
+C2 com espaço/Unicode no POSIX. No Windows grava o `.cmd` com `%~dp0`, sem o caminho no texto. Os testes antigos que
+presumiam o vínculo foram atualizados com a justificativa no próprio comentário: vários `pythonX.Y`, sem X.Y
+ambíguo, relativo com barra, presença ambígua, mutação durante a leitura e o layout Windows. As formas `env` agora
+estão na matriz negativa. Nenhuma asserção de versão, contrato ou C8 foi afrouxada.
+
+**RED** (`src/` intacto; `.checks/code-review/formal7-red.txt`, 2ª execução): resolução, mutação, presença,
+configuração, capacidades, envelope, snapshot e inventário → tests 151, pass 117, fail 32, skipped 2,
+`EXIT_CODE=1`. Na matriz negativa, 25 dos 33 casos publicavam um pacote: 21 dos 22 POSIX (`env` em todas as formas
+com nome bare, opções ou atribuição, relativo, sem shebang, sh, trampolim com nome, variável, env ou opção, raiz) e 4
+dos 11 `.cmd` (`python`/`python3.12` pelo PATH e os dois códigos Python disfarçados). O controle positivo parava no
+trampolim (0.21.4 de `/a` no lugar de 0.20.0 de `/b`), e o trampolim sem pacote em B publicava `/a`. O relativo com
+barra publicava 0.21.4. Na CLI do Windows, o cenário do achado publicava 0.21.4. As demais 27 falhas vêm do `.cmd`
+com `%~dp0` das fixtures, que o leitor anterior não reconhecia: versão nula e nenhuma linha `verified`. A 1ª execução tinha os mesmos números, sem os 2 casos de raiz, que foram acrescentados com `src/` ainda
+intacto.
+
+**GREEN** (`.checks/code-review/formal7-green.txt`): os mesmos alvos → tests 151, pass 149, fail 0, skipped 2,
+`EXIT_CODE=0`.
+
+**`npm test` único** (`.checks/code-review/formal7-npm-test.txt`): `test:governance` 6/6, `test:code-review` 10/10 e
+`test:doctor` com 365 testes / 363 pass / 0 fail / 2 skip, `EXIT_CODE=0`. Os skips são os dois POSIX já registrados. O
+delta 361 → 365 são os 4 testes novos (3 de resolução e 1 de CLI), todos executados no log, assim como os testes
+antigos atualizados.
+
+**Provas.** A matriz negativa tem 33 formas com dois prefixos contraditórios, cada um com versão e catálogo, e exige
+`{ version: null, reasonCode: "launcher_not_recognized" }` exato. Os 7 controles positivos usam `deepEqual` exato,
+com `packageDir` do prefixo do intérprete: absoluto de B, absoluto do próprio A, `env` com um absoluto, com e sem
+X.Y, trampolim com e sem aspas, e o `.cmd` com `%~dp0`. Os controles sem pacote (env, trampolim, `.cmd`) e ambíguos
+(env, trampolim) nunca usam o pacote do launcher. O teste de CLI usa `PATH=B:A`, `hooks_auto_accept:true` e
+`DOCTOR_TEST_WRITE_SENTINEL=1`. Ele confere 3 agentes, exit 0, Hermes `present` no caminho de A, versão nula,
+`launcher_not_recognized`, 5 linhas `unverified/version_unresolved` e `configuration`/`trust` `unknown`. Confere
+também a paridade dos motivos no texto, a ausência de `0.21.4`, `0.20.0` e `hermes_cli` nos dois formatos e a
+ausência da sentinela. O `hermes.exe` continua `present/version null`.
+
+**Limites.**
+
+- O leitor não modela `PYTHONPATH`, `PYTHONHOME`, site do usuário, `.pth` nem `sys.path[0]`. Achado fora do escopo,
+  comunicado e não corrigido: um `hermes_cli` ao lado do launcher precede o `site-packages` em tempo de execução. Com
+  os dois presentes, a versão do `site-packages` é publicada. Com só o vizinho, o resultado continua
+  `launcher_not_recognized`.
+- A existência do intérprete fixado não é conferida, como antes. Fluxo de controle de sh/`.cmd` não é avaliado.
+- Ficam inconclusivos, com perda de precisão: opções no shebang (inclusive `-s` de distribuições), `"<absoluto>\
+  python.exe"` no `.cmd`, o trampolim relocável com `$(dirname …)` e `env -S`/`-P`.
+- `stripCommentLines` (`path-helpers.mjs`) ficou sem consumidor no produto. A remoção ficou fora do ownership desta
+  rodada e fica registrada como dívida.
+- A execução foi só em Windows 11 Pro, com Node 24.21.0. Os ramos POSIX do helper (shebang direto e trampolim com
+  espaço na CLI) e os dois testes POSIX pulados dependem da execução Linux do orquestrador; macOS não foi observado.

@@ -119,12 +119,32 @@ function hermesBinDirName() {
   return process.platform === "win32" ? "Scripts" : "bin";
 }
 
-function writeHermesShimContent(sentinelPath) {
+// O texto do launcher fixa o intérprete do próprio venv, como o leitor exige
+// (revisão formal7). A fixture anterior usava `#!/usr/bin/env python3` e
+// `python -m hermes_cli`, que deixam o intérprete para o PATH de quem executa
+// e não comprovavam vínculo nenhum com o pacote deste venv.
+// - POSIX: a regra de `_build_shebang` do distlib que o pip usa
+//   (pypa/distlib, distlib/scripts.py): `#!<venv>/bin/python3.12` quando o
+//   caminho não tem espaço e a linha cabe em 127 bytes (512 no macOS); senão,
+//   o trampolim `#!/bin/sh` com `'''exec' <intérprete> "$0" "$@"`, entre
+//   aspas só quando o caminho tem espaço.
+// - Windows (.cmd simplificado): executa o python.exe do mesmo Scripts por
+//   `"%~dp0python.exe"`; o caminho não aparece no texto.
+function hermesPosixHeader(venvRoot) {
+  const interpreter = path.join(venvRoot, "bin", HERMES_PYTHON_DIR);
+  const hasSpace = interpreter.includes(" ");
+  const maxShebangLength = process.platform === "darwin" ? 512 : 127;
+  if (!hasSpace && Buffer.byteLength(interpreter) + 3 <= maxShebangLength) return `#!${interpreter}\n`;
+  const executable = hasSpace ? `"${interpreter}"` : interpreter;
+  return `#!/bin/sh\n'''exec' ${executable} "$0" "$@"\n' '''\n`;
+}
+
+function writeHermesShimContent(venvRoot, sentinelPath) {
   if (process.platform === "win32") {
-    return "@ECHO off\r\n" + cmdSentinelLine(sentinelPath) + "python -m hermes_cli %*\r\n";
+    return "@ECHO off\r\n" + cmdSentinelLine(sentinelPath) + '"%~dp0python.exe" -m hermes_cli %*\r\n';
   }
   return (
-    "#!/usr/bin/env python3\n" +
+    hermesPosixHeader(venvRoot) +
     "import os, sys\n" +
     `if os.environ.get("DOCTOR_TEST_WRITE_SENTINEL"):\n` +
     `    open(r"${sentinelPath}", "w").write("executed")\n` +
@@ -145,7 +165,7 @@ export function writeHermes(
   const binDir = path.join(venvRoot, hermesBinDirName());
   mkdirSync(binDir, { recursive: true });
   const file = path.join(binDir, process.platform === "win32" ? "hermes.cmd" : "hermes");
-  writeFileSync(file, writeHermesShimContent(sentinelPath));
+  writeFileSync(file, writeHermesShimContent(venvRoot, sentinelPath));
   if (process.platform !== "win32") chmodSync(file, 0o755);
 
   const sitePackages =

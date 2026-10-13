@@ -11,7 +11,13 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { installAllAgents, makeScratch, pathEnv } from "./helpers/fixture-agents.mjs";
+import {
+  hermesBinDirName,
+  installAllAgents,
+  makeScratch,
+  pathEnv,
+  writeHermes,
+} from "./helpers/fixture-agents.mjs";
 import { AGENT_CONFIG_PATH, writeAgentConfig } from "./helpers/fixture-agent-config.mjs";
 import { CANARY } from "./helpers/fixture-configs.mjs";
 import { hermesPluginsSource } from "./helpers/hermes-contract-source.mjs";
@@ -616,6 +622,91 @@ for (const [label, expected] of Object.entries(CASE_CAPTURE_CLI_CASES)) {
     }
   });
 }
+
+// Revisão formal7 (.checks/code-review/formal7-fixes.md): o cenário do achado
+// na fronteira real da CLI. PATH=B:A e só A tem o launcher do Hermes, cujo
+// intérprete fica para o PATH de quem executa: `#!/usr/bin/env python3.12` no
+// POSIX e `python -m hermes_cli` num .cmd no Windows (a forma que o PATHEXT
+// encontra). B tem esse intérprete — dado de fixture que só gravaria a
+// sentinela se fosse executado — e o Hermes 0.20.0; A tem 0.21.4 e o catálogo
+// completo. Nenhum dos dois pacotes pode ser atribuído: nem versão, nem
+// catálogo, nem caminho de pacote, em nenhum dos dois formatos.
+test("configuration-trust-C2/C5/C8/formal7-binding launcher Hermes com intérprete pelo PATH fica present/version null, sem verified/configured/trusted, mesmo com hooks_auto_accept:true", () => {
+  const scratch = makeScratch("doctor-formal7-binding-");
+  try {
+    const windows = process.platform === "win32";
+    const sentinelPath = path.join(scratch, "sentinel.txt");
+    const { launcherPath, binDir } = writeHermes(path.join(scratch, "a"), {
+      version: "0.21.4",
+      sentinelPath,
+      contractSource: hermesPluginsSource(),
+    });
+    writeFileSync(
+      launcherPath,
+      windows
+        ? "@ECHO off\r\npython -m hermes_cli %*\r\n"
+        : "#!/usr/bin/env python3.12\nimport sys\nfrom hermes_cli.main import main\nsys.exit(main())\n",
+    );
+    const prefixB = path.join(scratch, "b");
+    const packageDirB = windows
+      ? path.join(prefixB, "Lib", "site-packages", "hermes_cli")
+      : path.join(prefixB, "lib", "python3.12", "site-packages", "hermes_cli");
+    mkdirSync(packageDirB, { recursive: true });
+    writeFileSync(path.join(packageDirB, "__init__.py"), '__version__ = "0.20.0"\n');
+    writeFileSync(path.join(packageDirB, "plugins.py"), hermesPluginsSource());
+    const binDirB = path.join(prefixB, hermesBinDirName());
+    mkdirSync(binDirB, { recursive: true });
+    writeFileSync(
+      path.join(binDirB, windows ? "python.exe" : "python3.12"),
+      `#!/bin/sh\nif [ -n "$DOCTOR_TEST_WRITE_SENTINEL" ]; then echo executed > "${sentinelPath}"; fi\n`,
+      { mode: 0o755 },
+    );
+    const home = path.join(scratch, "home");
+    const env = { PATH: pathEnv([binDirB, binDir]), ...homeEnv(home), DOCTOR_TEST_WRITE_SENTINEL: "1" };
+    writeAgentConfig(
+      home,
+      "hermes",
+      'hooks:\n  pre_tool_call:\n    - command: "internal-safe-handler"\nhooks_auto_accept: true\n',
+      { env, platform: process.platform },
+    );
+
+    const { status, stdout, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.agents.length, 3);
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.presence, "present");
+    assert.equal(hermes.path, launcherPath);
+    assert.equal(hermes.version, null);
+    assert.equal(hermes.versionSource, null);
+    assert.equal(hermes.reasonCode, "launcher_not_recognized");
+    assert.equal(hermes.configuration, "unknown");
+    assert.equal(hermes.configReasonCode, "hooks_catalog_unavailable");
+    assert.equal(hermes.trust, "unknown");
+    assert.equal(hermes.trustReasonCode, "configuration_not_determined");
+
+    const localRows = hermes.capabilities.filter((row) => row.surface === "cli_local");
+    assert.equal(localRows.length, 5);
+    for (const row of localRows) {
+      assert.equal(row.support, "unverified", row.mechanism);
+      assert.equal(row.reasonCode, "version_unresolved", row.mechanism);
+    }
+    assert.doesNotMatch(stdout, /"support":"verified"/);
+
+    const text = runDoctor([], { env });
+    assert.equal(text.status, 0);
+    for (const reason of ["launcher_not_recognized", "version_unresolved", "hooks_catalog_unavailable", "configuration_not_determined"]) {
+      assert.match(text.stdout, new RegExp(reason), reason);
+    }
+    assert.doesNotMatch(text.stdout, /local_contract_lists_events/);
+    for (const leaked of [/0\.21\.4/, /0\.20\.0/, /hermes_cli/]) {
+      assert.doesNotMatch(stdout, leaked, `JSON: ${leaked}`);
+      assert.doesNotMatch(text.stdout, leaked, `texto: ${leaked}`);
+    }
+    assert.equal(existsSync(sentinelPath), false);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
 
 // C16/G4 — fronteira real da CLI: config inacessível, provada de forma
 // portátil entre Windows/Linux/macOS. chmod não bloqueia o dono no Windows e

@@ -8,12 +8,12 @@ import test from "node:test";
 import {
   AGENT_ORDER,
   KNOWN_GOOD_VERSION_TEXT,
-  hermesBinDirName,
   installAllAgents,
   makeScratch,
   pathEnv,
   writeCodex,
   writeCodexLocalInstall,
+  writeHermes,
 } from "./helpers/fixture-agents.mjs";
 import { inventory } from "./helpers/fs-inventory.mjs";
 import { buildMinimalPe, corruptFixedFileInfoSignature } from "./helpers/synthetic-pe.mjs";
@@ -25,18 +25,6 @@ function emptyHomeEnv(scratch) {
     USERPROFILE: path.join(scratch, "home-vazio"),
     LOCALAPPDATA: path.join(scratch, "localappdata-vazio"),
   };
-}
-
-function hermesSitePackagesDir(venvRoot) {
-  return process.platform === "win32"
-    ? path.join(venvRoot, "Lib", "site-packages")
-    : path.join(venvRoot, "lib", "python3.12", "site-packages");
-}
-
-function hermesShimContent() {
-  return process.platform === "win32"
-    ? "@ECHO off\r\npython -m hermes_cli %*\r\n"
-    : "#!/usr/bin/env python3\nfrom hermes_cli import main\nimport sys\nsys.exit(main())\n";
 }
 
 test("presence-C1 PATH vazio e nenhum local reconhecido retorna três ausentes, nesta ordem, exit 0", () => {
@@ -166,23 +154,17 @@ test("presence-C3 launcher não reconhecido mantém presence present com motivo 
   }
 });
 
+// O launcher vem do helper compartilhado, com o intérprete fixado pelo próprio
+// texto (revisão formal7): o shim local anterior (`#!/usr/bin/env python3`,
+// `python -m hermes_cli`) deixava o intérprete para o PATH e hoje pararia em
+// launcher_not_recognized antes de ler o __init__.py ambíguo deste teste.
 test("presence-C3 fonte de versão ambígua mantém version null com motivo version_source_ambiguous", () => {
   const scratch = makeScratch("doctor-c3-ambiguous-");
   try {
-    const venvRoot = path.join(scratch, "hermes-venv");
-    const binDir = path.join(venvRoot, hermesBinDirName());
-    mkdirSync(binDir, { recursive: true });
-    const hermesFile = path.join(
-      binDir,
-      process.platform === "win32" ? "hermes.cmd" : "hermes",
-    );
-    writeFileSync(hermesFile, hermesShimContent(), { mode: 0o755 });
-    const pkgDir = path.join(hermesSitePackagesDir(venvRoot), "hermes_cli");
-    mkdirSync(pkgDir, { recursive: true });
-    writeFileSync(
-      path.join(pkgDir, "__init__.py"),
-      '__version__ = "0.21.4"\n__version__ = "0.21.5"\n',
-    );
+    const { binDir } = writeHermes(path.join(scratch, "hermes-venv"), {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      initSource: '__version__ = "0.21.4"\n__version__ = "0.21.5"\n',
+    });
     const { status, report } = runDoctorJson([], {
       env: { PATH: pathEnv([binDir]), ...emptyHomeEnv(scratch) },
     });

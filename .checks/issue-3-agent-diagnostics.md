@@ -340,6 +340,21 @@ Fonte, RED/GREEN e limites estão na seção 28 do build.
 
 Proof: `node --test --test-name-pattern="formal6-captures" tests/doctor/agent-resolution.unit.test.mjs tests/doctor/contract-evidence.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
 
+### Landing do intérprete fixado pelo launcher Hermes — revisão formal7
+
+Encaminhamento: `.checks/code-review/formal7-fixes.md`. É o único finding (P2) de
+`.checks/code-review/issue-3-formal7-response.json` e bloqueava C2/C3, C5 e C8; não é um critério novo. Com
+`PATH=/b/bin:/a/bin`, o launcher `/a/bin/hermes` com `#!/usr/bin/env python3.12` publicava 0.21.4 e o catálogo de `/a`,
+embora o `python3.12` do PATH fosse o de `/b`. Autor: Claude; o Codex local só revisa. Fontes, RED/GREEN e limites
+estão na seção 29 do build.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| O pacote do Hermes só é atribuído pelo intérprete que o texto do launcher fixa; sem ele, `launcher_not_recognized` | **Supera** a decisão "Vínculo Hermes ↔ intérprete" da rodada formal 1 (o `pythonX.Y` "via `env`" escolhia o diretório) e as linhas G4 e "correção residual G3/G4" acima, na parte "sem caminho absoluto (bare/`env`/relativo/não-Python), preserva o prefixo do launcher". Agora `hermesInterpreterPath` (`launcher-link/hermes.mjs`) aceita só: `#!<caminho absoluto de Python>` sozinho; `#!<env absoluto> <caminho absoluto de Python>` com um único operando, sem `=`; o trampolim `#!/bin/sh` do distlib (`'''exec' <caminho absoluto> "$0" "$@"`, com ou sem aspas e sem `$`, crase, `\`, glob nem operadores); e, em `.cmd`/`.bat`, `"%~dp0python.exe" -m hermes_cli %*` numa linha que começa um comando. O prefixo é o do intérprete (`dirname` duas vezes), e um prefixo vazio (intérprete na raiz) também é inconclusivo. A presença continua `present`; nenhum `packageDir` sai, então nenhum catálogo é lido | Presumir o prefixo do launcher (o defeito). Também foram descartados: resolver o PATH, executar o Python ou importar o pacote; interpretar opções do `env`/Python; aceitar `"<absoluto>\python.exe"` no `.cmd`, que nenhum consumidor usa; e usar `version_source_ambiguous`, que já significa vários candidatos no mesmo prefixo |
+| Fixtures positivas fixam o intérprete do próprio venv | `writeHermes` grava o shebang absoluto `<venv>/bin/python3.12` ou, com espaço ou acima de 127 bytes (512 no macOS), o trampolim, pela regra de `_build_shebang` do distlib; no Windows grava o `.cmd` com `"%~dp0python.exe"`. A premissa anterior (`#!/usr/bin/env python3`, `python -m hermes_cli` e código Python dentro de `hermes.cmd` nos testes de camada) não comprovava vínculo; os testes passavam só porque o leitor presumia o prefixo do launcher | Manter as fixtures `env`/PATH e simular o vínculo; recusar o caminho com espaço no POSIX, o que quebraria C2 para uma instalação real do pip |
+
+Proof: `node --test --test-name-pattern="formal7-binding" tests/doctor/agent-resolution.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
+
 ## Checks
 
 ### S1 - Saber quais agentes foram encontrados sem iniciar os agentes · 6 arquivos · ~26 KB · ~7k

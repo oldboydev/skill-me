@@ -1,11 +1,6 @@
-import {
-  detectSeparator,
-  dirnameGeneric,
-  isAbsolutePathGeneric,
-  joinGeneric,
-  stripCommentLines,
-} from "./path-helpers.mjs";
+import { detectSeparator, dirnameGeneric, isAbsolutePathGeneric, joinGeneric } from "./path-helpers.mjs";
 import { isNativeExecutable } from "./native-executable.mjs";
+import { commandStartLines } from "./shim-lines.mjs";
 import {
   endsStatement,
   findAssignments,
@@ -17,21 +12,24 @@ import { readBoundedText } from "../snapshot-read.mjs";
 import { isPlausibleVersionString } from "../version-sources/validate.mjs";
 
 const ONE_MIB_BYTES = 1024 * 1024;
-// Launcher que não é Python pelo shebang (o .cmd simplificado, o trampolim
-// `#!/bin/sh` do pip): exige uma referência real de import/execução no início
-// da linha, não apenas a substring "hermes_cli" em qualquer lugar do texto —
-// uma linha de comentário mencionando o mesmo texto nunca casa aqui.
-const HERMES_CLI_REFERENCE_PATTERN =
-  /^[ \t]*(from\s+hermes_cli(?:\.[\w.]+)?\s+import\b|import\s+hermes_cli\b|python3?(?:\.\w+)?\s+-m\s+hermes_cli\b)/m;
 
-// Nome de intérprete Python reconhecido pelo shebang, com ou sem versão:
-// "python", "python3", "python3.12" (mas não "sh", "node" etc.). Mesma
-// família de nome em `referencesHermesCli` (decide se o shim é Python) e em
-// `shebangPythonInterpreterPath` (decide se um caminho absoluto do shebang
-// liga a OUTRO prefixo) — um caminho absoluto bare (`/b/bin/python`,
-// `/b/bin/python3`, sem X.Y) é tão reconhecido quanto um com versão
-// (achado G4 da rodada 3, variante residual: antes só `pythonX.Y` contava).
+// Nome de intérprete Python, com ou sem versão: "python", "python3",
+// "python3.12" (mas não "sh", "node" etc.). Um caminho absoluto bare
+// (`/b/bin/python3`, sem X.Y) fixa o intérprete tanto quanto um com versão
+// (achado G4 da rodada 3, variante residual).
 const PYTHON_INTERPRETER_NAME = /(?:^|[\\/])python[\d.]*$/;
+
+// Segunda linha do trampolim que o distlib do pip grava quando o shebang
+// direto não serve (caminho com espaço ou linha acima de 127 bytes; 512 no
+// macOS): `'''exec' <intérprete> "$0" "$@"`, com aspas só quando há espaço
+// (pypa/distlib, distlib/scripts.py, `_build_shebang`). Só valem caracteres
+// que o sh não expande nem separa; `$`, crase, `\`, glob, operadores ou
+// qualquer opção antes de "$0" deixam o intérprete indeterminado.
+const DISTLIB_TRAMPOLINE_EXEC = /^'''exec' (?:"([^"$`\\]+)"|([^\s"'$`\\*?[\]{}();&|<>]+)) "\$0" "\$@"$/;
+
+// .cmd simplificado: executa o python.exe do diretório do próprio .cmd
+// (`%~dp0` já termina na barra) com `-m hermes_cli` e todos os argumentos.
+const CMD_SIBLING_PYTHON_INVOCATION = /^[ \t]*@?"%~dp0python\.exe"[ \t]+-m[ \t]+hermes_cli[ \t]+%\*[ \t]*$/;
 
 // Resultado de três estados (não só texto|null): "too_large" precisa de um
 // reasonCode próprio (input_too_large), distinto de "não reconhecido".
@@ -68,43 +66,25 @@ function extractSourceLiteralVersion(text) {
   return { version: literals[0], versionSource: "source_literal" };
 }
 
-// Interpretador da primeira linha do launcher, direto (`#!/venv/bin/python3.12`)
-// ou via env (`#!/usr/bin/env python3.12`, com ou sem flags como `-S`).
-function shebangInterpreter(text) {
-  const firstLine = text.split("\n", 1)[0].replace(/\r$/, "");
+// Intérprete que as duas primeiras linhas de um launcher POSIX fixam sem
+// depender de quem o executa: `#!<caminho>` sozinho, `#!<env> <caminho>` com
+// um único operando, ou o trampolim `#!/bin/sh` do distlib. O env procura no
+// PATH um nome sem barra, mas usa como está um caminho com barra (POSIX:
+// XBD 8.3 PATH e exec/execvp); um operando com "=" é atribuição de ambiente.
+// Opções do env ou do Python (`-S` tira o site-packages do sys.path) e
+// argumentos extras não são interpretados: o resultado é null, como para
+// `#!/usr/bin/env python3.12`, um nome relativo ou um sh qualquer.
+function interpreterFixedByShebang(text) {
+  const [firstLine, secondLine = ""] = text.split("\n", 2).map((line) => line.replace(/\r$/, ""));
   if (!firstLine.startsWith("#!")) return null;
-  const tokens = firstLine.slice(2).trim().split(/\s+/);
-  const interpreter = tokens[0] ?? "";
-  if (/(^|[\\/])env$/.test(interpreter)) {
-    return tokens.slice(1).find((token) => !token.startsWith("-")) ?? "";
+  const words = firstLine.slice(2).trim().split(/\s+/);
+  if (words.length === 1 && words[0] === "/bin/sh") {
+    const exec = DISTLIB_TRAMPOLINE_EXEC.exec(secondLine);
+    return exec ? (exec[1] ?? exec[2]) : null;
   }
-  return interpreter;
-}
-
-// Versão X.Y do intérprete do shebang. `python`/`python3` sem X.Y, ou um
-// trampolim `#!/bin/sh` (o pip usa um quando o caminho do intérprete tem
-// espaços), não determinam a versão: null.
-function shebangPythonVersion(text) {
-  const match = /(?:^|[\\/])python(\d+\.\d+)$/.exec(shebangInterpreter(text) ?? "");
-  return match ? match[1] : null;
-}
-
-// Caminho absoluto do intérprete no shebang, para qualquer nome Python já
-// reconhecido (`.../python`, `.../python3` ou `.../pythonX.Y`), nunca um nome
-// bare resolvido via PATH/`env` — ex.: o `python3.12` que sobra de
-// `#!/usr/bin/env python3.12` não tem prefixo próprio, e um caminho relativo
-// com separador (`bin/python3.12`) não é absoluto só por conter barra
-// (isAbsolutePathGeneric). Um caminho absoluto aponta para um prefixo de venv
-// que pode ser diferente do prefixo do launcher: o vínculo precisa seguir
-// ESSE prefixo, nunca presumir que o intérprete mora no mesmo venv do
-// launcher só porque ambos têm `bin`/`Scripts` (achado G4 da rodada 3). Sem
-// X.Y no nome (`.../python`, `.../python3`), a versão específica continua
-// indeterminada pelo shebang: `findSitePackagesInitFile` decide por varredura
-// do prefixo já resolvido (achado, nunca um pacote de outro prefixo).
-function shebangPythonInterpreterPath(text) {
-  const interpreter = shebangInterpreter(text);
-  if (interpreter === null || !isAbsolutePathGeneric(interpreter)) return null;
-  return PYTHON_INTERPRETER_NAME.test(interpreter) ? interpreter : null;
+  if (words.length === 1) return words[0];
+  const viaEnv = words.length === 2 && isAbsolutePathGeneric(words[0]) && /[\\/]env$/.test(words[0]);
+  return viaEnv && !words[1].includes("=") ? words[1] : null;
 }
 
 // `from hermes_cli[.x] import ...` ou `import hermes_cli` como instrução em
@@ -122,15 +102,25 @@ function importsHermesCli(tokens) {
   });
 }
 
-// O console-script do pip é Python (shebang de python): o import de
-// hermes_cli só conta em código. Os demais launchers seguem a leitura por
-// linha sem comentários.
-function referencesHermesCli(text) {
-  if (PYTHON_INTERPRETER_NAME.test(shebangInterpreter(text) ?? "")) {
-    const tokens = tokenizePython(text);
-    return tokens !== null && importsHermesCli(tokens);
+// Caminho absoluto do intérprete Python que o texto do launcher fixa e com o
+// qual executa o hermes_cli, ou null. O dialeto vem da extensão, como o SO
+// decide quem interpreta o arquivo: um .cmd/.bat só vale pela invocação do
+// python.exe irmão numa linha que começa um comando (shim-lines.mjs), nunca
+// por um shebang; os demais são Python pelo shebang ou pelo trampolim, e o
+// import de hermes_cli só conta em código, não numa docstring. Um intérprete
+// achado pelo PATH, pelo diretório de trabalho ou por variável do shell pode
+// ser de outro prefixo: nunca é presumido o do launcher (revisão formal7).
+function hermesInterpreterPath(text, launcherPath) {
+  if (/\.(?:cmd|bat)$/i.test(launcherPath)) {
+    const invokesSibling = commandStartLines(text, "cmd").some((line) => CMD_SIBLING_PYTHON_INVOCATION.test(line));
+    return invokesSibling ? joinGeneric(detectSeparator(launcherPath), dirnameGeneric(launcherPath), "python.exe") : null;
   }
-  return HERMES_CLI_REFERENCE_PATTERN.test(stripCommentLines(text));
+  const interpreter = interpreterFixedByShebang(text);
+  if (interpreter === null || !isAbsolutePathGeneric(interpreter) || !PYTHON_INTERPRETER_NAME.test(interpreter)) {
+    return null;
+  }
+  const tokens = tokenizePython(text);
+  return tokens !== null && importsHermesCli(tokens) ? interpreter : null;
 }
 
 async function fileExists(filePath, fs) {
@@ -143,13 +133,13 @@ async function fileExists(filePath, fs) {
   }
 }
 
-// Layout padrão de venv/pip: o launcher mora em <prefix>/bin (POSIX) ou
-// <prefix>\Scripts (Windows simplificado — ver nota abaixo) e o pacote em
-// <prefix>/lib/pythonX.Y/site-packages (POSIX) ou <prefix>\Lib\site-packages
-// (Windows). Um hermes_cli colocado ao lado do launcher, fora desse layout,
-// não é encontrado por aqui — proximidade no diretório não é vínculo. No
-// POSIX o mesmo prefixo pode ter vários pythonX.Y: o do shebang decide; sem
-// ele, só um candidato com hermes_cli é aceito, e dois ou mais ficam
+// Layout padrão de venv/pip (documentação do módulo venv): o intérprete mora
+// em <prefix>/bin (POSIX) ou <prefix>\Scripts (Windows) e o pacote em
+// <prefix>/lib/pythonX.Y/site-packages ou <prefix>\Lib\site-packages. Um
+// hermes_cli colocado ao lado do launcher, fora desse layout, não é
+// encontrado por aqui — proximidade no diretório não é vínculo. No POSIX o
+// mesmo prefixo pode ter vários pythonX.Y: o X.Y do intérprete fixado decide;
+// sem ele, só um candidato com hermes_cli é aceito, e dois ou mais ficam
 // ambíguos — nunca o primeiro em ordem lexical, que pode ser de outro
 // intérprete.
 async function findSitePackagesInitFile(prefix, sep, interpreterVersion, fs) {
@@ -195,31 +185,20 @@ export async function resolveHermesVersion(launcherPath, { fs }) {
   if (linked.state === "changed_during_read") {
     return { version: null, reasonCode: "version_changed_during_read" };
   }
-  // O launcher real (console-script do pip) importa hermes_cli; um shim sem
-  // essa referência real (comentário ou docstring mencionando o mesmo texto
-  // não conta) não é reconhecido, mesmo que um hermes_cli exista perto.
-  if (linked.state === "missing" || !referencesHermesCli(linked.text)) {
-    return { version: null, reasonCode: "launcher_not_recognized" };
-  }
+  if (linked.state === "missing") return { version: null, reasonCode: "launcher_not_recognized" };
 
-  const launcherDir = dirnameGeneric(launcherPath); // .../bin ou .../Scripts
-  const launcherPrefix = dirnameGeneric(launcherDir); // raiz do venv do launcher
-  // Um shebang com caminho absoluto de intérprete (`#!/outro/prefixo/bin/
-  // pythonX.Y`, ou sem a versão, `#!/outro/prefixo/bin/python3`) liga a esse
-  // prefixo, possivelmente diferente do launcher: o pacote procurado precisa
-  // ser o do intérprete real, nunca o do launcher só por proximidade de
-  // diretório (achado G4 da rodada 3, incluindo a variante residual sem
-  // X.Y). Sem um caminho absoluto reconhecido (bare/`env`/relativo/
-  // não-Python), preserva o prefixo do launcher como sempre.
-  const interpreterPath = shebangPythonInterpreterPath(linked.text);
-  const interpreterPrefix =
-    interpreterPath !== null ? dirnameGeneric(dirnameGeneric(interpreterPath)) : "";
-  const prefix = interpreterPrefix || launcherPrefix;
-  // O separador para o layout do venv vem do caminho já resolvido (dirname),
-  // não do caminho original recebido (ver nota equivalente em
-  // launcher-link/codex.mjs).
-  const sep = detectSeparator(prefix || launcherDir);
-  const located = await findSitePackagesInitFile(prefix, sep, shebangPythonVersion(linked.text), fs);
+  // O pacote é o do prefixo do intérprete que o launcher fixa, possivelmente
+  // diferente do prefixo do launcher (achado G4 da rodada 3). Sem intérprete
+  // fixado — env com nome, PATH, caminho relativo, sem shebang, comentário ou
+  // docstring no lugar do import —, ou com ele na raiz, sem um prefixo de venv
+  // acima de bin/Scripts, a presença continua comprovada, mas nenhum pacote é
+  // atribuído: nem o do launcher, nem outro (revisão formal7).
+  const interpreterPath = hermesInterpreterPath(linked.text, launcherPath);
+  const prefix = interpreterPath === null ? "" : dirnameGeneric(dirnameGeneric(interpreterPath));
+  if (prefix === "") return { version: null, reasonCode: "launcher_not_recognized" };
+  const interpreterVersion = /(?:^|[\\/])python(\d+\.\d+)$/.exec(interpreterPath)?.[1] ?? null;
+  const sep = detectSeparator(interpreterPath);
+  const located = await findSitePackagesInitFile(prefix, sep, interpreterVersion, fs);
   if (located.state === "ambiguous") return { version: null, reasonCode: "version_source_ambiguous" };
   if (located.state === "missing") return { version: null, reasonCode: "launcher_not_recognized" };
   const { initPath } = located;

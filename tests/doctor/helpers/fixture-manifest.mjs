@@ -43,6 +43,8 @@ export const FIXTURE_SCENARIOS = [
   { id: "C2-codex-shim-npm-local", origin: "fixture", os: ["windows", "linux", "macos"], file: "agent-resolution.unit.test.mjs" },
   { id: "C2-codex-instalacao-local-cli", origin: "fixture", os: ["host"], file: "presence.cli.test.mjs" },
   { id: "C2-C3-hermes-interpretador-shebang", origin: "fixture", os: ["linux", "macos"], file: "agent-resolution.unit.test.mjs" },
+  { id: "C2-C3-hermes-interprete-fixado-pelo-launcher", origin: "fixture", os: ["windows", "linux", "macos"], file: "agent-resolution.unit.test.mjs" },
+  { id: "C3-C5-C8-hermes-interprete-pelo-path-cli", origin: "fixture", os: ["host"], file: "configuration-trust.cli.test.mjs" },
   { id: "C8-forma-nativa-hooks", origin: "fixture", os: ["any"], file: "config-projection.unit.test.mjs" },
   { id: "C8-forma-nativa-hooks-cli", origin: "fixture", os: ["host"], file: "configuration-trust.cli.test.mjs" },
 ];

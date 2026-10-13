@@ -13,10 +13,12 @@ import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { resolveAgents } from "../../src/doctor/agent-resolution.mjs";
 import { resolveCodexVersion } from "../../src/doctor/launcher-link/codex.mjs";
 import { resolveHermesVersion } from "../../src/doctor/launcher-link/hermes.mjs";
 import { buildMinimalPe, corruptSizeOfOptionalHeader } from "./helpers/synthetic-pe.mjs";
+import { hermesPluginsSource } from "./helpers/hermes-contract-source.mjs";
 import {
   AUGMENTED_OPERATORS,
   GROUPED_AUGMENTED_TARGETS,
@@ -97,12 +99,17 @@ function installCodexShShim(tree, dir, packageJson = CODEX_PACKAGE_JSON) {
   addFile(tree, `${dir}/node_modules/@openai/codex`, "package.json", packageJson);
 }
 
-function hermesShimContent() {
-  // O launcher real (console-script do pip) importa hermes_cli; o conteúdo
-  // exato do shim do Windows é uma simplificação declarada (ver
-  // src/doctor/launcher-link/hermes.mjs), mas ainda precisa referenciar
-  // hermes_cli para ser reconhecido.
-  return "#!/usr/bin/env python3\nfrom hermes_cli import main\nimport sys\nsys.exit(main())\n";
+// O launcher real (console-script do pip) importa hermes_cli e fixa o
+// intérprete do próprio venv: no POSIX, o shebang absoluto de
+// <venv>/bin/python3.12; no .cmd simplificado do Windows (ver
+// src/doctor/launcher-link/hermes.mjs), o python.exe do mesmo Scripts por
+// `%~dp0`. Até a revisão formal7 este shim era `#!/usr/bin/env python3` —
+// inclusive dentro de hermes.cmd —, que deixa o intérprete para o PATH e não
+// comprova vínculo; os testes que o usavam passavam só porque o leitor
+// presumia o prefixo do launcher.
+function hermesShimContent(venvRoot, platform = "linux") {
+  if (platform === "win32") return '@ECHO off\r\n"%~dp0python.exe" -m hermes_cli %*\r\n';
+  return `#!${venvRoot}/bin/python3.12\nfrom hermes_cli import main\nimport sys\nsys.exit(main())\n`;
 }
 
 function installAgentsInTree(tree, dir, platform) {
@@ -116,7 +123,7 @@ function installAgentsInTree(tree, dir, platform) {
   const hermesVenvRoot = [dir, "hermes-venv"].join(sep);
   const hermesBinDir = [hermesVenvRoot, hermesBinDirName].join(sep);
   const hermesName = platform === "win32" ? "hermes.cmd" : "hermes";
-  addFile(tree, hermesBinDir, hermesName, hermesShimContent());
+  addFile(tree, hermesBinDir, hermesName, hermesShimContent(hermesVenvRoot, platform));
   let sitePackagesDir;
   if (platform === "win32") {
     sitePackagesDir = [hermesVenvRoot, "Lib", "site-packages"].join(sep);
@@ -326,7 +333,7 @@ test("agent-resolution-C3 launcher alheio do Hermes com hermes_cli vizinho (fora
   const tree = buildFsTree();
   const venvRoot = "/path/foreign-hermes-venv";
   const binDir = venvRoot + "/bin";
-  addFile(tree, binDir, "hermes", hermesShimContent());
+  addFile(tree, binDir, "hermes", hermesShimContent(venvRoot));
   // hermes_cli colocado ao lado do launcher, fora de lib/python*/site-packages.
   addFile(tree, binDir + "/hermes_cli", "__init__.py", '__version__ = "9.9.9"\n');
   const result = await resolveHermesVersion(binDir + "/hermes", { fs: createFakeFsAdapter(tree) });
@@ -338,11 +345,12 @@ test("agent-resolution-C2 layout Windows do Hermes (Lib/site-packages) liga a fo
   const tree = buildFsTree();
   const venvRoot = "C:\\fixture\\hermes-venv";
   const binDir = venvRoot + "\\Scripts";
-  addFile(tree, binDir, "hermes.cmd", hermesShimContent());
+  addFile(tree, binDir, "hermes.cmd", hermesShimContent(venvRoot, "win32"));
   addFile(tree, venvRoot + "\\Lib\\site-packages\\hermes_cli", "__init__.py", '__version__ = "0.21.4"\n');
   const result = await resolveHermesVersion(binDir + "\\hermes.cmd", { fs: createFakeFsAdapter(tree) });
   assert.equal(result.version, "0.21.4");
   assert.equal(result.versionSource, "source_literal");
+  assert.equal(result.packageDir, venvRoot + "\\Lib\\site-packages\\hermes_cli");
 });
 
 // C3/C14 — os regex de vínculo nunca reconhecem uma referência dentro de um
@@ -383,7 +391,7 @@ test("agent-resolution-C10 comentário com import do Hermes não atribui versão
     tree,
     binDir,
     "hermes",
-    "#!/usr/bin/env python3\n# from hermes_cli import main\necho noop\n",
+    "#!/path/hermes-comment-only/bin/python3.12\n# from hermes_cli import main\necho noop\n",
   );
   addDir(tree, "/path/hermes-comment-only/lib", "python3.12");
   addFile(
@@ -400,7 +408,7 @@ test("agent-resolution-C10 comentário com import do Hermes não atribui versão
 test("agent-resolution-C10 literal de versão do Hermes com formato implausível (canário) vira version_unreadable, nunca exposto", async () => {
   const tree = buildFsTree();
   const binDir = "/path/hermes-canary/bin";
-  addFile(tree, binDir, "hermes", hermesShimContent());
+  addFile(tree, binDir, "hermes", hermesShimContent("/path/hermes-canary"));
   addDir(tree, "/path/hermes-canary/lib", "python3.12");
   addFile(
     tree,
@@ -491,7 +499,7 @@ test("agent-resolution-formal3-1 package.json do Codex válido continua resolven
 test("agent-resolution-C10 hermes_cli/__init__.py acima de 1 MiB vira input_too_large, não version_unreadable", async () => {
   const tree = buildFsTree();
   const binDir = "/path/hermes-oversized/bin";
-  addFile(tree, binDir, "hermes", hermesShimContent());
+  addFile(tree, binDir, "hermes", hermesShimContent("/path/hermes-oversized"));
   addDir(tree, "/path/hermes-oversized/lib", "python3.12");
   const oversized = `__version__ = "0.21.4"\n# ${"x".repeat(1024 * 1024 + 1)}\n`;
   addFile(
@@ -806,11 +814,17 @@ function installHermesTwoPythons(tree, root, shebang) {
   return root + "/bin/hermes";
 }
 
+// Até a revisão formal7 este teste também esperava a versão por
+// `#!/usr/bin/env python3.11` e `#!/usr/bin/env -S python3.12 -u`: o env
+// procura o nome no PATH de quem executa, então o pythonX.Y do PATH não é o
+// deste prefixo só porque o launcher mora aqui. Essas formas estão agora na
+// matriz negativa formal7; o env com um único caminho absoluto fixa o
+// intérprete (POSIX: com <slash>, não há busca no PATH).
 test("agent-resolution-C2 Hermes: com python3.11 e python3.12 no prefixo, o pythonX.Y do shebang escolhe a fonte de versão", async () => {
   for (const [shebang, expected, pythonDir] of [
     ["#!/opt/hermes/bin/python3.12", "0.21.4", "python3.12"],
-    ["#!/usr/bin/env python3.11", "0.20.0", "python3.11"],
-    ["#!/usr/bin/env -S python3.12 -u", "0.21.4", "python3.12"],
+    ["#!/opt/hermes/bin/python3.11", "0.20.0", "python3.11"],
+    ["#!/usr/bin/env /opt/hermes/bin/python3.11", "0.20.0", "python3.11"],
   ]) {
     const tree = buildFsTree();
     const launcher = installHermesTwoPythons(tree, "/opt/hermes", shebang);
@@ -825,8 +839,12 @@ test("agent-resolution-C2 Hermes: com python3.11 e python3.12 no prefixo, o pyth
   }
 });
 
+// `#!/usr/bin/env python3` e o `#!/bin/sh` sem trampolim também esperavam
+// version_source_ambiguous até a revisão formal7, mas nenhum dos dois fixa o
+// intérprete: agora param antes, em launcher_not_recognized (matriz negativa
+// formal7). Aqui ficam só intérpretes fixados sem X.Y.
 test("agent-resolution-C3 Hermes: shebang sem versão e dois pythonX.Y com hermes_cli fica version_source_ambiguous, nunca o primeiro lexical", async () => {
-  for (const shebang of ["#!/usr/bin/env python3", "#!/opt/hermes/bin/python", "#!/bin/sh"]) {
+  for (const shebang of ["#!/opt/hermes/bin/python3", "#!/opt/hermes/bin/python", "#!/usr/bin/env /opt/hermes/bin/python3"]) {
     const tree = buildFsTree();
     const launcher = installHermesTwoPythons(tree, "/opt/hermes", shebang);
     const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree) });
@@ -944,16 +962,20 @@ test("agent-resolution-G4 Hermes: shebang absoluto SEM X.Y de outro prefixo com 
 // Variante residual de G4: "caminho absoluto" exige separador NO INÍCIO
 // (POSIX "/" ou unidade/UNC do Windows), não qualquer string que contenha uma
 // barra. Um intérprete relativo com barra (`venv/bin/python3.12`, sem `/`
-// inicial) não liga a um prefixo "venv" inexistente — o X.Y ainda escolhe o
-// pythonX.Y certo dentro do prefixo do PRÓPRIO launcher, igual ao caso `env`.
-test("agent-resolution-G4 Hermes: intérprete relativo com barra (sem caminho absoluto) não inventa prefixo de outro processo, usa X.Y no prefixo do launcher", async () => {
+// inicial) não liga a um prefixo "venv" inexistente. Até a revisão formal7
+// este teste esperava 0.21.4 do prefixo do PRÓPRIO launcher, "igual ao caso
+// env" — a mesma presunção do achado: o caminho relativo do shebang é
+// resolvido a partir do diretório de trabalho de quem executa, não do
+// launcher. Fica inconclusivo, sem nenhum pacote.
+test("agent-resolution-G4 Hermes: intérprete relativo com barra (sem caminho absoluto) não inventa prefixo nem presume o do launcher", async () => {
   const tree = buildFsTree();
   const launcher = installHermesTwoPythons(tree, "/opt/hermes", "#!venv/bin/python3.12");
 
   const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree) });
-  assert.equal(result.version, "0.21.4", "precisa escolher python3.12 no prefixo do launcher, não um prefixo 'venv' inventado");
-  assert.equal(result.versionSource, "source_literal");
-  assert.equal(result.packageDir, "/opt/hermes/lib/python3.12/site-packages/hermes_cli");
+  assert.equal(result.version, null);
+  assert.equal(result.reasonCode, "launcher_not_recognized");
+  assert.equal(result.versionSource, undefined);
+  assert.equal(result.packageDir, undefined);
 });
 
 // --- Vínculo só pela invocação do template npm (pré-revisão formal) ---
@@ -1220,4 +1242,177 @@ test("agent-resolution-C3 launcher Python do Hermes que cita o import de hermes_
   assert.equal(result.reasonCode, "launcher_not_recognized");
   const control = await hermesVersionWith('__version__ = "0.21.4"\n');
   assert.equal(control.version, "0.21.4", "controle: import em código no mesmo layout");
+});
+
+// --- Intérprete fixado pelo próprio launcher (revisão formal7) ---
+// .checks/code-review/formal7-fixes.md: com PATH=/b/bin:/a/bin, só /a/bin tem
+// o launcher, e `#!/usr/bin/env python3.12` faz o env procurar python3.12 no
+// PATH de quem executa — o de /b, venv com Hermes 0.20.0. O leitor presumia o
+// prefixo do launcher e publicava 0.21.4 de /a, cujo catálogo ainda liberava
+// verified/configured/trusted. Sem um intérprete fixado pelo texto do
+// launcher, nenhum dos dois pacotes pode ser atribuído: versão nula,
+// launcher_not_recognized e nenhum packageDir (nenhum catálogo é lido).
+
+const HERMES_IMPORT_BODY = "import sys\nfrom hermes_cli.main import main\nsys.exit(main())\n";
+
+// Corpo que o distlib grava no console-script (SCRIPT_TEMPLATE de
+// distlib/scripts.py), com o import dentro do guarda de __main__.
+const DISTLIB_SCRIPT_BODY =
+  "# -*- coding: utf-8 -*-\nimport re\nimport sys\nif __name__ == '__main__':\n" +
+  "    from hermes_cli.main import main\n" +
+  "    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n" +
+  "    sys.exit(main())\n";
+
+function distlibTrampoline(executable) {
+  return `#!/bin/sh\n'''exec' ${executable} "$0" "$@"\n' '''\n${DISTLIB_SCRIPT_BODY}`;
+}
+
+// Dois prefixos contraditórios, cada um com seu pacote e catálogo: A é o do
+// launcher (0.21.4) e B o de outro Python (0.20.0), que um PATH como B:A
+// escolheria em tempo de execução. O intérprete de B é dado de fixture, nunca
+// executado nem lido. `.cmd` usa o layout do Windows.
+function installContradictoryHermesPrefixes(
+  launcherName,
+  content,
+  { other = "/b", packageInLauncherPrefix = true, packageInOtherPrefix = true } = {},
+) {
+  const tree = buildFsTree();
+  const windows = launcherName.endsWith(".cmd");
+  const sep = windows ? "\\" : "/";
+  const [a, b] = windows ? ["C:\\a", "C:\\b"] : ["/a", other];
+  const binDirOf = (prefix) => prefix + sep + (windows ? "Scripts" : "bin");
+  const packageDirOf = (prefix) =>
+    windows ? `${prefix}\\Lib\\site-packages\\hermes_cli` : `${prefix}/lib/python3.12/site-packages/hermes_cli`;
+  addFile(tree, binDirOf(a), launcherName, content);
+  addFile(tree, binDirOf(b), windows ? "python.exe" : "python3.12", "stub de intérprete, nunca executado\n");
+  for (const [prefix, version, installed] of [
+    [a, "0.21.4", packageInLauncherPrefix],
+    [b, "0.20.0", packageInOtherPrefix],
+  ]) {
+    if (!windows) addDir(tree, `${prefix}/lib`, "python3.12");
+    if (!installed) continue;
+    addFile(tree, packageDirOf(prefix), "__init__.py", `__version__ = "${version}"\n`);
+    addFile(tree, packageDirOf(prefix), "plugins.py", hermesPluginsSource());
+  }
+  return { tree, launcher: binDirOf(a) + sep + launcherName, packageDirOf };
+}
+
+const UNBOUND_HERMES_LAUNCHERS = {
+  hermes: {
+    "env python3.12 (cenário do achado)": `#!/usr/bin/env python3.12\n${HERMES_IMPORT_BODY}`,
+    "env python3": `#!/usr/bin/env python3\n${HERMES_IMPORT_BODY}`,
+    "env python": `#!/usr/bin/env python\n${HERMES_IMPORT_BODY}`,
+    "env -S com nome bare": `#!/usr/bin/env -S python3.12 -u\n${HERMES_IMPORT_BODY}`,
+    "env -S com caminho absoluto": `#!/usr/bin/env -S /b/bin/python3.12 -u\n${HERMES_IMPORT_BODY}`,
+    "env -i com caminho absoluto": `#!/usr/bin/env -i /b/bin/python3.12\n${HERMES_IMPORT_BODY}`,
+    "env -u PATH com caminho absoluto": `#!/usr/bin/env -u PATH /b/bin/python3.12\n${HERMES_IMPORT_BODY}`,
+    "env -C diretório antes do nome bare": `#!/usr/bin/env -C /b/bin python3.12\n${HERMES_IMPORT_BODY}`,
+    "env com atribuição antes do nome": `#!/usr/bin/env PYTHONPATH=/b/lib/python3.12/site-packages python3.12\n${HERMES_IMPORT_BODY}`,
+    "env com argumento depois do caminho absoluto": `#!/usr/bin/env /b/bin/python3.12 -u\n${HERMES_IMPORT_BODY}`,
+    "nome relativo sem barra": `#!python3.12\n${HERMES_IMPORT_BODY}`,
+    "caminho relativo com barra": `#!bin/python3.12\n${HERMES_IMPORT_BODY}`,
+    "absoluto com opção do intérprete": `#!/b/bin/python3.12 -S\n${HERMES_IMPORT_BODY}`,
+    "absoluto na raiz, sem prefixo de venv": `#!/bin/python3\n${HERMES_IMPORT_BODY}`,
+    "env com caminho absoluto na raiz": `#!/usr/bin/env /python3.12\n${HERMES_IMPORT_BODY}`,
+    "sem shebang": HERMES_IMPORT_BODY,
+    "sh que chama python3 pelo PATH": '#!/bin/sh\npython3 -m hermes_cli "$@"\n',
+    "trampolim com nome bare": distlibTrampoline("python3.12"),
+    "trampolim com variável no caminho": distlibTrampoline('"$HOME/b/bin/python3.12"'),
+    "trampolim com env": distlibTrampoline("/usr/bin/env python3.12"),
+    "trampolim com opção antes de $0": distlibTrampoline("/b/bin/python3.12 -S"),
+    "invocação do .cmd num launcher sem extensão": '"%~dp0python.exe" -m hermes_cli %*\n',
+  },
+  "hermes.cmd": {
+    "python pelo PATH (fixture Windows anterior)": "@ECHO off\r\npython -m hermes_cli %*\r\n",
+    "python3.12 pelo PATH": "@ECHO off\r\npython3.12 -m hermes_cli %*\r\n",
+    "python.exe entre aspas pelo PATH": '@ECHO off\r\n"python.exe" -m hermes_cli %*\r\n',
+    "caminho absoluto (forma não declarada)": '@ECHO off\r\n"C:\\b\\Scripts\\python.exe" -m hermes_cli %*\r\n',
+    "código Python com shebang env (fixture anterior)": `#!/usr/bin/env python3\n${HERMES_IMPORT_BODY}`,
+    "código Python com shebang absoluto": `#!C:\\a\\Scripts\\python3.12\n${HERMES_IMPORT_BODY}`,
+    "irmão só impresso por echo": '@ECHO off\r\necho "%~dp0python.exe" -m hermes_cli %*\r\n',
+    "irmão em REM": '@ECHO off\r\nREM "%~dp0python.exe" -m hermes_cli %*\r\n',
+    "irmão continuando a linha anterior": '@ECHO off\r\necho ^\r\n"%~dp0python.exe" -m hermes_cli %*\r\n',
+    "irmão com opção antes de -m": '@ECHO off\r\n"%~dp0python.exe" -S -m hermes_cli %*\r\n',
+    "irmão com outro módulo": '@ECHO off\r\n"%~dp0python.exe" -m outro_cli %*\r\n',
+  },
+};
+
+test("agent-resolution-formal7-binding Hermes: launcher sem intérprete fixado pelo próprio texto fica launcher_not_recognized, sem versão nem packageDir de nenhum dos dois prefixos", async () => {
+  const published = [];
+  let checked = 0;
+  for (const [launcherName, cases] of Object.entries(UNBOUND_HERMES_LAUNCHERS)) {
+    for (const [label, content] of Object.entries(cases)) {
+      checked += 1;
+      const { tree, launcher } = installContradictoryHermesPrefixes(launcherName, content);
+      const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree) });
+      if (!isDeepStrictEqual(result, { version: null, reasonCode: "launcher_not_recognized" })) {
+        published.push(`${launcherName}/${label} -> ${JSON.stringify(result)}`);
+      }
+    }
+  }
+  assert.equal(checked, 22 + 11);
+  assert.deepEqual(published, []);
+});
+
+test("agent-resolution-formal7-binding Hermes: intérprete fixado pelo texto liga ao pacote do PRÓPRIO prefixo do intérprete, com packageDir exato", async () => {
+  const cases = {
+    "shebang absoluto de B": ["hermes", `#!/b/bin/python3.12\n${HERMES_IMPORT_BODY}`, "/b", "0.20.0"],
+    "shebang absoluto do próprio A": ["hermes", `#!/a/bin/python3.12\n${HERMES_IMPORT_BODY}`, "/a", "0.21.4"],
+    "env com um único caminho absoluto de B": ["hermes", `#!/usr/bin/env /b/bin/python3.12\n${HERMES_IMPORT_BODY}`, "/b", "0.20.0"],
+    "env com caminho absoluto sem X.Y": ["hermes", `#!/usr/bin/env /b/bin/python3\n${HERMES_IMPORT_BODY}`, "/b", "0.20.0"],
+    "trampolim do distlib sem aspas (shebang longo)": ["hermes", distlibTrampoline("/b/bin/python3.12"), "/b", "0.20.0"],
+    "trampolim do distlib entre aspas (caminho com espaço)": [
+      "hermes",
+      distlibTrampoline('"/b com espaço/bin/python3.12"'),
+      "/b com espaço",
+      "0.20.0",
+    ],
+    ".cmd que executa o python.exe irmão por %~dp0": [
+      "hermes.cmd",
+      '@ECHO off\r\n"%~dp0python.exe" -m hermes_cli %*\r\n',
+      "C:\\a",
+      "0.21.4",
+    ],
+  };
+  for (const [label, [launcherName, content, prefix, version]] of Object.entries(cases)) {
+    const { tree, launcher, packageDirOf } = installContradictoryHermesPrefixes(launcherName, content, {
+      other: prefix.startsWith("/b") ? prefix : "/b",
+    });
+    const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree) });
+    assert.deepEqual(
+      result,
+      { version, versionSource: "source_literal", packageDir: packageDirOf(prefix) },
+      label,
+    );
+  }
+});
+
+test("agent-resolution-formal7-binding Hermes: intérprete fixado sem pacote no próprio prefixo, ou com dois pythonX.Y nele, fica inconclusivo e nunca usa o pacote do launcher", async () => {
+  const withoutPackage = {
+    "env com caminho absoluto de B": ["hermes", `#!/usr/bin/env /b/bin/python3.12\n${HERMES_IMPORT_BODY}`],
+    "trampolim do distlib para B": ["hermes", distlibTrampoline("/b/bin/python3.12")],
+  };
+  for (const [label, [launcherName, content]] of Object.entries(withoutPackage)) {
+    const { tree, launcher } = installContradictoryHermesPrefixes(launcherName, content, { packageInOtherPrefix: false });
+    const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree) });
+    assert.deepEqual(result, { version: null, reasonCode: "launcher_not_recognized" }, label);
+  }
+
+  // O .cmd fixa o python.exe irmão (prefixo A): o pacote que só B tem não
+  // serve.
+  const cmd = installContradictoryHermesPrefixes("hermes.cmd", '@ECHO off\r\n"%~dp0python.exe" -m hermes_cli %*\r\n', {
+    packageInLauncherPrefix: false,
+  });
+  assert.deepEqual(await resolveHermesVersion(cmd.launcher, { fs: createFakeFsAdapter(cmd.tree) }), {
+    version: null,
+    reasonCode: "launcher_not_recognized",
+  });
+
+  for (const content of [`#!/usr/bin/env /b/bin/python3\n${HERMES_IMPORT_BODY}`, distlibTrampoline("/b/bin/python")]) {
+    const { tree, launcher } = installContradictoryHermesPrefixes("hermes", content);
+    addDir(tree, "/b/lib", "python3.11");
+    addFile(tree, "/b/lib/python3.11/site-packages/hermes_cli", "__init__.py", '__version__ = "0.19.0"\n');
+    const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree) });
+    assert.deepEqual(result, { version: null, reasonCode: "version_source_ambiguous" }, content);
+  }
 });
