@@ -142,6 +142,44 @@ test("contract-evidence-C5 só a atribuição literal em código, no nível do m
   }
 });
 
+// Achado formal5 P2 (nº1, .checks/code-review/formal5-fixes.md): o regex de
+// mutação exigia o ponto imediatamente após o nome — `VALID_HOOKS .clear()`
+// (espaço antes do ponto) é Python tão válido quanto a forma sem espaço, e
+// escapava do filtro: a tabela mutada passava como reconhecida, liberando
+// `verified`/`configured`/`trusted` com eventos que a mutação já removeu do
+// conjunto efetivo. Cobre espaço, tab e continuação lógica (`\` + quebra de
+// linha) nas duas junções (nome→ponto e método→parêntese), nas duas tabelas.
+test("contract-evidence-formal5-1 mutação com espaço, tab ou continuação lógica entre nome/ponto/método/parêntese não escapa do filtro", () => {
+  const MUTATIONS = {
+    "espaço antes do ponto": "VALID_HOOKS .clear()\n",
+    "tab antes do ponto": "VALID_HOOKS\t.clear()\n",
+    "espaço depois do ponto, antes do método": "VALID_HOOKS. clear()\n",
+    "espaço antes do parêntese": "VALID_HOOKS.clear ()\n",
+    "continuação lógica (\\) antes do ponto": "VALID_HOOKS \\\n.clear()\n",
+    "continuação lógica (\\) antes do parêntese": "VALID_HOOKS.clear \\\n()\n",
+  };
+  for (const [label, mutation] of Object.entries(MUTATIONS)) {
+    const validHooksText = 'VALID_HOOKS = {"pre_tool_call"}\n' + mutation;
+    assert.equal(extractHermesValidHooks(validHooksText), null, `VALID_HOOKS/${label}`);
+
+    const shellMutation = mutation.replace("VALID_HOOKS", "SHELL_UNSUPPORTED_HOOKS");
+    const shellText = 'SHELL_UNSUPPORTED_HOOKS = {"pre_tool_call"}\n' + shellMutation;
+    assert.equal(extractHermesShellUnsupportedHooks(shellText), null, `SHELL_UNSUPPORTED_HOOKS/${label}`);
+  }
+});
+
+test("contract-evidence-formal5-1 VALID_HOOKS com espaço antes de .clear() no arquivo da instalação vira state unrecognized, nunca found", async () => {
+  const mutated = hermesPluginsSource({ extra: "VALID_HOOKS .clear()\n" });
+  const result = await readContractEvidence({
+    agentId: "hermes",
+    packageDir: PKG_DIR,
+    fs: fsWithPlugins(mutated),
+  });
+  assert.equal(result.state, "unrecognized");
+  assert.equal(result.mechanisms, undefined);
+  assert.equal(result.validHooks, undefined);
+});
+
 test("contract-evidence-C5 tabela com forma não reconhecida vira state unrecognized, sem eventos", async () => {
   const result = await readContractEvidence({
     agentId: "hermes",

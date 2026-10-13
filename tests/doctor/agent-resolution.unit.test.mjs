@@ -8,7 +8,7 @@
 // launcher-link/hermes.mjs) — esta suíte usa o mesmo tipo de referência que
 // um shim gerado por npm/pip realmente contém.
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -212,6 +212,74 @@ test("agent-resolution-C3 permissão negada vira presence unknown preservando o 
   assert.equal(claude.presence, "present");
   assert.equal(hermes.presence, "present");
 });
+
+// Achado formal5 P2 (nº2, .checks/code-review/formal5-fixes.md): uma entrada
+// do PATH que é, na verdade, um arquivo regular (não diretório) faz
+// stat(dir/agente) retornar ENOTDIR — a mesma ausência de candidato válido
+// que ENOENT, exigindo a mesma continuação para o diretório seguinte. Antes
+// da correção só ENOENT era ignorado; ENOTDIR interrompia findLauncherPath e
+// devolvia presence:unknown/reasonCode:ENOTDIR, mesmo com uma instalação
+// reconhecida no diretório seguinte. Fake FS, portável entre SOs (não
+// depende do errno real do SO que roda o teste). Outros erros de E/S
+// (EACCES, EIO) continuam propagados, provado no teste de permissão negada
+// acima.
+test("agent-resolution-formal5-2 entrada do PATH que faz stat(dir/agente) devolver ENOTDIR é ignorada como ENOENT, continuando para o diretório seguinte", async () => {
+  const tree = buildFsTree();
+  const fileEntryDir = "/tmp/entrada-arquivo";
+  const laterDir = "/path/two";
+  addFile(tree, laterDir, "claude", peBytes(V1));
+  const fs = createFakeFsAdapter(tree);
+  fs.injectFault(fileEntryDir + "/claude", "ENOTDIR");
+
+  const results = await resolveAgents({
+    pathDirs: [fileEntryDir, laterDir],
+    platform: "linux",
+    fs,
+    childProcess: throwingChildProcess(),
+  });
+  const claude = results.find((r) => r.id === "claude");
+  assert.equal(claude.presence, "present");
+  assert.equal(claude.path, laterDir + "/claude");
+  assert.equal(claude.version, "2.1.295");
+});
+
+// Mesmo achado, fronteira real do SO (Linux/macOS): um ARQUIVO de verdade no
+// primeiro diretório do PATH precisa produzir o ENOTDIR nativo (não
+// simulado) ao tentar stat(arquivo/claude), e a instalação real no segundo
+// diretório precisa ser encontrada mesmo assim. O Windows não reproduz esta
+// mesma condição de SO (um componente de caminho que é arquivo resolve
+// diferente no NTFS/Win32; a cobertura portável acima já cobre o contrato em
+// todo SO), então este teste roda só em Linux/macOS, como o teste de
+// symlink real já faz nesta suíte.
+test(
+  "agent-resolution-formal5-2 arquivo regular real no PATH antes de uma instalação real (POSIX): ENOTDIR não interrompe a busca",
+  { skip: process.platform === "win32" },
+  async () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), "doctor-enotdir-"));
+    try {
+      const fileEntry = path.join(scratch, "arquivo-no-path");
+      writeFileSync(fileEntry, "não é um diretório\n");
+      const binDir = path.join(scratch, "bin");
+      mkdirSync(binDir, { recursive: true });
+      const claudePath = path.join(binDir, "claude");
+      writeFileSync(claudePath, peBytes(V1));
+      chmodSync(claudePath, 0o755);
+
+      const fsAdapter = { stat, readFile, lstat, realpath };
+      const results = await resolveAgents({
+        pathDirs: [fileEntry, binDir],
+        platform: process.platform,
+        fs: fsAdapter,
+      });
+      const claude = results.find((r) => r.id === "claude");
+      assert.equal(claude.presence, "present");
+      assert.equal(claude.path, claudePath);
+      assert.equal(claude.version, "2.1.295");
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
 
 test("agent-resolution-C4 nunca chama child_process ao resolver agentes", async () => {
   const tree = buildFsTree();

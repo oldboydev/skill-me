@@ -33,9 +33,19 @@ const HERMES_CONTRACT_SOURCE_KIND = "hermes_valid_hooks";
 // nome porque o mesmo arquivo traz duas tabelas de conjunto reconhecidas por
 // esta leitura (VALID_HOOKS e SHELL_UNSUPPORTED_HOOKS, ver
 // extractHermesShellUnsupportedHooks abaixo).
+//
+// Achado formal5 (nº1): `NOME.clear(` exigia o ponto imediatamente após o
+// nome, mas espaço, tab ou continuação lógica (`\` + quebra de linha) entre
+// nome/ponto e entre método/parêntese são Python tão válidos quanto a forma
+// sem separador — `VALID_HOOKS .clear()` escapava do filtro. Continua regex
+// sobre texto bruto (não token) para preservar a mesma proteção contra
+// mutação escondida em string/exec já documentada acima; uma forma
+// parentesizada equivalente (`(VALID_HOOKS).clear()`) ficaria fora deste
+// padrão, pois exigiria tokenizar em vez de só flexibilizar separadores.
+const PY_TOKEN_SEP = String.raw`(?:[ \t]|\\\r?\n)*`;
 function runtimeMutationPattern(name) {
   return new RegExp(
-    `${name}[ \\t]*[-&^|+]=|${name}\\.(?:add|discard|remove|clear|pop|update|difference_update|intersection_update|symmetric_difference_update)\\s*\\(`,
+    `${name}${PY_TOKEN_SEP}[-&^|+]=|${name}${PY_TOKEN_SEP}\\.${PY_TOKEN_SEP}(?:add|discard|remove|clear|pop|update|difference_update|intersection_update|symmetric_difference_update)${PY_TOKEN_SEP}\\(`,
   );
 }
 const EVENT_NAME = /^[a-z_][a-z0-9_]*$/;

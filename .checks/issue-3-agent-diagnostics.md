@@ -201,6 +201,53 @@ condicional ao executor já registrado desde a rodada 3). `npm test` completo um
 `contract-evidence.unit.test.mjs` foram adicionados dentro de testes "unrecognized" já existentes, sem criar
 test() novo.
 
+### Landing da correção formal5 — mutação com separador flexível e entrada de PATH que é arquivo
+
+Quinta revisão formal (`.checks/code-review/issue-3-formal5-response.json`, HEAD `ba43626`,
+`changes_requested`): encaminhamento em `.checks/code-review/formal5-fixes.md`. Dois achados P2 bloqueantes,
+ambos residuais dos mesmos dois leitores já corrigidos em rodadas anteriores (regex de mutação textual do
+contrato Hermes, achado 2 da rodada formal 1; resolução de PATH, achados 3/4 da mesma rodada) — não uma
+categoria nova de critério. Autor: Claude; Codex local só revisa. Nenhum critério da task muda;
+`.verified.md` não é editado por este autor.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| Mutação de `VALID_HOOKS`/`SHELL_UNSUPPORTED_HOOKS` continua regex sobre texto bruto, com separador flexível (achado 1) | `runtimeMutationPattern` (`contract-evidence.mjs`) exigia o ponto imediatamente após o nome: `VALID_HOOKS.clear(` casava, `VALID_HOOKS .clear(` (espaço) não — mesma instrução Python válida escapando do filtro, deixando a tabela mutada ser lida como se o literal anterior ainda fosse o conjunto efetivo. Um novo grupo `PY_TOKEN_SEP` (`(?:[ \t]|\\\r?\n)*`, espaço/tab/continuação lógica) entra nas duas junções — nome→ponto e método→parêntese — preservando a mesma leitura sobre texto bruto (não token), que já é a proteção documentada contra mutação escondida em string/exec. Mais permissivo nunca é menos seguro aqui: toda correspondência nova só reforça o lado conservador (`null`/`unrecognized`), nunca libera `verified`/`configured`/`trusted` a mais | Tokenizar esta checagem para também cobrir parentesização equivalente (`(VALID_HOOKS).clear()`) — exigiria abandonar a leitura sobre texto bruto que protege contra mutação dentro de string/exec, documentada desde a rodada formal 1; fora do escopo do achado, que pede separador flexível, não um parser novo |
+| Entrada de PATH que é arquivo regular continua a busca, igual a ausente (achado 2) | `findLauncherPath` (`agent-resolution.mjs`) só ignorava `ENOENT` ao fazer `stat(dir/agente)`; uma entrada do PATH que é, de fato, um arquivo (não diretório) faz esse mesmo `stat` devolver `ENOTDIR` — exceção não tratada subia inteira, encerrando a busca e devolvendo `presence: unknown/reasonCode: ENOTDIR` mesmo com instalações reconhecidas em diretórios seguintes. `ENOTDIR` entra no mesmo `continue` de `ENOENT` (mesma ausência de candidato válido nesse diretório). `EACCES`/`EIO`/outros erros de E/S continuam propagados sem alteração (já provado no teste de permissão negada) | Checar `stats.isDirectory()` do próprio diretório do PATH antes de descer ao candidato — exigiria um `stat()` a mais por diretório (custo e chamada nova) só para antecipar um erro que o `stat()` do candidato já relata com um código específico e sem ambiguidade |
+
+Regressão RED contra `ba43626` (produto no estado anterior a esta correção, testes desta rodada já
+presentes), saída completa em `.checks/code-review/formal5-red.txt`:
+
+```
+node --test tests/doctor/contract-evidence.unit.test.mjs tests/doctor/agent-resolution.unit.test.mjs \
+  tests/doctor/configuration-trust.cli.test.mjs
+  -> tests 103, pass 97, fail 4, skipped 2
+EXIT_CODE=1
+```
+
+As 4 falhas (2 em `contract-evidence.unit.test.mjs` — mutação com espaço/tab/continuação lógica ainda
+reconhecida como tabela válida, e o `readContractEvidence` correspondente ainda `found`; 1 em
+`agent-resolution.unit.test.mjs` — `claude.presence` observado `"unknown"`/`reasonCode: "ENOTDIR"` contra o
+esperado `"present"`; 1 em `configuration-trust.cli.test.mjs` — `hermes.configuration` observado
+`"configured"` contra o esperado `"unknown"`, com `trust` ainda alcançando a avaliação de
+`hooks_auto_accept`) são exatamente os casos novos desta rodada; os demais 97 continuavam verdes (nenhuma
+regressão de fora do escopo). Os 2 skips são o mesmo `agent-resolution-C2 realpath/symlink real` (POSIX, já
+condicional) e o novo teste de arquivo real no PATH desta rodada (achado 2), ambos condicionais ao executor
+— esta máquina é Windows, então nenhum dos dois roda aqui; a matriz de CI (Linux/macOS) os exercita de
+verdade.
+
+GREEN dos mesmos três alvos depois da correção, mais `capability-evidence.cli.test.mjs` (controle de que
+tabelas legítimas não perdem contrato — não afetado pelo achado 1, incluído para confirmar ausência de
+regressão na mesma função), saída completa em `.checks/code-review/formal5-green.txt`: 111 pass, 0 fail, 2
+skip (mesmos dois skips condicionais ao executor).
+
+`npm test` completo, uma única execução após a última alteração de código/testes desta rodada, antes das
+notas de documentação/Landing abaixo (saída completa em `.checks/code-review/formal5-npm-test.txt`):
+`test:governance` 6/6, `test:code-review` 10/10,
+`test:doctor` 335 testes/333 pass/2 skip. Delta de `test:doctor` contra a seção 23 do build (330 → 335): 5
+testes novos (2 em `contract-evidence.unit.test.mjs`, 2 em `agent-resolution.unit.test.mjs` — um portável via
+fake FS, um real em POSIX/skip no Windows —, 1 em `configuration-trust.cli.test.mjs`).
+
 ## Checks
 
 ### S1 - Saber quais agentes foram encontrados sem iniciar os agentes · 6 arquivos · ~26 KB · ~7k
@@ -225,8 +272,15 @@ reconhecido); o shim npm é ligado ao pacote pela linha de invocação do templa
 `.checks/issue-3-agent-diagnostics.build.md` seção 10; no Hermes POSIX o `pythonX.Y` do
 shebang escolhe o `site-packages`. As fixtures usam os templates reais do cmd-shim desta máquina e o
 symlink do npm no POSIX — o shim `require("./node_modules/...")` anterior era fictício.
+**Corrigido na correção formal5 (achado 2)**: uma entrada do PATH que é, na verdade, um arquivo regular (não
+diretório) fazia `stat(dir/agente)` devolver `ENOTDIR`, não tratado — a busca pela primeira resolução válida
+parava nessa entrada em vez de seguir para o diretório seguinte, mesmo com uma instalação reconhecida
+depois. `ENOTDIR` agora é ignorado igual a `ENOENT`; `EACCES`/`EIO` continuam propagados sem alteração. Ver
+Landing da correção formal5.
 Proof: `node --test --test-name-pattern="presence-C2" tests/doctor/presence.cli.test.mjs`
 Proof: `node --test --test-name-pattern="agent-resolution-C2" tests/doctor/agent-resolution.unit.test.mjs`
+Proof (achado 2, fake FS portável + regressão real em Linux/macOS, condicional ao executor):
+`node --test --test-name-pattern="agent-resolution-formal5-2" tests/doctor/agent-resolution.unit.test.mjs`
 
 **C3** - Versão ilegível, launcher não reconhecido e fonte ambígua mantêm `presence: present`,
 `version: null` com motivo específico; permissão negada vira `presence: unknown` preservando o código do
@@ -271,10 +325,18 @@ com `evidence.source`/`evidence.events`; launcher ausente → `unavailable/execu
 local; versão/fonte inconclusiva → `unverified` com motivo específico. Claude e Codex ficam
 `unverified/no_static_contract_source` (sem artefato textual nos layouts inspecionados). Ver Landing da
 rodada formal 1.
+**Corrigido na correção formal5 (achado 1)**: o regex de mutação de `VALID_HOOKS`/`SHELL_UNSUPPORTED_HOOKS`
+exigia o ponto imediatamente após o nome; `VALID_HOOKS .clear()` (espaço antes do ponto, Python tão válido
+quanto a forma sem espaço) escapava do filtro e a tabela mutada era lida como se o literal anterior ainda
+fosse o conjunto efetivo. Espaço, tab e continuação lógica (`\` + quebra de linha) agora são reconhecidos nas
+duas junções (nome→ponto, método→parêntese), nas duas tabelas. Ver Landing da correção formal5.
 Proof: `node --test --test-name-pattern="capability-matrix-C5" tests/doctor/capability-matrix.unit.test.mjs`
 Proof (leitura da tabela instalada, estados inconclusivos): `node --test tests/doctor/contract-evidence.unit.test.mjs`
 Proof (fronteira real da CLI — verified com fonte, evento ausente, versão sem perfil, launcher ausente):
 `node --test --test-name-pattern="capability-evidence-C5" tests/doctor/capability-evidence.cli.test.mjs`
+Proof (achado 1, separador flexível na mutação, camada pura e fronteira real combinada com configuration/
+trust do Hermes): `node --test --test-name-pattern="formal5-1" tests/doctor/contract-evidence.unit.test.mjs
+tests/doctor/configuration-trust.cli.test.mjs`
 
 **C6** - `support`, `configuration` e `runtimeVerification` são representados separadamente; configuração
 existente nunca produz `runtimeVerification: verified`; nesta entrega `runtimeVerification` é sempre
@@ -410,12 +472,22 @@ ou `invalid/features_hooks_flag_invalid_type`. `features`/`hooks`/`codex_hooks` 
 (`FeaturesToml`, `lib.rs:838–871`): `extractSafeFields` agora entra no ramo inteiro só com
 `agentId === "codex"`. Claude/Hermes ignoram `features` de qualquer tipo e continuam decididos por
 `hooks`, `disableAllHooks`, `allowManagedHooksOnly` e `hooks_auto_accept`; a validação do Codex não muda.
+**Corrigido na correção formal5 (achado 1, efeito em cascata sem alteração própria de `config-reader.mjs`)**:
+a mutação de `VALID_HOOKS` com separador flexível (ver C5) agora é reconhecida como tal, então o catálogo
+real nunca mais é lido como válido nesse cenário — `hermesValidHooks` chega `null`, e um Hermes
+estruturalmente `configured` (com handler real e `hooks_auto_accept: true`) cai para
+`unknown/hooks_catalog_unavailable`; `trust` fica `unknown/configuration_not_determined`, pois a origem
+nativa de confiança só é consultada quando `configuration` já é `configured`. Nenhuma regra nova de
+configuration/trust: o mesmo caminho já provado para "sem `plugins.py` vinculado" (`hermesValidHooks null`,
+C8 acima) passa a cobrir também a tabela mutada, agora que a mutação é detectada corretamente.
 Proof: `node --test --test-name-pattern="config-projection-C8" tests/doctor/config-projection.unit.test.mjs`
 Proof: `node --test tests/doctor/config-sources.unit.test.mjs`
 Proof: `node --test tests/doctor/config-reader.unit.test.mjs`
 Proof: `node --test tests/doctor/scope-merge.unit.test.mjs`
 Proof: `node --test tests/doctor/trust-resolution.unit.test.mjs`
 Proof: `node --test --test-name-pattern="configuration-trust-C8" tests/doctor/configuration-trust.cli.test.mjs`
+Proof (achado 1 formal5, fronteira real combinando mutação + configuration + trust):
+`node --test --test-name-pattern="formal5" tests/doctor/configuration-trust.cli.test.mjs`
 
 **C9** - `--collector tcp://127.0.0.1:<porta>` ou `tcp://[::1]:<porta>` tenta só conexão de transporte;
 socket disponível retorna `reachable`; recusa retorna `unreachable`; `identityVerified` é sempre `false`.

@@ -84,7 +84,13 @@ async function findLauncherPath(agentId, pathDirs, platform, env, fs) {
       try {
         stats = await fs.stat(candidate);
       } catch (error) {
-        if (error.code === "ENOENT") continue;
+        // Achado formal5 (nº2): uma entrada do PATH que é, na verdade, um
+        // arquivo regular (não diretório) faz stat(dir/nome) devolver
+        // ENOTDIR, não ENOENT — mesma ausência de candidato válido nesse
+        // diretório, mesma continuação para o próximo. Outros erros de E/S
+        // (EACCES, EIO, ...) continuam propagados; resolveOneAgent os
+        // reporta como presence: unknown.
+        if (error.code === "ENOENT" || error.code === "ENOTDIR") continue;
         throw error;
       }
       if (stats.isDirectory?.()) continue;

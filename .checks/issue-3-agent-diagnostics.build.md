@@ -2889,3 +2889,165 @@ teste lê estes dois arquivos.
 - Evidência (ignorada pelo Git): `.checks/code-review/formal4-red.txt`, `…-green.txt`, `…-npm-test.txt`.
   Preservado sem alteração: `.checks/code-review/formal4-fixes.md` (encaminhamento) e
   `.checks/code-review/issue-3-formal4-response.json` (resposta formal).
+
+## 24. Correção dos dois achados bloqueantes da revisão formal5 (13/10/2026)
+
+Encaminhamento: `.checks/code-review/formal5-fixes.md`; resposta formal em
+`.checks/code-review/issue-3-formal5-response.json` (HEAD `ba43626`, `changes_requested`). Autor: Claude;
+Codex local só revisa. Dois achados P2 bloqueantes, ambos residuais dos mesmos dois leitores já corrigidos
+na rodada formal 1 (regex de mutação textual do contrato Hermes; resolução de PATH) — nenhum critério novo.
+Decisão registrada no Landing (`.checks/issue-3-agent-diagnostics.md`, "Landing da correção formal5"). Sem
+commit, push, stash, PR, Verifier ou agentes nesta rodada; `.tasks`, `.verified.md`, `.linux.md`,
+`code-review.config.json`, core vendorizado e `.git` não tocados — só os dois arquivos de ownership, testes
+afetados, Landing e esta seção. Nenhuma operação Git foi usada para preservar/restaurar estado (sem
+`git stash`): a comparação RED usa a cópia do produto já preservada em
+`.checks/code-review/formal5-baseline-source/` mais a leitura do próprio HEAD anterior à correção.
+
+### Achado 1 — mutação de `VALID_HOOKS` com espaço antes do ponto escapa do filtro
+
+`src/doctor/contract-evidence.mjs:38`. `runtimeMutationPattern` casava `NOME.clear(`/`NOME.add(`/etc. só com
+o ponto imediatamente após o nome: `[-&^|+]=` (operador aumentado) já tolerava espaço/tab antes de si
+(`[ \t]*`), mas a alternativa de chamada de método (`\.`) exigia adjacência total, tanto entre nome e ponto
+quanto entre método e `(`. `VALID_HOOKS .clear()` (espaço antes do ponto) é uma instrução Python tão válida
+quanto `VALID_HOOKS.clear()` e mutava a tabela em tempo de execução da mesma forma, mas escapava do regex:
+`extractTopLevelStringSet` não via a mutação, `findAssignments` encontrava um único `site` de ligação (a
+atribuição original, já que uma chamada de método não é uma ligação do nome) e devolvia o literal anterior
+como se a tabela ainda fosse aquele conjunto. Com um `pre_tool_call` configurado e `hooks_auto_accept: true`
+ao lado, isso liberava `verified` nas cinco capacidades locais (C5/AC2) e `configured`/`trusted` na
+configuração do Hermes (C8/AC3) usando eventos que a mutação já havia removido do conjunto efetivo.
+
+Correção mínima, sem tokenizar: um novo grupo `PY_TOKEN_SEP = (?:[ \t]|\\\r?\n)*` (espaço, tab ou
+continuação lógica — `\` seguido de quebra de linha, real em Python) entra nas duas junções da alternativa
+de método (nome→ponto, método→parêntese) e também na alternativa de operador aumentado (mesma tolerância,
+agora incluindo continuação lógica, que antes só aceitava espaço/tab). Continua regex sobre texto bruto
+(não token): a mesma proteção documentada contra mutação escondida em string/exec (`exec()` com o mesmo
+texto) não muda, e mais permissivo nunca é menos seguro aqui — toda correspondência nova só reforça o lado
+conservador (tabela tratada como não reconhecida), nunca libera `verified`/`configured`/`trusted` a mais.
+Parentesização equivalente (`(VALID_HOOKS).clear()`) fica fora deste padrão: exigiria tokenizar em vez de só
+flexibilizar separadores, e o achado pedia separador flexível, não um parser novo. Aplica-se às duas tabelas
+reconhecidas por `runtimeMutationPattern` (`VALID_HOOKS` e `SHELL_UNSUPPORTED_HOOKS`), já que a função é
+parametrizada pelo nome.
+
+### Achado 2 — entrada de PATH que é arquivo interrompe a resolução
+
+`src/doctor/agent-resolution.mjs:87`. `findLauncherPath` só ignorava `ENOENT` ao capturar o erro de
+`fs.stat(candidate)`; qualquer outro código subia inteiro, encerrando o laço de diretórios do PATH. Uma
+entrada do PATH que é, de fato, um arquivo regular (não diretório) — por exemplo, uma ferramenta instalada
+sem extensão num diretório comum — faz `stat(arquivo/nome-do-agente)` devolver `ENOTDIR` (POSIX: um
+componente do prefixo do caminho não é diretório), não `ENOENT`. Antes da correção, essa condição real
+encerrava a busca da primeira resolução válida (contrato de C2) e devolvia `presence: unknown`/
+`reasonCode: "ENOTDIR"` para o agente inteiro, mesmo com uma instalação reconhecida em um diretório seguinte
+do mesmo PATH — contrariando C2/AC1 (a primeira resolução válida deve vencer, não a primeira entrada que
+falhar ao ser examinada).
+
+Correção mínima: `ENOTDIR` entra no mesmo `continue` já usado para `ENOENT` — mesma ausência de candidato
+válido nesse diretório, mesma continuação para o próximo. `EACCES`/`EIO`/outros erros de E/S reais continuam
+subindo sem alteração (provado no teste de permissão negada já existente, `agent-resolution-C3`); a correção
+não amplia a lista de códigos ignorados além do exigido pelo achado.
+
+### Ordem seguida e evidência de execução real
+
+Leitura do encaminhamento (`.checks/code-review/formal5-fixes.md`) e da resposta formal
+(`.checks/code-review/issue-3-formal5-response.json`) → leitura de `contract-evidence.mjs`,
+`agent-resolution.mjs` e dos testes/helpers existentes (`hermes-contract-source.mjs`, `fake-fs-adapter.mjs`,
+`fixture-agents.mjs`, `fixture-agent-config.mjs`) → testes novos nos três arquivos afetados → RED com `src/`
+intacto → correção → GREEN nos mesmos três arquivos, mais `capability-evidence.cli.test.mjs` como controle
+de ausência de regressão → Landing → `npm test` completo uma única execução após a última alteração →
+documentação lida por teste. Sem `git stash` nem qualquer outra operação Git: o RED foi obtido rodando a
+suíte com o produto ainda não corrigido nesta sessão (testes já escritos, fontes de `src/doctor/**` intactas
+até a correção ser aplicada), não por restaurar um estado anterior via Git.
+
+RED (saída completa em `.checks/code-review/formal5-red.txt`):
+
+```
+node --test tests/doctor/contract-evidence.unit.test.mjs tests/doctor/agent-resolution.unit.test.mjs \
+  tests/doctor/configuration-trust.cli.test.mjs
+tests 103, pass 97, fail 4, skipped 2
+exit=1
+```
+
+As 4 falhas, uma a uma:
+
+- 2 em `contract-evidence.unit.test.mjs` (achado 1): `extractHermesValidHooks`/
+  `extractHermesShellUnsupportedHooks` com espaço/tab/continuação lógica antes do ponto ou do parêntese
+  ainda devolviam a lista de eventos (esperado `null`); `readContractEvidence` sobre o mesmo arquivo mutado
+  ainda devolvia `state: "found"` (esperado `"unrecognized"`).
+- 1 em `agent-resolution.unit.test.mjs` (achado 2, fake FS portável): `claude.presence` observado
+  `"unknown"` contra o esperado `"present"` depois de uma entrada de PATH com `ENOTDIR` injetado antes de um
+  diretório com instalação reconhecida — a prova literal do sintoma na fronteira de `resolveAgents`.
+- 1 em `configuration-trust.cli.test.mjs` (achado 1, fronteira real da CLI): `hermes.configuration`
+  observado `"configured"` contra o esperado `"unknown"`, com `trust` chegando a avaliar
+  `hooks_auto_accept: true` e produzir `"trusted"` — a prova literal do efeito em cascata sobre C8/AC3 numa
+  instalação Hermes real (três agentes instalados, config.yaml real, `pre_tool_call` configurado).
+
+Os 2 skips são condicionais à plataforma do executor (Windows, nesta máquina): o mesmo
+`agent-resolution-C2 realpath/symlink real` já registrado desde a seção 3, e o novo teste desta rodada que
+reproduz `ENOTDIR` com um arquivo REAL no PATH (achado 2) — a condição de SO que gera `ENOTDIR` por um
+componente de caminho ser arquivo é POSIX; o Windows não garante o mesmo errno pela mesma causa. A cobertura
+portável (fake FS, sem depender do errno real do SO que roda o teste) cobre o contrato em qualquer SO,
+inclusive Windows; a regressão real em Linux/macOS roda na matriz de CI. Os demais 97 casos continuavam
+verdes (nenhuma regressão de fora do escopo introduzida pelos testes novos).
+
+GREEN dos mesmos três alvos depois da correção, mais `capability-evidence.cli.test.mjs` como controle de
+que tabelas `VALID_HOOKS` legítimas (sem mutação) não perdem o contrato por causa do separador mais flexível
+(saída completa em `.checks/code-review/formal5-green.txt`):
+
+```
+tests 113, pass 111, fail 0, skipped 2
+exit=0
+```
+
+`npm test` completo, uma única execução após a última alteração de código/testes desta rodada (antes das
+notas de documentação/Landing que fecham esta seção, que não alteram comportamento nem são recobertas por
+este run — saída completa em `.checks/code-review/formal5-npm-test.txt`):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 335, pass 333, fail 0, skipped 2
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a seção 23 (330 → 335): 5 testes novos (2 em
+`contract-evidence.unit.test.mjs`: mutação com espaço/tab/continuação lógica nas duas junções e nas duas
+tabelas, e `readContractEvidence` sobre o arquivo mutado; 2 em `agent-resolution.unit.test.mjs`: fake FS
+portável com `ENOTDIR` injetado, e regressão real em POSIX com um arquivo de verdade no PATH — condicional
+ao executor, mesmo padrão do skip de symlink já existente; 1 em `configuration-trust.cli.test.mjs`:
+fronteira real da CLI combinando a mutação com `configuration`/`trust`/`hooks_auto_accept` do Hermes). O
+único delta de skip contra a seção 23 (1 → 2) é exatamente o novo teste condicional ao executor, não uma
+omissão.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0. O teste de regressão real do achado 2 (arquivo de verdade no
+  PATH produzindo `ENOTDIR` nativo) está escrito e foi conferido estaticamente, mas **não rodou nesta
+  máquina** — fica `skip` por `process.platform === "win32"`, como o teste de symlink real já registrado
+  desde a seção 3. A cobertura portável por fake FS (mesma asserção de comportamento, sem depender do errno
+  real do SO) roda em qualquer SO, incluindo este; a regressão real em Linux/macOS só é exercitada pela
+  matriz de CI (`ubuntu-22.04`, `macos-14`), não observada diretamente nesta sessão.
+- Não verificado se o Windows pode produzir `ENOTDIR` pela mesma causa (componente de caminho que é
+  arquivo) em algum layout de sistema de arquivos — a literatura e a observação local indicam que o Win32/
+  NTFS tende a `ENOENT` nesse caso, daí o teste real ser condicionado a POSIX; nenhuma alegação é feita sobre
+  o comportamento exato do Windows aqui, apenas que `ENOTDIR`, quando ocorrer em qualquer SO, é tratado como
+  `ENOENT` pela correção.
+- `PY_TOKEN_SEP` é mais permissivo que a gramática exata do Python (ex.: aceitaria uma sequência inválida
+  como espaço seguido de `\` sem quebra de linha imediata, que o Python rejeitaria como erro de sintaxe);
+  isso nunca é um risco de segurança nesta leitura, porque qualquer correspondência a mais só reforça o lado
+  conservador (tabela tratada como mutada/não reconhecida), nunca libera `verified`/`configured`/`trusted`
+  para um caso que não deveria — documentado no comentário da função, não testado exaustivamente contra toda
+  entrada inválida possível, por não ser necessário ao contrato.
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/contract-evidence.mjs` (`PY_TOKEN_SEP`, achado 1); `src/doctor/agent-resolution.mjs`
+  (`ENOTDIR` no mesmo `continue` de `ENOENT`, achado 2).
+- Testes: `tests/doctor/contract-evidence.unit.test.mjs` (2 novos, achado 1),
+  `tests/doctor/agent-resolution.unit.test.mjs` (2 novos: fake FS portável e regressão real POSIX/skip no
+  Windows, achado 2), `tests/doctor/configuration-trust.cli.test.mjs` (1 novo, achado 1, fronteira real da
+  CLI combinando mutação + configuration/trust). `tests/doctor/capability-evidence.cli.test.mjs` rodado como
+  controle de ausência de regressão, sem alteração própria.
+- Documentação/checklist: `.checks/issue-3-agent-diagnostics.md` (nova subseção "Landing da correção
+  formal5"; notas de correção nos itens C2, C5 e C8; novas linhas de Proof), esta seção.
+- Evidência (ignorada pelo Git): `.checks/code-review/formal5-red.txt`, `…-green.txt`, `…-npm-test.txt`.
+  Preservado sem alteração: `.checks/code-review/formal5-fixes.md` (encaminhamento) e
+  `.checks/code-review/issue-3-formal5-response.json` (resposta formal).
