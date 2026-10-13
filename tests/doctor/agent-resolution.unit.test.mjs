@@ -23,6 +23,12 @@ import {
   groupedAugmentedStatement,
 } from "./helpers/grouped-augmented-targets.mjs";
 import {
+  CAPTURE_CONTROLS,
+  CASE_CAPTURE_PATTERNS,
+  WITH_CAPTURE_TARGETS,
+  captureStatement,
+} from "./helpers/binding-captures.mjs";
+import {
   addDir,
   addFile,
   addSymlink,
@@ -1165,6 +1171,44 @@ test("agent-resolution-formal5-grouped-binding Hermes: __version__ agrupado em l
     const result = await hermesVersionWith(`__version__ = "0.21.4"\n${statement}\n`);
     assert.equal(result.version, "0.21.4", label);
     assert.equal(result.versionSource, "source_literal", label);
+  }
+});
+
+// Revisão formal6 (.checks/code-review/formal6-fixes.md): `case __version__:`
+// e `with C() as (__version__, outro):` ligam o nome sem `=` (formas em
+// helpers/binding-captures.mjs) e ainda publicavam o literal anterior.
+test("agent-resolution-formal6-captures Hermes: __version__ capturado em padrão case ou no alvo de with vira version_source_ambiguous e nunca publica o literal anterior", async () => {
+  const published = [];
+  let checked = 0;
+  for (const [shape, template] of Object.entries({ ...CASE_CAPTURE_PATTERNS, ...WITH_CAPTURE_TARGETS })) {
+    checked += 1;
+    const statement = captureStatement(template, "__version__", '"0.20.0"');
+    const result = await hermesVersionWith(`__version__ = "0.21.4"\n${statement}\n`);
+    if (result.version !== null || result.versionSource !== undefined || result.reasonCode !== "version_source_ambiguous") {
+      published.push(`${shape} -> ${JSON.stringify(result)}`);
+    }
+  }
+  assert.equal(checked, 20 + 10);
+  assert.deepEqual(published, []);
+});
+
+test("agent-resolution-formal6-captures Hermes: __version__ em guarda, subject, corpo, valor pontuado, classe, case/match comuns, contexto do with, comentário ou string preserva 0.21.4", async () => {
+  for (const [label, template] of Object.entries(CAPTURE_CONTROLS)) {
+    const statement = captureStatement(template, "__version__", '"0.20.0"');
+    const result = await hermesVersionWith(`__version__ = "0.21.4"\n${statement}\n`);
+    assert.equal(result.version, "0.21.4", label);
+    assert.equal(result.versionSource, "source_literal", label);
+  }
+});
+
+// Limites conservadores declarados: sem avaliar Python, um nome dentro de
+// subscrito no alvo do with e `case[...]: T` (anotação de `case[...]`, lida
+// como case_block) contam como ligação — ambíguo, nunca o literal anterior.
+test("agent-resolution-formal6-captures Hermes: subscrito no alvo do with e anotação de case[...] ficam ambíguos", async () => {
+  for (const statement of ["with C() as cache[__version__]:\n    pass", "case[__version__]: int = 1"]) {
+    const result = await hermesVersionWith(`__version__ = "0.21.4"\n${statement}\n`);
+    assert.equal(result.version, null, statement);
+    assert.equal(result.reasonCode, "version_source_ambiguous", statement);
   }
 });
 

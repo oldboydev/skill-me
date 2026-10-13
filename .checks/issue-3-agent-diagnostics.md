@@ -327,6 +327,19 @@ revisa. Fonte, RED/GREEN e limites estão na seção 27 do build, que supera o l
 
 Proof: `node --test --test-name-pattern="formal5-grouped-binding" tests/doctor/contract-evidence.unit.test.mjs tests/doctor/agent-resolution.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
 
+### Landing das capturas de `case` e alvos agrupados de `with` — revisão formal6
+
+Encaminhamento: `.checks/code-review/formal6-fixes.md`. É o único finding (P2) da revisão formal6 e bloqueava
+C3/C5/C8; não é um critério novo. `case __version__:` publicava 0.21.4, `case VALID_HOOKS:` confirmava o catálogo
+anterior, e `with C() as (__version__, outro):` também passava despercebido. Autor: Claude; o Codex local só revisa.
+Fonte, RED/GREEN e limites estão na seção 28 do build.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| Captura em padrão `case` e nome no alvo de `with ... as` ligam o nome (CPython 3.13 `pattern_capture_target` e `star_target`) | `captureTargetIndices` (`python-source.mjs`), consumida por `findAssignments`. É case_block quando o token seguinte pode abrir um padrão e há `:` de nível 0 antes de `=`. A captura é o nome do padrão sem `.` antes nem `.`/`(`/`=` depois. O alvo do with vai do `as` até `,`/`:`/fecho na profundidade do `as` | Parser Python completo ou avaliar Python. Também foram descartados recusar todo arquivo com `match`/`with`, que perderia tabelas legítimas, e tomar todo nome depois de `case` como ligação, que tornaria ligação a guarda e `case = x` |
+
+Proof: `node --test --test-name-pattern="formal6-captures" tests/doctor/agent-resolution.unit.test.mjs tests/doctor/contract-evidence.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
+
 ## Checks
 
 ### S1 - Saber quais agentes foram encontrados sem iniciar os agentes · 6 arquivos · ~26 KB · ~7k

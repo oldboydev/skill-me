@@ -25,6 +25,12 @@ import {
   GROUPED_AUGMENTED_TARGETS,
   groupedAugmentedStatement,
 } from "./helpers/grouped-augmented-targets.mjs";
+import {
+  CAPTURE_CONTROLS,
+  CASE_CAPTURE_PATTERNS,
+  WITH_CAPTURE_TARGETS,
+  captureStatement,
+} from "./helpers/binding-captures.mjs";
 
 const PKG_DIR = "/venv/lib/python3.12/site-packages/hermes_cli";
 const PLUGINS_PATH = PKG_DIR + "/plugins.py";
@@ -492,6 +498,63 @@ test("contract-evidence-formal5-grouped-binding alvo agrupado no arquivo da inst
   });
   assert.equal(shellMutated.state, "found");
   assert.equal(shellMutated.shellUnsupportedHooks, null);
+});
+
+// Revisão formal6 (.checks/code-review/formal6-fixes.md): `case VALID_HOOKS:`
+// depois de `match {"not_mapped"}:` substitui a tabela sem `=`, assim como o
+// alvo agrupado de with; as duas tabelas publicavam a lista anterior.
+test("contract-evidence-formal6-captures captura em padrão case ou no alvo de with não confirma nenhuma das duas tabelas", () => {
+  const escaped = [];
+  let checked = 0;
+  for (const [table, extract] of TABLE_EXTRACTORS) {
+    for (const [shape, template] of Object.entries({ ...CASE_CAPTURE_PATTERNS, ...WITH_CAPTURE_TARGETS })) {
+      checked += 1;
+      const statement = captureStatement(template, table, '{"not_mapped"}');
+      const result = extract(`${table} = {"pre_tool_call"}\n${statement}\n`);
+      if (result !== null) escaped.push(`${table}/${shape} -> ${JSON.stringify(result)}`);
+    }
+  }
+  assert.equal(checked, 2 * (20 + 10));
+  assert.deepEqual(escaped, []);
+});
+
+test("contract-evidence-formal6-captures guarda, subject, corpo, valor pontuado, classe, case/match comuns, contexto do with, comentário e string continuam reconhecidos nas duas tabelas", () => {
+  for (const [table, extract] of TABLE_EXTRACTORS) {
+    for (const [label, template] of Object.entries(CAPTURE_CONTROLS)) {
+      const text = `${table} = {"pre_tool_call"}\n${captureStatement(template, table, '{"not_mapped"}')}\n`;
+      assert.deepEqual(extract(text), ["pre_tool_call"], `${table}/${label}`);
+    }
+  }
+});
+
+test("contract-evidence-formal6-captures captura no arquivo da instalação: VALID_HOOKS vira unrecognized; SHELL_UNSUPPORTED_HOOKS vira exclusões desconhecidas, nunca a lista anterior", async () => {
+  for (const extra of [
+    'match {"not_mapped"}:\n    case VALID_HOOKS:\n        pass\n',
+    "with C() as (VALID_HOOKS, outro):\n    pass\n",
+  ]) {
+    const result = await readContractEvidence({
+      agentId: "hermes",
+      packageDir: PKG_DIR,
+      fs: fsWithPlugins(hermesPluginsSource({ extra })),
+    });
+    assert.equal(result.state, "unrecognized", extra);
+    assert.equal(result.mechanisms, undefined, extra);
+    assert.equal(result.validHooks, undefined, extra);
+  }
+
+  for (const extra of [
+    'match {"x"}:\n    case SHELL_UNSUPPORTED_HOOKS:\n        pass\n',
+    "with C() as [outro, SHELL_UNSUPPORTED_HOOKS]:\n    pass\n",
+  ]) {
+    const shellCaptured = await readContractEvidence({
+      agentId: "hermes",
+      packageDir: PKG_DIR,
+      fs: fsWithPlugins(hermesPluginsSource({ extra })),
+    });
+    assert.equal(shellCaptured.state, "found", extra);
+    assert.equal(shellCaptured.shellUnsupportedHooks, null, extra);
+    assert.ok(shellCaptured.validHooks.includes("pre_tool_call"), extra);
+  }
 });
 
 test("contract-evidence-C5 tabela com forma não reconhecida vira state unrecognized, sem eventos", async () => {

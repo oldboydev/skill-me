@@ -206,6 +206,74 @@ function isOtherBindingTarget(tokens, first, k) {
   return topLevelEqualsIn(tokens, k + 1, statementEnd(tokens, k)) !== -1;
 }
 
+// Capturas que ligam sem `=` (CPython 3.13 Grammar/python.gram, lido só como
+// texto, https://github.com/python/cpython/blob/v3.13.0/Grammar/python.gram):
+// o alvo de `with ... as` é um star_target, com grupo, tupla, lista e `*`
+// (l. 407–410 e 1056–1070); num padrão de `case`, todo NAME que não vem
+// depois de `.` nem antes de `.`, `(` ou `=` é pattern_capture_target
+// (l. 455–630). Guarda, subject e corpo só leem. Uma passada por instrução,
+// sem recursão. Ver .checks/issue-3-agent-diagnostics.build.md, seção 28.
+const PATTERN_START_OPS = new Set(["(", "[", "{", "-", "*"]);
+const WITH_TARGET_END_OPS = new Set([",", ":", ")", "]", "}"]);
+
+// `case` é soft keyword: `case = x`, `case.a`, `case(x)` usam um nome comum.
+// É case_block quando o token seguinte pode abrir um padrão e há `:` fora de
+// colchetes antes de qualquer `=`; devolve onde o padrão termina (`if` da
+// guarda ou `:`), ou -1. `case[i]: T` (anotação) também passa: conservador.
+function canStartPattern(token) {
+  if (token?.type === "op") return PATTERN_START_OPS.has(token.value);
+  return token?.type === "name" || token?.type === "string";
+}
+
+function casePatternEnd(tokens, first, end) {
+  if (!isName(tokens[first], "case") || !canStartPattern(tokens[first + 1])) return -1;
+  for (let k = first + 1; k < end; k += 1) {
+    if (tokens[k].depth !== 0) continue;
+    if (isOp(tokens[k], ":") || isName(tokens[k], "if")) return k;
+    if (isOp(tokens[k], "=")) return -1;
+  }
+  return -1;
+}
+
+function isPatternCapture(tokens, k) {
+  const next = tokens[k + 1];
+  return !isOp(tokens[k - 1], ".") && !(next?.type === "op" && [".", "(", "="].includes(next.value));
+}
+
+// Do `as` até `,`, `:` ou o fecho de um grupo na profundidade do próprio
+// `as`, tudo é alvo; o nome dentro de um subscrito do alvo (`as c[NOME]`)
+// também conta: conservador.
+function addWithTargets(tokens, first, end, captured) {
+  let targetDepth = -1;
+  for (let k = first + 1; k < end; k += 1) {
+    const token = tokens[k];
+    if (targetDepth === -1) {
+      if (isName(token, "as")) targetDepth = token.depth;
+    } else if (token.depth === targetDepth && token.type === "op" && WITH_TARGET_END_OPS.has(token.value)) {
+      targetDepth = -1;
+    } else if (token.type === "name") {
+      captured.add(k);
+    }
+  }
+}
+
+function captureTargetIndices(tokens) {
+  const captured = new Set();
+  for (let first = 0; first < tokens.length; ) {
+    const end = statementEnd(tokens, first);
+    const head = tokens[first];
+    const patternEnd = casePatternEnd(tokens, first, end);
+    for (let k = first + 1; k < patternEnd; k += 1) {
+      if (tokens[k].type === "name" && isPatternCapture(tokens, k)) captured.add(k);
+    }
+    if (isName(head, "with") || (isName(head, "async") && isName(tokens[first + 1], "with"))) {
+      addWithTargets(tokens, first, end, captured);
+    }
+    first = end + 1;
+  }
+  return captured;
+}
+
 // Toda ligação de `name` em código. Só `name = ...` e `name: T = ...` com a
 // instrução começando no próprio nome, na coluna 0 e fora de colchetes têm
 // `moduleLevel` e `valueIndex` (primeiro token do valor); `name=` dentro de
@@ -220,8 +288,10 @@ function isOtherBindingTarget(tokens, first, k) {
 // https://github.com/python/cpython/blob/v3.13.0/Grammar/python.gram#L968).
 // Basta o operador logo depois do grupo, fora de colchetes: `x[(name)] += 1`
 // muda `x`, e `f(name) += 1` ou `(a, name) += 1` não são Python válido.
+// Capturas de `case` e alvos de `with ... as` vêm de captureTargetIndices.
 export function findAssignments(tokens, name) {
   const sites = [];
+  const captured = captureTargetIndices(tokens);
   let first = 0;
   tokens.forEach((token, k) => {
     if (token.statementStart || (isOp(tokens[k - 1], ";") && tokens[k - 1].depth === 0)) first = k;
@@ -243,6 +313,7 @@ export function findAssignments(tokens, name) {
     if (
       isOp(next, ":=") ||
       (afterGroup?.type === "op" && AUGMENTED_ASSIGNMENT_OPERATORS.has(afterGroup.value) && afterGroup.depth === 0) ||
+      captured.has(k) ||
       isOtherBindingTarget(tokens, first, k)
     ) {
       sites.push({ moduleLevel: false, valueIndex: null });

@@ -538,6 +538,85 @@ for (const [label, expected] of Object.entries(GROUPED_BINDING_CLI_CASES)) {
   });
 }
 
+// Revisão formal6 (.checks/code-review/formal6-fixes.md): os dois cenários do
+// achado, captura em padrão case, na fronteira real da CLI. Mesmas asserções
+// do alvo agrupado acima; o corpo repete aquele para não alterar testes já
+// entregues.
+const CASE_CAPTURE_CLI_CASES = {
+  "case __version__ (versão)": {
+    fixture: {
+      hermesContractSource: hermesPluginsSource(),
+      hermesInitSource: '__version__ = "0.21.4"\nmatch "0.20.0":\n    case __version__:\n        pass\n',
+    },
+    version: null,
+    versionReasonCode: "version_source_ambiguous",
+    rowReasonCode: "version_unresolved",
+  },
+  "case VALID_HOOKS (catálogo)": {
+    fixture: {
+      hermesContractSource: hermesPluginsSource({ extra: 'match {"not_mapped"}:\n    case VALID_HOOKS:\n        pass\n' }),
+    },
+    version: "0.21.4",
+    versionReasonCode: null,
+    rowReasonCode: "contract_source_unrecognized",
+  },
+};
+
+for (const [label, expected] of Object.entries(CASE_CAPTURE_CLI_CASES)) {
+  test(`configuration-trust-C8/formal6-captures ${label} não concede verified/configured/trusted, mesmo com hooks_auto_accept:true`, () => {
+    const scratch = makeScratch("doctor-formal6-captures-");
+    try {
+      const dir = path.join(scratch, "bin");
+      const { pathDirs } = installAllAgents(dir, {
+        sentinelPath: path.join(scratch, "sentinel.txt"),
+        ...expected.fixture,
+      });
+      const home = path.join(scratch, "home");
+      const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
+      writeAgentConfig(
+        home,
+        "hermes",
+        'hooks:\n  pre_tool_call:\n    - command: "internal-safe-handler"\nhooks_auto_accept: true\n',
+        { env, platform: process.platform },
+      );
+
+      const { status, stdout, report } = runDoctorJson([], { env });
+      assert.equal(status, 0, label);
+      assert.equal(report.agents.length, 3, label);
+      const hermes = report.agents.find((a) => a.id === "hermes");
+      assert.equal(hermes.presence, "present", label);
+      assert.equal(hermes.version, expected.version, label);
+      assert.equal(hermes.reasonCode, expected.versionReasonCode, label);
+      assert.equal(hermes.configuration, "unknown", label);
+      assert.equal(hermes.configReasonCode, "hooks_catalog_unavailable", label);
+      assert.equal(hermes.trust, "unknown", label);
+      assert.equal(hermes.trustReasonCode, "configuration_not_determined", label);
+
+      const localRows = hermes.capabilities.filter((row) => row.surface === "cli_local");
+      assert.equal(localRows.length, 5, label);
+      for (const row of localRows) {
+        assert.equal(row.support, "unverified", `${label}/${row.mechanism}`);
+        assert.equal(row.reasonCode, expected.rowReasonCode, `${label}/${row.mechanism}`);
+      }
+      assert.doesNotMatch(stdout, /"support":"verified"/, label);
+
+      const text = runDoctor([], { env });
+      assert.equal(text.status, 0, label);
+      assert.match(text.stdout, /hooks_catalog_unavailable/, label);
+      assert.match(text.stdout, new RegExp(expected.rowReasonCode), label);
+      assert.doesNotMatch(text.stdout, /local_contract_lists_events/, label);
+      if (expected.version === null) {
+        assert.equal(hermes.versionSource, null, label);
+        assert.match(text.stdout, /version_source_ambiguous/, label);
+        assert.doesNotMatch(stdout, /0\.21\.4/, label);
+        assert.doesNotMatch(text.stdout, /0\.21\.4/, label);
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+}
+
 // C16/G4 — fronteira real da CLI: config inacessível, provada de forma
 // portátil entre Windows/Linux/macOS. chmod não bloqueia o dono no Windows e
 // CI costuma rodar como root, então uma permissão negada real não é

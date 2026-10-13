@@ -3328,3 +3328,68 @@ exato e `configuration`/`trust` `unknown`. Conferem também a paridade entre JSO
   léxica já registrada para `obj.__version__`.
 - O custo quadrático de `columnOf` numa linha única longa segue fora do alcance.
 - A execução foi só em Windows 11 Pro, com Node 24.21.0.
+
+## 28. Capturas de `case` e alvos agrupados de `with` — revisão formal6 (13/10/2026)
+
+Encaminhamento: `.checks/code-review/formal6-fixes.md`. É o único finding (P2) de
+`.checks/code-review/issue-3-formal6-response.json` e bloqueava C3/C5/C8; não é um critério novo. Autor: Claude; o Codex
+local só revisa. Arquivos alterados: `src/doctor/python-source.mjs`, os testes de versão, de contrato e de CLI, o novo
+helper `tests/doctor/helpers/binding-captures.mjs`, o Landing e esta seção. `contract-evidence.mjs` ficou intacto. Não
+houve operação Git, stash, agente, hook, execução de Python nem configuração real.
+
+**Fonte.** `Grammar/python.gram` da tag v3.13.0 do CPython, lido só como texto (sha256 `f33b6e20…`). `with_item`
+(l. 407–410) usa `'as' star_target`, e `star_atom` (l. 1066–1070) admite grupo, tupla e lista. Em `case_block`
+(l. 455–460), o padrão termina na guarda `if` ou em `:`. `pattern_capture_target` (l. 531–533) é o `NAME` que não vem
+antes de `.`, `(` ou `=`, e aparece em captura, `*`, `**`, `as` e argumentos de classe (l. 471–630). As linhas citadas
+no encaminhamento (371–374, 412–417, 479–484, 499–545) e o `#L968` da seção 27 não apontam para essas regras no texto
+bruto. As regras são as mesmas.
+
+**Decisão.** `captureTargetIndices` percorre cada instrução uma vez sobre os tokens existentes, sem recursão, e
+`findAssignments` conta os índices devolvidos como ligação:
+
+- `case` é soft keyword. A instrução é case_block quando o token seguinte pode abrir um padrão (nome, string, `( [ { -
+  *`) e há `:` de nível 0 antes de qualquer `=`. Assim, `case = x`, `case.a = x`, `case(x)` e `case += x` continuam nomes
+  comuns. No padrão, até o `if` ou o `:` de nível 0, é captura todo nome que não vem depois de `.` nem antes de `.`, `(`
+  ou `=`. Guarda, subject e corpo ficam fora.
+- Em `with` e `async with`, depois de cada `as`, todo nome até `,`, `:` ou o fecho do grupo na profundidade do `as` é
+  alvo. O nome no contexto, ou em outro item sem `as`, continua sendo leitura.
+
+Os consumidores não mudaram: a versão fica `version_source_ambiguous`, `VALID_HOOKS` fica `unrecognized` e
+`SHELL_UNSUPPORTED_HOOKS` fica `null`.
+
+**RED** (`src/` intacto; `.checks/code-review/formal6-red.txt`): versão + contrato + CLI → tests 129, pass 121, fail 6,
+skipped 2, `EXIT_CODE=1`. As 6 falhas são testes novos. Na versão, 29 das 30 formas publicavam 0.21.4 (só
+`case [1, 2] as NOME` já era ligação). Nas tabelas, 58 das 60 combinações escapavam. `readContractEvidence` devolvia
+`found`, e o subscrito no alvo do with publicava 0.21.4. Na CLI, a versão era `0.21.4` e o catálogo ficava
+`configured`. Os 2 testes de controle já passavam. A probe do Root deu 2 `pass:false`.
+
+**GREEN** (`.checks/code-review/formal6-green.txt`): os mesmos alvos mais `capability-evidence.cli.test.mjs` → tests
+139, pass 137, fail 0, skipped 2, `EXIT_CODE=0`. A probe deu 2/2 `pass:true`. O caso profundo da seção 26 levou 304 ms
+no RED e 320 ms no GREEN, uma execução cada.
+
+**`npm test` único** (`.checks/code-review/formal6-npm-test.txt`): `test:governance` 6/6, `test:code-review` 10/10 e
+`test:doctor` com 361 testes / 359 pass / 0 fail / 2 skip, `EXIT_CODE=0`. Os skips são os dois POSIX já registrados. O
+delta 353 → 361 são os 8 testes novos (3 de versão, 3 de contrato e 2 de CLI).
+
+**Provas.** Há 20 formas de `case` e 10 de `with`, testadas para `__version__` e para as duas tabelas. As de `case` são:
+simples; corpo na linha; antes da guarda; grupo; grupo aninhado; sequência entre colchetes, entre parênteses, aberta e
+aninhada; `*` em duas formas; valor de mapping; `**`; `as` e antes de `as`; alternativas; posicional e keyword de
+classe; classe em mapping; multilinha com comentário. As de `with` são: tupla; grupo; grupo aninhado; lista; tupla
+aninhada; `*`; segundo item; itens entre parênteses em várias linhas com comentário; corpo na linha; `async with`. Os
+23 controles cobrem guarda, subject, corpo, valor pontuado, nome e keyword da classe, `case`/`match` como nomes comuns,
+contexto do with, comentário e string. Os dois casos de CLI (`case __version__` e `case VALID_HOOKS`) usam
+`hooks_auto_accept:true`. Eles conferem 3 agentes, exit 0, 5 linhas `unverified` com o motivo exato e
+`configuration`/`trust` `unknown`. Conferem também a paridade entre JSON e texto e, no caso da versão, que `0.21.4` não
+aparece em nenhum dos dois formatos.
+
+**Limites.**
+
+- Sem avaliar Python, algumas formas contam como ligação e ficam ambíguas, o lado conservador: um nome dentro de
+  subscrito no alvo do with (`as c[NOME]`), `case[NOME]: T` (anotação lida como case_block) e ligações dentro de
+  funções. A leitura também não confere se o `case` está sob um `match`.
+- Dentro de string/exec, capturas não são inferidas. Alias, `getattr` e reflexão seguem fora do alcance.
+- Medição avulsa, sem orçamento: 1 MiB de `with` ou de `case` em muitas linhas levou 101 ms e 65 ms. Numa linha única
+  de 1 MiB, levou 159 s, todos do custo quadrático de `columnOf`, já registrado e fora do escopo. Com 126 KB, o
+  tokenizer levou 1.092 ms e `findAssignments`, 4 ms.
+- O teste de CLI repete o corpo do teste formal5 para não alterar testes já entregues. Fica registrada a dívida.
+- A execução foi só em Windows 11 Pro, com Node 24.21.0.
