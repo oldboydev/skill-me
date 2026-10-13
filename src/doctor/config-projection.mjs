@@ -169,15 +169,21 @@ function extractSafeFields(parsed, agentId, platform) {
   // e um alias errado não fica escondido atrás de uma canônica válida. Só a
   // AUSÊNCIA da chave (não um tipo inválido dela) abre espaço para a outra
   // decidir; com as duas presentes e booleanas, a canônica decide.
-  if (parsed.features !== undefined) {
+  //
+  // O ramo inteiro é só do Codex: Claude/Hermes não têm `FeaturesToml`, então
+  // um `features` deles (null, escalar ou mapa com `hooks`/`codex_hooks`) é uma
+  // chave desconhecida, nunca fonte de `featuresHooksEnabled` nem de motivo do
+  // Codex. Restringir só a checagem de contêiner deixava `features: null`
+  // desses agentes chegar a `Object.hasOwn(null, ...)` e derrubar o relatório
+  // inteiro (.checks/code-review/formal3-shared-projection-regression.md).
+  if (agentId === "codex" && parsed.features !== undefined) {
     // `FeaturesToml` deserializa de uma TABELA (struct), nunca de um
     // booleano/array/string/número soltos — `features = true` ou `features =
     // false` no lugar de `[features]` falha a deserialização do documento
     // antes mesmo de qualquer chave interna existir. Checagem de container
     // primeiro, antes de ler `hooks`/`codex_hooks`: um `[features]` vazio
-    // (`{}`) continua válido (tabela real, só sem chaves). Só para Codex —
-    // Claude/Hermes não têm essa struct.
-    if (agentId === "codex" && !isPlainObject(parsed.features)) {
+    // (`{}`) continua válido (tabela real, só sem chaves).
+    if (!isPlainObject(parsed.features)) {
       return { fields: {}, featuresFlagsReasonCode: "features_hooks_flag_invalid_type" };
     }
     const hasCanonical = Object.hasOwn(parsed.features, "hooks");
@@ -191,13 +197,10 @@ function extractSafeFields(parsed, agentId, platform) {
     // conferidas, mas `FeaturesToml::entries` é o `BTreeMap<String, bool>`
     // inteiro — uma chave desconhecida com tipo errado (ex.: `shell_tool =
     // "yes"`) já derruba o documento na fonte, mesmo que as duas chaves de
-    // hooks estejam corretas. Restrito a `agentId === "codex"`: é o contrato
-    // de `[features]` do Codex, não um schema genérico de `[features]`.
-    if (agentId === "codex") {
-      const entriesReasonCode = codexFeaturesEntriesReasonCode(parsed.features);
-      if (entriesReasonCode) {
-        return { fields: {}, featuresFlagsReasonCode: entriesReasonCode };
-      }
+    // hooks estejam corretas.
+    const entriesReasonCode = codexFeaturesEntriesReasonCode(parsed.features);
+    if (entriesReasonCode) {
+      return { fields: {}, featuresFlagsReasonCode: entriesReasonCode };
     }
     if (canonicalIsBoolean) {
       fields.featuresHooksEnabled = parsed.features.hooks;

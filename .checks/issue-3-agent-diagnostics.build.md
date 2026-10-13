@@ -2546,3 +2546,137 @@ do build recebeu os números acima; nenhum teste lê este arquivo.
   `.checks/code-review/formal3-toml-document-range.md` (encaminhamento),
   `.checks/code-review/probe-formal3-before-global-range.txt` (probe da raiz) e
   `.checks/code-review/native-codex-0.162.1/` (fontes).
+
+## 22. Correção da regressão compartilhada `features: null` de Claude/Hermes (achados 2/3 da revisão formal3) (13/10/2026)
+
+Encaminhamento: `.checks/code-review/formal3-shared-projection-regression.md`; reprodução da raiz pela CLI em
+`.checks/code-review/probe-formal3-shared-features.txt` (cenário `claude-irrelevant-features-null`).
+Autor: Claude; Codex raiz só revisa. Correção necessária da mesma função `extractSafeFields` alterada pelos
+achados 2/3, com o isolamento do C12 — nenhum achado novo, nenhum critério alterado, nenhum recurso novo.
+`.tasks`, `.verified.md`, `.linux`, `code-review.config.json`, core vendorizado e `.git` não tocados. Sem
+commit/stash/push/PR/review/Verifier/spawn nesta rodada.
+
+### O defeito
+
+A seção 20 trocou `if (parsed.features)` (truthiness) por `if (parsed.features !== undefined)`, mas só a
+checagem de contêiner (`isPlainObject`) ficou restrita a `agentId === "codex"`. Para Claude/Hermes,
+`features: null` chegava a `Object.hasOwn(null, "hooks")`, fora de qualquer `catch`: a CLI emitia
+`failed`, `agents: []` e exit 1 por causa de uma chave que esses agentes nem leem. O mesmo ramo ainda
+projetava `featuresHooksEnabled` e motivos do Codex nesses agentes a partir de um mapa: `{ hooks: false }`
+virava `disabled/features_hooks_disabled` e `{ hooks: "yes" }` virava
+`invalid/features_hooks_flag_invalid_type` na camada `projectConfig` (a sonda está no log RED).
+
+### Decisão e correção
+
+`features`/`hooks`/`codex_hooks` são contrato exclusivo do Codex (`FeaturesToml`, `lib.rs:838–871`).
+`extractSafeFields` (`src/doctor/config-projection.mjs`) agora só entra no ramo inteiro com
+`agentId === "codex" && parsed.features !== undefined`. Os dois guards internos `agentId === "codex"`
+ficaram redundantes e foram removidos, sem alterar a regra. Claude/Hermes ignoram `features` em qualquer
+tipo: null, escalar, array ou mapa, inclusive com `hooks`/`codex_hooks`/`shell_tool`. As chaves próprias
+(`hooks`, `disableAllHooks`, `allowManagedHooksOnly`, `hooks_auto_accept`) continuam decidindo. Para o
+Codex, a validação não muda: contêiner, tipos de `hooks`/`codex_hooks`, mapa achatado e precedência da
+canônica.
+
+### Ordem seguida e evidência de execução real
+
+Leitura do encaminhamento e de `extractSafeFields` → testes novos → RED com `src/` intacto em HEAD
+`7922efb` → correção → GREEN nos mesmos alvos → documentação → alvos completos → `npm test` completo uma
+única vez após a última alteração de código, testes e documentação lida por teste.
+
+RED (`src/` sem alteração; saída completa em `.checks/code-review/formal3-shared-red.txt`):
+
+```
+node --test --test-name-pattern="features de qualquer tipo|features escalar/array|features:null, demais|features null/escalar/mapa" \
+  tests/doctor/config-projection.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+✖ config-projection-C8 Claude: features de qualquer tipo …   -> TypeError: Cannot convert undefined or null to object
+✖ config-projection-C8 Hermes: features de qualquer tipo …   -> TypeError: Cannot convert undefined or null to object
+✔ config-projection-C8 Codex: features escalar/array …       (controle)
+✖ configuration-trust-C12 Claude features:null, demais sem config -> exit 1 (esperado: 0)
+✖ configuration-trust-C12 features null/escalar/mapa + Codex inválido -> exit 1 no primeiro caso (null)
+tests 5, pass 1, fail 4
+exit=1
+```
+
+Os testes com laço param no primeiro caso que falha, o `null`. Por isso, o mesmo log anexa uma sonda direta
+de `projectConfig` por tipo, ainda com `src/` intacto. Para Claude e Hermes, `null` lança; os mapas
+`{hooks:false}`/`{codex_hooks:false}` viram `disabled/features_hooks_disabled` com
+`featuresHooksEnabled:false`; `{hooks:"yes", …}` vira `invalid/features_hooks_flag_invalid_type`; escalares
+e `{shell_tool:"yes"}` já ficavam `configured`.
+
+GREEN (mesmos alvos e a mesma sonda depois da correção; saída em `.checks/code-review/formal3-shared-green.txt`):
+
+```
+tests 5, pass 5, fail 0, skipped 0
+exit=0
+sonda: todos os tipos de Claude/Hermes -> configured/hooks_configured, sem featuresHooksEnabled
+```
+
+Alvos completos depois da última alteração lida por teste (`config-projection.unit`, `configuration-trust.cli`,
+`config-reader.unit`, `docs-compatibility`; saída em `.checks/code-review/formal3-shared-green-targets.txt`):
+
+```
+tests 142, pass 142, fail 0, skipped 0
+EXIT_CODE=0
+```
+
+O que os testes novos afirmam:
+
+- Camada `projectConfig`, Claude: em 9 valores de `features`, com hooks válidos e
+  `allowManagedHooksOnly: true`, o resultado é exatamente `configured/hooks_configured` e
+  `fields == { hasHooksSection: true, allowManagedHooksOnly: true }`. Com `disableAllHooks: true`, o
+  resultado é exatamente `disabled/hooks_disabled` e
+  `fields == { hasHooksSection: false, disableAllHooks: true }`.
+- Camada `projectConfig`, Hermes: em 10 valores YAML (vazio/`null`, `true`, `0`, string, `[]`,
+  mapas com chaves do Codex), com `hooks_auto_accept: true`, o resultado é exatamente
+  `configured/hooks_configured` e
+  `fields == { hasHooksSection: true, hermesTargetedEvents: ["pre_tool_call"], hooksAutoAccept: true }`.
+- Controle do Codex na mesma camada: `features = "yes"`, `1` e `[]` continuam
+  `invalid/features_hooks_flag_invalid_type`, com `fields == {}`. Os testes existentes do Codex
+  (bool, datetime, tipos do mapa, precedência) continuam sem alteração.
+- CLI: o cenário exato da raiz (Claude válido com `features: null`, demais sem config) fica
+  `complete`, exit 0 e 3 agentes, com Claude `configured/hooks_configured`. Em quatro combinações
+  (null, escalar e dois mapas com chaves do Codex), Claude e Hermes ficam ao lado de um Codex com
+  `features = "yes"`. O resultado é `partial`, exit 0 e 3 agentes; Claude fica
+  `configured/hooks_configured`, Hermes `not_configured/no_config_found` e Codex
+  `invalid/features_hooks_flag_invalid_type` com trust `unknown`. A saída de texto também termina com exit 0.
+
+`npm test` completo, uma única execução após a última alteração de código, testes e documentação lida
+por teste (saída completa em `.checks/code-review/formal3-shared-npm-test.txt`):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 319, pass 318, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a seção 21 (314 → 319): 5 testes novos (3 em
+`config-projection.unit.test.mjs`, 2 em `configuration-trust.cli.test.mjs`); nenhum teste existente foi
+alterado. Os 5 testes desta rodada aparecem como `✔` no log. O único skip continua
+`agent-resolution-C2 realpath/symlink real … (POSIX)`. Depois dessa execução, só esta seção do build
+recebeu os números acima; nenhum teste lê este arquivo.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24. Nenhum agente, hook, binário nativo ou intérprete foi
+  executado; `doctor` completo não foi repetido separadamente fora do `npm test`, conforme o pedido.
+- A afirmação de que Claude/Hermes não têm `features` com efeito em hooks vem da definição
+  agent-specific do encaminhamento e de `config-reader.mjs` (`isDisabled` do Claude só lê
+  `disableAllHooks`; o do Hermes não desativa). Esta rodada não consultou nova fonte desses dois
+  agentes.
+- Na CLI, o Hermes foi provado sem bloco `hooks` (`not_configured/no_config_found`). Com `hooks`, sem
+  catálogo instalado, o resultado seria `unknown/hooks_catalog_unavailable`, decidido pelo G3. A
+  combinação de hooks Hermes com `features` foi provada na camada `projectConfig`.
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/config-projection.mjs` (`extractSafeFields`: ramo de `features` só para o Codex).
+- Testes: `tests/doctor/config-projection.unit.test.mjs` (3 novos), `tests/doctor/configuration-trust.cli.test.mjs`
+  (2 novos).
+- Documentação/checklist: `docs/agent-compatibility.md` (frase "Regressão compartilhada corrigida",
+  aditiva na célula do Codex), `.checks/issue-3-agent-diagnostics.md` (frases aditivas nas entradas C8 e
+  C12), esta seção.
+- Evidência (ignorada pelo Git): `.checks/code-review/formal3-shared-red.txt`, `…-green.txt`,
+  `…-green-targets.txt`, `…-npm-test.txt`. Preservados sem alteração:
+  `.checks/code-review/formal3-shared-projection-regression.md` (encaminhamento) e
+  `.checks/code-review/probe-formal3-shared-features.txt` (probe da raiz).

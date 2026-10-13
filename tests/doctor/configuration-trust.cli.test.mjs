@@ -1196,3 +1196,76 @@ test("configuration-trust-C8 hooks.json do Codex com timeout=-0 fica invalid/par
     rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+// Regressão compartilhada da revisão formal3 (.checks/code-review/formal3-
+// shared-projection-regression.md; reprodução da raiz em .checks/code-review/
+// probe-formal3-shared-features.txt, cenário claude-irrelevant-features-null):
+// `features: null` num settings.json do Claude válido derrubava o relatório
+// inteiro (`failed`, `agents: []`, exit 1). `features` é contrato só do Codex;
+// Claude/Hermes nunca lançam nem herdam motivo dele, e o Codex com `features`
+// inválido continua isolado como invalid/partial, com os 3 agentes.
+const CLAUDE_VALID_HOOKS = { hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "x" }] }] } };
+
+test("configuration-trust-C12 settings.json do Claude válido com features:null, demais agentes sem config, fica complete/exit 0 com os 3 agentes", () => {
+  const scratch = makeScratch("doctor-c12-claude-features-null-");
+  try {
+    const home = path.join(scratch, "home");
+    writeAgentConfig(home, "claude", JSON.stringify({ ...CLAUDE_VALID_HOOKS, features: null }));
+    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    assert.equal(report.status, "complete");
+    assert.equal(report.agents.length, 3);
+    const claude = report.agents.find((a) => a.id === "claude");
+    assert.equal(claude.configuration, "configured");
+    assert.equal(claude.configReasonCode, "hooks_configured");
+
+    const text = runDoctor([], { env: homeEnv(home) });
+    assert.equal(text.status, 0);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("configuration-trust-C12 features null/escalar/mapa no Claude e no Hermes não derruba nem herda motivo do Codex; Codex com features inválido continua invalid/partial com 3 agentes", () => {
+  const cases = [
+    [null, "null"],
+    ["yes", "1"],
+    [{ hooks: false }, "\n  hooks: false"],
+    [{ hooks: "yes", codex_hooks: true }, '\n  hooks: "yes"\n  codex_hooks: true'],
+  ];
+  for (const [claudeFeatures, hermesFeatures] of cases) {
+    const label = JSON.stringify(claudeFeatures);
+    const scratch = makeScratch("doctor-c12-features-alheio-");
+    try {
+      const home = path.join(scratch, "home");
+      const env = homeEnv(home);
+      writeAgentConfig(home, "claude", JSON.stringify({ ...CLAUDE_VALID_HOOKS, features: claudeFeatures }));
+      writeAgentConfig(home, "hermes", `hooks_auto_accept: true\nfeatures: ${hermesFeatures}\n`, {
+        env,
+        platform: process.platform,
+      });
+      writeAgentConfig(home, "codex", `features = "yes"\n${CODEX_VALID_HOOKS_TOML}`);
+
+      const { status, report } = runDoctorJson([], { env });
+      assert.equal(status, 0, label);
+      assert.equal(report.status, "partial", label);
+      assert.equal(report.agents.length, 3, label);
+      const claude = report.agents.find((a) => a.id === "claude");
+      assert.equal(claude.configuration, "configured", label);
+      assert.equal(claude.configReasonCode, "hooks_configured", label);
+      const hermes = report.agents.find((a) => a.id === "hermes");
+      assert.equal(hermes.configuration, "not_configured", label);
+      assert.equal(hermes.configReasonCode, "no_config_found", label);
+      const codex = report.agents.find((a) => a.id === "codex");
+      assert.equal(codex.configuration, "invalid", label);
+      assert.equal(codex.configReasonCode, "features_hooks_flag_invalid_type", label);
+      assert.equal(codex.trust, "unknown", label);
+
+      const text = runDoctor([], { env });
+      assert.equal(text.status, 0, label);
+      assert.match(text.stdout, /features_hooks_flag_invalid_type/, label);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+});

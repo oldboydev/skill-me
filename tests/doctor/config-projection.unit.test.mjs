@@ -280,6 +280,100 @@ test("config-projection-C8 features com chave desconhecida de tipo inválido nã
   assert.equal(result.configuration, "configured");
 });
 
+// Regressão compartilhada da revisão formal3 (.checks/code-review/formal3-
+// shared-projection-regression.md): `features`/`hooks`/`codex_hooks` são
+// contrato exclusivo do Codex (`FeaturesToml`, lib.rs:838–871). Trocar o
+// teste de truthiness por `!== undefined` deixou `features: null` do Claude/
+// Hermes chegar a `Object.hasOwn(null, ...)` fora de qualquer catch, e um
+// mapa com essas chaves ainda projetava `featuresHooksEnabled`/motivos do
+// Codex nesses agentes. Esperado: nenhum tipo de `features` lança nem muda a
+// decisão; só as chaves próprias de cada agente decidem.
+const FOREIGN_FEATURES_VALUES = [
+  null,
+  true,
+  0,
+  "yes",
+  [],
+  { hooks: false },
+  { codex_hooks: false },
+  { hooks: "yes", codex_hooks: true },
+  { shell_tool: "yes" },
+];
+
+test("config-projection-C8 Claude: features de qualquer tipo (null/escalar/mapa com chaves do Codex) não lança nem projeta campo/motivo do Codex", () => {
+  for (const features of FOREIGN_FEATURES_VALUES) {
+    const label = JSON.stringify(features);
+    const withHooks = projectConfig({
+      rawText: JSON.stringify({
+        hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "x" }] }] },
+        allowManagedHooksOnly: true,
+        features,
+      }),
+      format: "json",
+      agentId: "claude",
+    });
+    assertShape(withHooks);
+    assert.equal(withHooks.configuration, "configured", label);
+    assert.equal(withHooks.reasonCode, "hooks_configured", label);
+    assert.deepEqual(withHooks.fields, { hasHooksSection: true, allowManagedHooksOnly: true }, label);
+
+    const disabled = projectConfig({
+      rawText: JSON.stringify({ hooks: { PreToolUse: [] }, disableAllHooks: true, features }),
+      format: "json",
+      agentId: "claude",
+    });
+    assert.equal(disabled.configuration, "disabled", label);
+    assert.equal(disabled.reasonCode, "hooks_disabled", label);
+    assert.deepEqual(disabled.fields, { hasHooksSection: false, disableAllHooks: true }, label);
+  }
+});
+
+const FOREIGN_FEATURES_YAML = [
+  "",
+  "null",
+  "true",
+  "0",
+  '"yes"',
+  "[]",
+  "\n  hooks: false",
+  "\n  codex_hooks: false",
+  '\n  hooks: "yes"\n  codex_hooks: true',
+  '\n  shell_tool: "yes"',
+];
+
+test("config-projection-C8 Hermes: features de qualquer tipo (null/escalar/mapa com chaves do Codex) não lança nem projeta campo/motivo do Codex", () => {
+  for (const features of FOREIGN_FEATURES_YAML) {
+    const result = projectConfig({
+      rawText: `hooks:\n  pre_tool_call:\n    - command: "x"\nhooks_auto_accept: true\nfeatures: ${features}\n`,
+      format: "yaml",
+      agentId: "hermes",
+    });
+    assertShape(result);
+    assert.equal(result.configuration, "configured", features);
+    assert.equal(result.reasonCode, "hooks_configured", features);
+    assert.deepEqual(
+      result.fields,
+      { hasHooksSection: true, hermesTargetedEvents: ["pre_tool_call"], hooksAutoAccept: true },
+      features,
+    );
+  }
+});
+
+// Controle do mesmo achado: restringir `features` ao Codex não pode afrouxar
+// a validação de contêiner do próprio Codex.
+test("config-projection-C8 Codex: features escalar/array (string, inteiro, array) continua invalid/features_hooks_flag_invalid_type", () => {
+  for (const literal of ['"yes"', "1", "[]"]) {
+    const result = projectConfig({
+      rawText: `features = ${literal}\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\n`,
+      format: "toml",
+      agentId: "codex",
+    });
+    assert.equal(result.configuration, "invalid", literal);
+    assert.equal(result.reasonCode, "features_hooks_flag_invalid_type", literal);
+    assert.deepEqual(result.fields, {}, literal);
+  }
+});
+
 // Achado residual da revisão formal3 (.checks/code-review/formal3-residual-
 // fixes.md, item 1): `FeaturesToml` desserializa de uma TABELA — `features =
 // true` ou `features = false` no lugar de `[features]` falha a

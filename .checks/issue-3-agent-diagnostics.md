@@ -364,6 +364,15 @@ inteiro em `i64`; é uma restrição desse pipeline, não de todo deserializer T
 agora recusa um inteiro fora de `[-2^63, 2^63-1]` em qualquer posição como `invalid/config_malformed`;
 o `timeout` TOML acima de `i64::MAX` passou de `hooks_structure_invalid` para `config_malformed`.
 Extremos de `i64`, floats e datetimes continuam válidos; `hooks.json` não muda.
+**Regressão compartilhada dos achados 2/3** (`.checks/code-review/formal3-shared-projection-regression.md`,
+também C12): a troca de `if (parsed.features)` por `!== undefined` restringiu ao Codex só a checagem de
+contêiner, e `features: null` num `settings.json` do Claude (ou `config.yaml` do Hermes) válido chegava a
+`Object.hasOwn(null, ...)` fora de qualquer `catch` — relatório inteiro `failed`, `agents: []`, exit 1.
+Um mapa `{ hooks: false }`/`{ hooks: "yes" }` nesses agentes ainda virava `disabled/features_hooks_disabled`
+ou `invalid/features_hooks_flag_invalid_type`. `features`/`hooks`/`codex_hooks` são contrato só do Codex
+(`FeaturesToml`, `lib.rs:838–871`): `extractSafeFields` agora entra no ramo inteiro só com
+`agentId === "codex"`. Claude/Hermes ignoram `features` de qualquer tipo e continuam decididos por
+`hooks`, `disableAllHooks`, `allowManagedHooksOnly` e `hooks_auto_accept`; a validação do Codex não muda.
 Proof: `node --test --test-name-pattern="config-projection-C8" tests/doctor/config-projection.unit.test.mjs`
 Proof: `node --test tests/doctor/config-sources.unit.test.mjs`
 Proof: `node --test tests/doctor/config-reader.unit.test.mjs`
@@ -420,6 +429,10 @@ configuração — a CLI emitia `failed/internal_error`, `agents: []` e exit 1, 
 inteiro por causa de um único agente. Os dois pontos agora usam laço simples, sem teto de argumentos;
 `matcherGroupHandlers` é compartilhada por Claude e Codex, então a mesma correção cobre os dois.
 Ver `.checks/issue-3-agent-diagnostics.build.md` seção 18.
+**Regressão compartilhada dos achados 2/3** (descrita na entrada C8; build seção 22): `features: null` num
+`settings.json` do Claude válido também derrubava o relatório inteiro (`failed`, `agents: []`, exit 1).
+Agora fica `complete`/exit 0 com os 3 agentes; com um Codex de `features` inválido ao lado, `partial`/exit 0,
+Codex `invalid/features_hooks_flag_invalid_type` e Claude/Hermes decididos só pelas próprias chaves.
 Proof: `node --test --test-name-pattern="config-projection-C12" tests/doctor/config-projection.unit.test.mjs`
 Proof (fronteira real da CLI, 3 agentes e collector preservados): `node --test --test-name-pattern="configuration-trust-C12" tests/doctor/configuration-trust.cli.test.mjs`
 
