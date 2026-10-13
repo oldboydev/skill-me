@@ -260,12 +260,19 @@ test("governance-C1 C3 workflow sempre publica CI sem IA nem release", () => {
   const tools = workflow.jobs.verify;
   assert.equal(tools.needs, "changes");
   assert.equal(tools.if, "needs.changes.outputs.code == 'true'");
+  assert.deepEqual(tools.strategy.matrix.os, [
+    "ubuntu-22.04",
+    "windows-latest",
+    "macos-14",
+  ]);
+  assert.equal(tools["runs-on"], "$" + "{{ matrix.os }}");
   assert.deepEqual(
     tools.steps.filter((step) => step.run).map((step) => step.run),
     [
       "npm ci --ignore-scripts",
       "npm run test:governance",
       "npm run test:code-review",
+      "npm run test:doctor",
     ],
   );
   const ci = workflow.jobs.ci;

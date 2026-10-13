@@ -28,3 +28,29 @@ revisão em novo commit: use o resumo gerado no PR. Conteúdo ou contexto altera
 exige revisão válida novamente. Login Codex por ChatGPT; nenhuma IA executa na CI.
 
 A CI valida as ferramentas de governança. package.json é privado e contém apenas esses comandos.
+
+## Diagnóstico local de agentes (doctor)
+
+`npm run --silent doctor -- --json` lê, de forma somente leitura, quais agentes
+(`claude`, `codex`, `hermes`) estão instalados no PATH local, qual versão foi
+encontrada e qual evidência a sustenta, e qual configuração/confiança de hooks
+foi lida. O comando nunca inicia um agente, não instala hooks e não corrige
+configuração — ver [docs/agent-compatibility.md](docs/agent-compatibility.md)
+para o contrato completo e as lacunas conhecidas.
+
+Sem `--json`, a mesma informação sai em texto português. Flags: `--json`,
+`--cwd <diretório>`, `--collector <endpoint>` (tenta só uma conexão de
+transporte a `tcp://127.0.0.1:<porta>` ou `tcp://[::1]:<porta>`, nunca envia
+payload) e `--help`.
+
+Três estados aparecem em todo relatório e não devem ser confundidos:
+
+- `status: partial` no envelope — alguma configuração de agente não pôde ser
+  lida (inválida, acima do limite de tamanho ou com permissão negada); as
+  demais entradas continuam presentes. O comando ainda sai com exit `0`.
+- `support: unverified` numa capacidade — não há evidência local vinculada à
+  versão encontrada que comprove aquele mecanismo; não significa "não
+  suportado", significa "não comprovado por esta leitura".
+- `collector.identityVerified: false` — mesmo quando `collector.status` é
+  `reachable`, um socket aceitar a conexão não comprova que o processo do
+  outro lado é o coletor nem que a captura funciona.
