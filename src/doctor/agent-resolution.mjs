@@ -62,10 +62,10 @@ function openableFromFlatFs(fs) {
 // A resolução nunca aciona child_process: cada agente tem seu próprio leitor
 // estático (PE por estrutura de recursos, shim por conteúdo/link real ao
 // pacote). Mantemos a função aqui só para dar o reasonCode certo por agente.
-async function readVersion(agentId, launcherPath, fs) {
+async function readVersion(agentId, launcherPath, { fs, cwd, env }) {
   if (agentId === "claude") return readPeVersion(launcherPath, { fs: openableFromFlatFs(fs) });
   if (agentId === "codex") return resolveCodexVersion(launcherPath, { fs });
-  return resolveHermesVersion(launcherPath, { fs });
+  return resolveHermesVersion(launcherPath, { fs, cwd, env });
 }
 
 // Ordem real de resolução de PATH: para cada diretório (precedência mais
@@ -101,7 +101,7 @@ async function findLauncherPath(agentId, pathDirs, platform, env, fs) {
   return null;
 }
 
-async function resolveOneAgent(agentId, { pathDirs, platform, env, fs }) {
+async function resolveOneAgent(agentId, { pathDirs, platform, env, cwd, fs }) {
   let launcherPath;
   try {
     launcherPath = await findLauncherPath(agentId, pathDirs, platform, env, fs);
@@ -128,7 +128,7 @@ async function resolveOneAgent(agentId, { pathDirs, platform, env, fs }) {
     };
   }
   try {
-    const result = await readVersion(agentId, launcherPath, fs);
+    const result = await readVersion(agentId, launcherPath, { fs, cwd, env });
     return {
       id: agentId,
       presence: "present",
@@ -157,12 +157,15 @@ async function resolveOneAgent(agentId, { pathDirs, platform, env, fs }) {
 // Leitura puramente estática: nenhuma chamada a child_process acontece aqui
 // nem nos módulos que esta função usa (ver testes com um childProcess que
 // lança exceção em toda chamada). `fs`/`childProcess` são sempre recebidos
-// por injeção para permitir um adaptador de teste em memória. `env` só
-// fornece PATHEXT para a resolução no Windows.
-export async function resolveAgents({ pathDirs, platform, env = {}, fs }) {
+// por injeção para permitir um adaptador de teste em memória. `env` fornece
+// PATHEXT para a resolução no Windows e PYTHONPATH/PYTHONHOME para o vínculo
+// do Hermes; ausente, vale um ambiente sem variáveis. `cwd` é o diretório de
+// trabalho da execução diagnosticada, onde o `-m` do Python importa primeiro;
+// ausente, vale null (desconhecido), nunca o diretório do processo atual.
+export async function resolveAgents({ pathDirs, platform, env = {}, cwd = null, fs }) {
   const results = [];
   for (const agentId of AGENT_ORDER) {
-    results.push(await resolveOneAgent(agentId, { pathDirs, platform, env, fs }));
+    results.push(await resolveOneAgent(agentId, { pathDirs, platform, env, cwd, fs }));
   }
   return results;
 }

@@ -144,9 +144,14 @@ test("agent-resolution-C2 conventions por SO: windows, linux e macos resolvem os
     const dir = platform === "win32" ? "C:\\fixture\\bin" : "/fixture/bin";
     const { hermesBinDir } = installAgentsInTree(tree, dir, platform);
 
+    // O hermes.cmd executa `-m hermes_cli`, e o Python põe primeiro em
+    // sys.path o diretório de trabalho de quem executa. Sem ele o vínculo do
+    // `-m` não é demonstrável (correção de vínculo Hermes); aqui é um
+    // diretório sem hermes_cli.
     const results = await resolveAgents({
       pathDirs: [dir, hermesBinDir],
       platform,
+      cwd: platform === "win32" ? "C:\\projeto" : "/projeto",
       fs: createFakeFsAdapter(tree),
       childProcess: throwingChildProcess(),
     });
@@ -347,7 +352,12 @@ test("agent-resolution-C2 layout Windows do Hermes (Lib/site-packages) liga a fo
   const binDir = venvRoot + "\\Scripts";
   addFile(tree, binDir, "hermes.cmd", hermesShimContent(venvRoot, "win32"));
   addFile(tree, venvRoot + "\\Lib\\site-packages\\hermes_cli", "__init__.py", '__version__ = "0.21.4"\n');
-  const result = await resolveHermesVersion(binDir + "\\hermes.cmd", { fs: createFakeFsAdapter(tree) });
+  // `-m hermes_cli` importa primeiro do diretório de trabalho: o teste o
+  // informa, sem hermes_cli (correção de vínculo Hermes).
+  const result = await resolveHermesVersion(binDir + "\\hermes.cmd", {
+    fs: createFakeFsAdapter(tree),
+    cwd: "C:\\projeto",
+  });
   assert.equal(result.version, "0.21.4");
   assert.equal(result.versionSource, "source_literal");
   assert.equal(result.packageDir, venvRoot + "\\Lib\\site-packages\\hermes_cli");
@@ -1378,7 +1388,13 @@ test("agent-resolution-formal7-binding Hermes: intérprete fixado pelo texto lig
     const { tree, launcher, packageDirOf } = installContradictoryHermesPrefixes(launcherName, content, {
       other: prefix.startsWith("/b") ? prefix : "/b",
     });
-    const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree) });
+    // O `.cmd` (`-m hermes_cli`) importa primeiro do diretório de trabalho,
+    // aqui sem hermes_cli; nos demais o cwd não entra (correção de vínculo
+    // Hermes).
+    const result = await resolveHermesVersion(launcher, {
+      fs: createFakeFsAdapter(tree),
+      cwd: launcherName.endsWith(".cmd") ? "C:\\projeto" : "/projeto",
+    });
     assert.deepEqual(
       result,
       { version, versionSource: "source_literal", packageDir: packageDirOf(prefix) },
@@ -1399,11 +1415,12 @@ test("agent-resolution-formal7-binding Hermes: intérprete fixado sem pacote no 
   }
 
   // O .cmd fixa o python.exe irmão (prefixo A): o pacote que só B tem não
-  // serve.
+  // serve. O cwd informado, sem hermes_cli, faz a leitura chegar ao
+  // site-packages de A (correção de vínculo Hermes).
   const cmd = installContradictoryHermesPrefixes("hermes.cmd", '@ECHO off\r\n"%~dp0python.exe" -m hermes_cli %*\r\n', {
     packageInLauncherPrefix: false,
   });
-  assert.deepEqual(await resolveHermesVersion(cmd.launcher, { fs: createFakeFsAdapter(cmd.tree) }), {
+  assert.deepEqual(await resolveHermesVersion(cmd.launcher, { fs: createFakeFsAdapter(cmd.tree), cwd: "C:\\projeto" }), {
     version: null,
     reasonCode: "launcher_not_recognized",
   });
@@ -1414,5 +1431,210 @@ test("agent-resolution-formal7-binding Hermes: intérprete fixado sem pacote no 
     addFile(tree, "/b/lib/python3.11/site-packages/hermes_cli", "__init__.py", '__version__ = "0.19.0"\n');
     const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree) });
     assert.deepEqual(result, { version: null, reasonCode: "version_source_ambiguous" }, content);
+  }
+});
+
+// --- hermes_cli importado antes do site-packages (correção de vínculo Hermes) ---
+// .checks/code-review/hermes-import-shadow-fixes.md: o launcher fixa o
+// intérprete do venv, e o site-packages tem o hermes_cli 0.21.4 com o
+// catálogo. O Python 3.13 procura antes no primeiro diretório de sys.path
+// (`sys.path`: "python -m module command line: prepend the current working
+// directory"; "python script.py command line: prepend the script's
+// directory. If it's a symbolic link, resolve symbolic links") e nos caminhos
+// de PYTHONPATH; PYTHONHOME muda o prefix (`sys_path_init`). Um hermes_cli
+// 9.9.9 nesse primeiro diretório é o importado: o leitor publicava 0.21.4 e o
+// packageDir do site-packages. Nenhuma das duas versões pode sair, e o
+// vizinho nunca é lido.
+
+const SHADOW_CMD_FORM = ".cmd com -m hermes_cli";
+
+const SHADOW_BOUND_LAUNCHERS = {
+  "shebang absoluto": `#!/v/bin/python3.12\n${HERMES_IMPORT_BODY}`,
+  "env com caminho absoluto": `#!/usr/bin/env /v/bin/python3.12\n${HERMES_IMPORT_BODY}`,
+  "trampolim do distlib": distlibTrampoline("/v/bin/python3.12"),
+  [SHADOW_CMD_FORM]: '@ECHO off\r\n"%~dp0python.exe" -m hermes_cli %*\r\n',
+};
+
+const SHADOW_UNBOUND = { version: null, reasonCode: "launcher_not_recognized" };
+
+// O primeiro diretório de import é o cwd para o `-m` e o diretório do script
+// para os demais; o outro é o que o Python não consulta antes do
+// site-packages nessa forma.
+function installShadowableHermes(form) {
+  const windows = form === SHADOW_CMD_FORM;
+  const sep = windows ? "\\" : "/";
+  const binDir = windows ? "C:\\v\\Scripts" : "/v/bin";
+  const packageDir = windows ? "C:\\v\\Lib\\site-packages\\hermes_cli" : "/v/lib/python3.12/site-packages/hermes_cli";
+  const cwd = windows ? "C:\\projeto" : "/projeto";
+  const launcherName = windows ? "hermes.cmd" : "hermes";
+  const tree = buildFsTree();
+  addFile(tree, binDir, launcherName, SHADOW_BOUND_LAUNCHERS[form]);
+  if (!windows) addDir(tree, "/v/lib", "python3.12");
+  addFile(tree, packageDir, "__init__.py", '__version__ = "0.21.4"\n');
+  addFile(tree, packageDir, "plugins.py", hermesPluginsSource());
+  const [firstDir, otherDir] = windows ? [cwd, binDir] : [binDir, cwd];
+  return {
+    tree,
+    sep,
+    binDir,
+    launcher: binDir + sep + launcherName,
+    cwd,
+    firstDir,
+    otherDir,
+    bound: { version: "0.21.4", versionSource: "source_literal", packageDir },
+  };
+}
+
+const SHADOW_NEIGHBORS = {
+  "módulo hermes_cli.py": (tree, dir) => addFile(tree, dir, "hermes_cli.py", '__version__ = "9.9.9"\n'),
+  "pacote regular hermes_cli/__init__.py": (tree, dir, sep) =>
+    addFile(tree, dir + sep + "hermes_cli", "__init__.py", '__version__ = "9.9.9"\n'),
+};
+
+function readRecordingFs(tree) {
+  const fs = createFakeFsAdapter(tree);
+  const reads = [];
+  const readFile = fs.readFile;
+  fs.readFile = async (filePath) => {
+    reads.push(filePath);
+    return readFile(filePath);
+  };
+  return { fs, reads };
+}
+
+test("agent-resolution-hermes-shadow hermes_cli no primeiro diretório de import (script: diretório do launcher; -m: cwd) deixa a versão desconhecida, sem pacote nenhum, e o vizinho nunca é lido", async () => {
+  const published = [];
+  let checked = 0;
+  for (const form of Object.keys(SHADOW_BOUND_LAUNCHERS)) {
+    for (const [kind, addNeighbor] of Object.entries(SHADOW_NEIGHBORS)) {
+      checked += 1;
+      const { tree, sep, launcher, cwd, firstDir } = installShadowableHermes(form);
+      addNeighbor(tree, firstDir, sep);
+      const { fs, reads } = readRecordingFs(tree);
+      const result = await resolveHermesVersion(launcher, { fs, cwd, env: {} });
+      const neighborReads = reads.filter((filePath) => filePath.startsWith(firstDir + sep + "hermes_cli"));
+      if (!isDeepStrictEqual(result, SHADOW_UNBOUND) || neighborReads.length > 0) {
+        published.push(`${form}/${kind} -> ${JSON.stringify(result)}; lidos: ${JSON.stringify(neighborReads)}`);
+      }
+    }
+  }
+  assert.equal(checked, 4 * 2);
+  assert.deepEqual(published, []);
+});
+
+test("agent-resolution-hermes-shadow controles: vizinho só no outro diretório (-m: diretório do launcher; script: cwd), diretório hermes_cli sem __init__.py e cwd ausente no script mantêm o pacote do site-packages", async () => {
+  const lost = [];
+  let checked = 0;
+  async function expectBound(label, installation, options) {
+    checked += 1;
+    const result = await resolveHermesVersion(installation.launcher, {
+      fs: createFakeFsAdapter(installation.tree),
+      env: {},
+      ...options,
+    });
+    if (!isDeepStrictEqual(result, installation.bound)) lost.push(`${label} -> ${JSON.stringify(result)}`);
+  }
+  for (const form of Object.keys(SHADOW_BOUND_LAUNCHERS)) {
+    for (const [kind, addNeighbor] of Object.entries(SHADOW_NEIGHBORS)) {
+      const installation = installShadowableHermes(form);
+      addNeighbor(installation.tree, installation.otherDir, installation.sep);
+      await expectBound(`${form}/${kind} no outro diretório`, installation, { cwd: installation.cwd });
+    }
+    // Sem __init__.py, o diretório é só porção de namespace (PEP 420): a
+    // busca continua e o pacote regular do site-packages vence.
+    const namespace = installShadowableHermes(form);
+    addFile(namespace.tree, namespace.firstDir + namespace.sep + "hermes_cli", "main.py", "def main():\n    pass\n");
+    await expectBound(`${form}/diretório hermes_cli sem __init__.py`, namespace, { cwd: namespace.cwd });
+  }
+  for (const form of Object.keys(SHADOW_BOUND_LAUNCHERS).filter((name) => name !== SHADOW_CMD_FORM)) {
+    await expectBound(`${form}/sem cwd`, installShadowableHermes(form), {});
+  }
+  assert.equal(checked, 4 * 2 + 4 + 3);
+  assert.deepEqual(lost, []);
+});
+
+test("agent-resolution-hermes-shadow ausência de contexto: no -m, cwd não informado fica launcher_not_recognized; env não informado vale ambiente sem variáveis", async () => {
+  const cmd = installShadowableHermes(SHADOW_CMD_FORM);
+  for (const [label, options] of [
+    ["cwd omitido", { env: {} }],
+    ["cwd null", { env: {}, cwd: null }],
+    ["cwd undefined", { env: {}, cwd: undefined }],
+  ]) {
+    const result = await resolveHermesVersion(cmd.launcher, { fs: createFakeFsAdapter(cmd.tree), ...options });
+    assert.deepEqual(result, SHADOW_UNBOUND, label);
+  }
+  const withCwd = await resolveHermesVersion(cmd.launcher, { fs: createFakeFsAdapter(cmd.tree), cwd: cmd.cwd });
+  assert.deepEqual(withCwd, cmd.bound, "env omitido, cwd informado");
+  const script = installShadowableHermes("shebang absoluto");
+  assert.deepEqual(await resolveHermesVersion(script.launcher, { fs: createFakeFsAdapter(script.tree) }), script.bound);
+});
+
+test("agent-resolution-hermes-shadow PYTHONPATH ou PYTHONHOME não vazio deixa a versão desconhecida; vazios ou ausentes mantêm o vínculo", async () => {
+  const published = [];
+  let checked = 0;
+  for (const form of Object.keys(SHADOW_BOUND_LAUNCHERS)) {
+    for (const name of ["PYTHONPATH", "PYTHONHOME"]) {
+      checked += 1;
+      const { tree, launcher, cwd } = installShadowableHermes(form);
+      const env = { [name]: form === SHADOW_CMD_FORM ? "C:\\outro" : "/outro" };
+      const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree), cwd, env });
+      if (!isDeepStrictEqual(result, SHADOW_UNBOUND)) published.push(`${form}/${name} -> ${JSON.stringify(result)}`);
+    }
+  }
+  assert.equal(checked, 4 * 2);
+  assert.deepEqual(published, []);
+
+  for (const form of Object.keys(SHADOW_BOUND_LAUNCHERS)) {
+    const { tree, launcher, cwd, bound } = installShadowableHermes(form);
+    for (const env of [{ PYTHONPATH: "", PYTHONHOME: "" }, {}, { PATH: "/usr/bin" }]) {
+      const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree), cwd, env });
+      assert.deepEqual(result, bound, `${form}: ${JSON.stringify(env)}`);
+    }
+  }
+});
+
+test("agent-resolution-hermes-shadow launcher alcançado por link simbólico: decide o diretório real do script, não o do link", async () => {
+  for (const [kind, addNeighbor] of Object.entries(SHADOW_NEIGHBORS)) {
+    for (const neighborDir of ["/v/bin", "/usr/local/bin"]) {
+      const { tree, launcher, bound } = installShadowableHermes("shebang absoluto");
+      addSymlink(tree, "/usr/local/bin", "hermes", launcher);
+      addNeighbor(tree, neighborDir, "/");
+      const result = await resolveHermesVersion("/usr/local/bin/hermes", {
+        fs: createFakeFsAdapter(tree),
+        cwd: "/projeto",
+        env: {},
+      });
+      assert.deepEqual(result, neighborDir === "/v/bin" ? SHADOW_UNBOUND : bound, `${kind} em ${neighborDir}`);
+    }
+  }
+});
+
+test("agent-resolution-hermes-shadow erro de E/S ao conferir o vizinho sobe como antes: presence unknown com o código, nunca ausência de vizinho", async () => {
+  for (const [form, platform, faultedPath] of [
+    ["shebang absoluto", "linux", ({ firstDir, sep }) => firstDir + sep + "hermes_cli.py"],
+    [SHADOW_CMD_FORM, "win32", ({ firstDir, sep }) => [firstDir, "hermes_cli", "__init__.py"].join(sep)],
+  ]) {
+    const installation = installShadowableHermes(form);
+    const fs = createFakeFsAdapter(installation.tree);
+    fs.injectFault(faultedPath(installation), "EACCES");
+    const results = await resolveAgents({
+      pathDirs: [installation.binDir],
+      platform,
+      env: {},
+      cwd: installation.cwd,
+      fs,
+    });
+    const hermes = results.find((r) => r.id === "hermes");
+    assert.deepEqual(
+      {
+        presence: hermes.presence,
+        version: hermes.version,
+        path: hermes.path,
+        reasonCode: hermes.reasonCode,
+        packageDir: hermes.packageDir,
+      },
+      { presence: "unknown", version: null, path: installation.launcher, reasonCode: "EACCES", packageDir: null },
+      form,
+    );
   }
 });

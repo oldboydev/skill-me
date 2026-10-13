@@ -3475,3 +3475,117 @@ ausência da sentinela. O `hermes.exe` continua `present/version null`.
   rodada e fica registrada como dívida.
 - A execução foi só em Windows 11 Pro, com Node 24.21.0. Os ramos POSIX do helper (shebang direto e trampolim com
   espaço na CLI) e os dois testes POSIX pulados dependem da execução Linux do orquestrador; macOS não foi observado.
+
+## 30. `hermes_cli` importado antes do site-packages — correção de vínculo Hermes (13/10/2026)
+
+Encaminhamento: `.checks/code-review/hermes-import-shadow-fixes.md`. Corrige o defeito que o primeiro limite da seção 29
+reconheceu e deixou aberto. É o mesmo vínculo de C2/C3, C5 e C8, e o proprietário autorizou a correção: não é critério
+novo nem achado fora do escopo. Esta seção **supera** os limites da seção 29 sobre `sys.path[0]`, `PYTHONPATH` e
+`PYTHONHOME`. O texto da seção 29 fica como registro. Autor: Claude; o Codex local só revisa. Arquivos alterados:
+`src/doctor/launcher-link/hermes.mjs`, o encaminhamento em `agent-resolution.mjs` e `run-diagnostics.mjs`, os testes de
+resolução e de configuração, `docs/agent-compatibility.md`, o Landing e esta seção. Os helpers de teste ficaram
+intactos. Não houve operação Git de mutação, stash, agente, hook, execução de Python nem configuração real.
+
+**Defeito.** O launcher fixava o intérprete do venv, e o site-packages tinha o `hermes_cli` 0.21.4 com o catálogo. Com
+um `hermes_cli.py` ou `hermes_cli/__init__.py` no primeiro diretório de import, o doctor publicava 0.21.4 e o catálogo
+como vinculados. Nesse caso o Python importa o vizinho.
+
+**Fontes**, lidas só como texto:
+
+- Documentação do Python 3.13. Em `sys.path`: "`python -m module` command line: prepend the current working
+  directory"; "`python script.py` command line: prepend the script's directory. If it's a symbolic link, resolve
+  symbolic links"; `-P`/`PYTHONSAFEPATH` desligam esse acréscimo. Em `sys_path_init`, o primeiro item é o diretório do
+  script ou o diretório atual (`-c`, `-m`, shell). Os caminhos de `PYTHONPATH` vêm em seguida, antes do site-packages,
+  e `PYTHONHOME` muda `prefix`/`exec_prefix`. Em `using/cmdline`, não há regra sobre valor vazio dessas variáveis.
+- CPython v3.13.0. Em `Python/initconfig.c`, `config_get_env_dup` (que lê `PYTHONPATH`) traz
+  `if (!var || var[0] == '\0')`, e vazio vale não definido. Em `Modules/getpath.py`, a condição é
+  `elif use_environment and ENV_PYTHONHOME and not py_setpath:`, então um valor vazio é ignorado.
+- PEP 420, "Specification". `<directory>/foo/__init__.py` é um pacote regular, e `<directory>/foo.{py,pyc,so,pyd}` é um
+  módulo. Um diretório `foo` sem eles "is recorded and the scan continues".
+
+**Decisão.** `resolveHermesVersion(launcherPath, { fs, cwd = null, env = {} })` passa por
+`mayImportBeforeSitePackages` depois de achar o prefixo do intérprete fixado e antes de procurar o site-packages. O
+resultado é `{ version: null, reasonCode: "launcher_not_recognized" }`, sem `packageDir`, quando:
+
+1. `PYTHONPATH` ou `PYTHONHOME` não está vazio. O conteúdo não é examinado e o `sys.path` inteiro não é reproduzido.
+2. O primeiro diretório de import não é conhecido. No `.cmd`/`.bat` (`-m hermes_cli`), ele é o `cwd`; no shebang, no
+   `env` absoluto e no trampolim, é o diretório do script. Se `fs.lstat` mostra um link, vale o diretório de
+   `fs.realpath`. Sem `lstat`/`realpath` no adaptador, vale o caminho recebido, como em `codex.mjs`.
+3. Esse diretório tem `hermes_cli.py` ou `hermes_cli/__init__.py`. A conferência usa o `fileExists` existente: ENOENT é
+   ausência, e outro erro de E/S sobe como antes, até `presence: unknown` com o código.
+
+A versão do vizinho nunca é lida. A presença continua `present`, e nenhum catálogo é lido, então suporte, configuração e
+confiança não usam o pacote errado. `resolveAgents` e `runDiagnostics` só encaminham o `cwd` e o `env` que a CLI já
+recebia. Nenhuma função injetada lê `process.cwd()` ou `process.env`. A ausência foi definida de modo explícito: `cwd`
+ausente é `null`, desconhecido, e o `-m` não liga; `env` ausente é `{}`, a convenção que `resolveAgents` já usava.
+Também foi descartado tratar o `env` ausente como desconhecido. Isso mudaria o contrato de `resolveAgents`, e a CLI
+sempre o encaminha. O código reaproveita `launcher_not_recognized`, usado na seção 29 quando o vínculo não é
+demonstrável; um código novo mudaria o contrato do envelope v1.
+
+**Fixtures.** A premissa de quatro testes antigos mudou: no `-m`, o diretório de trabalho é o primeiro diretório de
+import. Os testes cujo `.cmd` precisa chegar ao site-packages passaram a informar `cwd` de um diretório sem
+`hermes_cli`: convenções por SO, layout Windows, o controle positivo formal7 e o formal7 do `.cmd` sem pacote no próprio
+prefixo, que sem o `cwd` pararia antes de provar o que afirma. A justificativa ficou no comentário de cada um. Nenhuma
+asserção foi afrouxada.
+
+**RED** (`src/` intacto; `.checks/code-review/shadow-red.txt`): os 8 alvos da seção 29 → tests 164, pass 153, fail 9,
+skipped 2, `EXIT_CODE=1`. As 9 falhas são os testes novos negativos. Na camada:
+
+- as 8 combinações de vizinho (4 formas × módulo/pacote) publicavam 0.21.4 com o `packageDir` do site-packages;
+- o `.cmd` sem `cwd` publicava 0.21.4;
+- as 8 combinações de `PYTHONPATH`/`PYTHONHOME` não vazios publicavam 0.21.4;
+- o vizinho no diretório real de um launcher alcançado por link publicava 0.21.4;
+- o `EACCES` no vizinho nunca era alcançado, e o resultado ficava `present`/0.21.4.
+
+Na CLI, os 4 cenários publicavam `version: "0.21.4"`. O teste de controles da camada, os 3 controles da CLI e os 4
+testes ajustados já passavam.
+
+**GREEN** (`.checks/code-review/shadow-green.txt`): os mesmos alvos → tests 164, pass 162, fail 0, skipped 2,
+`EXIT_CODE=0`. Depois do `npm test` só mudou um comentário de `hermes.mjs` (a citação do CPython sobre variável vazia).
+Os alvos foram reexecutados depois dessa mudança, com os mesmos números, e o log guardado é essa 2ª execução.
+
+**`npm test` único** (`.checks/code-review/shadow-npm-test.txt`): `test:governance` 6/6, `test:code-review` 10/10 e
+`test:doctor` com 378 testes / 376 pass / 0 fail / 2 skip, `EXIT_CODE=0`. Os skips são os dois POSIX já registrados. O
+delta 365 → 378 são os 13 testes novos (6 de resolução e 7 de CLI), todos executados no log.
+
+**Provas.** Os casos derivam do cenário do encaminhamento e da fonte, não do código.
+
+- O vizinho: `hermes_cli.py` 9.9.9 e `hermes_cli/__init__.py` 9.9.9, nas quatro formas aceitas (shebang absoluto, `env`
+  absoluto, trampolim e `.cmd`). O primeiro diretório de import é o do script ou o `cwd`, conforme a forma. Cada caso
+  exige o resultado inconclusivo exato, sem `packageDir`, e confere que nenhum caminho do vizinho foi lido.
+- Os controles: o mesmo vizinho só no outro diretório (o `cwd` no script e o diretório do launcher no `-m`); o
+  diretório `hermes_cli` só com `main.py`; e o script sem `cwd`. Todos exigem `deepEqual` exato com 0.21.4 e o
+  `packageDir` do site-packages.
+- A ausência de contexto: `cwd` omitido, `null` ou `undefined` no `.cmd` é inconclusivo; `env` omitido mantém o
+  vínculo.
+- O ambiente: `PYTHONPATH` e `PYTHONHOME` não vazios, nas quatro formas, são inconclusivos. Vazios, `{}` e só `PATH`
+  mantêm o vínculo.
+- O link simbólico: o vizinho no diretório real é inconclusivo, e o vizinho só no diretório do link mantém o vínculo.
+- E/S: `EACCES` no vizinho, pelo `resolveAgents` do Linux e do Windows, termina em `presence: unknown`, `EACCES`,
+  versão e `packageDir` nulos. O caso do Windows também prova o encaminhamento do `cwd` na camada.
+
+Na CLI, a fixture usa `--cwd`, `hooks_auto_accept:true` e `DOCTOR_TEST_WRITE_SENTINEL=1`. O primeiro diretório é o
+`--cwd` no Windows e o diretório do launcher no POSIX. Os 4 casos negativos são o módulo, o pacote, `PYTHONPATH` e
+`PYTHONHOME`. Eles conferem 3 agentes, exit 0, Hermes `present` no launcher, versão nula, `launcher_not_recognized`, 5
+linhas `unverified/version_unresolved` e `configuration`/`trust` `unknown`. Conferem também os motivos no texto e a
+ausência de `0.21.4`, `9.9.9` e `hermes_cli` nos dois formatos, além da sentinela. Os 3 controles são o módulo e o
+pacote só no outro diretório e o diretório sem `__init__.py`. Eles conferem 0.21.4, `configured`, `trusted`, 5 linhas
+`verified/local_contract_lists_events` com a fonte do site-packages e a ausência de `9.9.9`.
+
+**Limites.**
+
+- Só as duas formas pedidas são conferidas. Um módulo de extensão (`.so`/`.pyd`), um `.pyc` sem fonte ou um
+  `hermes_cli/__init__.pyc` no primeiro diretório também seriam importados antes (PEP 420). Com uma dessas formas, a
+  versão do site-packages ainda é publicada. O resíduo fica registrado para decisão do proprietário.
+- `PYTHONSAFEPATH`/`-P` não são modelados. Com eles definidos, o vizinho não seria importado, e o resultado fica
+  inconclusivo, com perda de precisão. Em sistema de arquivos sem distinção de maiúsculas, um vizinho com outra caixa
+  também conta, pelo lado conservador.
+- `.pth`, site do usuário, `sys.path` alterado em tempo de execução, finders e reflexão continuam fora da leitura
+  estática.
+- O `-m` usa o `--cwd` diagnosticado (padrão: diretório atual da CLI). Uma execução do Hermes a partir de outro diretório
+  pode ter outro vizinho.
+- `realScriptPath` repete o padrão `lstat`/`realpath` de `codex.mjs`. Extrair um helper comum exigiria alterar
+  `codex.mjs`, fora do ownership; fica registrado como dívida, junto com `stripCommentLines` da seção 29.
+- A execução foi só em Windows 11 Pro, com Node 24.21.0. Na CLI, o Windows exercita o `.cmd` (`-m`, `--cwd`). O ramo
+  POSIX do mesmo teste (vizinho no diretório do launcher) depende da execução Linux do orquestrador; macOS não foi
+  observado.

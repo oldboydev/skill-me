@@ -83,7 +83,7 @@ export async function runDiagnostics({ cwd, collectorEndpoint, env, platform, fs
     .split(platformPathDelimiter(platform))
     .filter((entry) => entry.length > 0);
 
-  const agentsPresence = await resolveAgents({ pathDirs, platform, env, fs });
+  const agentsPresence = await resolveAgents({ pathDirs, platform, env, cwd, fs });
   const agents = [];
   for (const presence of agentsPresence) {
     agents.push(await diagnoseAgent({ presence, env, platform, cwd, fs }));

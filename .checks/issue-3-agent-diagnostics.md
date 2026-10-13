@@ -355,6 +355,22 @@ estão na seção 29 do build.
 
 Proof: `node --test --test-name-pattern="formal7-binding" tests/doctor/agent-resolution.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
 
+### Landing do `hermes_cli` importado antes do site-packages — correção de vínculo Hermes
+
+Encaminhamento: `.checks/code-review/hermes-import-shadow-fixes.md`. Corrige o defeito reconhecido nos limites da seção 29
+do build. É o mesmo vínculo de C2/C3, C5 e C8: correção autorizada, não um critério novo nem achado fora do escopo. O
+intérprete absoluto do venv e o `hermes_cli` 0.21.4 no site-packages publicavam 0.21.4 e o catálogo desse pacote mesmo
+com um `hermes_cli.py` ou `hermes_cli/__init__.py` no primeiro diretório de import, que o Python encontra antes. Autor:
+Claude; o Codex local só revisa. Fonte, RED/GREEN e limites estão na seção 30 do build, que supera os limites de
+`sys.path[0]`, `PYTHONPATH` e `PYTHONHOME` da seção 29.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| O site-packages do intérprete fixado só é atribuído quando nada observável vem antes dele em `sys.path`; senão, `launcher_not_recognized` | Python 3.13 (`sys.path` e `sys_path_init`): `-m` põe primeiro o diretório de trabalho; um script põe o próprio diretório, com links resolvidos; `PYTHONPATH` acrescenta caminhos antes do site-packages; `PYTHONHOME` muda o prefix. `resolveHermesVersion(launcherPath, { fs, cwd = null, env = {} })` (`launcher-link/hermes.mjs`) decide antes de procurar o site-packages: (1) `PYTHONPATH` ou `PYTHONHOME` não vazio é inconclusivo; (2) o primeiro diretório é o `cwd` no `.cmd`/`.bat` (`-m hermes_cli`) e, no shebang, `env` absoluto ou trampolim, o diretório do launcher, depois de `realpath` quando `fs.lstat` mostra um link; `cwd` não informado no `-m` é inconclusivo; (3) `hermes_cli.py` ou `hermes_cli/__init__.py` nesse diretório é inconclusivo (`fileExists` existente: erro de E/S diferente de ENOENT sobe como antes). Diretório `hermes_cli` sem `__init__.py` é porção de namespace e não conta. A versão do vizinho nunca é lida. A presença continua `present`, sem `packageDir`, e nenhum catálogo é lido. `resolveAgents` e `runDiagnostics` só encaminham o `cwd` e o `env` que a CLI já recebia. `env` ausente vale `{}`, como já em `resolveAgents`; `cwd` ausente vale `null`, desconhecido | Ler a versão do vizinho, executar o intérprete ou importar o pacote; modelar o `sys.path` inteiro (`.pth`, site do usuário, `PYTHONSAFEPATH`). Também foram descartados: um código novo, porque o `reasonCode` é contrato do envelope v1; `version_source_ambiguous`, que significa vários candidatos no mesmo prefixo; `process.cwd()`/`process.env` como default dentro das funções injetadas; e `env` ausente como desconhecido, que mudaria o contrato existente de `resolveAgents` sem ganho para a CLI, que sempre o encaminha |
+| Fixtures `.cmd` positivas informam o diretório de trabalho da execução | Os testes de camada que provam o vínculo do `.cmd` passam `cwd` de um diretório sem `hermes_cli`. A premissa anterior, de que o cwd não importava, mudou: no `-m`, ele é o primeiro diretório de import | Presumir um cwd dentro do leitor ou manter o vínculo do `-m` sem conhecer o cwd |
+
+Proof: `node --test --test-name-pattern="hermes-shadow" tests/doctor/agent-resolution.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
+
 ## Checks
 
 ### S1 - Saber quais agentes foram encontrados sem iniciar os agentes · 6 arquivos · ~26 KB · ~7k

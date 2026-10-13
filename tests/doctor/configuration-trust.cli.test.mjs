@@ -708,6 +708,143 @@ test("configuration-trust-C2/C5/C8/formal7-binding launcher Hermes com intérpre
   }
 });
 
+// Correção de vínculo Hermes (.checks/code-review/hermes-import-shadow-
+// fixes.md) na fronteira real da CLI. installAllAgents fixa o intérprete do
+// venv e põe no site-packages o 0.21.4 com o catálogo completo. O primeiro
+// diretório de import é o --cwd no Windows (`.cmd` com `-m hermes_cli`) e o
+// diretório do launcher no POSIX (o Python executa o script do shebang ou do
+// trampolim). Um hermes_cli 9.9.9 nesse diretório, ou PYTHONPATH/PYTHONHOME
+// não vazio, impede atribuir o pacote do site-packages. O mesmo vizinho no
+// outro diretório, ou um diretório hermes_cli sem __init__.py, não impede.
+function runHermesShadowScenario(scratch, { neighbor = null, neighborIn = "first", extraEnv = {} } = {}) {
+  const dir = path.join(scratch, "bin");
+  const sentinelPath = path.join(scratch, "sentinel.txt");
+  const { pathDirs, hermesPkgDir } = installAllAgents(dir, {
+    sentinelPath,
+    hermesContractSource: hermesPluginsSource(),
+  });
+  const windows = process.platform === "win32";
+  const hermesBinDir = path.join(dir, "hermes-venv", hermesBinDirName());
+  const project = path.join(scratch, "projeto");
+  mkdirSync(project, { recursive: true });
+  const [firstDir, otherDir] = windows ? [project, hermesBinDir] : [hermesBinDir, project];
+  const neighborDir = neighborIn === "first" ? firstDir : otherDir;
+  if (neighbor === "module") writeFileSync(path.join(neighborDir, "hermes_cli.py"), '__version__ = "9.9.9"\n');
+  if (neighbor === "package" || neighbor === "namespace") {
+    mkdirSync(path.join(neighborDir, "hermes_cli"), { recursive: true });
+    const fileName = neighbor === "package" ? "__init__.py" : "main.py";
+    writeFileSync(path.join(neighborDir, "hermes_cli", fileName), '__version__ = "9.9.9"\n');
+  }
+  const home = path.join(scratch, "home");
+  const env = { PATH: pathEnv(pathDirs), ...homeEnv(home), DOCTOR_TEST_WRITE_SENTINEL: "1", ...extraEnv };
+  writeAgentConfig(
+    home,
+    "hermes",
+    'hooks:\n  pre_tool_call:\n    - command: "internal-safe-handler"\nhooks_auto_accept: true\n',
+    { env, platform: process.platform },
+  );
+  return {
+    json: runDoctorJson(["--cwd", project], { env }),
+    text: runDoctor(["--cwd", project], { env }),
+    sentinelPath,
+    hermesPkgDir,
+    launcherPath: path.join(hermesBinDir, windows ? "hermes.cmd" : "hermes"),
+  };
+}
+
+const HERMES_SHADOW_UNBOUND_CLI_CASES = {
+  "hermes_cli.py no primeiro diretório de import": () => ({ neighbor: "module" }),
+  "hermes_cli/__init__.py no primeiro diretório de import": () => ({ neighbor: "package" }),
+  "PYTHONPATH não vazio": (scratch) => ({ extraEnv: { PYTHONPATH: path.join(scratch, "outro") } }),
+  "PYTHONHOME não vazio": (scratch) => ({ extraEnv: { PYTHONHOME: path.join(scratch, "outro") } }),
+};
+
+for (const [label, scenarioFor] of Object.entries(HERMES_SHADOW_UNBOUND_CLI_CASES)) {
+  test(`configuration-trust-C2/C5/C8/hermes-shadow ${label}: Hermes present/version null, sem verified/configured/trusted, mesmo com hooks_auto_accept:true`, () => {
+    const scratch = makeScratch("doctor-hermes-shadow-");
+    try {
+      const { json, text, sentinelPath, launcherPath } = runHermesShadowScenario(scratch, scenarioFor(scratch));
+      const { status, stdout, report } = json;
+      assert.equal(status, 0, label);
+      assert.equal(report.agents.length, 3, label);
+      const hermes = report.agents.find((a) => a.id === "hermes");
+      assert.equal(hermes.presence, "present", label);
+      assert.equal(hermes.path, launcherPath, label);
+      assert.equal(hermes.version, null, label);
+      assert.equal(hermes.versionSource, null, label);
+      assert.equal(hermes.reasonCode, "launcher_not_recognized", label);
+      assert.equal(hermes.configuration, "unknown", label);
+      assert.equal(hermes.configReasonCode, "hooks_catalog_unavailable", label);
+      assert.equal(hermes.trust, "unknown", label);
+      assert.equal(hermes.trustReasonCode, "configuration_not_determined", label);
+
+      const localRows = hermes.capabilities.filter((row) => row.surface === "cli_local");
+      assert.equal(localRows.length, 5, label);
+      for (const row of localRows) {
+        assert.equal(row.support, "unverified", `${label}/${row.mechanism}`);
+        assert.equal(row.reasonCode, "version_unresolved", `${label}/${row.mechanism}`);
+      }
+      assert.doesNotMatch(stdout, /"support":"verified"/, label);
+
+      assert.equal(text.status, 0, label);
+      for (const reason of ["launcher_not_recognized", "version_unresolved", "hooks_catalog_unavailable", "configuration_not_determined"]) {
+        assert.match(text.stdout, new RegExp(reason), `${label}: ${reason}`);
+      }
+      assert.doesNotMatch(text.stdout, /local_contract_lists_events/, label);
+      for (const leaked of [/0\.21\.4/, /9\.9\.9/, /hermes_cli/]) {
+        assert.doesNotMatch(stdout, leaked, `${label}: JSON ${leaked}`);
+        assert.doesNotMatch(text.stdout, leaked, `${label}: texto ${leaked}`);
+      }
+      assert.equal(existsSync(sentinelPath), false, label);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+}
+
+const HERMES_SHADOW_BOUND_CLI_CASES = {
+  "hermes_cli.py só no outro diretório": { neighbor: "module", neighborIn: "other" },
+  "hermes_cli/__init__.py só no outro diretório": { neighbor: "package", neighborIn: "other" },
+  "diretório hermes_cli sem __init__.py no primeiro diretório de import": { neighbor: "namespace" },
+};
+
+for (const [label, scenario] of Object.entries(HERMES_SHADOW_BOUND_CLI_CASES)) {
+  test(`configuration-trust-C2/C5/C8/hermes-shadow controle ${label}: o pacote do site-packages continua ligado (0.21.4, verified, configured, trusted)`, () => {
+    const scratch = makeScratch("doctor-hermes-shadow-controle-");
+    try {
+      const { json, text, sentinelPath, hermesPkgDir } = runHermesShadowScenario(scratch, scenario);
+      const { status, stdout, report } = json;
+      assert.equal(status, 0, label);
+      assert.equal(report.agents.length, 3, label);
+      const hermes = report.agents.find((a) => a.id === "hermes");
+      assert.equal(hermes.presence, "present", label);
+      assert.equal(hermes.version, "0.21.4", label);
+      assert.equal(hermes.versionSource, "source_literal", label);
+      assert.equal(hermes.reasonCode, null, label);
+      assert.equal(hermes.configuration, "configured", label);
+      assert.equal(hermes.configReasonCode, "hooks_configured", label);
+      assert.equal(hermes.trust, "trusted", label);
+      assert.equal(hermes.trustReasonCode, "hooks_auto_accept_enabled", label);
+
+      const localRows = hermes.capabilities.filter((row) => row.surface === "cli_local");
+      assert.equal(localRows.length, 5, label);
+      for (const row of localRows) {
+        assert.equal(row.support, "verified", `${label}/${row.mechanism}`);
+        assert.equal(row.reasonCode, "local_contract_lists_events", `${label}/${row.mechanism}`);
+        assert.equal(row.evidence.source.path, path.join(hermesPkgDir, "plugins.py"), `${label}/${row.mechanism}`);
+      }
+
+      assert.equal(text.status, 0, label);
+      assert.match(text.stdout, /0\.21\.4/, label);
+      assert.doesNotMatch(stdout, /9\.9\.9/, label);
+      assert.doesNotMatch(text.stdout, /9\.9\.9/, label);
+      assert.equal(existsSync(sentinelPath), false, label);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+}
+
 // C16/G4 — fronteira real da CLI: config inacessível, provada de forma
 // portátil entre Windows/Linux/macOS. chmod não bloqueia o dono no Windows e
 // CI costuma rodar como root, então uma permissão negada real não é
