@@ -183,14 +183,29 @@ async function firstImportDirectory(launcherPath, { fs, cwd }) {
 const COMPILED_HERMES_CLI_NAME = /^hermes_cli(?:\.[^/\\]+)?\.(?:so|pyd)$/;
 const COMPILED_INIT_NAME = /^__init__(?:\.[^/\\]+)?\.(?:so|pyd)$/;
 
-async function hasCompiledSibling(dirPath, namePattern, fs) {
+// No Windows, o FileFinder do import cacheia os nomes do diretório com tudo
+// a partir do primeiro ponto em minúsculas antes de casar contra os sufixos
+// (CPython v3.13.0, `_bootstrap_external.py` `_fill_cache`: "Windows users
+// can import modules with case-insensitive file suffixes"). O nome antes do
+// primeiro ponto nunca é tocado por essa normalização: hermes_cli/__init__
+// continuam contrato exato, só a extensão e o marcador de ABI perdem caixa.
+function windowsFoldedSuffix(name) {
+  const dotIndex = name.indexOf(".");
+  return dotIndex === -1 ? name : name.slice(0, dotIndex) + name.slice(dotIndex).toLowerCase();
+}
+
+// `platform` vem do chamador (resolveAgents/resolveHermesVersion), nunca de
+// process.platform: só "win32" aciona o casefold acima; qualquer outro valor,
+// incluindo ausente, mantém o POSIX exato — o lado conservador quando o
+// chamador direto não declara a plataforma.
+async function hasCompiledSibling(dirPath, namePattern, fs, platform) {
   let entries = [];
   try {
     entries = await fs.listDir(dirPath);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  return entries.some((name) => namePattern.test(name));
+  return entries.some((name) => namePattern.test(platform === "win32" ? windowsFoldedSuffix(name) : name));
 }
 
 // Verdadeiro quando outro hermes_cli pode ser importado antes do
@@ -201,7 +216,7 @@ async function hasCompiledSibling(dirPath, namePattern, fs) {
 // namespace (PEP 420): a busca continua e o pacote regular do site-packages
 // vence. A versão do vizinho nunca é lida, e o resto do sys.path (.pth, site
 // do usuário) não é modelado.
-async function mayImportBeforeSitePackages(launcherPath, { fs, cwd, env }) {
+async function mayImportBeforeSitePackages(launcherPath, { fs, cwd, env, platform }) {
   if (IMPORT_PATH_ENV_VARS.some((name) => (env[name] ?? "") !== "")) return true;
   const firstDir = await firstImportDirectory(launcherPath, { fs, cwd });
   if (firstDir === null) return true;
@@ -211,8 +226,8 @@ async function mayImportBeforeSitePackages(launcherPath, { fs, cwd, env }) {
     (await fileExists(joinPath(firstDir, "hermes_cli.pyc"), fs)) ||
     (await fileExists(joinPath(packageDir, "__init__.py"), fs)) ||
     (await fileExists(joinPath(packageDir, "__init__.pyc"), fs)) ||
-    (await hasCompiledSibling(firstDir, COMPILED_HERMES_CLI_NAME, fs)) ||
-    (await hasCompiledSibling(packageDir, COMPILED_INIT_NAME, fs))
+    (await hasCompiledSibling(firstDir, COMPILED_HERMES_CLI_NAME, fs, platform)) ||
+    (await hasCompiledSibling(packageDir, COMPILED_INIT_NAME, fs, platform))
   );
 }
 
@@ -258,8 +273,11 @@ async function findSitePackagesInitFile(prefix, sep, interpreterVersion, fs) {
 // (ver contract-evidence.mjs). `cwd` e `env` descrevem a execução
 // diagnosticada e nunca vêm do processo atual: `cwd` ausente vale null
 // (desconhecido, então o `-m` do .cmd não liga), e `env` ausente vale um
-// ambiente sem variáveis, a mesma convenção de resolveAgents.
-export async function resolveHermesVersion(launcherPath, { fs, cwd = null, env = {} }) {
+// ambiente sem variáveis, a mesma convenção de resolveAgents. `platform`
+// segue a mesma convenção explícita (nunca process.platform implícito);
+// ausente vale o lado conservador do casefold de sufixo (ver
+// hasCompiledSibling).
+export async function resolveHermesVersion(launcherPath, { fs, cwd = null, env = {}, platform = null }) {
   // Launcher compilado (ex.: hermes.exe): não é um script de texto com o
   // import de hermes_cli, então o vínculo não é demonstrável a partir dele.
   if (await isNativeExecutable(launcherPath, { fs })) {
@@ -286,8 +304,8 @@ export async function resolveHermesVersion(launcherPath, { fs, cwd = null, env =
   // O site-packages desse prefixo só é o hermes_cli importado se nada vier
   // antes dele em sys.path. Com um candidato anterior observável, ou sem
   // como saber, o vínculo não é demonstrável: a presença continua, sem
-  // versão nem pacote. Ver .checks/issue-3-agent-diagnostics.build.md, seções 30 e 31.
-  if (await mayImportBeforeSitePackages(launcherPath, { fs, cwd, env })) {
+  // versão nem pacote. Ver .checks/issue-3-agent-diagnostics.build.md, seções 30-32.
+  if (await mayImportBeforeSitePackages(launcherPath, { fs, cwd, env, platform })) {
     return { version: null, reasonCode: "launcher_not_recognized" };
   }
   const interpreterVersion = /(?:^|[\\/])python(\d+\.\d+)$/.exec(interpreterPath)?.[1] ?? null;

@@ -733,6 +733,12 @@ function runHermesShadowScenario(scratch, { neighbor = null, neighborIn = "first
   // Residual da seção 30 (seção 31 do build): bytecode solto sem o .py ao
   // lado é importado antes do site-packages tanto quanto o módulo fonte.
   if (neighbor === "pyc_module") writeFileSync(path.join(neighborDir, "hermes_cli.pyc"), "\0");
+  // P2 da verificação12 (.checks/code-review/compiled-suffix-case-fixes.md):
+  // no Windows, importlib casefolda o sufixo antes de casar contra os nomes
+  // nativos (CPython `_fill_cache`) — um .PYD maiúsculo sombreia tanto
+  // quanto a extensão nativa minúscula já provada na camada
+  // (agent-resolution.unit.test.mjs).
+  if (neighbor === "pyd_module_uppercase") writeFileSync(path.join(neighborDir, "hermes_cli.PYD"), "\0");
   if (neighbor === "package" || neighbor === "namespace") {
     mkdirSync(path.join(neighborDir, "hermes_cli"), { recursive: true });
     const fileName = neighbor === "package" ? "__init__.py" : "main.py";
@@ -805,6 +811,63 @@ for (const [label, scenarioFor] of Object.entries(HERMES_SHADOW_UNBOUND_CLI_CASE
     }
   });
 }
+
+// P2 da verificação12 (.checks/code-review/compiled-suffix-case-fixes.md):
+// mesmo cenário acima, mas o vizinho é a extensão nativa com sufixo
+// maiúsculo (.PYD) que o scanner de hermes.mjs ignorava. Só roda no Windows:
+// a case-insensitividade de sufixo do import é exclusiva desse SO (CPython
+// `_fill_cache` só casefolda quando `sys.platform.startswith('win')`).
+test(
+  "configuration-trust-C2/C5/C8/hermes-shadow hermes_cli.PYD (sufixo maiúsculo) no primeiro diretório de import: Hermes present/version null, sem verified/configured/trusted, mesmo com hooks_auto_accept:true",
+  { skip: process.platform !== "win32" },
+  () => {
+    const scratch = makeScratch("doctor-hermes-shadow-pyd-case-");
+    try {
+      const { json, text, sentinelPath, launcherPath } = runHermesShadowScenario(scratch, {
+        neighbor: "pyd_module_uppercase",
+      });
+      const { status, stdout, report } = json;
+      assert.equal(status, 0);
+      assert.equal(report.agents.length, 3);
+      const hermes = report.agents.find((a) => a.id === "hermes");
+      assert.equal(hermes.presence, "present");
+      assert.equal(hermes.path, launcherPath);
+      assert.equal(hermes.version, null);
+      assert.equal(hermes.versionSource, null);
+      assert.equal(hermes.reasonCode, "launcher_not_recognized");
+      assert.equal(hermes.configuration, "unknown");
+      assert.equal(hermes.configReasonCode, "hooks_catalog_unavailable");
+      assert.equal(hermes.trust, "unknown");
+      assert.equal(hermes.trustReasonCode, "configuration_not_determined");
+
+      const localRows = hermes.capabilities.filter((row) => row.surface === "cli_local");
+      assert.equal(localRows.length, 5);
+      for (const row of localRows) {
+        assert.equal(row.support, "unverified", row.mechanism);
+        assert.equal(row.reasonCode, "version_unresolved", row.mechanism);
+      }
+      assert.doesNotMatch(stdout, /"support":"verified"/);
+
+      assert.equal(text.status, 0);
+      for (const reason of [
+        "launcher_not_recognized",
+        "version_unresolved",
+        "hooks_catalog_unavailable",
+        "configuration_not_determined",
+      ]) {
+        assert.match(text.stdout, new RegExp(reason), reason);
+      }
+      assert.doesNotMatch(text.stdout, /local_contract_lists_events/);
+      for (const leaked of [/0\.21\.4/, /9\.9\.9/, /hermes_cli/]) {
+        assert.doesNotMatch(stdout, leaked, `JSON: ${leaked}`);
+        assert.doesNotMatch(text.stdout, leaked, `texto: ${leaked}`);
+      }
+      assert.equal(existsSync(sentinelPath), false);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
 
 const HERMES_SHADOW_BOUND_CLI_CASES = {
   "hermes_cli.py só no outro diretório": { neighbor: "module", neighborIn: "other" },

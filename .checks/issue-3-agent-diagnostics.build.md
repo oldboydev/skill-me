@@ -3663,3 +3663,85 @@ estática; sistema de arquivos sem distinção de maiúsculas conta um vizinho c
 (herdado, não reavaliado nesta seção); `realScriptPath` continua a mesma dívida de `codex.mjs`, junto com
 `stripCommentLines` da seção 29; execução só em Windows 11 Pro com Node 24.21.0, POSIX dependente da execução Linux
 do orquestrador, macOS não observado.
+
+## 32. Sufixo compilado em maiúsculas no Windows — fecha o P2 da verificação independente 12 (13/10/2026)
+
+Encaminhamento: `.checks/code-review/compiled-suffix-case-fixes.md`. Fecha o único achado bloqueante do relatório12
+(`.checks/issue-3-agent-diagnostics.verified.md`), P2 em C2/C3/C5/C8: `hasCompiledSibling` (`hermes.mjs`) casava
+`COMPILED_HERMES_CLI_NAME`/`COMPILED_INIT_NAME` sempre case-sensitive, então um `hermes_cli.PYD`/`__init__.PYD` (ou
+qualquer variante com extensão/marcador de ABI maiúsculo) no primeiro diretório de import não era reconhecido como
+vizinho no Windows — o scanner devolvia lista vazia de casos, `mayImportBeforeSitePackages` concluía "nada sombreia"
+e o doctor publicava o site-packages (0.21.4, `source_literal`, cinco `verified`, `configured`/`trusted`) como se o
+vínculo estivesse provado, quando a presença do vizinho já deveria deixar tudo isso inconclusivo. Probe do verifier:
+`verifier12/compiled-case-result.json` (`actual` contradiz `expected`). **Esta seção supera** especificamente a
+frase "sistema de arquivos sem distinção de maiúsculas conta um vizinho com outra caixa, pelo lado conservador" da
+seção 31: não contava — contava errado, para o lado não conservador. O restante das seções 30/31 (demais candidatos,
+limites, decisões) fica como registro, intacto. Autor: Claude; o Codex local só revisa, nenhuma implementação pelo
+Verifier. Arquivos alterados: `src/doctor/launcher-link/hermes.mjs`, `src/doctor/agent-resolution.mjs` (só
+encaminha `platform` ao leitor, nenhuma decisão nova), os testes de resolução (`agent-resolution.unit.test.mjs`) e
+de CLI (`configuration-trust.cli.test.mjs`) e esta seção. Nenhuma mutação Git, stash, agente extra, hook nem
+execução de Python/configuração real.
+
+**Fonte primária**, lida só como texto: [CPython v3.13.0, `_bootstrap_external.py`, `_fill_cache`](https://github.com/python/cpython/blob/v3.13.0/Lib/importlib/_bootstrap_external.py#L1682)
+(linhas físicas 1682–1698, scratch do verifier `verifier12/bootstrap_external.py`, SHA256
+`E4A5705DE0F740E98BD811A7D15EB09697B0783BF5DADD5263FC23EE6FF9E3DA`). No Windows, o `FileFinder` cacheia os nomes do
+diretório fazendo `item.partition('.')` e colocando em minúsculas só o que vem a partir do primeiro ponto
+("Windows users can import modules with case-insensitive file suffixes... This is safe as the specified suffixes
+to check against are always specified in a case-sensitive manner"); o nome antes do primeiro ponto nunca é tocado.
+No POSIX (`not sys.platform.startswith('win')`) a comparação é sempre exata, sem esse casefold.
+
+**Decisão.** `hasCompiledSibling` (`hermes.mjs`) ganha um quarto parâmetro `platform` e uma função
+`windowsFoldedSuffix(name)` que reproduz exatamente o `partition('.')` da fonte: mantém o texto antes do primeiro
+ponto como está e baixa a caixa só do restante. A comparação contra `COMPILED_HERMES_CLI_NAME`/`COMPILED_INIT_NAME`
+usa esse nome dobrado quando `platform === "win32"`; qualquer outro valor, incluindo ausente, mantém o nome como veio
+do `listDir` (POSIX exato). `mayImportBeforeSitePackages` e `resolveHermesVersion` só encaminham `platform`; nenhum
+decide por ele além disso — não é um resolvedor de ABI nem de runtime, a guarda permanece conservadora no mesmo
+escopo da seção 31. `agent-resolution.mjs` (`readVersion`/`resolveOneAgent`) encaminha o `platform` que `resolveAgents`
+já recebe (hoje de `process.platform`, via `run-diagnostics.mjs`, sem mudança nesta seção) até `resolveHermesVersion`;
+nenhum outro agente ou candidato usa esse parâmetro. Chamadas diretas de `resolveHermesVersion` sem `platform`
+(testes herdados da seção 30/31) continuam no default `null`, que é POSIX exato — compatível com os cenários
+existentes e com o lado conservador: o parâmetro nunca lê `process.platform` implicitamente, só o valor que o
+chamador declarar.
+
+**RED** (`src` intacto; `.checks/code-review/suffix-case-red.txt`): alvo `--test-name-pattern="hermes-shadow"` nos
+dois arquivos de teste → tests 19, pass 17, fail 2, `EXIT_CODE=1`. As 2 falhas são exatamente os dois testes novos
+desta seção: a matriz de 4 variantes maiúsculas na camada (todas ainda publicando 0.21.4/packageDir do site-packages
+em vez de inconclusivo) e o cenário equivalente na CLI (`hermes_cli.PYD` publicando `"0.21.4"` em vez de `null`). Os
+17 que já passavam: os dois testes de controle desta mesma seção (plataforma não-win32 mantém o vínculo; base
+maiúscula e ausência de `platform` não sombreiam — nenhum dos dois depende do fix) e os 15 testes herdados de
+30/31, inalterados.
+
+**GREEN** (`.checks/code-review/suffix-case-green.txt`): mesmo alvo → tests 19, pass 19, fail 0, `EXIT_CODE=0`.
+
+**`npm.cmd test` único** (`.checks/code-review/suffix-case-npm-test.txt`): `test:governance` 6/6, `test:code-review`
+10/10, `test:doctor` 384 testes/382 pass/0 fail/2 skip — `EXIT_CODE=0`. Os skips são os mesmos dois POSIX já
+registrados nas seções 30/31 (symlink real e arquivo real no PATH). O delta 381→384 são os 3 testes novos desta
+seção (2 de resolução, 1 de CLI), todos executados no log.
+
+**Provas.** Os casos derivam do defeito reproduzido pelo probe do verifier e da fonte primária, não do código.
+
+- Camada: `hermes_cli.PYD` e `__init__.PYD` sem marcador de ABI, `hermes_cli.CP313-WIN_AMD64.PYD` com marcador
+  maiúsculo e `hermes_cli.PyD` (caixa mista) no primeiro diretório de import, só com `platform: "win32"` explícito —
+  cada caso exige o resultado inconclusivo exato (`launcher_not_recognized`), sem `packageDir`, e confere que nenhum
+  caminho do vizinho foi lido (mesma asserção `neighborReads` da seção 31).
+- Controle POSIX: o mesmo vizinho maiúsculo com `platform: "linux"` mantém o vínculo — sufixo maiúsculo não é
+  importável nesse SO, a guarda não pode inventar sombra onde não há.
+- Controle de base: `HERMES_CLI.pyd` (base maiúscula, extensão já minúscula) em `platform: "win32"` mantém o
+  vínculo — só a extensão/marcador de ABI perdem caixa, nunca `hermes_cli`/`__init__` em si (não é um lowercase
+  indiscriminado do nome).
+- Controle de ausência: o mesmo `hermes_cli.PYD` sem `platform` declarado mantém o vínculo — o lado conservador
+  quando o chamador direto não informa o SO, sem recorrer a `process.platform` implícito.
+- Na CLI: um cenário plausível (`hermes_cli.PYD` no `--cwd`, primeiro diretório de import do `.cmd` no Windows, com
+  `hooks_auto_accept: true` e catálogo completo, reproduzindo o probe do verifier) confere 3 agentes, exit 0, Hermes
+  `present`, versão nula, `launcher_not_recognized`, cinco linhas `unverified`/`version_unresolved` e
+  `configuration`/`trust` `unknown` — mesmas asserções já parametrizadas para os demais casos das seções 30/31. Só
+  roda no Windows (`skip: process.platform !== "win32"`): a case-insensitividade de sufixo do import é exclusiva
+  desse SO.
+
+**Limites.** Os mesmos da seção 31 continuam, exceto a frase sobre caixa já superada acima. `EXTENSION_SUFFIXES`
+reais (`cpython-313-x86_64-linux-gnu`, `cp313-win_amd64`) continuam lidos só como texto, nunca enumerados; `PYTHONCASEOK`
+segue fora de alcance (não modelado, nenhum parser novo); o casefold cobre só o scanner de extensão nativa
+(`hasCompiledSibling`) — o `fileExists` exato de `hermes_cli.py`/`.pyc` não muda, pois depende de `fs.stat`, cuja
+resolução de caixa no Windows real é do sistema de arquivos (NTFS case-preserving/case-insensitive para abrir
+caminho), não do nosso código, e nenhum probe mostrou esse caminho divergindo; execução só em Windows 11 Pro com
+Node 24.21.0, POSIX/macOS não reexecutados nesta seção.

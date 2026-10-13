@@ -62,10 +62,10 @@ function openableFromFlatFs(fs) {
 // A resolução nunca aciona child_process: cada agente tem seu próprio leitor
 // estático (PE por estrutura de recursos, shim por conteúdo/link real ao
 // pacote). Mantemos a função aqui só para dar o reasonCode certo por agente.
-async function readVersion(agentId, launcherPath, { fs, cwd, env }) {
+async function readVersion(agentId, launcherPath, { fs, cwd, env, platform }) {
   if (agentId === "claude") return readPeVersion(launcherPath, { fs: openableFromFlatFs(fs) });
   if (agentId === "codex") return resolveCodexVersion(launcherPath, { fs });
-  return resolveHermesVersion(launcherPath, { fs, cwd, env });
+  return resolveHermesVersion(launcherPath, { fs, cwd, env, platform });
 }
 
 // Ordem real de resolução de PATH: para cada diretório (precedência mais
@@ -128,7 +128,7 @@ async function resolveOneAgent(agentId, { pathDirs, platform, env, cwd, fs }) {
     };
   }
   try {
-    const result = await readVersion(agentId, launcherPath, { fs, cwd, env });
+    const result = await readVersion(agentId, launcherPath, { fs, cwd, env, platform });
     return {
       id: agentId,
       presence: "present",

@@ -379,6 +379,22 @@ casado como texto) nos dois mesmos diretórios da tabela acima. `__pycache__` co
 cacheado lá depende do `.py` ao lado. A mesma proof acima cobre o residual (matriz ampliada para 8 kinds na camada,
 mais o cenário de CLI `hermes_cli.pyc`); prova completa, RED/GREEN e limites restantes na seção 31 do build.
 
+**Aditivo — seção 32 do build (`.checks/code-review/compiled-suffix-case-fixes.md`):** fecha o único achado
+bloqueante (P2) do relatório12 (`.checks/issue-3-agent-diagnostics.verified.md`), em C2/C3/C5/C8. O scanner de
+`hasCompiledSibling` acima casava `COMPILED_HERMES_CLI_NAME`/`COMPILED_INIT_NAME` sempre case-sensitive; no Windows,
+um `hermes_cli.PYD`/`__init__.PYD` (ou qualquer variante com extensão/marcador de ABI maiúsculo) no primeiro
+diretório de import não era reconhecido como vizinho, e o doctor publicava o site-packages como vinculado (0.21.4,
+`verified`, `configured`/`trusted`) quando devia ficar inconclusivo. **Supera** especificamente a frase "sistema de
+arquivos sem distinção de maiúsculas conta um vizinho com outra caixa, pelo lado conservador" dos limites da
+seção 31: não contava — contava errado, para o lado não conservador. `hasCompiledSibling` ganha um parâmetro
+`platform`, só usado para reproduzir o casefold que o CPython aplica no Windows (`_fill_cache`: minúsculas a partir
+do primeiro ponto do nome, nunca antes dele); qualquer outro valor, incluindo ausente, mantém a comparação POSIX
+exata, nunca lendo `process.platform` implicitamente. `resolveHermesVersion`/`mayImportBeforeSitePackages` só
+encaminham esse parâmetro; `agent-resolution.mjs` encaminha o `platform` que `resolveAgents` já recebia. Prova
+completa, RED/GREEN e limites na seção 32 do build.
+
+Proof: `node --test --test-name-pattern="hermes-shadow" tests/doctor/agent-resolution.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
+
 ## Checks
 
 ### S1 - Saber quais agentes foram encontrados sem iniciar os agentes · 6 arquivos · ~26 KB · ~7k

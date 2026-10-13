@@ -1696,3 +1696,93 @@ test("agent-resolution-hermes-shadow erro de E/S ao conferir o vizinho sobe como
     );
   }
 });
+
+// --- P2 da verificação12 (.checks/code-review/compiled-suffix-case-fixes.md) ---
+// No Windows, o FileFinder do import casefolda tudo a partir do primeiro
+// ponto do nome antes de casar contra os sufixos (CPython v3.13.0,
+// `_bootstrap_external.py` `_fill_cache`: "Windows users can import modules
+// with case-insensitive file suffixes"). Um `hermes_cli.PYD`/`.PyD`, com ou
+// sem marcador de ABI maiúsculo, sombreia o site-packages nesse SO tanto
+// quanto a forma minúscula já coberta acima; `platform` precisa ser "win32"
+// explícito (nunca process.platform implícito) para acionar o casefold.
+const WINDOWS_CASE_FOLDED_NEIGHBORS = {
+  "extensão hermes_cli maiúscula sem marcador de ABI (.PYD)": (tree, dir) => addFile(tree, dir, "hermes_cli.PYD", "\0"),
+  "extensão hermes_cli maiúscula com marcador de ABI (.CP313-WIN_AMD64.PYD)": (tree, dir) =>
+    addFile(tree, dir, "hermes_cli.CP313-WIN_AMD64.PYD", "\0"),
+  "extensão hermes_cli/__init__ maiúscula sem marcador de ABI (.PYD)": (tree, dir, sep) =>
+    addFile(tree, dir + sep + "hermes_cli", "__init__.PYD", "\0"),
+  "extensão mista (.PyD)": (tree, dir) => addFile(tree, dir, "hermes_cli.PyD", "\0"),
+};
+
+test("agent-resolution-hermes-shadow sufixo compilado maiúsculo no Windows (.PYD/.PyD, com ou sem marcador de ABI) também sombreia quando platform:'win32' é declarado", async () => {
+  const published = [];
+  let checked = 0;
+  for (const [kind, addNeighbor] of Object.entries(WINDOWS_CASE_FOLDED_NEIGHBORS)) {
+    checked += 1;
+    const { tree, sep, launcher, cwd, firstDir } = installShadowableHermes(SHADOW_CMD_FORM);
+    addNeighbor(tree, firstDir, sep);
+    const { fs, reads } = readRecordingFs(tree);
+    const result = await resolveHermesVersion(launcher, { fs, cwd, env: {}, platform: "win32" });
+    const neighborReads = reads.filter((filePath) => filePath.startsWith(firstDir + sep + "hermes_cli"));
+    if (!isDeepStrictEqual(result, SHADOW_UNBOUND) || neighborReads.length > 0) {
+      published.push(`${kind} -> ${JSON.stringify(result)}; lidos: ${JSON.stringify(neighborReads)}`);
+    }
+  }
+  assert.equal(checked, 4);
+  assert.deepEqual(published, []);
+});
+
+test("agent-resolution-hermes-shadow controles do casefold Windows: plataforma não declarada como win32 mantém o sufixo maiúsculo exato (POSIX) e a base hermes_cli/__init__ nunca perde caixa", async () => {
+  const lost = [];
+  let checked = 0;
+
+  // Controle POSIX: mesmo vizinho, mas platform explicitamente não-win32 —
+  // o sufixo maiúsculo não é importável nesse SO (sistema de arquivos
+  // case-sensitive), então o vínculo continua.
+  for (const [kind, addNeighbor] of Object.entries(WINDOWS_CASE_FOLDED_NEIGHBORS)) {
+    checked += 1;
+    const installation = installShadowableHermes(SHADOW_CMD_FORM);
+    addNeighbor(installation.tree, installation.firstDir, installation.sep);
+    const result = await resolveHermesVersion(installation.launcher, {
+      fs: createFakeFsAdapter(installation.tree),
+      cwd: installation.cwd,
+      env: {},
+      platform: "linux",
+    });
+    if (!isDeepStrictEqual(result, installation.bound)) lost.push(`linux/${kind} -> ${JSON.stringify(result)}`);
+  }
+
+  // Controle de base: no Windows só a extensão perde caixa, nunca o nome
+  // antes do primeiro ponto (CPython `_fill_cache`) — uma base maiúscula
+  // (HERMES_CLI.pyd) não é o mesmo módulo e não sombreia.
+  checked += 1;
+  const baseUppercase = installShadowableHermes(SHADOW_CMD_FORM);
+  addFile(baseUppercase.tree, baseUppercase.firstDir, "HERMES_CLI.pyd", "\0");
+  const baseResult = await resolveHermesVersion(baseUppercase.launcher, {
+    fs: createFakeFsAdapter(baseUppercase.tree),
+    cwd: baseUppercase.cwd,
+    env: {},
+    platform: "win32",
+  });
+  if (!isDeepStrictEqual(baseResult, baseUppercase.bound)) {
+    lost.push(`win32/base maiúscula (HERMES_CLI.pyd) -> ${JSON.stringify(baseResult)}`);
+  }
+
+  // Controle de ausência: sem platform declarado (nunca process.platform
+  // implícito), o mesmo sufixo maiúsculo que sombrearia em win32 explícito
+  // não sombreia — o lado conservador do chamador direto.
+  checked += 1;
+  const noPlatform = installShadowableHermes(SHADOW_CMD_FORM);
+  addFile(noPlatform.tree, noPlatform.firstDir, "hermes_cli.PYD", "\0");
+  const noPlatformResult = await resolveHermesVersion(noPlatform.launcher, {
+    fs: createFakeFsAdapter(noPlatform.tree),
+    cwd: noPlatform.cwd,
+    env: {},
+  });
+  if (!isDeepStrictEqual(noPlatformResult, noPlatform.bound)) {
+    lost.push(`platform ausente/hermes_cli.PYD -> ${JSON.stringify(noPlatformResult)}`);
+  }
+
+  assert.equal(checked, 4 + 1 + 1);
+  assert.deepEqual(lost, []);
+});
