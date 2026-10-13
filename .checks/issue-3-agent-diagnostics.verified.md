@@ -1,101 +1,135 @@
 # Issue 3 — Verificação independente do diagnóstico local
 
-**Verdict**: PASS
+**Verdict**: FAIL
 **Profile**: light
-**Diff range**: `4242520dc6b70848bd0ac8acb7e00acdd1755c8a..25d2b7054a44129ea7c8fcbab94d453f053a54f8`
-**Fix diff**: `8a4304f95e4aab73ba603fe5a3f4f5b0ccf4fc96..25d2b7054a44129ea7c8fcbab94d453f053a54f8`
-**Round**: 2 — scoped
-**Verifier**: subagente Codex independente; autor Claude; nenhuma correção aplicada pelo Verifier.
-**Checks**: 18/18 PASS; G1–G4 da rodada 1 fechados. Nenhum gap bloqueante novo no diff revisado.
+**Diff range**: `4242520dc6b70848bd0ac8acb7e00acdd1755c8a..46e7c932e236b979754b10b82330be91d8c7597f`
+**Fix diff**: `a41001c2f057b08d690bd12ad40d8c127d03e42c..46e7c932e236b979754b10b82330be91d8c7597f`
+**Round**: 3 — scoped (última rodada da skill; nenhuma exceção de teto presumida)
+**Verifier**: subagente Codex independente; autor Claude; somente leitura de produto/testes/fontes.
+**Checks**: 13/18 PASS; C2, C3, C5, C8 e C12 FAIL. Quatro classes de falha confirmadas abaixo. Suíte verde não libera a entrega.
 
-## Escopo e fontes
+## Escopo, proveniência e fontes
 
-`verified at 25d2b7054a44129ea7c8fcbab94d453f053a54f8`: correções dos quatro FAIL anteriores (C7/C11/C15/C16) e seu alcance em matriz, renderer, CLI, leitores de metadata, helpers/manifest e documentação. Diff completo do fix foi lido, sem limitar a análise às descrições do autor. Todos os targets de prova foram novamente executados nesta HEAD.
+**verified at 46e7c932e236b979754b10b82330be91d8c7597f**: sete findings de `.checks/code-review/issue-3/response.json` lidos integralmente; diff do fix mapeado inteiro (39 arquivos), código das novas decisões, leitores/contrato/parser/validação/renderers/fixtures e asserções atingidas examinados diretamente. As seções do `.build.md` são self-report e não serviram como prova de execução. Todos os targets rodaram independentemente nesta HEAD.
 
-`carried from 8a4304f95e4aab73ba603fe5a3f4f5b0ccf4fc96`: conclusões não atingidas pelo fix, conforme a marca por critério abaixo. O relatório FAIL integral da rodada 1 está preservado no commit `30f94dc9968978bfce420ea61823abfc67fb7bc6`, confirmado por Git; não foi apagado do histórico. Citações de arquivos alterados foram atualizadas mesmo quando a conclusão anterior é preservada.
+**carried from 25d2b7054a44129ea7c8fcbab94d453f053a54f8**: conclusões de C9, C10 e C13, sem mudança de sua decisão no fix; seus testes foram novamente executados. Demais critérios foram reavaliados por alcance da resolução, avaliação real do contrato, novas estruturas nativas, origem, integração e apresentação. Os relatórios anteriores continuam no histórico Git; esta edição não apaga commits nem resposta formal.
 
-| Fonte | Leitura / estado nesta rodada | Correspondência |
-| --- | --- | --- |
-| Issue #3, `https://github.com/oldboydev/skill-me/issues/3` | `verified at 25d2b70`: relida pelo conector GitHub, corpo e seis ACs sem mudanças | AC1 → C1–C4; AC2 → C5–C6; AC3 → C7–C8; AC4 → C9–C10; AC5 → C11–C14; AC6 → C15–C17. Aprovação humana de plano/implementação mantida. |
-| Task aprovada `.tasks/issue-3-agent-diagnostics.md` | `carried from 8a4304f`; ausência de diff confirmada | C7 requer excluir hosted tools dos hooks locais, preservando superfícies não inspecionadas; C11 mesmos fatos/códigos; C15 inconclusivo quando mudança detectada; C16 cenários na CLI. Task não foi alterada para acompanhar o produto. |
-| Checklist `.checks/issue-3-agent-diagnostics.md` | `verified at 25d2b70`: diff lido | Novas provas explícitas C7/C11/C15/C16. C7 corrigiu a equivalência errada da preparação sem afirmar que cloud inteira é unavailable. Claims e provas foram comparadas com a task. |
-| AGENTS.md / `references/verify.md` | Profile light reconfirmado; procedimento de reverificação relido; regras integrais `carried from 8a4304f` | Revisor não implementa, provas completas na nova HEAD, conclusões novas/carry explícitos. |
-| `.build.md` | Self-report; não usado como prova independente | Contagens e descrições do autor não substituem execução/assertions abaixo. |
-| CONTRIBUTING | Ausência `carried from 8a4304f`; nenhum arquivo introduzido no diff | Busca anterior em raiz, `.github/` e arquivos ocultos não encontrou essa fonte. |
-| Guia em Downloads | Não usado | Continua sendo referência não vinculante. |
+Task aprovada e os seis ACs da issue continuam a referência: AC1 → C1–C4, AC2 → C5–C6, AC3 → C7–C8, AC4 → C9–C10, AC5 → C11–C14, AC6 → C15–C17. AGENTS e perfil light mantidos. O guia Downloads não foi usado como spec. Checklist alterado foi lido; seus detalhes nativos foram confrontados com fontes primárias, não adotados como verdade só porque possuem testes.
 
-A fonte visual/Step 1 (`ui`), recomputação formal de Coverage e Test policy (`standard`/`ui`) e fault injection não se aplicam ao perfil light. Não há fonte visual vinculante nem seção Test policy. A leitura de Swept da rodada 1 permanece válida: não há linhas `existing` a reconfirmar; há critérios ou n/a/fora do escopo. As lacunas de nível/amostragem apontadas anteriormente foram revistas nos próprios cenários corrigidos, sem ampliar o perfil.
+| Fonte primária consultada nesta rodada | Evidência usada / limite |
+| --- | --- |
+| [Codex hook_config.rs, tag rust-v0.162.1](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/config/src/hook_config.rs) | Obtida pelo conector GitHub, blob `7575fa5fcb1042cc380812308f62b8378540ad2a`; linhas 154–159: matcher Option<String>, hooks com default; 171–172: async bool com default; 190–191 e 203–215: input Map e desserializador customizado. Default de campo ausente não autoriza null em bool/Map. |
+| [Codex discovery.rs na mesma tag](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/hooks/src/engine/discovery.rs) | Obtida pelo conector; descoberta carrega structs nativas, trata erro de arquivo e ignora os tipos/eventos expressamente não suportados. Não executado. |
+| [Claude Hooks](https://code.claude.com/docs/en/hooks), [Codex Hooks](https://learn.chatgpt.com/docs/hooks), [Hermes Hooks](https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks) | Páginas abertas nesta rodada. Forma geral, catálogo/eventos e exclusão de hosted tools examinados; não são prova de execução ou confiança local. |
+| `C:/Users/paulo/AppData/Local/hermes/hermes-agent/agent/shell_hooks.py` | Fonte instalada lida somente como texto. Linhas 211–236: valida eventos contra VALID_HOOKS e ignora nomes desconhecidos; 240–250: entradas/command. Nenhum módulo Python importado/executado. |
+| Mesmo pacote: `hermes_cli/plugins.py`, `hermes_cli/__init__.py`, `website/docs/user-guide/features/hooks.md` | Tabela na linha 108; versão literal na linha 6 (`0.21.4`); doc local :399 e :445–477 define fonte do catálogo e os sinais mapeados. Parser do produto, carregado de cópia isolada, leu independentemente a fonte real: 41 eventos, os sete nomes mapeados presentes. Isso prova a leitura dessa fonte, não vínculo do launcher compilado instalado nem captura real. |
 
-## Execução independente na nova HEAD
+Não houve captura de eventos, execução de agente ou leitura de transcripts/credenciais. Provas de instalação/contrato usam fixtures sintéticas registradas; `real_environment` no relatório da CLI descreve o filesystem entregue à CLI, não certifica a máquina real a partir da fixture. O Hermes real tem launcher compilado: não afirmei contrato/versão ligados a ele com base na tabela lida diretamente.
 
-`verified at 25d2b7054a44129ea7c8fcbab94d453f053a54f8`.
+## Execuções independentes e resultados externos separados
 
-Original antes das provas: HEAD correta, porcelain vazio. Uma cópia temporária foi criada com `git archive` da HEAD exata; `node_modules` existente foi copiado para essa cópia. As três suítes rodaram nela, uma invocação por target, com Node v24.21.0/npm 11.19.0 no Windows. O escalonamento ficou restrito à cópia temporária e aos testes, pois o sandbox já havia demonstrado bloqueio de `.git/config` em repos temporários na rodada 1. Nenhum teste rodou contra a workspace original; nenhum stash ou mutação de produto foi feito.
+**verified at 46e7c93**. Original começou limpo nessa HEAD. Criei archive da HEAD exata em TEMP, extraí e copiei node_modules; executei cada target completo uma vez na cópia, com escalonamento restrito aos repos temporários dos testes antigos. Runtime Windows: Node v24.21.0/npm 11.19.0. Não usei stash, worktree do original ou alteração de produto para provar falhas.
 
-| Target | Resultado efetivamente executado |
+| Target executado pelo Verifier | Resultado |
 | --- | --- |
 | `npm run test:governance` | 6 testes, 6 PASS, 0 FAIL, 0 skip; exit 0 |
 | `npm run test:code-review` | 10 testes, 10 PASS, 0 FAIL, 0 skip; exit 0 |
-| `npm run test:doctor` | 151 testes, 150 PASS, 0 FAIL, 1 skip; exit 0 |
+| `npm run test:doctor` | 229 testes, 228 PASS, 0 FAIL, 1 skip; exit 0 |
 
-Total dos targets: **166 PASS, 0 FAIL, 1 skip**, 167 testes contabilizados. O runner imprimiu individualmente os testes nomeados; as novas provas apareceram com PASS, incluindo `capability-evidence-C7`, os dois novos `capability-matrix-C7/C5`, ambos novos `envelope-C11`, ambos `render-text-C11`, os quatro `mid-read-mutation-C15/G3`, `presence-C16` e `configuration-trust-C16`. Nenhum filtro vazio foi aceito como prova. Localizações foram buscadas com `rg -n 'assert\.|test\('` e os diffs/corpos de provas alteradas foram lidos.
+Total independente Windows: **244 PASS, 0 FAIL, 1 skip**, 245 testes. O runner nomeou os casos individualmente; os casos de PATHEXT, shim npm local, vários intérpretes, three support states, 45 origens not_inspected, forma nativa e campos opcionais executaram. Inclusive executou verde o teste incorreto que exige configured para async:null; verde não torna esse valor compatível com a fonte.
 
-O único skip continua `agent-resolution-C2 realpath/symlink real liga o launcher do Codex ao pacote (POSIX)` em `tests/doctor/agent-resolution.unit.test.mjs:413`, condicionado a Windows. Não foi afirmado como executado. Fixtures parametrizadas win32/linux/darwin rodaram nesta máquina; execução real em Linux/macOS e runs remotos da CI não foram observados nesta rodada.
+Skip único: `agent-resolution-C2 realpath/symlink real liga o launcher do Codex ao pacote (POSIX)`, `tests/doctor/agent-resolution.unit.test.mjs:443`, condição Windows. Não afirmado como executado. Asserções foram localizadas com `rg -n 'test\(|assert\.'` nos arquivos atingidos; não aceitei ausência de teste selecionado como sucesso.
 
-## Checks — 18 critérios contabilizados
+**Evidência complementar do orquestrador, não execução do Verifier**: li `.checks/code-review/linux-final-npm-test.txt`; há resultados individuais e totais 6 governança + 10 motor + 229 doctor PASS, zero falhas/skips, EXIT_CODE=0, no mesmo commit. Orquestrador informa Node24.13.0/Git temporário2.49.0. A falha anterior com Git2.34 foi preservada em `linux-initial-git234-npm-test.txt`; li o erro `git worktree list -z`. Não atribuí a mim nem escondi essa primeira falha. macOS/CI remota não foram observados. Meu probe adicional de shebang foi executado na CLI Linux com Node24.13.0, em minha própria cópia temporária do snapshot exato, sem executar agente/intérprete.
 
-`N` abaixo = **verified at 25d2b7054a44129ea7c8fcbab94d453f053a54f8**, conclusão reavaliada por impacto do fix. `C` = **carried from 8a4304f95e4aab73ba603fe5a3f4f5b0ccf4fc96**, conclusão preservada, prova novamente executada na nova HEAD. Todas as referências têm números de linha atuais; o histórico e análise completos da rodada 1 permanecem no commit citado. O target doctor integral executou todos os grupos nomeados nesta tabela.
+## Sete achados formais — resultado específico e alcance
 
-| Check | Claim / provas executadas | Asserção relevante localizada nesta HEAD | Estado / veredito |
+**verified at 46e7c93**. Numeração corresponde à ordem de `response.json`.
+
+| Finding | Prova localizada que rodou | Resultado do cenário formal / limite |
+| --- | --- | --- |
+| F1 caminhos Windows em POSIX | `config-sources.unit.test.mjs:30/:39` — literal `C:\Users\alguem\AppData\Local\hermes`; :94–110 — paths exatos dos três agentes por plataforma | Cenário corrigido; path.win32/path.posix explícitos. Windows independente passa; log Linux complementar passa. Sem afirmar macOS observado. |
+| F2 suporte sempre unverified | `capability-evidence.cli.test.mjs:148`–151 — cinco verified/local_contract_lists_events com fonte/eventos; :186–190 — evento ausente só afeta mecanismo; :299–305 — absent CLI unavailable e demais unverified | Avaliação real agora existe e os três estados chegam à CLI. C5 ainda FAIL pelo vínculo errado do caso G4, não pela antiga constante. |
+| F3 codex.exe/claude.cmd ignorados | `agent-resolution.unit.test.mjs:489`–496 — presentes, versão null/motivo; :515–518 — primeiro PATH preservado; :529/:534/:545 — ordem PATHEXT e entrada inválida | Cenário corrigido, sem executar launcher. Teste CLI `presence-C3` :356–365 corrobora seleção e sentinel ausente. |
+| F4 npm local não reconhecido | `agent-resolution.unit.test.mjs:594`–599 — 0.162.1/package_metadata/path local; `presence.cli.test.mjs:387`–391 — mesmo contrato por processo CLI e sem sentinel | Cenário corrigido. Fixtures usam templates nativos e links reais conforme o SO, não o antigo require inventado. |
+| F5 outro pythonX.Y escolhido lexicalmente | `agent-resolution.unit.test.mjs:670`–676 — versão e packageDir do X.Y; :685–686 — sem X.Y ambíguo; :694–695 — sem pacote correspondente null | Cenário original, dentro do mesmo prefixo, corrigido. Vínculo geral ainda incorreto com shebang absoluto em prefixo diferente: G4, reproduzido também na CLI Linux. |
+| F6 hooks inválidos configured | `configuration-trust.cli.test.mjs:237`–245 — dois exemplos formais invalid/partial e demais preservados; :273–274 — Codex/Hermes estruturalmente invalid; :458–459 — timeout inválido | Exemplos formais corrigidos, mas critério continua não satisfeito: nullable native fields e evento Hermes fora da tabela ainda produzem conclusões erradas (G1/G2/G3). |
+| F7 45 origens fixture falsas | `capability-evidence.cli.test.mjs:333`–350 — 45 linhas not_inspected, CLI local real_environment, zero fixture em JSON/texto | Cenário corrigido. fixture só explícita na camada/registro de teste; nenhuma fixture tratada como validação da máquina real pelo Verifier. |
+
+## Checks — C1 a C18
+
+Todos foram contabilizados. `V` = **verified at 46e7c932e236b979754b10b82330be91d8c7597f**, reavaliado; `C` = **carried from 25d2b7054a44129ea7c8fcbab94d453f053a54f8**, conclusão preservada mas prova novamente executada. Referências são relativas ao repo, com linhas atuais. Uma localização em FAIL demonstra prova parcial/incorreta, não aprovação da claim inteira.
+
+| Check | Claim e prova executada | Asserção localizada / lacuna | Veredito |
 | --- | --- | --- | --- |
-| C1 | Ausência/ordem/versão null/motivo/texto/exit; `presence-C1`, inventário unitário | `tests/doctor/presence.cli.test.mjs:48` — `assert.equal(report.agents.length, 3)`; :54–56 — `absent/null/executable_not_found`; :61 — texto por agente; `tests/doctor/agent-resolution.unit.test.mjs:110` — IDs literais `["claude", "codex", "hermes"]`. Texto novo preserva isso. | C, PASS; citações atualizadas |
-| C2 | Versões reconhecidas/fontes/PATH/Unicode/convenções; `presence-C2`, `agent-resolution-C2` | `tests/doctor/agent-resolution.unit.test.mjs:117/:122/:127` — versões literais `2.1.295/0.162.1/0.21.4`; :118/:123/:128 — fontes; :148 — primeiro PATH; :164 — caminho Unicode. Export de `writeCodex` não alterou a construção da fixture. | N, PASS |
-| C3 | Ilegível/ambígua/launcher alheio e acesso unknown; `presence-C3`, `agent-resolution-C3`; impacto dos leitores revisto | `tests/doctor/presence.cli.test.mjs:135`–137 — `present/null/version_unreadable`; :190–192 — `present/null/version_source_ambiguous`; `tests/doctor/agent-resolution.unit.test.mjs:182`–187 — Codex `unknown/EACCES`, outros presentes. Novos estados inconclusivos de metadata não confundem estes motivos. | N, PASS |
-| C4 | Sem execução ou mudanças de perfil/config/skills; `presence-C4`, `agent-resolution-C4` | `tests/doctor/presence.cli.test.mjs:275` — sentinel não existe; :278 — `assert.deepEqual(snapshotAfter, snapshotBefore)`; SHA256 no helper `fs-inventory.mjs:18`. Fix adiciona apresentação/estado, não efeito de agentes. | C, PASS; citações atualizadas |
-| C5 | Support/motivo/origem conservadores; `capability-matrix-C5`, `capability-evidence-C5`, novas combinações C5/C7 | `tests/doctor/capability-evidence.cli.test.mjs:37` — versão conhecida não produz verified; `tests/doctor/capability-matrix.unit.test.mjs:232`–244 — `unverified/no_local_evidence` ou `unverified/version_profile_incompatible` preservados ao lado da exclusão; :71 — origem fixture. Exclusão documentada não virou prova local. | N, PASS |
-| C6 | Configuration/support/runtime distintos; `capability-matrix-C6` | `tests/doctor/capability-matrix.unit.test.mjs:89` — configuration corresponde à entrada; :90–93 — exatamente `not_performed`; :100 — todas as linhas assim. Renderer continua informando runtime separado. | C, PASS |
-| C7 | 5×4, superfícies, SkillStart, exclusão específica; `capability-matrix-C7`, `capability-evidence-C7` | `tests/doctor/capability-matrix.unit.test.mjs:104`–117 — listas literais; :153–156 — cloud `unverified/surface_not_inspected`, exclusion null; :202–206 — exclusion literal `{ reasonCode: "hosted_tools_outside_local_hooks", origin: "documented_contract", source: "https://learn.chatgpt.com/docs/hooks" }`; `tests/doctor/capability-evidence.cli.test.mjs:74`–93 — motivo local preservado, exclusão/origem distintas, cloud sem exclusão, saída texto com o fato. | N, PASS — G2 fechado |
-| C8 | Config/trust/precedência/sem inferência; todos os grupos config/scope/trust/CLI; novo acesso CLI | `tests/doctor/configuration-trust.cli.test.mjs:57`–58 — disabled/not_applicable; :98–100 — conflito unknown e nunca disabled; :137–139 — Hermes configured/trusted/motivo nativo; :166–171 — acesso real unknown sem contaminar outros; :211–213 — campo trust arbitrário nunca trusted. `config-projection.unit.test.mjs:110` — malformed invalid; `trust-resolution.unit.test.mjs:88` — untrusted nativo. | N, PASS |
-| C9 | TCP loopback/status/identidade; `collector-C9` | `tests/doctor/collector.cli.test.mjs:31`–32 — reachable/false; :48/:50 — unreachable/false; :71–72 — IPv6 reachable/false. Código de conexão sem envio de payload não mudou. | C, PASS |
-| C10 | Sem endpoint/validação/1000ms/continuação; `collector-C10`, `collector-probe-C10` | `tests/doctor/collector.cli.test.mjs:86`–87 — unknown/endpoint_not_provided; :127–129 — endpoints inválidos exit 2/failed/não reachable; `collector-probe.unit.test.mjs:65`–69 — timeout com tempo de parede/status/motivo exatos; :84 — abort true. | C, PASS |
-| C11 | JSON único/paridade texto/falhas; `envelope-C11`, `render-text-C11`, `capability-evidence-C7`, probe independente | `tests/doctor/envelope.cli.test.mjs:31`–33 — único JSON/sem ANSI; :86 — path no texto; :91/:98/:102–109 — motivos/origem/exclusão no texto; `tests/doctor/render-text.unit.test.mjs:105`–110 — plataforma/cwd/timestamp/path; :115–125 — mecanismo×superfície/motivo/origem; `envelope.cli.test.mjs:139`–147 — códigos literais seguros, mesmo exit, code/message no texto, zero canário/stack. Probe independente adicional afirmou 60 linhas completas nos respectivos blocos de agente. | N, PASS — G1 fechado |
-| C12 | Envelope/status/exits/parcial/failure seguro; `envelope-C12`, `envelope-failure-C12`, `configuration-trust-C16` | `tests/doctor/envelope.cli.test.mjs:161`–163 — exit 0/schema1/complete; :184–188 — partial/três agentes/continuação; :213–217 — failed exit2/sem stack; `envelope-failure.unit.test.mjs:15`–17 — complete 0/partial 0/failed 1; `configuration-trust.cli.test.mjs:162`–171 — inacessível partial/unknown preserva os demais. | N, PASS |
-| C13 | Help/flags/defaults/exits/sem inspeção; `envelope-C13` | `tests/doctor/envelope.cli.test.mjs:231`–238 — help exit0, flags permitidas/proibidas; :252–253 — cwd inválido exit2 legível; :264 — reparo/instalação/coleta exit2. Mudança do emitter acrescenta código seguro sem alterar flags/defaults/retorno antecipado. | N, PASS |
-| C14 | Canários/limites/YAML/PE; grupos leak/config/metadata e novo failure CLI | `tests/doctor/leak-and-limits.cli.test.mjs:48`–54 — canário ausente nas duas saídas; :111–113 — unknown/input_too_large/sem conteúdo; `tests/doctor/mid-read-mutation.unit.test.mjs:95`–97 — teto real/content undefined; `config-projection.unit.test.mjs:120`–123 — YAML tag insegura sem execução/interpolação; `version-metadata.unit.test.mjs:67`–70 — versão correta/leitura parcial; `envelope.cli.test.mjs:146`–147 — canário/stack ausentes após novo emitter. | N, PASS |
-| C15 | Concorrência e mutação inconclusiva em config/metadata; `snapshot-C15`, todos `mid-read-mutation-*` | `tests/doctor/snapshot-concurrency.cli.test.mjs:52`–59 — dois exit0/fatos iguais/inventário igual; `tests/doctor/mid-read-mutation.unit.test.mjs:133`–134 — config unknown/config_changed_during_read; :165–167 — wrapper changed_during_read/text undefined; :199–201 — package Codex null/version_changed_during_read; :227–228 — shim Codex null/motivo; :265–267 — literal Hermes null/motivo próprio. Probe da rodada 1 repetido na nova versão confirmou o mesmo input agora inconclusivo. | N, PASS — G3 fechado |
-| C16 | Cenários na CLI e origem/SOs; `presence-C16`, `configuration-trust-C16`, `fixture-suite-C16`, demais cenários CLI | `tests/doctor/presence.cli.test.mjs:244`–252 — reconhecido present/9.9.0/package_metadata e cinco motivos version_profile_incompatible, nunca verified; `configuration-trust.cli.test.mjs:162`–171 — diretório real no path de config → partial/unknown/motivo, demais not_configured; `fixture-suite-inventory.test.mjs:21/:37–46/:50–51` — fixture, três convenções, sem E2E/payload privado. Ausência/disabled/malformed/coletor indisponível também rodaram nos grupos existentes. | N, PASS — G4 fechado |
-| C17 | Docs fontes/data/versão/superfície/evidência/lacunas; `docs-C17` e leitura da linha nova de compatibilidade | `tests/doctor/docs-compatibility.test.mjs:14`–17 — comando/partial/unverified/identityVerified false; :32 — colunas; :40–42 — três níveis de evidência. Nova linha documenta a origem publicada da exclusão, distinguindo-a da inspeção local. | N, PASS |
-| C18 | Suítes antigas/CI/core/private/governança; targets completos e SHA256 | `scripts/governance-ci.test.mjs:263`–277 — matriz literal/steps de três suítes; :279–281 — CI/always/needs; 6/6 e 10/10 executados. Archives base/head confirmam cinco hashes iguais abaixo; npm/CI/AGENTS e task sem diff do fix. | N, PASS |
+| C1 | Ausência/ordem/null/motivo/texto/exit, presence-C1 | `presence.cli.test.mjs:49` — length3; :55–57 — absent/null/executable_not_found; :62 — texto por agente. Inventário unitário afirma IDs literais. | V PASS |
+| C2 | Versão e origem ligadas ao artefato, PATH/Unicode/SOs/npm | `agent-resolution.unit.test.mjs:143/:148/:153` — versões literais 2.1.295/0.162.1/0.21.4; :594/:599 — shim local; :670–676 — intérprete no mesmo prefixo. G4 publica fonte de A apesar de shebang B; prova amostra só prefixo igual. | V FAIL — G4 |
+| C3 | Não inventar versão de launcher/fonte desconhecida/ambígua; acesso | `presence.cli.test.mjs:191`–193 — present/null/ambiguidade; `agent-resolution.unit.test.mjs:491`–496 — formato Windows desconhecido null; :685–686 — ambíguo null. G4 fora desse layout não fica inconclusivo, atribui outra fonte. | V FAIL — G4 |
+| C4 | Zero execução/mudança de perfil/skills/config | `presence.cli.test.mjs:315` — sentinel ausente; :318 — inventários iguais, incluindo SHA256. `agent-resolution-C4` executou; inspeção de src/doctor não encontra spawn/exec/import de agentes ou filesystem writes. | V PASS |
+| C5 | Contrato local compatível por mecanismo; três estados e origem | `capability-evidence.cli.test.mjs:148`–151 — verified/fonte/eventos; :299–305 — unavailable versus unverified; :212–213 — versão sem perfil unverified. Fonte real foi lida independentemente. G4 ainda faz o produto verificar contrato de pacote não ligado ao intérprete. | V FAIL — G4 |
+| C6 | Configuration/support/runtime separados | `capability-matrix.unit.test.mjs:110`–114 — config e runtime not_performed; :121 — matriz inteira not_performed; `capability-evidence.cli.test.mjs:150` — verified de contrato não significa runtime verified. | V PASS |
+| C7 | 5×4/superfícies/hosted tools/SkillStart | `capability-matrix.unit.test.mjs:125`–138 — listas literais; :174–177 — cloud unverified/exclusion null; `capability-evidence.cli.test.mjs:92`–105 — motivo local, exclusion documented_contract separado, cloud preservada. | V PASS |
+| C8 | Forma/config/trust/precedência nativas corretas | `configuration-trust.cli.test.mjs:240`–245 — estrutura formal invalid/partial; :99–101 — política unknown; :142–144 — confiança nativa; `config-projection.unit.test.mjs:640` exige configured para async:null, em desacordo com bool nativo. G1–G3 confirmados na CLI. | V FAIL — G1/G2/G3 |
+| C9 | Transporte loopback IPv4/IPv6/recusa/identidade false | `collector.cli.test.mjs:31`–32 — reachable/false; :48/:50 — unreachable/false; :71–72 — IPv6/false. Função sem envio de payload inalterada. | C PASS |
+| C10 | Sem endpoint/entrada recusada/1000ms/continuação | `collector.cli.test.mjs:86`–87 — unknown/endpoint_not_provided; :127–129 — uso inválido exit2; `collector-probe.unit.test.mjs:65`–69 — timeout/motivo/tempo real, :84 — abort. | C PASS |
+| C11 | Mesmo modelo/fatos/códigos, JSON único, texto PT | `envelope.cli.test.mjs:32`–34 — JSON único/sem ANSI; :86–117 — fixture verified, path/fonte/eventos nos dois formatos; :160–168 — failure code/message/exit, sem canário; `render-text.unit.test.mjs:181`–188 — fonte/eventos/missingEvents no bloco da linha. | V PASS |
+| C12 | Envelope/status/partial por inválido, exit0/1/2 | `envelope.cli.test.mjs:182`–184 — schema1/complete/exit0; :205–209 — partial/continuação; `envelope-failure.unit.test.mjs:15`–17 — exits. G1 gera complete para config que fonte nativa rejeita; G2 gera partial para config válida. | V FAIL — G1/G2 |
+| C13 | Help/flags/defaults/exits/sem inspeção | `envelope.cli.test.mjs:252`–259 — help exit0/flags; :273–274 — cwd inexistente exit2 legível; :285 — flags de reparo/instalação/coleta exit2. Citações atualizadas após teste alterado; decisão não mudou. | C PASS |
+| C14 | Projeção sem vazamento/limite/YAML/PE/cabeçalho | `leak-and-limits.cli.test.mjs:48`–54 — zero canário; :111–113 — unknown/input_too_large; `config-projection.unit.test.mjs` provas C14 rodaram; `version-metadata.unit.test.mjs:67`–70 — versão/leitura parcial; `agent-resolution.unit.test.mjs:570`–573 — binário nativo só cabeçalho. | V PASS |
+| C15 | Concorrência/snapshot/mutação inconclusiva | `snapshot-concurrency.cli.test.mjs:52`–59 — fatos/inventário iguais; `mid-read-mutation.unit.test.mjs:134`–135 — config unknown; :166 — wrapper changed_during_read; :199/:225/:263 — motivo específico de versão; `contract-evidence.unit.test.mjs:186` — fonte de contrato mutada inconclusiva. | V PASS |
+| C16 | Cenários CLI/fixture versus real/convenções de SO | `presence.cli.test.mjs:284`–292 — 9.9.0 reconhecida/matriz incompatível; `configuration-trust.cli.test.mjs:167`–176 — leitura inacessível real; `capability-evidence.cli.test.mjs:333`–350 — 45 not_inspected, zero fixture falsamente atribuída; inventário de origem e três convenções executou. | V PASS; macOS não observado |
+| C17 | Fontes/data/evidência/lacunas e README | `docs-compatibility.test.mjs:14`–17 — invocação/estados; :32 e :40–42 — colunas/três níveis. Conteúdo e fontes primárias reabertos. Limitações documentadas não autorizam os configured incorretos de G1/G3. | V PASS do registro exigido; erros de produto permanecem |
+| C18 | Suítes/core/CI/private/governança | `scripts/governance-ci.test.mjs:263`–281 — matriz/steps/CI; 6gov+10motor rodados independentemente. Cinco SHA256 base/head iguais; package/CI/core não alterados pelo fix nem pelo Verifier. | V PASS |
 
-## Fechamento dos gaps e blast radius
+## Gaps confirmados, ranqueados
 
-`verified at 25d2b7054a44129ea7c8fcbab94d453f053a54f8`.
+**verified at 46e7c93**. Todos P2/bloqueantes para o contrato de diagnóstico; nenhum patch/teste/critério foi corrigido pelo Verifier.
 
-- **G1/C11**: renderer deixou de reduzir a matriz a contagens. `render-text.mjs:34`–45 mostra cada mecanismo/superfície, configuração, support traduzido, motivo/origem e exclusão com fonte; :52 mostra path, :74–79 ambiente. `cli.mjs:18`–19 imprime code/message do envelope seguro nas falhas. Provas unitária e de fronteira rodaram; probe independente na cópia isolada separou cada bloco de agente e afirmou o texto completo de todas as 60 linhas (20 por agente), caminho e fonte/origem da exclusão. Isto complementa as asserções globais `includes` dos novos testes, sem confundir presença numa outra linha com paridade. Resultado PASS.
-- **G2/C7**: `capability-matrix.mjs:55`–66 adiciona somente a exclusão documentada em Codex/tool_calls/cli_local. `evaluateSupport` preservado; cloud/desktop/IDE genéricos continuam unverified/surface_not_inspected. Unitário afirma o objeto exato com source URL; CLI afirma exclusão e motivo local coexistindo. O mesmo probe confirmou cloud com exclusion null. A checklist corrigiu a frase incorreta sem mudar a task. Resultado PASS.
-- **G3/C15**: `snapshot-read.mjs:71` propaga a detecção sem retornar texto; leitores Codex/Hermes tratam shim e metadata como null/version_changed_during_read. Provas de wrapper, shim Codex, package Codex e literal Hermes rodaram; leitura de `agent-resolution.mjs` (inalterado) confirma que a presença continua present para retorno version null. A entrada da reprodução independente anterior foi repetida: snapshotChanged true agora produz state changed_during_read/text undefined. Resultado PASS. Sem sincronizar escrita externa real ou prometer snapshot transacional.
-- **G4/C16**: novos processos reais CLI provam instalação reconhecida 9.9.0 fora do perfil e falha de leitura de diretório no path de config. Export de helper existente e duas entradas de manifest não mudaram a construção anterior nem decisões do produto. O segundo cenário prova falha de leitura real na montagem, não permissão negada via chmod; acesso nativo EACCES continua com a limitação unitária declarada. Resultado PASS.
+### G4 — Shebang externo atribui versão e contrato de outro pacote (C2/C3/C5)
 
-Alcance revisto: o campo adicional de exclusão não sobrescreve evidence local/runtime; renderer usa os mesmos campos do relatório sem nova decisão de domínio; emitter continua usando mensagens/códigos próprios; limites efetivos e canários foram novamente exercitados. A alteração de helpers é um export da função existente e adição de metadados de fixture, sem mudança silenciosa de valores esperados. Nenhuma asserção anterior foi enfraquecida no fix analisado.
+**Localização**: `src/doctor/launcher-link/hermes.mjs:72`–74 extrai somente X.Y; :173 fixa prefixo a partir do launcher; :178 busca o X.Y nesse prefixo; :194 retorna esse packageDir. `run-diagnostics.mjs` usa esse pacote para a fonte do contrato.
 
-## Limitações e itens não executados
+**Cenário**: `/a/bin/hermes` tem `#!/b/bin/python3.12`; A contém pacote 0.21.4 e B contém 0.20.0. **Esperado**: seguir o intérprete/pacote realmente ligado ao launcher ou reportar version null com motivo de vínculo inconclusivo. **Atual**: version0.21.4/source_literal de A e evidência de contrato A verificada. Não foi executado o intérprete, nem precisava ser executado para recusar essa atribuição incorreta. A fonte escolhida não corresponde ao caminho explícito do intérprete.
 
-Conclusões de limitações não afetadas **carried from 8a4304f**; confirmação de perfil/skip e novas provas **verified at 25d2b70**:
+**Reprodução independente**: primeiro leitor unitário com FS sintético; depois processo real CLI Linux sobre minha própria cópia temporária `/tmp/independent-r3-linux-XqwQoF/checkout`, Node24.13.0, com diretórios A/B e arquivos de fixture. Saída: exit0, Hermes present, version0.21.4, source `.../a/lib/python3.12/site-packages/hermes_cli/plugins.py`, apesar do shebang `.../b/bin/python3.12`. Fonte B tinha 0.20.0; retorno null também seria seguro. O intérprete da fixture era um stub e nunca foi iniciado: a prova é da escolha estática errada, não da execução Python. Testes :661–695 amostram vários X.Y dentro do mesmo prefixo; não têm prefixos absolutos diferentes. Assim, o cenário formal original melhorou, mas a intenção do vínculo ainda falha.
 
-- **Light**: fault injection/mutação de produto não realizada; join Coverage e Test policy formais não executados. Não foi inventada rodada/perfil superior para aprovar.
-- **C3/política gerenciada**: EACCES de resolução e política de caminho fixo continuam provados por adaptador/camada, sem alegar permissão real em todos os SOs.
-- **C10/exit1**: timeout usa connect injetado com relógio real; falha interna exit1 usa a função de envelope/exit usada pela CLI. Não são E2E de firewall ou falha arbitrária do processo.
-- **C16**: config inacessível agora tem fronteira CLI real com diretório no path do arquivo; essa condição não prova chmod/permissão nativa. O teste não afirma EACCES como o erro concreto daquela fixture.
-- **C9/help**: zero payload de transporte e retorno antecipado de help têm inspeção do código além de testes de status/saída; não se alegou contagem de bytes ou instrumentação de filesystem que a suíte não possui.
-- **Captura/SOs**: nenhuma captura real de eventos iniciada; nenhuma instalação de agentes; sem certificação IDE/desktop/cloud; sem afirmar execução local em Linux/macOS. Um skip POSIX no Windows declarado, não omitido.
+### G1 — Null em campos não Option do Codex é aceito como configured (C8/C12)
 
-Não há gaps bloqueantes remanescentes nos quatro achados ou no diff que os corrigiu. Essas limitações permanecem explícitas e não são usadas para presumir runtime/identidade verificados.
+**Localização**: `src/doctor/hooks-shape.mjs:29`–32 aceita null genericamente; :107 usa isso para async e :127 para input. Fonte vinculada à versão: `hook_config.rs:171`–172 define bool com default; :190–191 e :203–215 definem Map/desserializador, não Option. Somente ausência pode usar default; null presente não satisfaz esses tipos.
 
-## Paridade e preservação
+**Reprodução independente na CLI Windows isolada**: escrevi `hooks.json` de usuário com `PreToolUse`/grupo/handler nativos, isolando (a) command `command:"echo ok", async:null`, (b) mcp_tool `server:"s", tool:"t", input:null`. Em ambos: exit0, status complete, configuration configured, hooks_configured. **Esperado**: invalid/hooks_structure_invalid e partial, preservando os demais agentes. **Impacto**: documento que Codex rejeita é anunciado como configuração de captura existente.
 
-`verified at 25d2b7054a44129ea7c8fcbab94d453f053a54f8`: SHA256 calculado independentemente em arquivos extraídos dos archives base/head; todas as comparações True. `git diff --exit-code <base> -- <cinco arquivos>` também retornou 0.
+**Prova incorreta localizada**: `tests/doctor/config-projection.unit.test.mjs:625`–640 inclui async:null (:633) na tabela de valores aceitos e afirma configuration configured (:640). Esse teste existiu, rodou e passou nesta HEAD; ele mede o valor errado. Precisa ser corrigido com justificativa da fonte, não preservado como verde.
 
-| Arquivo comum `scripts/code-review/` | SHA256 base = HEAD |
+### G3 — Evento Hermes fora do catálogo instalado conta como hook configurado (C8)
+
+**Localização**: `src/doctor/hooks-shape.mjs:304`–316 aceita qualquer chave que não seja reservada e soma entradas com command. **Fonte nativa**: `C:/Users/paulo/AppData/Local/hermes/hermes-agent/agent/shell_hooks.py:224`–230 ignora nomes fora de VALID_HOOKS; a própria tabela instalada está em `hermes_cli/plugins.py:108` e o registro de plugins valida contra ela. Uma configuração não amplia o catálogo só por escrever uma chave.
+
+**Reprodução independente CLI Windows isolada**: instalação Hermes reconhecida0.21.4, plugins.py ligado com tabela sintética da mesma forma nativa, config `hooks: { made_up_event: [ { command: "echo ok" } ] }`. Saída exit0/status complete/configuration configured/hooks_configured. Parser aplicado independentemente à fonte real leu 41 eventos e confirmou made_up_event ausente. **Esperado**: não afirmar configured de um evento que a fonte rejeita/ignora; not_configured quando esse é o único handler e ausência comprovada, ou unknown se não houver catálogo aplicável. **Impacto**: doctor afirma configuração, mas nenhum hook será registrado. A lacuna explicitada na documentação não altera C8 nem autoriza essa afirmação positiva. Não confundir extensão futura do agente com configuração da versão examinada.
+
+### G2 — Matcher null válido do Codex é rejeitado (C8/C12)
+
+**Localização**: `src/doctor/hooks-shape.mjs:14`–16 e :161 só permitem matcher string/undefined; não permitem null. **Fonte**: `hook_config.rs:154`–159 define matcher Option<String> com default. Nesse campo JSON null é ausência de matcher válida (diferente de async/input).
+
+**Reprodução independente na CLI Windows isolada**: mesmo hooks.json com PreToolUse, `matcher:null`, e command válido. Saída exit0/status partial/configuration invalid/hooks_structure_invalid. **Esperado**: grupo válido, handler com alvo → configured, sem partial por esse campo. **Impacto**: falso impedimento para configuração nativa válida. Os testes de matcher inválido amostram números/valores de outro tipo, não esse Option nullable.
+
+## Limitações, nível das provas e teto
+
+Profile light mantido: **sem fault injection/mutação de produto**, sem join formal Coverage/Test policy ou comparação visual ui. Entradas de fixture e probes acima não modificam implementação. Ausência de CONTRIBUTING e Swept sem linhas existing **carried from rodada2**; nenhum novo documento desse tipo no diff.
+
+As sete correções receberam provas específicas, mas amostragem nativa não fecha com testes derivados do novo parser: async:null foi explicitamente rotulado com valor errado, matcher:null faltou, nomes Hermes não foram confrontados com catálogo e vínculo só amostrou X.Y no mesmo prefixo. Fontes e provas de CLI independentes distinguem esses defeitos de preferências de implementação.
+
+Limitações anteriores de acesso EACCES por adaptador, política em caminho fixo, timeout com connect injetado e exit1 por função continuam declaradas. C16 inacessibilidade real usa diretório no lugar do arquivo (EISDIR/EPERM), não prova chmod. CLI local fixture não certifica runtime real; nenhuma capacidade foi afirmada como captura funcional. Zero payload de transporte conferido por inspeção + testes de status, sem alegar contador de bytes inexistente. O skip Windows foi contabilizado e o Linux complementar não foi atribuído ao Verifier.
+
+Esta é a rodada3 da skill. FAIL exige decisão do proprietário para qualquer verificação adicional; o Verifier não abriu rodada extra, aumentou perfil/teto ou alterou a resposta formal. Nenhuma autorização de merge/publicação é inferida do resultado de testes.
+
+## Preservação e hashes
+
+**verified at 46e7c93**: original HEAD correta e porcelain vazio antes das provas e imediatamente antes deste relatório. Após salvar, confirmei novamente HEAD `46e7c932e236b979754b10b82330be91d8c7597f` e porcelain somente ` M .checks/issue-3-agent-diagnostics.verified.md`. Nenhum código/teste/critério, `.git`, estado/resposta de code-review, commit, push, PR, issue ou instalação global foi alterado pelo Verifier. Logs Linux são do orquestrador, só lidos.
+
+Archives base/head extraídos separadamente em TEMP e SHA256 comparado; todos True. `git diff --exit-code 4242520 -- <cinco arquivos>` retornou0.
+
+| Arquivo comum scripts/code-review | SHA256 base = HEAD |
 | --- | --- |
 | cli.mjs | `D69974087A3B43FCCF482E5F5B56C19F96FED60652B8985E7A9C298F061AE61E` |
 | review.mjs | `88508699ED5AB33F81BA438E229CD1A5DA3DE71FCD0EFFCFBD162CF7CF0E0CB6` |
@@ -103,8 +137,6 @@ Não há gaps bloqueantes remanescentes nos quatro achados ou no diff que os cor
 | schema.json | `A11E040A7061447C1E0D516E31919DA0D2821E012C6C44F27A56634228C6A467` |
 | README.md | `5F1998DB4621A09396920C37DC8AA4267C4DEF33F028F9945EF717DB8E8C0064` |
 
-Original antes e depois das provas: HEAD 25d2b7054a44129ea7c8fcbab94d453f053a54f8, porcelain vazio. Após salvar o relatório, reconferido: mesma HEAD, porcelain somente ` M .checks/issue-3-agent-diagnostics.verified.md`. Nenhum código/teste/critério, `.git`, commit, push, PR ou publicação foi alterado pelo Verifier. Relatório da rodada 1 permanece recuperável pelo commit 30f94dc.
-
 ## Gate
 
-**PASS — 18/18 critérios contabilizados**, com proveniência explícita. Provas atuais: **166 PASS, 0 FAIL, 1 skip**, todas as três suítes exit 0. Gaps ranqueados remanescentes: nenhum bloqueante. A revisão formal automática `review:run` continua sendo etapa do orquestrador após registrar este relatório; executar test:code-review não substitui essa revisão nem autoriza merge.
+**FAIL — 13/18 PASS**, C2/C3/C5/C8/C12 não satisfeitos nos cenários independentes confirmados. Windows independente: **244 PASS, 0 FAIL, 1 skip**; Linux complementar lido: **245 PASS, 0 FAIL, 0 skip**. Quatro classes bloqueantes G4/G1/G3/G2, apesar da suíte verde. A revisão formal final não é liberada por este relatório; nenhuma correção ou nova rodada foi realizada pelo Verifier.
