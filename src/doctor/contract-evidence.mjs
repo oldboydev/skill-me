@@ -42,27 +42,51 @@ const HERMES_CONTRACT_SOURCE_KIND = "hermes_valid_hooks";
 // mutação escondida em string/exec já documentada acima.
 //
 // Achado formal5 residual (.checks/code-review/formal5-residual-fixes.md):
-// duas variantes concretas da mesma chamada direta `nome.mutator(args)` ainda
-// escapavam. (a) Parentesização redundante do nome (`(VALID_HOOKS).clear()`)
-// não precisa de um parser novo — é só mais uma forma de "nome" antes do
-// ponto, coberta pela mesma alternativa com os mesmos separadores flexíveis
-// ao redor do `(`/`)`. (b) `__ior__`/`__iand__`/`__ixor__`/`__isub__` (formas
-// de método dos operadores aumentados já cobertos: `|=`, `&=`, `^=`, `-=`) e
-// `__init__` (reinicializa/limpa o conjunto — CPython `set_init`,
-// setobject.c:2171-2192,
+// `__ior__`/`__iand__`/`__ixor__`/`__isub__` (formas de método dos operadores
+// aumentados já cobertos: `|=`, `&=`, `^=`, `-=`) e `__init__` (reinicializa/
+// limpa o conjunto — CPython `set_init`, setobject.c:2171-2192,
 // https://github.com/python/cpython/blob/v3.13.0/Objects/setobject.c#L2170)
 // são a mesma família de métodos mutadores diretos, só com nomes diferentes.
-// Casar demais aqui nunca é menos seguro: qualquer correspondência a mais só
-// reforça o lado conservador (tabela tratada como não reconhecida).
+//
+// Nome agrupado (.checks/code-review/formal5-parentheses-fixes.md): qualquer
+// quantidade de parênteses redundantes ao redor do nome é a mesma chamada
+// direta. Aqui basta o nome seguido de qualquer sequência de `)`: os `(` que
+// abrem o grupo não mudam a decisão. Quebra de linha e comentário dentro do
+// grupo (continuação implícita) ficam com callsMutatorDirectly, sobre tokens:
+// um comentário nesta regex não ancorada custaria tempo quadrático numa linha
+// longa de 1 MiB. Casar demais aqui nunca é menos seguro: qualquer
+// correspondência a mais só reforça o lado conservador (tabela tratada como
+// não reconhecida) — inclusive `f(NOME).clear()`, que muta o resultado de f.
 const PY_TOKEN_SEP = String.raw`(?:[ \t]|\\\r?\n)*`;
-const SET_MUTATOR_METHODS =
-  "add|discard|remove|clear|pop|update|difference_update|intersection_update|symmetric_difference_update" +
-  "|__ior__|__iand__|__ixor__|__isub__|__init__";
+const PY_CLOSING_GROUP_SEP = String.raw`(?:[ \t)]|\\\r?\n)*`;
+const SET_MUTATOR_METHODS = [
+  "add", "discard", "remove", "clear", "pop", "update",
+  "difference_update", "intersection_update", "symmetric_difference_update",
+  "__ior__", "__iand__", "__ixor__", "__isub__", "__init__",
+];
 function runtimeMutationPattern(name) {
-  const target = `(?:${name}|\\(${PY_TOKEN_SEP}${name}${PY_TOKEN_SEP}\\))`;
   return new RegExp(
-    `${name}${PY_TOKEN_SEP}[-&^|+]=|${target}${PY_TOKEN_SEP}\\.${PY_TOKEN_SEP}(?:${SET_MUTATOR_METHODS})${PY_TOKEN_SEP}\\(`,
+    `${name}${PY_TOKEN_SEP}[-&^|+]=|${name}${PY_CLOSING_GROUP_SEP}\\.${PY_TOKEN_SEP}(?:${SET_MUTATOR_METHODS.join("|")})${PY_TOKEN_SEP}\\(`,
   );
+}
+
+// A mesma chamada direta lida em código: o tokenizer já descarta espaço,
+// quebra de linha dentro de colchetes, comentário e continuação com "\", e
+// recusa o arquivo com colchetes desbalanceados. Percorre a lista uma vez,
+// sem recursão, qualquer que seja a profundidade do grupo.
+function callsMutatorDirectly(tokens, name) {
+  return tokens.some((token, k) => {
+    if (token.type !== "name" || token.value !== name) return false;
+    let next = k + 1;
+    while (isOp(tokens[next], ")")) next += 1;
+    const method = tokens[next + 1];
+    return (
+      isOp(tokens[next], ".") &&
+      method?.type === "name" &&
+      SET_MUTATOR_METHODS.includes(method.value) &&
+      isOp(tokens[next + 2], "(")
+    );
+  });
 }
 const EVENT_NAME = /^[a-z_][a-z0-9_]*$/;
 
@@ -101,7 +125,7 @@ function readStringSetStatement(tokens, start) {
 function extractTopLevelStringSet(text, name) {
   if (runtimeMutationPattern(name).test(text)) return null;
   const tokens = tokenizePython(text);
-  if (tokens === null) return null;
+  if (tokens === null || callsMutatorDirectly(tokens, name)) return null;
   const sites = findAssignments(tokens, name);
   if (sites.length !== 1 || !sites[0].moduleLevel) return null;
   return readStringSetStatement(tokens, sites[0].valueIndex);

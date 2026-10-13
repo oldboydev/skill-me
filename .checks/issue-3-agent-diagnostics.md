@@ -257,7 +257,7 @@ na rodada anterior continuar passando. Autor: Claude; Codex local só revisa.
 
 | One-way door | Literal shape | Alternative rejected |
 | --- | --- | --- |
-| Parentesização redundante do nome antes do ponto entra na mesma alternativa de `runtimeMutationPattern` (`contract-evidence.mjs`), com os mesmos separadores flexíveis ao redor de `(`/`)` | `target = (?:NOME\|\(SEP NOME SEP\))` substitui `NOME` na alternativa de chamada de método; `(VALID_HOOKS).clear()`, `( VALID_HOOKS ).clear()` etc. casam sem tokenizar — continua regex sobre texto bruto, preservando a proteção contra mutação escondida em string/exec | Tokenizar a checagem (rejeitada na rodada anterior pelo mesmo motivo: perderia a leitura sobre texto bruto que protege contra mutação dentro de string/exec) |
+| Parentesização redundante do nome antes do ponto entra na mesma alternativa de `runtimeMutationPattern` (`contract-evidence.mjs`), com os mesmos separadores flexíveis ao redor de `(`/`)` | `target = (?:NOME\|\(SEP NOME SEP\))` substitui `NOME` na alternativa de chamada de método; `(VALID_HOOKS).clear()`, `( VALID_HOOKS ).clear()` etc. casam sem tokenizar — continua regex sobre texto bruto, preservando a proteção contra mutação escondida em string/exec | Tokenizar a checagem (rejeitada na rodada anterior pelo mesmo motivo: perderia a leitura sobre texto bruto que protege contra mutação dentro de string/exec). **Superada no fechamento do agrupamento** (Landing abaixo): a regex bruta fica e passa a aceitar qualquer sequência de `)`; tokens apenas somam a continuação implícita dentro do grupo |
 | `__ior__`/`__iand__`/`__ixor__`/`__isub__`/`__init__` entram na lista de métodos mutadores reconhecidos (`SET_MUTATOR_METHODS`) | Mesma família de `add/discard/.../symmetric_difference_update` — os quatro primeiros são a forma de método explícita dos operadores aumentados já cobertos (`\|=`, `&=`, `^=`, `-=`); `__init__` reinicializa/limpa o conjunto (CPython `set_init`, setobject.c:2171-2192, https://github.com/python/cpython/blob/v3.13.0/Objects/setobject.c#L2170) | Resolver alias/reflexão arbitrária (`getattr(NOME, "clear")()`, renomear o nome antes de chamar) — fora do alcance do achado, que é a chamada direta `nome.mutator(args)`; não avaliado nem testado |
 
 Ordem seguida: leitura do encaminhamento e da probe (`.checks/code-review/probe-formal5-residuals.mjs`,
@@ -299,7 +299,20 @@ junções externas (nome→ponto, método→parêntese), mas não combina parên
 próprio parêntese sem o `\` explícito (quebra de linha implícita dentro de `(...)`, válida em Python sem
 continuação lógica) — `PY_TOKEN_SEP` não inclui quebra de linha nua, só espaço/tab/continuação com `\`; não
 testado por não fazer parte das 6 falhas concretas confirmadas pela API de extração nem do alcance direto de
-métodos mutadores pedido nesta rodada.
+métodos mutadores pedido nesta rodada. **Superada no fechamento do agrupamento** (Landing abaixo).
+
+### Landing do fechamento do agrupamento formal5 — qualquer quantidade de parênteses e continuação implícita
+
+Encaminhamento: `.checks/code-review/formal5-parentheses-fixes.md`. Mesmo achado 1 (P2), não um critério novo:
+`((VALID_HOOKS)).clear()` e `(\nVALID_HOOKS\n).clear()` publicavam a lista anterior nas duas tabelas (probe do
+Root: 8 casos anteriores passavam, 4 novos falhavam). Autor: Claude; Codex local só revisa. Detalhe, RED/GREEN e
+medidas: seção 26 do build.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| Nome seguido de qualquer sequência de `)` antes de `.mutador(` é mutação: na regex bruta e na leitura por tokens | Regex: `NOME(?:[ \t)]\|\\\r?\n)*\.SEP(mutadores)SEP\(` (os `(` que abrem o grupo não mudam a decisão; casar a mais só torna o resultado conservador). Tokens (`callsMutatorDirectly`, `tokenizePython` existente): nome, qualquer quantidade de `)`, `.`, mutador e `(`; quebra de linha, CRLF, comentário e `\` dentro do grupo já foram descartados pelo tokenizer, sem recursão | Comentário/quebra de linha na regex não ancorada (custo quadrático numa linha longa de 1 MiB); parser Python novo ou casar `(` com `)` (desnecessário: o tokenizer já recusa arquivo desbalanceado, e o superconjunto só reforça `unrecognized`) |
+
+Proof: `node --test --test-name-pattern="formal5-parens" tests/doctor/contract-evidence.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
 
 ## Checks
 

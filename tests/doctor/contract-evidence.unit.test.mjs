@@ -184,9 +184,10 @@ test("contract-evidence-formal5-1 VALID_HOOKS com espaço antes de .clear() no a
 // uma parentesização simples do nome antes do ponto (`(VALID_HOOKS).clear()`)
 // é a mesma chamada direta `nome.mutator(args)` do achado anterior, só com um
 // `(`/`)` redundante ao redor do nome — Python tão válido quanto a forma sem
-// parêntese, e continuava escapando do filtro. Reaproveita os mesmos
-// separadores flexíveis (`PY_TOKEN_SEP`) já testados para a forma sem
-// parêntese, agora também nas duas junções em volta do próprio parêntese.
+// parêntese, e continuava escapando do filtro. Prova um par com os mesmos
+// separadores flexíveis já testados para a forma sem parêntese; qualquer
+// quantidade de pares e a continuação implícita dentro deles ficam nos testes
+// formal5-parens abaixo.
 test("contract-evidence-formal5-residual parêntese ao redor do nome, com os mesmos separadores flexíveis, não escapa do filtro", () => {
   const MUTATIONS = {
     "parêntese simples": "(NOME).clear()\n",
@@ -264,6 +265,139 @@ test("contract-evidence-formal5-residual VALID_HOOKS.__init__() no arquivo da in
   assert.equal(result.state, "unrecognized");
   assert.equal(result.mechanisms, undefined);
   assert.equal(result.validHooks, undefined);
+});
+
+// Último residual do achado formal5 (.checks/code-review/formal5-parentheses-
+// fixes.md): `((VALID_HOOKS)).clear()` e `(\nVALID_HOOKS\n).clear()` são a
+// mesma chamada direta `nome.mutator(args)` dos testes acima e ainda
+// publicavam a lista anterior. O nome agrupado admite qualquer quantidade de
+// parênteses redundantes e, dentro deles, a continuação implícita do Python
+// (quebra de linha, CRLF, comentário). Matriz: catorze métodos mutadores ×
+// duas tabelas; "sem parêntese" e "um par" são os controles já corrigidos.
+const TABLE_EXTRACTORS = [
+  ["VALID_HOOKS", extractHermesValidHooks],
+  ["SHELL_UNSUPPORTED_HOOKS", extractHermesShellUnsupportedHooks],
+];
+
+const MUTATOR_CALL_ARGS = {
+  add: '"post_tool_call"',
+  discard: '"pre_tool_call"',
+  remove: '"pre_tool_call"',
+  clear: "",
+  pop: "",
+  update: '{"post_tool_call"}',
+  difference_update: '{"pre_tool_call"}',
+  intersection_update: '{"post_tool_call"}',
+  symmetric_difference_update: '{"pre_tool_call"}',
+  __ior__: '{"post_tool_call"}',
+  __iand__: '{"post_tool_call"}',
+  __ixor__: '{"pre_tool_call"}',
+  __isub__: '{"pre_tool_call"}',
+  __init__: "",
+};
+
+const GROUPED_MUTATIONS = {
+  "sem parêntese (controle)": "NOME.METODO(ARGS)",
+  "um par (controle)": "(NOME).METODO(ARGS)",
+  "dois pares": "((NOME)).METODO(ARGS)",
+  "três pares": "(((NOME))).METODO(ARGS)",
+  "64 pares": `${"(".repeat(64)}NOME${")".repeat(64)}.METODO(ARGS)`,
+  "quebra de linha dentro do par": "(\nNOME\n).METODO(ARGS)",
+  "CRLF dentro do par": "(\r\nNOME\r\n).METODO(ARGS)",
+  "comentário com ) dentro do par": "(NOME  # comentário com )\n).METODO(ARGS)",
+  "comentário antes do nome, dentro do par": "(  # comentário\n    NOME\n).METODO(ARGS)",
+  "pares aninhados em linhas diferentes": "(\n    (\n        NOME\n    )\n).METODO(ARGS)",
+  "ponto depois de quebra, dentro do par externo": "((NOME)\n    .METODO(ARGS))",
+  "método depois de quebra, dentro do par externo": "((NOME).\n    METODO(ARGS))",
+  "parêntese da chamada depois de quebra, dentro do par externo": "((NOME).METODO\n    (ARGS))",
+};
+
+function groupedSource(template, table, method, args) {
+  const statement = template.replaceAll("NOME", table).replaceAll("METODO", method).replaceAll("ARGS", args);
+  return `${table} = {"pre_tool_call"}\n${statement}\n`;
+}
+
+test("contract-evidence-formal5-parens nome agrupado por qualquer quantidade de parênteses redundantes, com continuação implícita dentro deles, não escapa do filtro em nenhum mutador nem tabela", () => {
+  const escaped = [];
+  let checked = 0;
+  for (const [table, extract] of TABLE_EXTRACTORS) {
+    for (const [shape, template] of Object.entries(GROUPED_MUTATIONS)) {
+      for (const [method, args] of Object.entries(MUTATOR_CALL_ARGS)) {
+        checked += 1;
+        const result = extract(groupedSource(template, table, method, args));
+        if (result !== null) escaped.push(`${table}/${shape}/${method} -> ${JSON.stringify(result)}`);
+      }
+    }
+  }
+  assert.equal(checked, 2 * 13 * 14);
+  assert.deepEqual(escaped, []);
+});
+
+// Controles: o mesmo agrupamento sem mutação da própria tabela continua sendo
+// a forma reconhecida — consulta, pertinência, argumento de outra chamada e
+// mutador de OUTRO objeto que só recebe o nome agrupado.
+test("contract-evidence-formal5-parens nome agrupado em consulta, pertinência ou argumento continua reconhecido nas duas tabelas", () => {
+  const GROUPED_QUERIES = {
+    "consulta com dois pares": "((NOME)).copy()",
+    "consulta multilinha com comentário": "(\n    NOME  # consulta\n).issubset(OUTRO)",
+    "consulta depois de quebra, dentro do par externo": '((NOME)\n    .union({"x"}))',
+    "nome agrupado como argumento": "print(sorted(((NOME))))",
+    "pertinência em nome agrupado": 'ativo = "x" in ((NOME))',
+    "mutador de outro objeto recebendo o nome agrupado": "OUTRO.update((NOME)); OUTRO.clear()",
+  };
+  for (const [table, extract] of TABLE_EXTRACTORS) {
+    for (const [label, template] of Object.entries(GROUPED_QUERIES)) {
+      const text = `${table} = {"pre_tool_call"}\n${template.replaceAll("NOME", table)}\n`;
+      assert.deepEqual(extract(text), ["pre_tool_call"], `${table}/${label}`);
+    }
+  }
+});
+
+test("contract-evidence-formal5-parens forma agrupada no arquivo da instalação: VALID_HOOKS vira unrecognized; SHELL_UNSUPPORTED_HOOKS vira exclusões desconhecidas, nunca vazias", async () => {
+  for (const extra of ["((VALID_HOOKS)).clear()\n", "(\n    VALID_HOOKS  # agrupado\n).clear()\n"]) {
+    const result = await readContractEvidence({
+      agentId: "hermes",
+      packageDir: PKG_DIR,
+      fs: fsWithPlugins(hermesPluginsSource({ extra })),
+    });
+    assert.equal(result.state, "unrecognized", extra);
+    assert.equal(result.mechanisms, undefined, extra);
+    assert.equal(result.validHooks, undefined, extra);
+  }
+
+  const shellMutated = await readContractEvidence({
+    agentId: "hermes",
+    packageDir: PKG_DIR,
+    fs: fsWithPlugins(hermesPluginsSource({ extra: "(\n    (SHELL_UNSUPPORTED_HOOKS)\n).clear()\n" })),
+  });
+  assert.equal(shellMutated.state, "found");
+  assert.equal(shellMutated.shellUnsupportedHooks, null);
+});
+
+// Redundância profunda dentro do limite de leitura do arquivo (1 MiB): a
+// leitura percorre os parênteses sem recursão nem regex de retrocesso
+// descontrolado — 262 mil pares em linhas separadas, ou 524 mil numa linha
+// só, terminam com a mesma decisão das formas curtas. Sem orçamento de tempo.
+test("contract-evidence-formal5-parens parênteses profundamente redundantes em texto de até 1 MiB: mutação recusada, consulta preservada", () => {
+  const ONE_MIB = 1024 * 1024;
+  const head = 'VALID_HOOKS = {"pre_tool_call"}\n';
+  const linePairs = Math.floor((ONE_MIB - 64) / 4);
+  const multiline = (call) => `${head}${"(\n".repeat(linePairs)}VALID_HOOKS${"\n)".repeat(linePairs)}${call}\n`;
+  const inlinePairs = Math.floor((ONE_MIB - 64) / 2);
+  const inline = `${head}${"(".repeat(inlinePairs)}VALID_HOOKS${")".repeat(inlinePairs)}.clear()\n`;
+  const cases = {
+    "multilinha .clear()": [multiline(".clear()"), null],
+    "multilinha .copy()": [multiline(".copy()"), ["pre_tool_call"]],
+    "linha única .clear()": [inline, null],
+  };
+  const observed = {};
+  for (const [label, [text, expected]] of Object.entries(cases)) {
+    assert.ok(Buffer.byteLength(text) <= ONE_MIB, `${label}: premissa de tamanho`);
+    observed[label] = { expected, actual: extractHermesValidHooks(text) };
+  }
+  for (const [label, { expected, actual }] of Object.entries(observed)) {
+    assert.deepEqual(actual, expected, `${label}: ${JSON.stringify(observed)}`);
+  }
 });
 
 test("contract-evidence-C5 tabela com forma não reconhecida vira state unrecognized, sem eventos", async () => {

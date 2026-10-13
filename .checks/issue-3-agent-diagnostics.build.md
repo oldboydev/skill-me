@@ -3180,7 +3180,7 @@ inalterada como registro histórico da decisão tomada naquele momento (ver tamb
   (nome→ponto, método→parêntese), mas não combina parêntese com quebra de linha implícita sem `\` dentro do
   próprio parêntese — `PY_TOKEN_SEP` não inclui quebra de linha nua, só espaço/tab/continuação lógica com `\`.
   Não testado por não fazer parte das 6 falhas concretas confirmadas pela probe nem do alcance direto de
-  métodos mutadores desta rodada.
+  métodos mutadores desta rodada. **Superada na seção 26.**
 - Parênteses em alvo de atribuição aumentada (`(VALID_HOOKS) -= {...}`) não foram avaliados nem testados: a
   probe e o encaminhamento tratam só da forma de chamada de método; nenhuma alegação é feita sobre esse caso.
 - Resolução de alias/reflexão arbitrária (`getattr(VALID_HOOKS, "clear")()`, atribuir o conjunto a outro nome
@@ -3203,3 +3203,63 @@ inalterada como registro histórico da decisão tomada naquele momento (ver tamb
   `…-npm-test.txt`. Preservado sem alteração: `.checks/code-review/formal5-residual-fixes.md`
   (encaminhamento), `.checks/code-review/probe-formal5-residuals.mjs` (probe do Root), e a seção 24 inteira
   (histórico preservado).
+
+## 26. Fechamento do agrupamento por parênteses do achado 1 da revisão formal5 (13/10/2026)
+
+Encaminhamento: `.checks/code-review/formal5-parentheses-fixes.md`. Mesmo achado 1 (P2), não um critério novo.
+Autor: Claude; Codex local só revisa. A probe do Root (`.checks/code-review/probe-formal5-parentheses.mjs`), rodada
+com o produto intacto, mostrou os 8 casos anteriores passando e 4 falhando: `((NOME)).clear()` e
+`(\nNOME\n).clear()`, nas duas tabelas, publicavam a lista anterior. É a mesma chamada direta da seção 25, com
+outra quantidade de parênteses redundantes ou com continuação implícita dentro deles. Arquivos alterados:
+`src/doctor/contract-evidence.mjs`, os testes de contrato e de CLI, esta seção e o Landing no checklist.
+`python-source.mjs` ficou intacto. Não houve operação Git, stash, agente, execução de Python nem configuração real.
+
+**Decisão de análise da expressão.** Duas leituras, com a lista única `SET_MUTATOR_METHODS` (14 nomes) como fonte:
+
+1. Regex bruta, mantida para string/exec: o nome seguido de qualquer sequência de `)` (`PY_CLOSING_GROUP_SEP`,
+   com espaço, tab e `\`) antes de `.mutador(`. Substitui o `target` de um par da seção 25 por um superconjunto
+   linear. Os `(` que abrem o grupo não mudam a decisão, e casar a mais só reforça `unrecognized`.
+2. Tokens (`callsMutatorDirectly`, sobre o `tokenizePython` existente): nome, qualquer quantidade de `)`, `.`,
+   mutador e `(`. O tokenizer já descarta quebra de linha dentro de colchetes, CRLF, comentário e `\`, e recusa
+   arquivo desbalanceado. É uma passada só, sem recursão.
+
+Um comentário dentro da regex não ancorada custaria tempo quadrático numa linha longa de 1 MiB (cada ocorrência
+do nome percorreria o resto da linha); por isso a continuação implícita é lida sobre tokens. Não há parser novo
+nem casamento de `(` com `)`.
+
+**RED** (`src/doctor/**` intacto, testes novos escritos; `.checks/code-review/formal5-parentheses-red.txt`):
+`node --test tests/doctor/contract-evidence.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs` → tests
+66, pass 62, fail 4, skipped 0, `EXIT_CODE=1`. As 4 falhas são os 4 testes novos de mutação:
+
+- matriz: 308 combinações escapavam (2 tabelas × 11 formas novas × 14 mutadores); os controles "sem parêntese"
+  e "um par" não escaparam;
+- `readContractEvidence`: o resultado foi `found` em vez de `unrecognized`;
+- caso profundo: as duas mutações de ~1 MiB devolviam a lista;
+- CLI: `configuration` ficava diferente de `unknown`.
+
+O controle de consultas agrupadas já passava. No RED, o caso profundo levou 244 s, porque a linha única de
+1 MiB passava pelo custo pré-existente do tokenizer, citado nos limites.
+
+**GREEN** (`.checks/code-review/formal5-parentheses-green.txt`): os mesmos alvos mais
+`capability-evidence.cli.test.mjs` como controle → tests 76, pass 76, fail 0, skipped 0, `EXIT_CODE=0`. Na
+mesma saída, a probe do Root deu 12/12 `pass:true`. O caso profundo levou 351 ms.
+
+**`npm test` único** depois da última alteração de código e testes (`.checks/code-review/formal5-parentheses-npm-test.txt`):
+`test:governance` 6/6, `test:code-review` 10/10, `test:doctor` 345 testes / 343 pass / 0 fail / 2 skip,
+`EXIT_CODE=0`. Os skips são os dois POSIX já registrados. O delta 340 → 345 corresponde aos 5 testes novos: 4 em
+`contract-evidence.unit.test.mjs` (matriz, controles, `readContractEvidence` das duas tabelas e o caso
+profundo) e 1 em `configuration-trust.cli.test.mjs`. Esse teste de CLI usa `((VALID_HOOKS)).clear()` e a forma
+multilinha com comentário, com `hooks_auto_accept:true`, e confere 3 agentes, exit 0, cinco linhas
+`unverified/contract_source_unrecognized`, `configuration` e `trust` `unknown`, além da paridade com o texto.
+
+**Limites.**
+
+- Dentro de string/exec, só valem as formas de uma linha da regex bruta; quebra de linha ou comentário nesses
+  casos não é inferido, assim como alias, `getattr` e `(NOME) -= …`, que seguem fora do alcance.
+- O tokenizer existente (`columnOf`) tem custo quadrático em linha única longa: uma consulta de 1 MiB numa linha
+  levaria minutos. Esse custo já existia antes desta correção, que não o aumenta. Uma mutação nessa forma é
+  recusada pela regex antes de tokenizar. É um achado fora do escopo e não foi corrigido.
+- Medição avulsa sem orçamento: entradas adversas de ~1 MiB na regex nova levaram 1–6 ms.
+- O corpo do teste de CLI repete o padrão dos dois testes formal5 anteriores, para não alterar testes já
+  entregues.
+- A execução foi só em Windows 11 Pro, com Node 24.21.0.
