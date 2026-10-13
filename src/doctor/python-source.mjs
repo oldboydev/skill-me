@@ -146,6 +146,18 @@ export function isOp(token, value) {
   return token?.type === "op" && token.value === value;
 }
 
+// Índice do primeiro token depois do nome em `nameIndex` e de qualquer
+// sequência de `)` que o segue: com o nome agrupado (`((NOME)).clear()`,
+// `(NOME) += x`), é ali que fica o ponto da chamada ou o operador. Os `(`
+// que abrem o grupo não mudam a decisão de quem consome. Uma passada, sem
+// recursão; quebra de linha e comentário dentro do grupo o tokenizer já
+// descartou.
+export function indexAfterGroupedName(tokens, nameIndex) {
+  let next = nameIndex + 1;
+  while (isOp(tokens[next], ")")) next += 1;
+  return next;
+}
+
 function isName(token, value) {
   return token?.type === "name" && token.value === value;
 }
@@ -201,6 +213,13 @@ function isOtherBindingTarget(tokens, first, k) {
 // = ...`, `:=`, atribuição aumentada `name OP= ...`, indentadas e as de
 // isOtherBindingTarget) entram sem `moduleLevel`: o valor lido no nível do
 // módulo pode não ser o efetivo.
+//
+// O alvo da atribuição aumentada pode vir agrupado: `(name) OP= ...` e
+// `((name)) OP= ...` ligam o mesmo nome (CPython 3.13 Grammar/python.gram,
+// augassign sobre single_target ::= NAME | '(' single_target ')',
+// https://github.com/python/cpython/blob/v3.13.0/Grammar/python.gram#L968).
+// Basta o operador logo depois do grupo, fora de colchetes: `x[(name)] += 1`
+// muda `x`, e `f(name) += 1` ou `(a, name) += 1` não são Python válido.
 export function findAssignments(tokens, name) {
   const sites = [];
   let first = 0;
@@ -209,6 +228,7 @@ export function findAssignments(tokens, name) {
     if (token.type !== "name" || token.value !== name) return;
     const moduleLevel = token.statementStart && token.column === 0 && token.depth === 0;
     const next = tokens[k + 1];
+    const afterGroup = tokens[indexAfterGroupedName(tokens, k)];
     if (isOp(next, "=") && token.depth === 0) {
       sites.push({ moduleLevel, valueIndex: k + 2 });
       return;
@@ -222,7 +242,7 @@ export function findAssignments(tokens, name) {
     }
     if (
       isOp(next, ":=") ||
-      (next?.type === "op" && AUGMENTED_ASSIGNMENT_OPERATORS.has(next.value) && token.depth === 0) ||
+      (afterGroup?.type === "op" && AUGMENTED_ASSIGNMENT_OPERATORS.has(afterGroup.value) && afterGroup.depth === 0) ||
       isOtherBindingTarget(tokens, first, k)
     ) {
       sites.push({ moduleLevel: false, valueIndex: null });

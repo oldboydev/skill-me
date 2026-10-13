@@ -314,6 +314,19 @@ medidas: seção 26 do build.
 
 Proof: `node --test --test-name-pattern="formal5-parens" tests/doctor/contract-evidence.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
 
+### Landing do alvo agrupado de atribuição aumentada — verificação independente 9
+
+Encaminhamento: `.checks/code-review/formal5-grouped-binding-fixes.md`. É o único finding (P2) da verificação 9 e
+bloqueava C3/C5/C8; não é um critério novo. `(__version__) += "-dev"` publicava 0.21.4, e
+`(VALID_HOOKS) -= …`/`(SHELL_UNSUPPORTED_HOOKS) -= …` publicavam a lista anterior. Autor: Claude; o Codex local só
+revisa. Fonte, RED/GREEN e limites estão na seção 27 do build, que supera o limite da seção 26 sobre `(NOME) -= …`.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| Nome seguido de qualquer sequência de `)` e de um dos 13 operadores aumentados, fora de colchetes, liga o nome (CPython 3.13 `single_target`) | `indexAfterGroupedName` (`python-source.mjs`), compartilhado por `findAssignments` e `callsMutatorDirectly`. A regex bruta usa o mesmo prefixo `NOME(?:[ \t)]\|\\\r?\n)*` para `[-&^\|+]=` e `.mutador(` | Parser novo, casar `(` com `)` ou avaliar Python. Também foi descartado ampliar para alias, `getattr`, condicionais ou novos operadores na regex bruta |
+
+Proof: `node --test --test-name-pattern="formal5-grouped-binding" tests/doctor/contract-evidence.unit.test.mjs tests/doctor/agent-resolution.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
+
 ## Checks
 
 ### S1 - Saber quais agentes foram encontrados sem iniciar os agentes · 6 arquivos · ~26 KB · ~7k

@@ -3263,3 +3263,68 @@ multilinha com comentário, com `hooks_auto_accept:true`, e confere 3 agentes, e
 - O corpo do teste de CLI repete o padrão dos dois testes formal5 anteriores, para não alterar testes já
   entregues.
 - A execução foi só em Windows 11 Pro, com Node 24.21.0.
+
+## 27. Alvo agrupado de atribuição aumentada — verificação independente 9 (13/10/2026)
+
+Encaminhamento: `.checks/code-review/formal5-grouped-binding-fixes.md`. É o único finding (P2) de
+`.checks/issue-3-agent-diagnostics.verified.md` e bloqueava C3/C5/C8. Autor: Claude; o Codex local só revisa.
+Arquivos alterados: `src/doctor/python-source.mjs`, `src/doctor/contract-evidence.mjs`, os testes de contrato, de
+versão e de CLI, o novo helper `tests/doctor/helpers/grouped-augmented-targets.mjs`, o Landing e esta seção. Não houve
+operação Git, stash, agente, execução de Python nem configuração real.
+
+**Fonte.** No CPython 3.13, `Grammar/python.gram`
+(https://github.com/python/cpython/blob/v3.13.0/Grammar/python.gram#L968), a atribuição aumentada usa
+`single_target augassign`, e `single_target` admite `'(' single_target ')'`. Por isso `(__version__) += "-dev"` e
+`((VALID_HOOKS)) -= {...}` ligam o mesmo nome. A fonte foi lida só como texto, sem avaliar Python.
+
+**Decisão e helper.** `indexAfterGroupedName(tokens, k)` devolve o primeiro token depois do nome e de qualquer
+sequência de `)`. É a varredura que `callsMutatorDirectly` já fazia, agora compartilhada. O ramo aumentado de
+`findAssignments` lê o operador nesse índice e exige profundidade 0 nele; sem grupo, o resultado é o mesmo de antes.
+`x[(name)] += 1` não liga o nome, porque o token seguinte é `]`. Já `f(name) += 1` e `(a, name) += 1` não são Python
+válido. A regex bruta (string/exec de uma linha) usa o mesmo prefixo `NOME(?:[ \t)]|\\\r?\n)*` para `[-&^|+]=` e para
+`.mutador(`, com os mesmos cinco operadores. Os consumidores não mudaram: a versão fica `version_source_ambiguous`,
+`VALID_HOOKS` fica `unrecognized` e `SHELL_UNSUPPORTED_HOOKS` fica `null`.
+
+**Supersessão.** O limite da seção 26 que deixava `(NOME) -= …` fora de alcance está superado para os 13 operadores.
+A seção 26 fica como histórico, e os critérios não mudaram.
+
+**RED** (`src/doctor/**` intacto; `.checks/code-review/formal5-grouped-binding-red.txt`): contrato + versão + CLI →
+tests 121, pass 113, fail 6, skipped 2, `EXIT_CODE=1`. As 6 falhas são os 6 testes novos de mutação:
+
+- 286 combinações de tabela escapavam (2 tabelas × 11 formas agrupadas × 13 operadores);
+- 143 de versão publicavam 0.21.4 (11 × 13);
+- 20 combinações de exec escapavam (2 tabelas × 5 operadores × 2 formas);
+- `readContractEvidence` devolvia `found`;
+- na CLI, o catálogo ficava com `configuration` `configured` e a versão era `0.21.4`.
+
+Os controles "sem parêntese" não escaparam, e os 2 testes novos de controle já passavam. A probe do Root deu
+`pass:false` nas duas tabelas. O arquivo guarda a segunda execução do RED: na primeira, os dois casos de CLI estavam
+num só teste, que parou no primeiro. Separei os casos e rodei de novo, ainda com `src/` intacto.
+
+**GREEN** (`.checks/code-review/formal5-grouped-binding-green.txt`): os mesmos alvos mais
+`capability-evidence.cli.test.mjs` → tests 131, pass 129, fail 0, skipped 2, `EXIT_CODE=0`. A probe deu 2/2
+`pass:true`. O caso profundo de 1 MiB da seção 26 levou 296 ms no RED e 295 ms no GREEN, uma execução cada e sem
+orçamento.
+
+**`npm test` único** (`.checks/code-review/formal5-grouped-binding-npm-test.txt`): `test:governance` 6/6,
+`test:code-review` 10/10 e `test:doctor` com 353 testes / 351 pass / 0 fail / 2 skip, `EXIT_CODE=0`. Os skips são os
+dois POSIX já registrados. O delta 345 → 353 são os 8 testes novos (4 de contrato, 2 de versão, 2 de CLI), todos
+executados no log.
+
+**Provas.** A matriz tem 12 formas (sem parêntese, como controle; um par; operador colado; espaço/tab; dois pares; 64
+pares; quebra de linha; CRLF; comentário com `)`; pares aninhados em várias linhas; `\` antes do operador; indentado em
+bloco) × 13 operadores, para as duas tabelas e para `__version__`. Há ainda o exec de uma linha, os controles
+(comparações `== != <= >=`, subscrito de outro objeto, outra variável, comentário e string) e `readContractEvidence`.
+Os dois casos de CLI usam `hooks_auto_accept:true` e conferem 3 agentes, exit 0, 5 linhas `unverified` com o motivo
+exato e `configuration`/`trust` `unknown`. Conferem também a paridade entre JSON e texto e, no caso da versão, que
+`0.21.4` não aparece em nenhum dos dois formatos.
+
+**Limites.**
+
+- A regex bruta cobre só `[-&^|+]=` numa linha. Os outros 8 operadores e as formas multilinha dentro de string/exec
+  não são inferidos, como antes. Pelo texto bruto, `(NOME) -= …` num comentário também torna a tabela não
+  reconhecida; por isso os controles de comentário e string usam `%=`/`*=`.
+- Alias, `getattr` e condicionais seguem fora do alcance. `(obj.NOME) += …` conta como ligação, pela mesma leitura
+  léxica já registrada para `obj.__version__`.
+- O custo quadrático de `columnOf` numa linha única longa segue fora do alcance.
+- A execução foi só em Windows 11 Pro, com Node 24.21.0.

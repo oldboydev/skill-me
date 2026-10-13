@@ -20,6 +20,11 @@ import {
   hermesPluginsSource,
 } from "./helpers/hermes-contract-source.mjs";
 import { addFile, buildFsTree, createFakeFsAdapter } from "./helpers/fake-fs-adapter.mjs";
+import {
+  AUGMENTED_OPERATORS,
+  GROUPED_AUGMENTED_TARGETS,
+  groupedAugmentedStatement,
+} from "./helpers/grouped-augmented-targets.mjs";
 
 const PKG_DIR = "/venv/lib/python3.12/site-packages/hermes_cli";
 const PLUGINS_PATH = PKG_DIR + "/plugins.py";
@@ -398,6 +403,95 @@ test("contract-evidence-formal5-parens parênteses profundamente redundantes em 
   for (const [label, { expected, actual }] of Object.entries(observed)) {
     assert.deepEqual(actual, expected, `${label}: ${JSON.stringify(observed)}`);
   }
+});
+
+// Verificação independente 9 (.checks/code-review/formal5-grouped-binding-
+// fixes.md): `(VALID_HOOKS) -= {"pre_tool_call"}` é a mesma atribuição
+// aumentada da correção formal4, só com o alvo agrupado (single_target do
+// CPython, ver helpers/grouped-augmented-targets.mjs), e publicava a lista
+// anterior nas duas tabelas. Matriz: formas do alvo × treze operadores × duas
+// tabelas.
+test("contract-evidence-formal5-grouped-binding atribuição aumentada com o nome agrupado, em qualquer forma e operador, não confirma nenhuma das duas tabelas", () => {
+  const escaped = [];
+  let checked = 0;
+  for (const [table, extract] of TABLE_EXTRACTORS) {
+    for (const [shape, template] of Object.entries(GROUPED_AUGMENTED_TARGETS)) {
+      for (const op of AUGMENTED_OPERATORS) {
+        checked += 1;
+        const statement = groupedAugmentedStatement(template, table, op, '{"pre_tool_call"}');
+        const result = extract(`${table} = {"pre_tool_call"}\n${statement}\n`);
+        if (result !== null) escaped.push(`${table}/${shape}/${op} -> ${JSON.stringify(result)}`);
+      }
+    }
+  }
+  assert.equal(checked, 2 * 12 * 13);
+  assert.deepEqual(escaped, []);
+});
+
+// A proteção bruta (texto inteiro, inclusive strings: um exec() com o mesmo
+// texto) já cobria `NOME OP=` para os operadores -= &= ^= |= +=; o alvo
+// agrupado de uma linha entra na mesma classe. Os demais operadores seguem só
+// na leitura por tokens, como antes.
+test("contract-evidence-formal5-grouped-binding alvo agrupado de uma linha dentro de exec() também torna as duas tabelas não reconhecidas", () => {
+  const escaped = [];
+  let checked = 0;
+  for (const [table, extract] of TABLE_EXTRACTORS) {
+    for (const op of ["-=", "&=", "^=", "|=", "+="]) {
+      for (const target of [`(${table})`, `(( ${table} ))`]) {
+        checked += 1;
+        const result = extract(`${table} = {"pre_tool_call"}\nexec("${target} ${op} {'pre_tool_call'}")\n`);
+        if (result !== null) escaped.push(`${table}/${target}/${op} -> ${JSON.stringify(result)}`);
+      }
+    }
+  }
+  assert.equal(checked, 2 * 5 * 2);
+  assert.deepEqual(escaped, []);
+});
+
+// Controles: o nome agrupado sem ligação da própria tabela continua sendo a
+// forma reconhecida — comparação (operadores que também terminam em "="),
+// subscrito de outro objeto, outra variável agrupada, e comentário/string com
+// operador fora da proteção bruta. Com -= &= ^= |= += o texto bruto
+// em comentário/string já tornava a tabela não reconhecida antes desta
+// correção (ver o teste acima); por isso esses controles usam %= e *=.
+test("contract-evidence-formal5-grouped-binding nome agrupado sem ligação da tabela continua reconhecido nas duas tabelas", () => {
+  const CONTROLS = {
+    "comparação ==": "IGUAL = (NOME) == OUTRO",
+    "comparação !=": "DIFERENTE = (NOME) != OUTRO",
+    "comparação <=": "SUBCONJUNTO = ((NOME)) <= OUTRO",
+    "comparação >=": "SUPERCONJUNTO = (\n    NOME  # agrupado\n) >= OUTRO",
+    "subscrito de outro objeto": "CONTAGEM[len((NOME))] += 1",
+    "outra variável agrupada": '(OUTRO) -= {"pre_tool_call"}',
+    "comentário com %=": '# (NOME) %= {"pre_tool_call"}',
+    "string com *=": `EXEMPLO = '(NOME) *= {"pre_tool_call"}'`,
+  };
+  for (const [table, extract] of TABLE_EXTRACTORS) {
+    for (const [label, template] of Object.entries(CONTROLS)) {
+      const text = `${table} = {"pre_tool_call"}\n${template.replaceAll("NOME", table)}\n`;
+      assert.deepEqual(extract(text), ["pre_tool_call"], `${table}/${label}`);
+    }
+  }
+});
+
+test("contract-evidence-formal5-grouped-binding alvo agrupado no arquivo da instalação: VALID_HOOKS vira unrecognized; SHELL_UNSUPPORTED_HOOKS vira exclusões desconhecidas, nunca a lista anterior", async () => {
+  for (const extra of ['(VALID_HOOKS) -= {"pre_tool_call"}\n', '(\n    (VALID_HOOKS)  # agrupado\n) |= {"x"}\n']) {
+    const result = await readContractEvidence({
+      agentId: "hermes",
+      packageDir: PKG_DIR,
+      fs: fsWithPlugins(hermesPluginsSource({ extra })),
+    });
+    assert.equal(result.state, "unrecognized", extra);
+    assert.equal(result.mechanisms, undefined, extra);
+    assert.equal(result.validHooks, undefined, extra);
+  }
+
+  const shellMutated = await readContractEvidence({
+    agentId: "hermes",
+    packageDir: PKG_DIR,
+    fs: fsWithPlugins(hermesPluginsSource({ extra: '(SHELL_UNSUPPORTED_HOOKS) -= {"transform_api_error_classification"}\n' })),
+  });
+  assert.equal(shellMutated.state, "found");
+  assert.equal(shellMutated.shellUnsupportedHooks, null);
 });
 
 test("contract-evidence-C5 tabela com forma não reconhecida vira state unrecognized, sem eventos", async () => {

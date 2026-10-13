@@ -18,6 +18,11 @@ import { resolveCodexVersion } from "../../src/doctor/launcher-link/codex.mjs";
 import { resolveHermesVersion } from "../../src/doctor/launcher-link/hermes.mjs";
 import { buildMinimalPe, corruptSizeOfOptionalHeader } from "./helpers/synthetic-pe.mjs";
 import {
+  AUGMENTED_OPERATORS,
+  GROUPED_AUGMENTED_TARGETS,
+  groupedAugmentedStatement,
+} from "./helpers/grouped-augmented-targets.mjs";
+import {
   addDir,
   addFile,
   addSymlink,
@@ -1118,6 +1123,49 @@ test("agent-resolution-formal4-P2 Hermes: atribuição aumentada em comentário/
   const indentedResult = await hermesVersionWith('__version__ = "0.21.4"\nif DEV:\n    __version__ += "-dev"\n');
   assert.equal(indentedResult.version, null);
   assert.equal(indentedResult.reasonCode, "version_source_ambiguous");
+});
+
+// Verificação independente 9 (.checks/code-review/formal5-grouped-binding-
+// fixes.md): `(__version__) += "-dev"` é a mesma atribuição aumentada dos
+// testes formal4 acima, só com o alvo agrupado (single_target do CPython, ver
+// helpers/grouped-augmented-targets.mjs), e ainda publicava 0.21.4.
+test("agent-resolution-formal5-grouped-binding Hermes: __version__ agrupado com atribuição aumentada, em qualquer forma e operador, vira version_source_ambiguous e nunca publica o literal anterior", async () => {
+  const published = [];
+  let checked = 0;
+  for (const [shape, template] of Object.entries(GROUPED_AUGMENTED_TARGETS)) {
+    for (const op of AUGMENTED_OPERATORS) {
+      checked += 1;
+      const statement = groupedAugmentedStatement(template, "__version__", op, '"-dev"');
+      const result = await hermesVersionWith(`__version__ = "0.21.4"\n${statement}\n`);
+      if (result.version !== null || result.versionSource !== undefined || result.reasonCode !== "version_source_ambiguous") {
+        published.push(`${shape}/${op} -> ${JSON.stringify(result)}`);
+      }
+    }
+  }
+  assert.equal(checked, 12 * 13);
+  assert.deepEqual(published, []);
+});
+
+// Controles: `__version__` agrupado sem ligação do próprio nome mantém o
+// literal — comparação (operadores que também terminam em "="), argumento,
+// subscrito de outro objeto, outra variável agrupada, comentário e string.
+test("agent-resolution-formal5-grouped-binding Hermes: __version__ agrupado em leitura, comparação, comentário, string ou outra variável preserva 0.21.4", async () => {
+  const unaffected = {
+    "argumento agrupado": "registrar((__version__))",
+    "comparação ==": 'IGUAL = (__version__) == "0.21.4"',
+    "comparação !=": 'DIFERENTE = ((__version__)) != "0.21.4"',
+    "comparação <=": 'ANTIGA = (\n    __version__  # agrupado\n) <= "0.22"',
+    "comparação >=": 'NOVA = (__version__) >= "0.21"',
+    "subscrito de outro objeto": "CONTAGEM[(__version__)] += 1",
+    "outra variável agrupada": '(OTHER_VAR) += "-dev"',
+    "comentário": '# (__version__) += "-dev"',
+    "dentro de string": `X = '(__version__) += "-dev"'`,
+  };
+  for (const [label, statement] of Object.entries(unaffected)) {
+    const result = await hermesVersionWith(`__version__ = "0.21.4"\n${statement}\n`);
+    assert.equal(result.version, "0.21.4", label);
+    assert.equal(result.versionSource, "source_literal", label);
+  }
 });
 
 test("agent-resolution-C3 launcher Python do Hermes que cita o import de hermes_cli só em docstring não é vínculo", async () => {

@@ -2,6 +2,7 @@ import { detectSeparator, joinGeneric } from "./launcher-link/path-helpers.mjs";
 import {
   endsStatement,
   findAssignments,
+  indexAfterGroupedName,
   isOp,
   simpleStringValue,
   tokenizePython,
@@ -57,6 +58,11 @@ const HERMES_CONTRACT_SOURCE_KIND = "hermes_valid_hooks";
 // longa de 1 MiB. Casar demais aqui nunca é menos seguro: qualquer
 // correspondência a mais só reforça o lado conservador (tabela tratada como
 // não reconhecida) — inclusive `f(NOME).clear()`, que muta o resultado de f.
+//
+// Alvo agrupado (.checks/code-review/formal5-grouped-binding-fixes.md):
+// `(NOME) -= {...}` é a mesma atribuição aumentada, então a alternativa
+// `OP=` aceita o mesmo grupo de `)` da chamada. Em código, a ligação vem de
+// findAssignments (python-source.mjs), com os treze operadores.
 const PY_TOKEN_SEP = String.raw`(?:[ \t]|\\\r?\n)*`;
 const PY_CLOSING_GROUP_SEP = String.raw`(?:[ \t)]|\\\r?\n)*`;
 const SET_MUTATOR_METHODS = [
@@ -66,7 +72,7 @@ const SET_MUTATOR_METHODS = [
 ];
 function runtimeMutationPattern(name) {
   return new RegExp(
-    `${name}${PY_TOKEN_SEP}[-&^|+]=|${name}${PY_CLOSING_GROUP_SEP}\\.${PY_TOKEN_SEP}(?:${SET_MUTATOR_METHODS.join("|")})${PY_TOKEN_SEP}\\(`,
+    `${name}${PY_CLOSING_GROUP_SEP}(?:[-&^|+]=|\\.${PY_TOKEN_SEP}(?:${SET_MUTATOR_METHODS.join("|")})${PY_TOKEN_SEP}\\()`,
   );
 }
 
@@ -77,8 +83,7 @@ function runtimeMutationPattern(name) {
 function callsMutatorDirectly(tokens, name) {
   return tokens.some((token, k) => {
     if (token.type !== "name" || token.value !== name) return false;
-    let next = k + 1;
-    while (isOp(tokens[next], ")")) next += 1;
+    const next = indexAfterGroupedName(tokens, k);
     const method = tokens[next + 1];
     return (
       isOp(tokens[next], ".") &&
