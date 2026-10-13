@@ -1,4 +1,10 @@
-import { detectSeparator, dirnameGeneric, joinGeneric, stripCommentLines } from "./path-helpers.mjs";
+import {
+  detectSeparator,
+  dirnameGeneric,
+  isAbsolutePathGeneric,
+  joinGeneric,
+  stripCommentLines,
+} from "./path-helpers.mjs";
 import { isNativeExecutable } from "./native-executable.mjs";
 import {
   endsStatement,
@@ -17,6 +23,15 @@ const ONE_MIB_BYTES = 1024 * 1024;
 // uma linha de comentário mencionando o mesmo texto nunca casa aqui.
 const HERMES_CLI_REFERENCE_PATTERN =
   /^[ \t]*(from\s+hermes_cli(?:\.[\w.]+)?\s+import\b|import\s+hermes_cli\b|python3?(?:\.\w+)?\s+-m\s+hermes_cli\b)/m;
+
+// Nome de intérprete Python reconhecido pelo shebang, com ou sem versão:
+// "python", "python3", "python3.12" (mas não "sh", "node" etc.). Mesma
+// família de nome em `referencesHermesCli` (decide se o shim é Python) e em
+// `shebangPythonInterpreterPath` (decide se um caminho absoluto do shebang
+// liga a OUTRO prefixo) — um caminho absoluto bare (`/b/bin/python`,
+// `/b/bin/python3`, sem X.Y) é tão reconhecido quanto um com versão
+// (achado G4 da rodada 3, variante residual: antes só `pythonX.Y` contava).
+const PYTHON_INTERPRETER_NAME = /(?:^|[\\/])python[\d.]*$/;
 
 // Resultado de três estados (não só texto|null): "too_large" precisa de um
 // reasonCode próprio (input_too_large), distinto de "não reconhecido".
@@ -74,17 +89,22 @@ function shebangPythonVersion(text) {
   return match ? match[1] : null;
 }
 
-// Caminho absoluto do intérprete no shebang, só quando reconhecido como
-// `.../pythonX.Y` (acompanhado de diretório, não um nome bare resolvido via
-// PATH/`env` — ex.: o `python3.12` que sobra de `#!/usr/bin/env python3.12`
-// não tem prefixo próprio). Um caminho absoluto aponta para um prefixo de
-// venv que pode ser diferente do prefixo do launcher: o vínculo precisa
-// seguir ESSE prefixo, nunca presumir que o intérprete mora no mesmo venv do
-// launcher só porque ambos têm `bin`/`Scripts` (achado G4 da rodada 3).
+// Caminho absoluto do intérprete no shebang, para qualquer nome Python já
+// reconhecido (`.../python`, `.../python3` ou `.../pythonX.Y`), nunca um nome
+// bare resolvido via PATH/`env` — ex.: o `python3.12` que sobra de
+// `#!/usr/bin/env python3.12` não tem prefixo próprio, e um caminho relativo
+// com separador (`bin/python3.12`) não é absoluto só por conter barra
+// (isAbsolutePathGeneric). Um caminho absoluto aponta para um prefixo de venv
+// que pode ser diferente do prefixo do launcher: o vínculo precisa seguir
+// ESSE prefixo, nunca presumir que o intérprete mora no mesmo venv do
+// launcher só porque ambos têm `bin`/`Scripts` (achado G4 da rodada 3). Sem
+// X.Y no nome (`.../python`, `.../python3`), a versão específica continua
+// indeterminada pelo shebang: `findSitePackagesInitFile` decide por varredura
+// do prefixo já resolvido (achado, nunca um pacote de outro prefixo).
 function shebangPythonInterpreterPath(text) {
   const interpreter = shebangInterpreter(text);
-  if (interpreter === null || !/[\\/]/.test(interpreter)) return null;
-  return /(?:^|[\\/])python\d+\.\d+$/.test(interpreter) ? interpreter : null;
+  if (interpreter === null || !isAbsolutePathGeneric(interpreter)) return null;
+  return PYTHON_INTERPRETER_NAME.test(interpreter) ? interpreter : null;
 }
 
 // `from hermes_cli[.x] import ...` ou `import hermes_cli` como instrução em
@@ -106,7 +126,7 @@ function importsHermesCli(tokens) {
 // hermes_cli só conta em código. Os demais launchers seguem a leitura por
 // linha sem comentários.
 function referencesHermesCli(text) {
-  if (/(?:^|[\\/])python[\d.]*$/.test(shebangInterpreter(text) ?? "")) {
+  if (PYTHON_INTERPRETER_NAME.test(shebangInterpreter(text) ?? "")) {
     const tokens = tokenizePython(text);
     return tokens !== null && importsHermesCli(tokens);
   }
@@ -185,11 +205,12 @@ export async function resolveHermesVersion(launcherPath, { fs }) {
   const launcherDir = dirnameGeneric(launcherPath); // .../bin ou .../Scripts
   const launcherPrefix = dirnameGeneric(launcherDir); // raiz do venv do launcher
   // Um shebang com caminho absoluto de intérprete (`#!/outro/prefixo/bin/
-  // pythonX.Y`) liga a esse prefixo, possivelmente diferente do launcher: o
-  // pacote procurado precisa ser o do intérprete real, nunca o do launcher
-  // só por proximidade de diretório (achado G4 da rodada 3). Sem um caminho
-  // absoluto reconhecido (bare/`env`/não-Python), preserva o prefixo do
-  // launcher como sempre.
+  // pythonX.Y`, ou sem a versão, `#!/outro/prefixo/bin/python3`) liga a esse
+  // prefixo, possivelmente diferente do launcher: o pacote procurado precisa
+  // ser o do intérprete real, nunca o do launcher só por proximidade de
+  // diretório (achado G4 da rodada 3, incluindo a variante residual sem
+  // X.Y). Sem um caminho absoluto reconhecido (bare/`env`/relativo/
+  // não-Python), preserva o prefixo do launcher como sempre.
   const interpreterPath = shebangPythonInterpreterPath(linked.text);
   const interpreterPrefix =
     interpreterPath !== null ? dirnameGeneric(dirnameGeneric(interpreterPath)) : "";

@@ -124,20 +124,33 @@ test("configuration-trust-C8 config.toml do Codex com [hooks] definido fica conf
   }
 });
 
+// Corrigido na correção residual de G3 (.checks/code-review/verifier3-fix-
+// residuals.md): esta prova dependia de `configured` sem nenhuma instalação
+// real do Hermes (presence absent, catálogo nunca lido) — a própria ausência
+// de catálogo agora rebaixa isso a `unknown/hooks_catalog_unavailable` (ver
+// teste abaixo), então "trust: trusted" não seria mais alcançável por esse
+// caminho. Reutiliza `installAllAgents`/`hermesPluginsSource` (mesmo padrão
+// dos testes G3 de catálogo real) para confirmar `pre_tool_call` contra um
+// VALID_HOOKS de verdade e isolar o que este teste realmente prova:
+// `hooks_auto_accept` é a única origem nativa de confiança, não um substituto
+// para o catálogo.
 test("configuration-trust-C8 hooks_auto_accept:true do Hermes é a única origem nativa de confiança desta entrega (trust: trusted)", () => {
   const scratch = makeScratch("doctor-c8-hermes-trusted-");
   try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs } = installAllAgents(dir, {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      hermesContractSource: hermesPluginsSource(),
+    });
     const home = path.join(scratch, "home");
-    // Escreve exatamente onde o hermesHome real resolve para este mesmo
-    // env/plataforma: no Windows isso é <LOCALAPPDATA>/hermes, não
-    // <HOME>/.hermes (ver src/doctor/config-sources.mjs::hermesHome).
+    const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
     writeAgentConfig(
       home,
       "hermes",
       'hooks:\n  pre_tool_call:\n    - command: "internal-safe-handler"\nhooks_auto_accept: true\n',
-      { env: homeEnv(home), platform: process.platform },
+      { env, platform: process.platform },
     );
-    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    const { status, report } = runDoctorJson([], { env });
     assert.equal(status, 0);
     const hermes = report.agents.find((a) => a.id === "hermes");
     assert.equal(hermes.configuration, "configured");
@@ -507,11 +520,45 @@ test("configuration-trust-C8/G3 Hermes: evento real do catálogo instalado ao la
   }
 });
 
-// Sem o catálogo ligado (presence absent, perfil incompatível, ou plugins.py
-// ausente/ilegível), o comportamento estrutural de sempre é preservado — a
-// ausência de fonte vinculada não vira uma afirmação nova, só não decide
-// nada além do que hooks-shape.mjs já decidia (ver hooks_auto_accept acima,
-// linha ~126, que já prova esse caso sem instalação real nenhuma).
+// Achado G3 da rodada 3, variante residual (correção após a primeira rodada
+// de fixes, .checks/code-review/verifier3-fix-residuals.md): Hermes presente
+// e com versão lida (perfil compatível), mas SEM `plugins.py` vinculado —
+// `readContractEvidence` devolve `state: "not_found"`, então `hermesValidHooks`
+// chega `null` em `readAgentConfiguration`. A correção anterior preservava
+// "configured" neste caso (nenhuma fonte para decidir o contrário); isso
+// afirmava um registro que ninguém comprovou — o próprio encaminhamento
+// original já exigia motivo inconclusivo sem catálogo vinculado. Mesmo
+// `installAllAgents` sem `hermesContractSource` (usado em toda esta suíte
+// quando o catálogo não é o fato sob teste) reproduz esse estado de verdade.
+test("configuration-trust-C8/G3 Hermes: sem plugins.py vinculado (hermesValidHooks null), hooks.made_up_event fica unknown/hooks_catalog_unavailable, nunca configured", () => {
+  const scratch = makeScratch("doctor-c8-hermes-sem-catalogo-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs } = installAllAgents(dir, { sentinelPath: path.join(scratch, "sentinel.txt") });
+    const home = path.join(scratch, "home");
+    const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
+    writeAgentConfig(home, "hermes", 'hooks:\n  made_up_event:\n    - command: "echo ok"\n', {
+      env,
+      platform: process.platform,
+    });
+
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.version, "0.21.4");
+    assert.equal(hermes.configuration, "unknown");
+    assert.equal(hermes.configReasonCode, "hooks_catalog_unavailable");
+    assert.equal(hermes.trust, "unknown");
+    assert.equal(hermes.trustReasonCode, "configuration_not_determined");
+
+    const text = runDoctor([], { env });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /hooks_catalog_unavailable/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
 
 // Achado 3 da pré-revisão formal da rodada 3 (Landing "Campos opcionais
 // tipados do Codex"): um campo opcional conhecido (`timeout`) com tipo errado

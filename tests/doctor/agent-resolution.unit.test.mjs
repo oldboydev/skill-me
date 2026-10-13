@@ -738,6 +738,76 @@ test("agent-resolution-C3 Hermes: shebang de outro prefixo sem pacote correspond
   assert.equal(result.reasonCode, "launcher_not_recognized");
 });
 
+// Achado G4 da rodada 3, variante residual (.checks/code-review/verifier3-
+// fix-residuals.md): a primeira correção só reconhecia um caminho absoluto
+// terminado em `pythonX.Y`; `referencesHermesCli` já reconhece `python`/
+// `python3` bare (sem versão) como intérprete Python válido para decidir se o
+// shim é Python — o vínculo de prefixo precisa cobrir a MESMA família de
+// nomes, não só a versionada. Reprodução real em
+// `.checks/code-review/probe-verifier3-residual.mjs`.
+test("agent-resolution-G4 Hermes: shebang absoluto SEM X.Y (python/python3 bare) de outro prefixo liga ao pacote desse prefixo, nunca ao do launcher", async () => {
+  for (const interpreter of ["python", "python3"]) {
+    const tree = buildFsTree();
+    addFile(tree, "/a/bin", "hermes", `#!/b/bin/${interpreter}\nfrom hermes_cli.main import main\n`);
+    addDir(tree, "/a/lib", "python3.12");
+    addFile(tree, "/a/lib/python3.12/site-packages/hermes_cli", "__init__.py", '__version__ = "0.21.4"\n');
+    addDir(tree, "/b/lib", "python3.12");
+    addFile(tree, "/b/lib/python3.12/site-packages/hermes_cli", "__init__.py", '__version__ = "0.20.0"\n');
+
+    const result = await resolveHermesVersion("/a/bin/hermes", { fs: createFakeFsAdapter(tree) });
+    assert.equal(result.version, "0.20.0", `${interpreter}: fonte precisa ser a do intérprete real (B)`);
+    assert.notEqual(result.version, "0.21.4", interpreter);
+    assert.equal(result.versionSource, "source_literal", interpreter);
+    assert.equal(result.packageDir, "/b/lib/python3.12/site-packages/hermes_cli", interpreter);
+  }
+});
+
+test("agent-resolution-G4 Hermes: shebang absoluto SEM X.Y de outro prefixo sem pacote lá fica inconclusivo, nunca cai para o prefixo do launcher", async () => {
+  const tree = buildFsTree();
+  addFile(tree, "/a/bin", "hermes", "#!/b/bin/python3\nfrom hermes_cli.main import main\n");
+  addDir(tree, "/a/lib", "python3.12");
+  addFile(tree, "/a/lib/python3.12/site-packages/hermes_cli", "__init__.py", '__version__ = "0.21.4"\n');
+  // /b existe, mas sem hermes_cli nenhum em nenhum pythonX.Y.
+  addDir(tree, "/b/lib", "python3.12");
+
+  const result = await resolveHermesVersion("/a/bin/hermes", { fs: createFakeFsAdapter(tree) });
+  assert.equal(result.version, null);
+  assert.notEqual(result.version, "0.21.4");
+  assert.equal(result.reasonCode, "launcher_not_recognized");
+});
+
+test("agent-resolution-G4 Hermes: shebang absoluto SEM X.Y de outro prefixo com dois pythonX.Y ambíguos fica version_source_ambiguous, nunca usa o do launcher", async () => {
+  const tree = buildFsTree();
+  addFile(tree, "/a/bin", "hermes", "#!/b/bin/python\nfrom hermes_cli.main import main\n");
+  addDir(tree, "/a/lib", "python3.12");
+  addFile(tree, "/a/lib/python3.12/site-packages/hermes_cli", "__init__.py", '__version__ = "0.21.4"\n');
+  // /b tem hermes_cli em DOIS pythonX.Y — sem versão no shebang para desempatar.
+  addDir(tree, "/b/lib", "python3.11");
+  addFile(tree, "/b/lib/python3.11/site-packages/hermes_cli", "__init__.py", '__version__ = "0.19.0"\n');
+  addDir(tree, "/b/lib", "python3.12");
+  addFile(tree, "/b/lib/python3.12/site-packages/hermes_cli", "__init__.py", '__version__ = "0.20.0"\n');
+
+  const result = await resolveHermesVersion("/a/bin/hermes", { fs: createFakeFsAdapter(tree) });
+  assert.equal(result.version, null);
+  assert.notEqual(result.version, "0.21.4");
+  assert.equal(result.reasonCode, "version_source_ambiguous");
+});
+
+// Variante residual de G4: "caminho absoluto" exige separador NO INÍCIO
+// (POSIX "/" ou unidade/UNC do Windows), não qualquer string que contenha uma
+// barra. Um intérprete relativo com barra (`venv/bin/python3.12`, sem `/`
+// inicial) não liga a um prefixo "venv" inexistente — o X.Y ainda escolhe o
+// pythonX.Y certo dentro do prefixo do PRÓPRIO launcher, igual ao caso `env`.
+test("agent-resolution-G4 Hermes: intérprete relativo com barra (sem caminho absoluto) não inventa prefixo de outro processo, usa X.Y no prefixo do launcher", async () => {
+  const tree = buildFsTree();
+  const launcher = installHermesTwoPythons(tree, "/opt/hermes", "#!venv/bin/python3.12");
+
+  const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree) });
+  assert.equal(result.version, "0.21.4", "precisa escolher python3.12 no prefixo do launcher, não um prefixo 'venv' inventado");
+  assert.equal(result.versionSource, "source_literal");
+  assert.equal(result.packageDir, "/opt/hermes/lib/python3.12/site-packages/hermes_cli");
+});
+
 // --- Vínculo só pela invocação do template npm (pré-revisão formal) ---
 // Todo caso traz o pacote real ao lado do shim e a referência certa no texto;
 // só a POSIÇÃO da referência muda. Uma menção (echo, here-document, string

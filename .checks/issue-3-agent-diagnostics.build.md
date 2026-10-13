@@ -1250,3 +1250,194 @@ review.test.mjs,schema.json,README.md}` sem diff.
   `.checks/issue-3-agent-diagnostics.md` e esta seção. `.checks/issue-3-agent-diagnostics.verified.md` não foi
   editado (relatório independente, preservado).
 - Evidência: `.checks/code-review/verifier-round3-fixes-red.txt`, `…-fixes-green.txt`.
+
+## 14. Correção residual de G3/G4 pós-encaminhamento (13/10/2026)
+
+Encaminhamento do orquestrador ao autor Claude após a primeira correção (commit `637abc9`), **não** uma
+rodada de verificação independente nova: `.checks/code-review/verifier3-fix-residuals.md`. As mesmas quatro
+classes confirmadas pelo Verifier na rodada 3 (`.checks/code-review/verifier-round3-fixes.md`) permanecem;
+só o alcance real de G3 e G4 estava incompleto nessa primeira correção. Autor: Claude. Nenhuma mudança na
+task, nos critérios, em `.verified.md` ou no motor comum de `scripts/code-review/` (paridade SHA-256
+reconfirmada abaixo). Sem commit, push, stash deixado, `review:run`/`pr:create` nem nova verificação
+independente nesta rodada.
+
+### Os dois gaps residuais
+
+1. **G3 — `configured` preservado sem catálogo vinculado**: `readAgentConfiguration` (`config-reader.mjs`,
+   estado pós-637abc9) só cruzava `hermesTargetedEvents` contra `hermesValidHooks` quando este não era
+   `null`. Sem fonte vinculada (presença ausente, versão fora do perfil, `plugins.py` ilegível/ausente/não
+   reconhecido), a configuração estrutural `configured` passava direto, afirmando um registro que ninguém
+   comprovara. O encaminhamento ORIGINAL da rodada 3 já exigia "mantenha motivo inconclusivo e prove o
+   caso" nesse cenário; a primeira correção preservou o comportamento antigo citando um teste já aprovado
+   (`hooks_auto_accept:true do Hermes…`, sem nenhuma instalação real) como justificativa. Essa justificativa
+   estava invertida: um teste é prova de comportamento, não uma decisão vinculante — quando ele contradiz o
+   critério/fonte (aqui, a exigência explícita de motivo inconclusivo sem fonte), ele precisa ser corrigido
+   com justificativa, não usado para preservar a lacuna. A aprovação humana foi do escopo (fechar G3/G4),
+   nunca dessas expectativas antigas.
+2. **G4 — vínculo do intérprete do shebang não cobria `python`/`python3` bare, e "absoluto" aceitava
+   qualquer barra**: `shebangPythonInterpreterPath` (estado pós-637abc9) só reconhecia um caminho absoluto
+   terminado em `pythonX.Y`. `referencesHermesCli` já reconhece `python`/`python3` SEM X.Y como intérprete
+   Python válido para decidir se o shim é Python (mesma fonte, família `python[\d.]*$`) — um shebang
+   absoluto de OUTRO prefixo sem a versão (`#!/b/bin/python`, `#!/b/bin/python3`) não entrava no ramo do
+   intérprete reconhecido e caía de volta ao prefixo do launcher por omissão, publicando de novo a fonte
+   errada (o mesmo defeito que G4 original visava fechar, só que para a variante bare). Separadamente, a
+   checagem de "caminho absoluto" (`/[\\/]/.test(interpreter)`) aceitava qualquer string com barra, inclusive
+   relativa (`venv/bin/python3.12`), inventando um prefixo de outro processo que não existe.
+
+### Ordem seguida (TDD)
+
+Reprodução real do orquestrador já presente em `.checks/code-review/probe-verifier3-residual.mjs`
+(referenciada no próprio encaminhamento) → regressão nova na própria camada (`config-reader.unit.test.mjs`,
+`agent-resolution.unit.test.mjs`) e na fronteira real da CLI (`configuration-trust.cli.test.mjs`, G3 cruza a
+CLI) → RED confirmado por execução real (`git stash push --keep-index` dos três arquivos de produto desta
+rodada para o estado `637abc9`, suíte afetada rodada sobre o produto antigo, depois `stash pop`) →
+implementação → GREEN com os alvos afetados e depois `npm test` completo uma única vez.
+
+RED real, produto no estado `637abc9` (só os testes desta rodada já presentes), saída completa em
+`.checks/code-review/verifier3-fix-residuals-red.txt`:
+
+```
+config-reader.unit.test.mjs         -> (dentro da suíte combinada abaixo)
+agent-resolution.unit.test.mjs      -> (dentro da suíte combinada abaixo)
+configuration-trust.cli.test.mjs    -> (dentro da suíte combinada abaixo)
+node --test config-reader.unit.test.mjs agent-resolution.unit.test.mjs configuration-trust.cli.test.mjs
+  -> tests 70, pass 63, fail 6, skipped 1
+```
+
+As 6 falhas são exatamente os casos novos/corrigidos desta rodada:
+
+- `config-reader-G3 Hermes sem catálogo vinculado … fica unknown/hooks_catalog_unavailable` — produto antigo
+  devolvia `configured` (reasonCode `hooks_configured`).
+- `configuration-trust-C8/G3 Hermes: sem plugins.py vinculado … fica unknown/hooks_catalog_unavailable` —
+  produto antigo devolvia `report.status: complete` (esperado `partial`).
+- `agent-resolution-G4 Hermes: shebang absoluto SEM X.Y … liga ao pacote desse prefixo` (`python`/`python3`,
+  2 variantes na mesma `assert` em loop) — produto antigo publicava a versão do launcher (`0.21.4`) em vez
+  da do intérprete real (`0.20.0`).
+- `agent-resolution-G4 Hermes: … de outro prefixo sem pacote lá fica inconclusivo` — produto antigo publicava
+  `0.21.4` (do launcher) em vez de `null/launcher_not_recognized`.
+- `agent-resolution-G4 Hermes: … com dois pythonX.Y ambíguos fica version_source_ambiguous` — produto antigo
+  publicava `0.21.4` (do launcher) em vez de `null/version_source_ambiguous`.
+- `agent-resolution-G4 Hermes: intérprete relativo com barra … usa X.Y no prefixo do launcher` — produto
+  antigo tratava `venv/bin/python3.12` como caminho absoluto de um prefixo "venv" inexistente, devolvendo
+  `null/launcher_not_recognized` em vez de `0.21.4` no prefixo real do launcher.
+
+O skip é o mesmo de sempre (`agent-resolution-C2 realpath/symlink real … POSIX`, condicional ao executor),
+não um skip novo. O teste corrigido `hooks_auto_accept` (ver abaixo) já passava mesmo no produto antigo,
+porque a reescrita usa um catálogo real (`hermesPluginsSource`) que o cruzamento de G3 já decidia
+corretamente antes desta rodada — não é um caso RED, é uma correção de dependência indevida do teste em
+"nenhuma instalação real", preservando o que ele de fato prova.
+
+### Decisões e correções por achado
+
+1. **G3 residual — sem catálogo vinculado, `configured` não pode ser preservado (`config-reader.mjs`)**:
+   `readAgentConfiguration` ganhou um segundo ramo no mesmo bloco que já existia (`agentId === "hermes" &&
+   configuration === "configured"`): quando `hermesValidHooks === null`, a configuração vira
+   `unknown/hooks_catalog_unavailable` ANTES de `resolveTrust` — `trust` continua decidido por essa única
+   função a partir da `configuration` final (fonte única de verdade, nenhuma duplicação da regra
+   `!== "configured" → trust unknown/configuration_not_determined` em outro lugar). `not_configured` (sem
+   handler algum) e `invalid` (erro nativo de forma) não entram neste ramo, pois ele só roda depois que a
+   forma estrutural já decidiu `configured` — provado em teste dedicado
+   (`config-reader-G3 … preserva not_configured … e invalid …`). Um evento com nome plausível
+   (`pre_tool_call`, já documentado/mapeado) recebe o mesmo tratamento que um inventado (`made_up_event`):
+   sem a tabela REAL desta instalação, "parece real" não é fonte — provado com os dois nomes na mesma
+   prova (`config-reader-G3 … com evento configurado fica unknown …`).
+   - Teste corrigido com justificativa explícita (AGENTS.md permite e exige corrigir uma expectativa que
+     contradiz a fonte/critério): `configuration-trust.cli.test.mjs`, teste `hooks_auto_accept:true do
+     Hermes…`. Antes, rodava com PATH vazio (presence absent, catálogo nunca lido) e dependia de
+     `configured` sem nenhuma instalação real — exatamente o comportamento que este achado corrige. Reescrito
+     para instalar um Hermes real com catálogo (`installAllAgents`+`hermesContractSource:
+     hermesPluginsSource()`, mesmo padrão dos demais testes G3 de catálogo real), confirmando
+     `pre_tool_call` contra um `VALID_HOOKS` de verdade. Isola o que o teste de fato prova — `hooks_auto_accept`
+     é a única origem nativa de confiança — sem depender da ausência de catálogo para chegar a `configured`.
+   - Teste novo na fronteira real da CLI, reproduzindo o cenário exato do encaminhamento (Hermes presente e
+     com versão lida via `installAllAgents` sem `hermesContractSource`, logo sem `plugins.py` vinculado):
+     `configuration-trust-C8/G3 Hermes: sem plugins.py vinculado…` — confirma `report.status: partial`,
+     `configuration: unknown`, `configReasonCode: hooks_catalog_unavailable`, `trust: unknown`,
+     `trustReasonCode: configuration_not_determined`, e o motivo aparecendo também na saída de texto.
+2. **G4 residual — vínculo do intérprete cobre `python`/`python3` bare; "absoluto" exige separador inicial
+   de verdade (`launcher-link/hermes.mjs`, `launcher-link/path-helpers.mjs`)**:
+   - `PYTHON_INTERPRETER_NAME` (`/(?:^|[\\/])python[\d.]*$/`) é agora uma constante compartilhada,
+     reaproveitada por `referencesHermesCli` (que já usava essa família inline) e por
+     `shebangPythonInterpreterPath` (que antes só reconhecia `python\d+\.\d+$`) — a mesma fonte decide as
+     duas perguntas ("isto é um shebang Python?" e "este caminho absoluto é um intérprete Python
+     reconhecido?"), nenhuma lista nova inventada.
+   - `isAbsolutePathGeneric` (`path-helpers.mjs`, nova função pura: POSIX `/...` ou Windows
+     `[A-Za-z]:[\\/]`/UNC `\\\\`) substitui a checagem antiga (`/[\\/]/.test(...)`, que aceitava qualquer
+     string com barra, inclusive relativa) em `shebangPythonInterpreterPath`. Sem X.Y no caminho absoluto
+     reconhecido, a versão específica continua indeterminada pelo shebang: `findSitePackagesInitFile` decide
+     por varredura do prefixo já resolvido (um único candidato com `hermes_cli` é aceito; dois ou mais,
+     `version_source_ambiguous`; nenhum, `launcher_not_recognized`) — nunca cai de volta ao pacote do
+     launcher, mesma regra já provada para a variante com X.Y.
+   - Nenhum teste existente mudou de resultado: os casos de mesmo prefixo (`installHermesTwoPythons`) e via
+     `env` continuam resolvendo exatamente igual, porque `interpreterPrefix` coincide com `launcherPrefix`
+     quando o intérprete absoluto está no mesmo prefixo, e `env`/bare sem barra nunca eram afetados pela
+     checagem de "absoluto". Confirmado por reexecução da suíte completa (ver Resultados).
+   - Reprodução real do orquestrador (`.checks/code-review/probe-verifier3-residual.mjs`) confirmada após a
+     correção: `external-python`/`external-python3` publicam `0.20.0`/`source_literal`/packageDir em `/b`
+     (nunca `0.21.4`/`/a`); `missing-catalog-cli` publica `exitCode:0`, `reportStatus:"partial"`,
+     `presence:"present"`, `version:"0.21.4"`, `configuration:"unknown"`,
+     `reasonCode:"hooks_catalog_unavailable"`, `trust:"unknown"`.
+
+### Resultados
+
+Alvos afetados, logo após a implementação (saída completa em
+`.checks/code-review/verifier3-fix-residuals-green-targets.txt`):
+
+```
+node --test config-reader.unit.test.mjs agent-resolution.unit.test.mjs configuration-trust.cli.test.mjs
+  -> tests 70, pass 69, fail 0, skipped 1
+```
+
+`npm test` completo, uma única execução após as alterações finais (saída completa em
+`.checks/code-review/verifier3-fix-residuals-green.txt`, sem pipe mascarando o exit):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 243, pass 242, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a seção 13 (236 → 243): 7 testes — 2 novos em `config-reader.unit.test.mjs`
+(unknown sem catálogo; preserva not_configured/invalid), 4 novos em `agent-resolution.unit.test.mjs` (bare
+absoluto liga a B com pacote; bare absoluto sem pacote em B; bare absoluto ambíguo em B; relativo com barra
+não inventa prefixo), 1 novo em `configuration-trust.cli.test.mjs` (fronteira CLI do cenário sem
+`plugins.py`) — o teste `hooks_auto_accept` foi reescrito, não contado como novo (mesma contagem de testes
+naquele arquivo). O único skip continua `agent-resolution-C2 realpath/symlink real … (POSIX)`, condicional
+ao executor. Paridade do motor comum reconfirmada nesta data: `git diff --exit-code 4242520 --
+scripts/code-review/{cli.mjs,review.mjs,review.test.mjs,schema.json,README.md}` sem diff.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0 (mesma limitação das seções 9-13); a reprodução POSIX-real
+  do orquestrador (`.checks/code-review/probe-verifier3-residual.mjs`) foi executada nesta máquina (Node
+  interpreta os caminhos `/a/...`/`/b/...` como strings opacas via o adaptador de filesystem falso — nenhum
+  filesystem POSIX real é necessário para este probe, mesmo padrão já usado pela suíte determinística desde
+  a seção 9). Nenhum launcher/Python/intérprete/hook de fixture foi executado; nenhuma configuração ativa da
+  máquina foi lida ou alterada nesta rodada.
+- `hermesValidHooks === null` continua um agregado único (presença ausente, versão fora do perfil, ou
+  `plugins.py` ilegível/ausente/forma não reconhecida todos colapsam para `null` em `run-diagnostics.mjs`,
+  inalterado nesta rodada): `hooks_catalog_unavailable` não distingue esses sub-motivos entre si no
+  `configReasonCode`. Diferenciar exigiria repassar o `contract.state` bruto até `config-reader.mjs`, uma
+  extensão não demonstrada por nenhum critério desta entrega — registrado como gap residual explícito, não
+  implementado.
+- Como antes (seção 13): o cruzamento de G3 usa só o primeiro escopo analisado (`firstParsedFields`), sem
+  impacto real porque o Hermes tem um único escopo (`hermesConfigScopes`).
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/config-reader.mjs` (ramo `hermesValidHooks === null` → `unknown/
+  hooks_catalog_unavailable`, antes de `resolveTrust`), `src/doctor/launcher-link/hermes.mjs`
+  (`PYTHON_INTERPRETER_NAME` compartilhada, `shebangPythonInterpreterPath` cobre bare), `src/doctor/
+  launcher-link/path-helpers.mjs` (`isAbsolutePathGeneric`, nova).
+- Testes: `tests/doctor/config-reader.unit.test.mjs` (2 novos), `tests/doctor/agent-resolution.unit.test.mjs`
+  (4 novos), `tests/doctor/configuration-trust.cli.test.mjs` (1 teste corrigido com justificativa + 1 novo).
+- Documentação/checklist: `docs/agent-compatibility.md` (linha Hermes de `shell_hooks.py`/G3 — corrige a
+  frase sobre preservar o resultado estrutural sem catálogo; linha do launcher Hermes — cobre intérprete
+  bare absoluto e exige separador inicial de verdade), `.checks/issue-3-agent-diagnostics.md` (nova
+  subseção "Landing da correção residual G3/G4") e esta seção. `.checks/issue-3-agent-diagnostics.verified.md`
+  não foi editado (relatório independente, preservado).
+- Evidência: `.checks/code-review/verifier3-fix-residuals-red.txt`,
+  `…-fix-residuals-green-targets.txt`, `…-fix-residuals-green.txt`. Preservados sem alteração:
+  `.checks/code-review/verifier3-fix-residuals.md` (encaminhamento) e
+  `.checks/code-review/probe-verifier3-residual.mjs` (reprodução do orquestrador).

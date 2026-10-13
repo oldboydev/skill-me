@@ -7,6 +7,17 @@ export function detectSeparator(filePath) {
   return filePath.includes("\\") ? "\\" : "/";
 }
 
+// Caminho absoluto nos dois estilos de SO: POSIX ("/...") ou Windows (letra
+// de unidade "C:\\..."/"C:/..." ou UNC "\\\\servidor\\..."). Uma string com
+// barra em qualquer posição (ex.: o nome relativo "bin/python3.12") não é
+// absoluta só por conter separador — distinção exigida pelo vínculo do
+// intérprete do shebang do Hermes (achado G4 da rodada 3, variante residual).
+const WINDOWS_ABSOLUTE_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+
+export function isAbsolutePathGeneric(value) {
+  return value.startsWith("/") || WINDOWS_ABSOLUTE_PATH.test(value);
+}
+
 // Encontra o último separador (de qualquer estilo) sem presumir que o
 // caminho inteiro usa um único estilo: um caminho pode chegar aqui com um
 // prefixo nativo do SO e uma junção final em "/", como o restante desta

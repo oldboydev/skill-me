@@ -11,6 +11,8 @@ import {
   claudeHome,
   codexConfigScopes,
   codexHome,
+  hermesConfigScopes,
+  hermesHome,
 } from "../../src/doctor/config-sources.mjs";
 
 function fsWithFiles(filesByPath) {
@@ -279,4 +281,75 @@ test("config-reader-C8 Codex recebe a plataforma do leitor para escolher o coman
     });
     assert.equal(result.configuration, configuration, platform);
   }
+});
+
+// Achado G3 da rodada 3, variante residual (encaminhamento pós-primeira
+// correção, .checks/code-review/verifier3-fix-residuals.md): sem o catálogo
+// VALID_HOOKS vinculado (hermesValidHooks null — presença ausente, versão
+// fora do perfil, ou plugins.py ilegível/ausente/não reconhecido), nenhum
+// nome de evento pode ser confirmado contra a instalação real. A primeira
+// correção (637abc9) só decidia quando o catálogo FOI lido; preservar
+// "configured" quando ele falta afirmaria um registro que ninguém comprovou,
+// contradizendo o próprio encaminhamento original ("mantenha motivo
+// inconclusivo e prove o caso"). Um evento com nome plausível (`pre_tool_call`,
+// já documentado) não muda isso: sem a tabela real desta instalação, o doctor
+// não tem como saber se ESTE Hermes a reconhece — "parece real" não é fonte.
+function hermesConfigPath(home, platform) {
+  return hermesConfigScopes({ home: hermesHome({ env: { HOME: home, USERPROFILE: home }, platform }), platform })[0]
+    .path;
+}
+
+test("config-reader-G3 Hermes sem catálogo vinculado (hermesValidHooks null) com evento configurado fica unknown/hooks_catalog_unavailable, nunca configured", async () => {
+  const home = "/fixture/hermes-sem-catalogo";
+  const platform = "linux";
+  const configPath = hermesConfigPath(home, platform);
+
+  for (const hooksYaml of [
+    'hooks:\n  made_up_event:\n    - command: "echo ok"\n',
+    'hooks:\n  pre_tool_call:\n    - command: "echo ok"\n',
+  ]) {
+    const result = await readAgentConfiguration({
+      agentId: "hermes",
+      env: { HOME: home, USERPROFILE: home },
+      platform,
+      cwd: "/fixture/cwd",
+      fs: fsWithFiles({ [configPath]: hooksYaml }),
+      hermesValidHooks: null,
+    });
+    assert.equal(result.configuration, "unknown", hooksYaml);
+    assert.equal(result.configReasonCode, "hooks_catalog_unavailable", hooksYaml);
+    assert.equal(result.trust, "unknown", hooksYaml);
+    assert.equal(result.trustReasonCode, "configuration_not_determined", hooksYaml);
+  }
+});
+
+// Preserva o que já decidia antes desta correção: `not_configured` (sem
+// handler nenhum) e `invalid` (erro nativo de forma) não passam pelo
+// cruzamento de catálogo — o novo ramo só se aplica depois que a forma
+// estrutural já decidiu "configured".
+test("config-reader-G3 Hermes sem catálogo vinculado preserva not_configured (sem handler) e invalid (forma errada), nunca os rebaixa para unknown", async () => {
+  const home = "/fixture/hermes-sem-catalogo-outros";
+  const platform = "linux";
+  const configPath = hermesConfigPath(home, platform);
+
+  const semHandler = await readAgentConfiguration({
+    agentId: "hermes",
+    env: { HOME: home, USERPROFILE: home },
+    platform,
+    cwd: "/fixture/cwd",
+    fs: fsWithFiles({ [configPath]: "hooks:\n  pre_tool_call: null\n" }),
+    hermesValidHooks: null,
+  });
+  assert.equal(semHandler.configuration, "not_configured");
+
+  const formaInvalida = await readAgentConfiguration({
+    agentId: "hermes",
+    env: { HOME: home, USERPROFILE: home },
+    platform,
+    cwd: "/fixture/cwd",
+    fs: fsWithFiles({ [configPath]: "hooks:\n  pre_tool_call: 42\n" }),
+    hermesValidHooks: null,
+  });
+  assert.equal(formaInvalida.configuration, "invalid");
+  assert.equal(formaInvalida.configReasonCode, "hooks_structure_invalid");
 });

@@ -127,9 +127,13 @@ function firstParsedFields(scopeResults) {
 // VALID_HOOKS no pacote ligado ao launcher (ver contract-evidence.mjs),
 // quando essa evidência foi encontrada; `null` quando não há fonte vinculada
 // (presença ausente, versão fora do perfil examinado, ou pacote/tabela
-// ilegível). Sem o catálogo, preserva o resultado estrutural de sempre: a
-// ausência de fonte vinculada não vira "configured"/"not_configured" novo,
-// só não decide nada a mais do que hooks-shape.mjs já decide (achado G3).
+// ilegível/não reconhecida). Sem o catálogo, nenhum evento configurado pode
+// ser confirmado contra a tabela real do Hermes instalado — manter
+// "configured" pela forma estrutural sozinha afirmaria um registro que
+// ninguém comprovou (acerto da classe G3, variante residual: a correção
+// original só decidia quando o catálogo FOI lido; preservar "configured" na
+// ausência dele contradizia o próprio encaminhamento, que já exigia motivo
+// inconclusivo sem fonte vinculada). Vira "unknown" abaixo nesse caso.
 export async function readAgentConfiguration({ agentId, env, platform, cwd, fs, hermesValidHooks = null }) {
   const definition = AGENT_CONFIG_DEFINITIONS[agentId];
   const home = definition.resolveHome({ env, platform });
@@ -150,17 +154,20 @@ export async function readAgentConfiguration({ agentId, env, platform, cwd, fs, 
   // Um evento Hermes fora do catálogo instalado nunca é registrado pelo
   // agente (`_parse_hooks_block` ignora nomes fora de VALID_HOOKS): a
   // configuração estrutural não pode contar como "configured" quando NENHUM
-  // dos eventos com handler bate com a tabela real. Só decide quando o
-  // catálogo foi de fato lido; `trust` é recalculado a seguir a partir desta
-  // `configuration`, como qualquer outro resultado (fonte única de verdade).
-  if (
-    agentId === "hermes" &&
-    configuration === "configured" &&
-    hermesValidHooks !== null &&
-    !(fields.hermesTargetedEvents ?? []).some((event) => hermesValidHooks.has(event))
-  ) {
-    configuration = "not_configured";
-    configReasonCode = "hooks_event_not_in_installed_catalog";
+  // dos eventos com handler bate com a tabela real, nem quando não há tabela
+  // nenhuma para cruzar — os dois casos abaixo só se aplicam depois que a
+  // forma estrutural já decidiu "configured" (não altera not_configured, que
+  // já significa "nenhum handler", nem invalid, que já significa erro nativo
+  // de forma). `trust` é recalculado a seguir a partir desta `configuration`
+  // final, como qualquer outro resultado (fonte única de verdade).
+  if (agentId === "hermes" && configuration === "configured") {
+    if (hermesValidHooks === null) {
+      configuration = "unknown";
+      configReasonCode = "hooks_catalog_unavailable";
+    } else if (!(fields.hermesTargetedEvents ?? []).some((event) => hermesValidHooks.has(event))) {
+      configuration = "not_configured";
+      configReasonCode = "hooks_event_not_in_installed_catalog";
+    }
   }
 
   const evidence = extractNativeTrustEvidence({ agentId, fields });
