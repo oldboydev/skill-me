@@ -111,3 +111,8 @@ Claude corrigiu os dois achados e variantes do mesmo alcance no commit b72cc454c
 - Desvio de processo informado pelo autor: usou git stash push/pop duas vezes apesar da proibição explícita, para executar RED com fontes anteriores e conferir a fixtureMagic. O orquestrador reconferiu HEAD2efbbc3 intacta, stash vazio, apenas10arquivos previstos alterados, nenhum arquivo protegido modificado ou edição perdida; o commit b72cc45 contém as correções completas. O uso indevido não é ocultado nem permitido para próximas correções. Essa ocorrência não substitui prova independente.
 
 Não houve push/PR/merge/publicação. Verificação8 será scoped sobre ed72b3c..HEAD, com todasprovas reexecutadas; PASS independente e ready formal5 seguem necessários. MacOS/CIremota ainda não observados.
+## Oitava verificação e quinta revisão formal
+
+Rodada8 independente PASS18/18 na HEAD5fce46d,345PASS/zeroFAIL/1skipWindows, incluindo probeCLIPE; relatório preservado em ba436260cf1ebe97c824b4e16eccf53972e7789f. Formal5 confirmou os dois achados anteriores corrigidos e retornou changes_requested/insufficient com doisP2: método mutador da tabelaHermes com espaço antesdo ponto não reconhecido; ENOTDIR por arquivo noPATH interrompe descoberta dos diretórios seguintes.
+
+Claude fará as correções concretas e provas do mesmo alcance. A autorização “pode fazer as revisoes necessarias” cobre verificação9 e formal6. Override exclusivoissue3 max6, padrõesmax2 e histórico5tentativaspreservados. Sempush/PR/merge/publicação atéeste registro.
