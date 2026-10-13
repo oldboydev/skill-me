@@ -138,3 +138,8 @@ Claude corrigiu a classe de alvo agrupado dos13 operadores no leitor compartilha
 - Root repetiu o probe direto das duas tabelas: ambosnull/pass:true. Autor não fez mutaçãoGit/stash, nem executouPython/agentes/hooks/configurações reais. Task/AGENTS/core5/estadoformal preservados; cinco tentativas formais no histórico, max6 exclusivamenteissue3 autorizado.
 
 A autorização humana das revisões necessárias cobre a rodada independente10 scoped sobre75a6c70..HEAD, incluindo os3critériosreprovados e blast do leitor compartilhado, com todas as provas reexecutadas. ApósPASS, formal6 continua obrigatório antes de push/PR. Nenhum push/PR/merge/publicação até este registro; macOS/CIremota ainda não observados.
+## Décima verificação e sexta revisão formal
+
+Rodada10 independente PASS18/18 na HEAD4bffd96,367PASS/0FAIL/2skipWindows; relatório preservado em aa4169b242cfe250bc6d00f1c229ff9bf859d83f. Formal6 confirmou os dois achados anteriores corrigidos e retornou changes_requested/insufficient com um P2: captura de nome em case não é reconhecida pelo leitor Python, publicando versão/catálogo anteriores e permitindo suporte/configuração/confiança indevidos.
+
+Root confirmou na função pública de ligações dois cenários do mesmo alcance: case captura e alvo de with em tupla, ambos produzem apenas1site em vez de2. Fonte CPython Grammar/python.gram v3.13.0: case/capture_pattern e with_item/star_target; nenhum Python executado. Claude corrigirá as capturas e suas formas diretas, com provas RED/GREEN. A autorização das revisões necessárias cobre independente11 e formal7; override exclusivoissue3 max7, padrõesmax2 e seis tentativas históricas preservados. Nenhum push/PR/merge/publicação até este registro.
