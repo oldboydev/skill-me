@@ -347,6 +347,64 @@ test("configuration-trust-C8/formal5 VALID_HOOKS .clear() (espaço antes do pont
   }
 });
 
+// Achado formal5 P2 residual (nº1, .checks/code-review/formal5-residual-
+// fixes.md): mesma fronteira real da CLI do teste acima, agora com as duas
+// formas concretas que ainda escapavam do filtro de mutação — parentesização
+// do nome (`(VALID_HOOKS).clear()`) e o dunder `__init__()` chamado
+// diretamente (reinicializa/limpa o conjunto). As duas precisam produzir o
+// mesmo resultado ponta a ponta do achado original: catálogo unrecognized,
+// cinco linhas locais unverified/contract_source_unrecognized,
+// configuration/trust do Hermes unknown mesmo com hooks_auto_accept:true,
+// três agentes no relatório, exit 0 e paridade entre JSON e texto.
+test("configuration-trust-C8/formal5-residual (VALID_HOOKS).clear() e VALID_HOOKS.__init__() não concedem verified/configured/trusted, mesmo com hooks_auto_accept:true", () => {
+  for (const extra of ["(VALID_HOOKS).clear()\n", "VALID_HOOKS.__init__()\n"]) {
+    const scratch = makeScratch("doctor-formal5-residual-valid-hooks-");
+    try {
+      const dir = path.join(scratch, "bin");
+      const { pathDirs } = installAllAgents(dir, {
+        sentinelPath: path.join(scratch, "sentinel.txt"),
+        hermesContractSource: hermesPluginsSource({ extra }),
+      });
+      const home = path.join(scratch, "home");
+      const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
+      writeAgentConfig(
+        home,
+        "hermes",
+        'hooks:\n  pre_tool_call:\n    - command: "internal-safe-handler"\nhooks_auto_accept: true\n',
+        { env, platform: process.platform },
+      );
+
+      const { status, stdout, report } = runDoctorJson([], { env });
+      assert.equal(status, 0, extra);
+      assert.equal(report.agents.length, 3, extra);
+      const hermes = report.agents.find((a) => a.id === "hermes");
+      assert.equal(hermes.version, "0.21.4", extra);
+      assert.equal(hermes.configuration, "unknown", extra);
+      assert.equal(hermes.configReasonCode, "hooks_catalog_unavailable", extra);
+      assert.equal(hermes.trust, "unknown", extra);
+      assert.equal(hermes.trustReasonCode, "configuration_not_determined", extra);
+      assert.notEqual(hermes.trust, "trusted", extra);
+
+      const localRows = hermes.capabilities.filter((row) => row.surface === "cli_local");
+      assert.equal(localRows.length, 5, extra);
+      for (const row of localRows) {
+        assert.equal(row.support, "unverified", `${extra}/${row.mechanism}`);
+        assert.equal(row.reasonCode, "contract_source_unrecognized", `${extra}/${row.mechanism}`);
+        assert.notEqual(row.support, "verified", `${extra}/${row.mechanism}`);
+      }
+      assert.doesNotMatch(stdout, /"support":"verified"/, extra);
+
+      const text = runDoctor([], { env });
+      assert.equal(text.status, 0, extra);
+      assert.match(text.stdout, /hooks_catalog_unavailable/);
+      assert.match(text.stdout, /contract_source_unrecognized/);
+      assert.doesNotMatch(text.stdout, /local_contract_lists_events/);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+});
+
 // C16/G4 — fronteira real da CLI: config inacessível, provada de forma
 // portátil entre Windows/Linux/macOS. chmod não bloqueia o dono no Windows e
 // CI costuma rodar como root, então uma permissão negada real não é

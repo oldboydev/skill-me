@@ -180,6 +180,92 @@ test("contract-evidence-formal5-1 VALID_HOOKS com espaço antes de .clear() no a
   assert.equal(result.validHooks, undefined);
 });
 
+// Achado formal5 residual nº1 (.checks/code-review/formal5-residual-fixes.md):
+// uma parentesização simples do nome antes do ponto (`(VALID_HOOKS).clear()`)
+// é a mesma chamada direta `nome.mutator(args)` do achado anterior, só com um
+// `(`/`)` redundante ao redor do nome — Python tão válido quanto a forma sem
+// parêntese, e continuava escapando do filtro. Reaproveita os mesmos
+// separadores flexíveis (`PY_TOKEN_SEP`) já testados para a forma sem
+// parêntese, agora também nas duas junções em volta do próprio parêntese.
+test("contract-evidence-formal5-residual parêntese ao redor do nome, com os mesmos separadores flexíveis, não escapa do filtro", () => {
+  const MUTATIONS = {
+    "parêntese simples": "(NOME).clear()\n",
+    "espaço dentro do parêntese": "( NOME ).clear()\n",
+    "tab dentro do parêntese": "(\tNOME\t).clear()\n",
+    "espaço antes do ponto, depois do parêntese": "(NOME) .clear()\n",
+    "tab antes do ponto, depois do parêntese": "(NOME)\t.clear()\n",
+    "espaço depois do ponto, antes do método": "(NOME). clear()\n",
+    "espaço antes do parêntese de chamada": "(NOME).clear ()\n",
+    "continuação lógica (\\) antes do ponto": "(NOME) \\\n.clear()\n",
+    "continuação lógica (\\) antes do parêntese de chamada": "(NOME).clear \\\n()\n",
+  };
+  for (const [label, template] of Object.entries(MUTATIONS)) {
+    const validHooksText = 'VALID_HOOKS = {"pre_tool_call"}\n' + template.replaceAll("NOME", "VALID_HOOKS");
+    assert.equal(extractHermesValidHooks(validHooksText), null, `VALID_HOOKS/${label}`);
+
+    const shellText =
+      'SHELL_UNSUPPORTED_HOOKS = {"pre_tool_call"}\n' + template.replaceAll("NOME", "SHELL_UNSUPPORTED_HOOKS");
+    assert.equal(extractHermesShellUnsupportedHooks(shellText), null, `SHELL_UNSUPPORTED_HOOKS/${label}`);
+  }
+});
+
+test("contract-evidence-formal5-residual (VALID_HOOKS).clear() no arquivo da instalação vira state unrecognized, nunca found", async () => {
+  const mutated = hermesPluginsSource({ extra: "(VALID_HOOKS).clear()\n" });
+  const result = await readContractEvidence({
+    agentId: "hermes",
+    packageDir: PKG_DIR,
+    fs: fsWithPlugins(mutated),
+  });
+  assert.equal(result.state, "unrecognized");
+  assert.equal(result.mechanisms, undefined);
+  assert.equal(result.validHooks, undefined);
+});
+
+// Achado formal5 residual nº2 (mesmo arquivo): `__ior__`/`__iand__`/
+// `__ixor__`/`__isub__` são as formas de método explícitas dos operadores
+// aumentados já cobertos (`|=`, `&=`, `^=`, `-=`) e `__init__` reinicializa o
+// conjunto (CPython `set_init`, limpa o conteúdo existente antes de
+// reconstruir — setobject.c:2171-2192,
+// https://github.com/python/cpython/blob/v3.13.0/Objects/setobject.c#L2170);
+// as cinco são chamadas de método tão diretas quanto `clear()`/`add()`, e
+// faltavam na lista de mutadores reconhecidos. Testado com e sem o parêntese
+// redundante ao redor do nome, nas duas tabelas.
+test("contract-evidence-formal5-residual __ior__/__iand__/__ixor__/__isub__/__init__ chamados diretamente mutam o conjunto, com ou sem parêntese ao redor do nome", () => {
+  const DUNDER_CALLS = {
+    __ior__: '.__ior__({"post_tool_call"})',
+    __iand__: '.__iand__({"pre_tool_call"})',
+    __ixor__: '.__ixor__({"pre_tool_call"})',
+    __isub__: '.__isub__({"pre_tool_call"})',
+    __init__: ".__init__()",
+  };
+  const WRAPS = {
+    "sem parêntese": (name) => name,
+    "com parêntese": (name) => `(${name})`,
+  };
+  for (const [dunder, call] of Object.entries(DUNDER_CALLS)) {
+    for (const [wrapLabel, wrap] of Object.entries(WRAPS)) {
+      const label = `${dunder}/${wrapLabel}`;
+      const validHooksText = 'VALID_HOOKS = {"pre_tool_call"}\n' + wrap("VALID_HOOKS") + call + "\n";
+      assert.equal(extractHermesValidHooks(validHooksText), null, `VALID_HOOKS/${label}`);
+
+      const shellText = 'SHELL_UNSUPPORTED_HOOKS = {"pre_tool_call"}\n' + wrap("SHELL_UNSUPPORTED_HOOKS") + call + "\n";
+      assert.equal(extractHermesShellUnsupportedHooks(shellText), null, `SHELL_UNSUPPORTED_HOOKS/${label}`);
+    }
+  }
+});
+
+test("contract-evidence-formal5-residual VALID_HOOKS.__init__() no arquivo da instalação vira state unrecognized, nunca found", async () => {
+  const mutated = hermesPluginsSource({ extra: "VALID_HOOKS.__init__()\n" });
+  const result = await readContractEvidence({
+    agentId: "hermes",
+    packageDir: PKG_DIR,
+    fs: fsWithPlugins(mutated),
+  });
+  assert.equal(result.state, "unrecognized");
+  assert.equal(result.mechanisms, undefined);
+  assert.equal(result.validHooks, undefined);
+});
+
 test("contract-evidence-C5 tabela com forma não reconhecida vira state unrecognized, sem eventos", async () => {
   const result = await readContractEvidence({
     agentId: "hermes",

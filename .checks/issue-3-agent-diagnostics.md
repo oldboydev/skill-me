@@ -212,7 +212,7 @@ categoria nova de critério. Autor: Claude; Codex local só revisa. Nenhum crit�
 
 | One-way door | Literal shape | Alternative rejected |
 | --- | --- | --- |
-| Mutação de `VALID_HOOKS`/`SHELL_UNSUPPORTED_HOOKS` continua regex sobre texto bruto, com separador flexível (achado 1) | `runtimeMutationPattern` (`contract-evidence.mjs`) exigia o ponto imediatamente após o nome: `VALID_HOOKS.clear(` casava, `VALID_HOOKS .clear(` (espaço) não — mesma instrução Python válida escapando do filtro, deixando a tabela mutada ser lida como se o literal anterior ainda fosse o conjunto efetivo. Um novo grupo `PY_TOKEN_SEP` (`(?:[ \t]|\\\r?\n)*`, espaço/tab/continuação lógica) entra nas duas junções — nome→ponto e método→parêntese — preservando a mesma leitura sobre texto bruto (não token), que já é a proteção documentada contra mutação escondida em string/exec. Mais permissivo nunca é menos seguro aqui: toda correspondência nova só reforça o lado conservador (`null`/`unrecognized`), nunca libera `verified`/`configured`/`trusted` a mais | Tokenizar esta checagem para também cobrir parentesização equivalente (`(VALID_HOOKS).clear()`) — exigiria abandonar a leitura sobre texto bruto que protege contra mutação dentro de string/exec, documentada desde a rodada formal 1; fora do escopo do achado, que pede separador flexível, não um parser novo |
+| Mutação de `VALID_HOOKS`/`SHELL_UNSUPPORTED_HOOKS` continua regex sobre texto bruto, com separador flexível (achado 1) | `runtimeMutationPattern` (`contract-evidence.mjs`) exigia o ponto imediatamente após o nome: `VALID_HOOKS.clear(` casava, `VALID_HOOKS .clear(` (espaço) não — mesma instrução Python válida escapando do filtro, deixando a tabela mutada ser lida como se o literal anterior ainda fosse o conjunto efetivo. Um novo grupo `PY_TOKEN_SEP` (`(?:[ \t]|\\\r?\n)*`, espaço/tab/continuação lógica) entra nas duas junções — nome→ponto e método→parêntese — preservando a mesma leitura sobre texto bruto (não token), que já é a proteção documentada contra mutação escondida em string/exec. Mais permissivo nunca é menos seguro aqui: toda correspondência nova só reforça o lado conservador (`null`/`unrecognized`), nunca libera `verified`/`configured`/`trusted` a mais | Tokenizar esta checagem para também cobrir parentesização equivalente (`(VALID_HOOKS).clear()`) — exigiria abandonar a leitura sobre texto bruto que protege contra mutação dentro de string/exec, documentada desde a rodada formal 1; fora do escopo deste achado, que pede separador flexível, não um parser novo. **Superada na correção residual** (ver "Landing da correção residual formal5" abaixo): a parentesização não exigiu tokenizar — entrou na mesma alternativa como mais uma forma de "nome" antes do ponto, ainda sobre texto bruto |
 | Entrada de PATH que é arquivo regular continua a busca, igual a ausente (achado 2) | `findLauncherPath` (`agent-resolution.mjs`) só ignorava `ENOENT` ao fazer `stat(dir/agente)`; uma entrada do PATH que é, de fato, um arquivo (não diretório) faz esse mesmo `stat` devolver `ENOTDIR` — exceção não tratada subia inteira, encerrando a busca e devolvendo `presence: unknown/reasonCode: ENOTDIR` mesmo com instalações reconhecidas em diretórios seguintes. `ENOTDIR` entra no mesmo `continue` de `ENOENT` (mesma ausência de candidato válido nesse diretório). `EACCES`/`EIO`/outros erros de E/S continuam propagados sem alteração (já provado no teste de permissão negada) | Checar `stats.isDirectory()` do próprio diretório do PATH antes de descer ao candidato — exigiria um `stat()` a mais por diretório (custo e chamada nova) só para antecipar um erro que o `stat()` do candidato já relata com um código específico e sem ambiguidade |
 
 Regressão RED contra `ba43626` (produto no estado anterior a esta correção, testes desta rodada já
@@ -247,6 +247,59 @@ notas de documentação/Landing abaixo (saída completa em `.checks/code-review/
 `test:doctor` 335 testes/333 pass/2 skip. Delta de `test:doctor` contra a seção 23 do build (330 → 335): 5
 testes novos (2 em `contract-evidence.unit.test.mjs`, 2 em `agent-resolution.unit.test.mjs` — um portável via
 fake FS, um real em POSIX/skip no Windows —, 1 em `configuration-trust.cli.test.mjs`).
+
+### Landing da correção residual formal5 — parêntese e métodos mutadores diretos
+
+Encaminhamento: `.checks/code-review/formal5-residual-fixes.md`. Mesmo achado 1 (P2) da revisão formal5
+acima, não um critério novo: a API de extração confirmou 6 falhas concretas (2 tabelas × 3 formas —
+parentesização do nome, `__isub__` e `__init__` chamados diretamente), depois de `spaced-clear` já corrigido
+na rodada anterior continuar passando. Autor: Claude; Codex local só revisa.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| Parentesização redundante do nome antes do ponto entra na mesma alternativa de `runtimeMutationPattern` (`contract-evidence.mjs`), com os mesmos separadores flexíveis ao redor de `(`/`)` | `target = (?:NOME\|\(SEP NOME SEP\))` substitui `NOME` na alternativa de chamada de método; `(VALID_HOOKS).clear()`, `( VALID_HOOKS ).clear()` etc. casam sem tokenizar — continua regex sobre texto bruto, preservando a proteção contra mutação escondida em string/exec | Tokenizar a checagem (rejeitada na rodada anterior pelo mesmo motivo: perderia a leitura sobre texto bruto que protege contra mutação dentro de string/exec) |
+| `__ior__`/`__iand__`/`__ixor__`/`__isub__`/`__init__` entram na lista de métodos mutadores reconhecidos (`SET_MUTATOR_METHODS`) | Mesma família de `add/discard/.../symmetric_difference_update` — os quatro primeiros são a forma de método explícita dos operadores aumentados já cobertos (`\|=`, `&=`, `^=`, `-=`); `__init__` reinicializa/limpa o conjunto (CPython `set_init`, setobject.c:2171-2192, https://github.com/python/cpython/blob/v3.13.0/Objects/setobject.c#L2170) | Resolver alias/reflexão arbitrária (`getattr(NOME, "clear")()`, renomear o nome antes de chamar) — fora do alcance do achado, que é a chamada direta `nome.mutator(args)`; não avaliado nem testado |
+
+Ordem seguida: leitura do encaminhamento e da probe (`.checks/code-review/probe-formal5-residuals.mjs`,
+rodada com o produto intacto confirmando as 6 falhas via a própria API de extração) → leitura de
+`contract-evidence.mjs` e dos testes existentes → testes novos em `contract-evidence.unit.test.mjs` (matriz de
+parêntese com os mesmos separadores já testados, e os cinco dunders com/sem parêntese, nas duas tabelas) e em
+`configuration-trust.cli.test.mjs` (fronteira real combinando `(VALID_HOOKS).clear()` e `VALID_HOOKS.__init__()`
+com `hooks_auto_accept:true`) → RED com `src/` intacto → correção (`target` parametrizado e
+`SET_MUTATOR_METHODS` com os cinco nomes novos) → GREEN nos mesmos alvos, mais `capability-evidence.cli.test.mjs`
+como controle → `npm test` completo uma única execução. Sem `git stash` nem qualquer outra operação Git: o RED
+foi obtido rodando a suíte com o produto desta sessão ainda não corrigido (testes já escritos, `src/doctor/**`
+intacto até a correção ser aplicada).
+
+RED (saída completa em `.checks/code-review/formal5-residual-red.txt`):
+
+```
+node --test tests/doctor/contract-evidence.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+tests 61, pass 56, fail 5, skipped 0
+EXIT_CODE=1
+```
+
+As 5 falhas são exatamente os 5 testes novos desta rodada (4 em `contract-evidence.unit.test.mjs` — matriz de
+parêntese, `(VALID_HOOKS).clear()` via `readContractEvidence`, os cinco dunders com/sem parêntese, e
+`VALID_HOOKS.__init__()` via `readContractEvidence`; 1 em `configuration-trust.cli.test.mjs` — fronteira real
+combinando as duas formas com `hooks_auto_accept:true`); os 56 demais continuavam verdes.
+
+GREEN dos mesmos dois alvos depois da correção, mais `capability-evidence.cli.test.mjs` como controle de que
+tabelas legítimas (sem mutação) não perdem contrato pela alternância nova (saída completa em
+`.checks/code-review/formal5-residual-green.txt`): 71 pass, 0 fail, 0 skip.
+
+`npm test` completo, uma única execução após a última alteração de código/testes desta rodada, antes destas
+notas de documentação/Landing (saída completa em `.checks/code-review/formal5-residual-npm-test.txt`):
+`test:governance` 6/6, `test:code-review` 10/10, `test:doctor` 340 testes/338 pass/2 skip (mesmos dois skips
+condicionais ao executor, já registrados desde a seção 3 do build). Delta de `test:doctor` contra a seção 24
+do build (335 → 340): exatamente os 5 testes novos desta rodada.
+
+Limitação declarada: a cobertura de parêntese prova a forma `(NOME)` com espaço/tab interno e nas duas
+junções externas (nome→ponto, método→parêntese), mas não combina parêntese com continuação lógica dentro do
+próprio parêntese sem o `\` explícito (quebra de linha implícita dentro de `(...)`, válida em Python sem
+continuação lógica) — `PY_TOKEN_SEP` não inclui quebra de linha nua, só espaço/tab/continuação com `\`; não
+testado por não fazer parte das 6 falhas concretas confirmadas pela API de extração nem do alcance direto de
+métodos mutadores pedido nesta rodada.
 
 ## Checks
 

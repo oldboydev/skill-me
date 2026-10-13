@@ -3051,3 +3051,155 @@ omissão.
 - Evidência (ignorada pelo Git): `.checks/code-review/formal5-red.txt`, `…-green.txt`, `…-npm-test.txt`.
   Preservado sem alteração: `.checks/code-review/formal5-fixes.md` (encaminhamento) e
   `.checks/code-review/issue-3-formal5-response.json` (resposta formal).
+
+## 25. Fechamento dos seis casos residuais do achado 1 da revisão formal5 (13/10/2026)
+
+Encaminhamento: `.checks/code-review/formal5-residual-fixes.md`. Mesmo achado 1 (P2) da seção 24 acima —
+residual, não um critério novo: duas formas concretas da mesma chamada direta `nome.mutator(args)` ainda
+escapavam de `runtimeMutationPattern`. Root confirmou pela própria API de extração
+(`.checks/code-review/probe-formal5-residuals.mjs`, rodado com o produto intacto): 6 falhas concretas (2
+tabelas `VALID_HOOKS`/`SHELL_UNSUPPORTED_HOOKS` × 3 formas — parentesização do nome, `__isub__` e `__init__`
+chamados diretamente), ao lado de `spaced-clear` (a correção da seção 24) já passando nas duas tabelas. Autor:
+Claude; Codex local só revisa. Ownership restrito a `src/doctor/contract-evidence.mjs`, aos testes da própria
+camada e CLI afetados (`contract-evidence.unit.test.mjs`, `configuration-trust.cli.test.mjs`), esta seção e a
+subseção "Landing da correção residual formal5" em `.checks/issue-3-agent-diagnostics.md`. Nenhum outro
+arquivo tocado: `agent-resolution.mjs` (achado 2 da seção 24, já corrigido e fechado) fica intacto;
+`python-source.mjs` não precisou de nenhum helper novo — a correção inteira é um ajuste textual dentro de
+`runtimeMutationPattern`, sem tokenizar. Sem commit, push, stash, PR, Verifier ou agentes nesta rodada;
+`.tasks`, `.verified.md`, `.linux.md`, `code-review.config.json`, core vendorizado e `.git` não tocados.
+Nenhuma operação Git foi usada para preservar/restaurar estado (sem `git stash`): o RED usa o produto desta
+sessão ainda não corrigido, com os testes novos já escritos e `src/doctor/**` intacto até a correção.
+
+### Achado 1 (continuação) — parêntese ao redor do nome e métodos mutadores diretos faltantes
+
+`src/doctor/contract-evidence.mjs:45-58`. A correção da seção 24 flexibilizou os separadores (espaço, tab,
+continuação lógica) nas duas junções de `NOME.metodo(`, mas deixou de fora duas variantes concretas da MESMA
+chamada direta de método, ambas Python válido e capazes de mutar a tabela em tempo de execução exatamente como
+as já cobertas:
+
+1. **Parentesização redundante do nome** — `(VALID_HOOKS).clear()` é a mesma chamada de `.clear()` sobre o
+   mesmo objeto que `VALID_HOOKS.clear()`; o comentário da seção 24 registrava essa forma como fora de escopo
+   por supor que exigiria tokenizar. Não exige: um parêntese redundante ao redor de um nome simples é só mais
+   uma forma textual de "o nome", reconhecível com a mesma técnica de separador flexível já usada — não há
+   necessidade de abandonar a leitura sobre texto bruto (a mesma proteção contra mutação escondida em
+   string/exec, documentada desde a rodada formal 1, continua intacta).
+2. **`__ior__`/`__iand__`/`__ixor__`/`__isub__`/`__init__` chamados diretamente** — os quatro primeiros são a
+   forma de método explícita dos operadores aumentados já cobertos pela alternativa `[-&^|+]=` (`|=`, `&=`,
+   `^=`, `-=` respectivamente); `__init__()` reinicializa o conjunto, descartando o conteúdo anterior. Fonte
+   primária conferida (texto, sem executar/compilar): CPython
+   https://github.com/python/cpython/blob/v3.13.0/Objects/setobject.c#L2170 — `set_init` (linhas 2171-2192)
+   limpa o conjunto existente antes de popular a partir do iterável/kwargs; `set_as_number` (linhas 2251-2280)
+   lista os slots `nb_inplace_*` que implementam `|=`/`&=`/`^=`/`-=` via `__ior__`/`__iand__`/`__ixor__`/
+   `__isub__`. As cinco são tão diretas quanto `clear()`/`add()`/etc.; faltavam na lista de nomes reconhecidos
+   como mutador.
+
+Correção mínima, ainda sem tokenizar: `runtimeMutationPattern(name)` ganha um `target` parametrizado —
+`(?:NOME|\(SEP NOME SEP\))` — que substitui `NOME` só na alternativa de chamada de método (a alternativa de
+operador aumentado, `[-&^|+]=`, não muda; parênteses em alvo de atribuição aumentada não fazem parte deste
+achado nem foram testados). `SET_MUTATOR_METHODS` ganha os cinco nomes novos ao lado dos nove já existentes.
+Mantém a mesma regex sobre texto bruto (não token); mais permissivo nunca é menos seguro aqui — toda
+correspondência nova só reforça o lado conservador (tabela tratada como não reconhecida), nunca libera
+`verified`/`configured`/`trusted` a mais. Resolução de alias/reflexão arbitrária (`getattr`, renomear o nome
+antes de chamar) continua fora do alcance: o achado é a chamada direta `nome.mutator(args)`, não avaliação de
+Python.
+
+### Ordem seguida e evidência de execução real
+
+Leitura do encaminhamento (`.checks/code-review/formal5-residual-fixes.md`) → execução da probe
+(`.checks/code-review/probe-formal5-residuals.mjs`) contra o produto intacto, confirmando as 6 falhas via a
+própria API de extração → leitura de `contract-evidence.mjs` e dos testes existentes → testes novos em
+`contract-evidence.unit.test.mjs` (matriz de parêntese com os mesmos separadores já testados na seção 24, mais
+os cinco dunders com/sem parêntese, nas duas tabelas, mais dois testes de `readContractEvidence` ponta a
+ponta) e em `configuration-trust.cli.test.mjs` (fronteira real da CLI combinando `(VALID_HOOKS).clear()` e
+`VALID_HOOKS.__init__()` com `hooks_auto_accept:true`) → RED com `src/` intacto → correção → GREEN nos mesmos
+alvos, mais `capability-evidence.cli.test.mjs` como controle de ausência de regressão → Landing → `npm test`
+completo uma única execução após a última alteração → documentação lida por teste.
+
+RED (saída completa em `.checks/code-review/formal5-residual-red.txt`):
+
+```
+node --test tests/doctor/contract-evidence.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+tests 61, pass 56, fail 5, skipped 0
+exit=1
+```
+
+As 5 falhas, uma a uma, são exatamente os 5 testes novos desta rodada:
+
+- 3 em `contract-evidence.unit.test.mjs`: a matriz de parêntese (`(VALID_HOOKS).clear()` e variantes de
+  espaço/tab/continuação lógica nas duas tabelas) ainda devolvia a lista de eventos em vez de `null`; os cinco
+  dunders (`__ior__`/`__iand__`/`__ixor__`/`__isub__`/`__init__`, com e sem parêntese, nas duas tabelas) idem;
+  `readContractEvidence` sobre um `plugins.py` com `(VALID_HOOKS).clear()` ou `VALID_HOOKS.__init__()` ainda
+  devolvia `state: "found"` (esperado `"unrecognized"`).
+- 1 em `configuration-trust.cli.test.mjs`: fronteira real da CLI — com `(VALID_HOOKS).clear()` ou
+  `VALID_HOOKS.__init__()` na instalação Hermes e `hooks_auto_accept: true` no `config.yaml`, `hermes.
+  configuration` observado `"unknown"`/`"hooks_catalog_unavailable"` esperado contra `"found"`-like real antes
+  da correção (o teste falhava na primeira asserção de estado).
+
+Os demais 56 casos continuavam verdes (nenhuma regressão de fora do escopo introduzida pelos testes novos).
+
+GREEN dos mesmos dois alvos depois da correção, mais `capability-evidence.cli.test.mjs` como controle de que
+tabelas `VALID_HOOKS` legítimas (sem mutação) não perdem o contrato pela alternância nova (saída completa em
+`.checks/code-review/formal5-residual-green.txt`):
+
+```
+tests 71, pass 71, fail 0, skipped 0
+exit=0
+```
+
+Confirmação independente pela probe do achado (saída já reproduzida acima desta seção, rodada novamente após
+a correção): os 8 casos (`spaced-clear` × 2 tabelas, já verde desde a seção 24; `parenthesized-clear`,
+`dunder-isub`, `dunder-init` × 2 tabelas, verdes nesta rodada) devolvem `pass:true`.
+
+`npm test` completo, uma única execução após a última alteração de código/testes desta rodada (antes das
+notas de documentação/Landing que fecham esta seção, que não alteram comportamento nem são recobertas por
+este run — saída completa em `.checks/code-review/formal5-residual-npm-test.txt`):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 340, pass 338, fail 0, skipped 2
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a seção 24 (335 → 340): exatamente os 5 testes novos desta rodada (4 em
+`contract-evidence.unit.test.mjs`, 1 em `configuration-trust.cli.test.mjs`). Os 2 skips são os mesmos dois já
+registrados desde a seção 24 (condicionais ao executor, sem delta nesta rodada).
+
+### Decisão que supera o limite registrado na seção 24
+
+A seção 24 (achado 1) registrou a parentesização como fora do escopo daquela rodada, por supor que exigiria
+tokenizar. Root pediu a reavaliação nesta rodada e confirmou, pela própria API de extração, que a forma
+parentesizada e os cinco dunders são a mesma família de chamada direta já coberta — só com nomes/forma
+textual diferentes, sem precisar de parser novo. Esta seção supera aquele limite; a seção 24 permanece
+inalterada como registro histórico da decisão tomada naquele momento (ver também a nota acrescentada à célula
+"Alternative rejected" da tabela da Landing da correção formal5, que aponta para esta seção).
+
+### Limitações declaradas
+
+- A cobertura de parêntese prova a forma `(NOME)` com espaço/tab interno e nas duas junções externas
+  (nome→ponto, método→parêntese), mas não combina parêntese com quebra de linha implícita sem `\` dentro do
+  próprio parêntese — `PY_TOKEN_SEP` não inclui quebra de linha nua, só espaço/tab/continuação lógica com `\`.
+  Não testado por não fazer parte das 6 falhas concretas confirmadas pela probe nem do alcance direto de
+  métodos mutadores desta rodada.
+- Parênteses em alvo de atribuição aumentada (`(VALID_HOOKS) -= {...}`) não foram avaliados nem testados: a
+  probe e o encaminhamento tratam só da forma de chamada de método; nenhuma alegação é feita sobre esse caso.
+- Resolução de alias/reflexão arbitrária (`getattr(VALID_HOOKS, "clear")()`, atribuir o conjunto a outro nome
+  antes de mutá-lo) continua fora do alcance declarado desde o encaminhamento original — não avaliado, não
+  testado, não uma lacuna desta correção.
+- Executado só em Windows 11 Pro, Node 24.21.0; nenhuma leitura ou execução de Python nesta rodada, só texto.
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/contract-evidence.mjs` (`target` parametrizado por parêntese opcional em
+  `runtimeMutationPattern`; `SET_MUTATOR_METHODS` com os cinco dunders novos).
+- Testes: `tests/doctor/contract-evidence.unit.test.mjs` (4 novos: matriz de parêntese, `readContractEvidence`
+  com `(VALID_HOOKS).clear()`, os cinco dunders com/sem parêntese, `readContractEvidence` com
+  `VALID_HOOKS.__init__()`), `tests/doctor/configuration-trust.cli.test.mjs` (1 novo, fronteira real da CLI
+  combinando as duas formas com `hooks_auto_accept:true`). `tests/doctor/capability-evidence.cli.test.mjs`
+  rodado como controle de ausência de regressão, sem alteração própria.
+- Documentação/checklist: `.checks/issue-3-agent-diagnostics.md` (nova subseção "Landing da correção residual
+  formal5"; nota de supersessão na célula "Alternative rejected" da Landing da correção formal5), esta seção.
+- Evidência (ignorada pelo Git): `.checks/code-review/formal5-residual-red.txt`, `…-green.txt`,
+  `…-npm-test.txt`. Preservado sem alteração: `.checks/code-review/formal5-residual-fixes.md`
+  (encaminhamento), `.checks/code-review/probe-formal5-residuals.mjs` (probe do Root), e a seção 24 inteira
+  (histórico preservado).

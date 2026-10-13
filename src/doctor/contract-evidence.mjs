@@ -39,13 +39,29 @@ const HERMES_CONTRACT_SOURCE_KIND = "hermes_valid_hooks";
 // nome/ponto e entre método/parêntese são Python tão válidos quanto a forma
 // sem separador — `VALID_HOOKS .clear()` escapava do filtro. Continua regex
 // sobre texto bruto (não token) para preservar a mesma proteção contra
-// mutação escondida em string/exec já documentada acima; uma forma
-// parentesizada equivalente (`(VALID_HOOKS).clear()`) ficaria fora deste
-// padrão, pois exigiria tokenizar em vez de só flexibilizar separadores.
+// mutação escondida em string/exec já documentada acima.
+//
+// Achado formal5 residual (.checks/code-review/formal5-residual-fixes.md):
+// duas variantes concretas da mesma chamada direta `nome.mutator(args)` ainda
+// escapavam. (a) Parentesização redundante do nome (`(VALID_HOOKS).clear()`)
+// não precisa de um parser novo — é só mais uma forma de "nome" antes do
+// ponto, coberta pela mesma alternativa com os mesmos separadores flexíveis
+// ao redor do `(`/`)`. (b) `__ior__`/`__iand__`/`__ixor__`/`__isub__` (formas
+// de método dos operadores aumentados já cobertos: `|=`, `&=`, `^=`, `-=`) e
+// `__init__` (reinicializa/limpa o conjunto — CPython `set_init`,
+// setobject.c:2171-2192,
+// https://github.com/python/cpython/blob/v3.13.0/Objects/setobject.c#L2170)
+// são a mesma família de métodos mutadores diretos, só com nomes diferentes.
+// Casar demais aqui nunca é menos seguro: qualquer correspondência a mais só
+// reforça o lado conservador (tabela tratada como não reconhecida).
 const PY_TOKEN_SEP = String.raw`(?:[ \t]|\\\r?\n)*`;
+const SET_MUTATOR_METHODS =
+  "add|discard|remove|clear|pop|update|difference_update|intersection_update|symmetric_difference_update" +
+  "|__ior__|__iand__|__ixor__|__isub__|__init__";
 function runtimeMutationPattern(name) {
+  const target = `(?:${name}|\\(${PY_TOKEN_SEP}${name}${PY_TOKEN_SEP}\\))`;
   return new RegExp(
-    `${name}${PY_TOKEN_SEP}[-&^|+]=|${name}${PY_TOKEN_SEP}\\.${PY_TOKEN_SEP}(?:add|discard|remove|clear|pop|update|difference_update|intersection_update|symmetric_difference_update)${PY_TOKEN_SEP}\\(`,
+    `${name}${PY_TOKEN_SEP}[-&^|+]=|${target}${PY_TOKEN_SEP}\\.${PY_TOKEN_SEP}(?:${SET_MUTATOR_METHODS})${PY_TOKEN_SEP}\\(`,
   );
 }
 const EVENT_NAME = /^[a-z_][a-z0-9_]*$/;
