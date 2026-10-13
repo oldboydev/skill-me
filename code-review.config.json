@@ -18,7 +18,7 @@
   "roundOverrides": {
     "3": {
       "profile": "light",
-      "maxRounds": 3,
+      "maxRounds": 4,
       "approval": "Proprietário autorizou em 13/10/2026: pode fazer as revisoes necessarias. Registro em .checks/issue-3-agent-diagnostics.linux.md; exclusivo da issue #3, preservando histórico."
     }
   }
