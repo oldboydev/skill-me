@@ -53,3 +53,7 @@ Claude aplicou a correção no commit `7f4eecbe5d082f98998f3363413cb4a6103bedef`
 - Hash/tamanho das quatro configurações ativas reconferidos: todos iguais ao baseline anterior à implementação. Nenhuma configuração ativa foi alterada; core5/task/AGENTS/relatório independente preservados.
 
 Essas execuções são provas do autor/orquestrador e não concedem PASS independente. A quarta rodada autorizada terminou FAIL; uma quinta não foi iniciada. A decisão do proprietário sobre verificação adicional permanece necessária antes da segunda revisão formal e de qualquer PR. O histórico e o teto formal original seguem intactos.
+
+## Autorização da rodada5 — 13/10/2026
+
+O proprietário autorizou nesta conversa: “pode fazer a quinta verificação independente da issue #3 e, se passar nas revisões, abra o PR”. Autoriza a quinta rodada TLC desta issue e a abertura do PR após aprovação independente e formal. Os relatórios anteriores permanecem no histórico. O limite formal continua duas tentativas, com uma restante; nenhuma exceção formal foi inferida desta autorização.
