@@ -48,7 +48,7 @@ Rodada4 independente no produto `6d073b69351a2884d46bf6056aaf8e6ecb7574b8`: **FA
 Claude aplicou a correção no commit `7f4eecbe5d082f98998f3363413cb4a6103bedef`; fontes, regressões, RED/GREEN e limites estão na seção15 do `.build.md`. O leitor usa as duas tabelas do mesmo texto vinculado, preserva o contrato de plugins da matriz e filtra a configuração shell. Exclusão sem fonte reconhecida fica unknown, sem inventar conjunto vazio.
 
 - Windows, autor: `npm test` completo, **6+10+251 =267PASS,0FAIL,1SKIP**, exit0. O skip permanece o symlink POSIX. Saída preservada em `.checks/code-review/verifier4-g3-shell-fix-npm-test.txt`.
-- Linux, orquestrador: novo snapshot isolado do commit7f4eecb, mesmo Ubuntu22.04/Node24.13.0/Git2.49.0; `npm test` completo, **6+10+252 =268PASS,0FAIL,0SKIP**, exit0. Saída em `.checks/code-review/linux-final-npm-test.txt`.
+- Linux, orquestrador: novo snapshot isolado do commit7f4eecb, mesmo Ubuntu22.04/Node24.13.0/Git2.49.0; `npm test` completo, **6+10+252 =268PASS,0FAIL,0SKIP**, exit0. Saída dessa execução em `.checks/code-review/linux-7f4eecb-npm-test.txt`.
 - Repetição complementar da reprodução nativa: plugins.py real copiado como dado para fixture0.21.4, sem importar/executar Python. Evento recusado sozinho: `complete/not_configured/hooks_event_shell_unsupported/trustnot_applicable`. Mistura com pre_tool_call: `complete/configured/hooks_configured/trustunknown`. Nos dois casos, o suporte de plugin permanece verified nas cinco linhas locais, mostrando a separação C5/C8; nenhuma sentinela foi criada. Script local ignorado: `.checks/code-review/probe-verifier4-native.mjs`.
 - Hash/tamanho das quatro configurações ativas reconferidos: todos iguais ao baseline anterior à implementação. Nenhuma configuração ativa foi alterada; core5/task/AGENTS/relatório independente preservados.
 
@@ -57,3 +57,16 @@ Essas execuções são provas do autor/orquestrador e não concedem PASS indepen
 ## Autorização da rodada5 — 13/10/2026
 
 O proprietário autorizou nesta conversa: “pode fazer a quinta verificação independente da issue #3 e, se passar nas revisões, abra o PR”. Autoriza a quinta rodada TLC desta issue e a abertura do PR após aprovação independente e formal. Os relatórios anteriores permanecem no histórico. O limite formal continua duas tentativas, com uma restante; nenhuma exceção formal foi inferida desta autorização.
+
+## Quinta rodada e segunda revisão formal
+
+A quinta verificação independente passou18/18 no produtoaa918a5; relatório preservado em `fd4258f1d203e481de02e0368725613d64f807e7`. A segunda revisão formal dessa HEAD retornou `changes_requested/verification:insufficient`, com três achados P2 bloqueantes no Codex: alias de desativação ignorado; null aninhado no input MCP; envelope hooks.json não validado. O contador comum mantém as duas tentativas no histórico; não foi apagado nem alterado para aparentar aprovação. O relatório de runtime permanece em `.checks/code-review/issue-3/response.json`, ignorado, conforme a regra do motor.
+
+Claude corrigiu os três casos em `a698b00ba31ef9cd958f108803cce96dabf56ae5` e o alcance dos tipos das mesmas flags em `fc3b47a0d3ec46fc7fe056dc319c7eb4b0edb2f5`. Fontes primárias da tagrust-v0.162.1, RED/GREEN, regressões próprias/CLI e limitações estão nas seções16–17 do `.build.md`. A chave canônica só delega por ausência; valores não booleanos conhecidos invalidam o arquivo. Null em objetos/arrays de input é rejeitado por uma validação iterativa. A forma HooksFile é aplicada somente a hooks.json, preservando TOML/Claude/Hermes.
+
+- Windows, autor: `npm test`, **6+10+279 =295PASS,0FAIL,1SKIP**, exit0; skip POSIX pré-existente. Log `.checks/code-review/formal2-flag-types-npm-test.txt`.
+- Linux, orquestrador: snapshot isolado do commitfc3b47a, mesmo Ubuntu22.04/Node24.13.0/Git2.49.0; `npm test`, **6+10+280 =296PASS,0FAIL,0SKIP**, exit0. Log `.checks/code-review/linux-final-npm-test.txt`.
+- Probes complementares de CLI isolada (`.checks/code-review/probe-formal2-native-cli.mjs`): alias false →disabled/features_hooks_disabled/trustnot_applicable/complete; null aninhado →invalid/hooks_structure_invalid/partial; description42 →invalid/hooks_file_envelope_invalid/partial; flag de tipo errado →invalid/features_hooks_flag_invalid_type/partial; envelope válido com descriptionnull →configured/hooks_configured/complete. Em todos: exit0, três agentes preservados e sentinela ausente. Os três probes de flags que antes mascaravam tipos errados agora retornam invalid.
+- Quatro configurações ativas: hash/tamanho iguais ao baseline anterior à implementação. Core5/AGENTS/task/configuração dos limites e relatório independente preservados.
+
+Essas provas não substituem uma nova verificação independente do código corrigido nem concedem ready formal. A rodada5 e as duas tentativas formais autorizadas terminaram; nenhuma verificação6 ou revisão formal3 foi iniciada. A entrega está preparada para a decisão específica do proprietário sobre ambas, exclusivamente para a issue3. Não houve push das correções, PR, merge ou publicação.
