@@ -1610,3 +1610,166 @@ scripts/code-review/{cli.mjs,review.mjs,review.test.mjs,schema.json,README.md}` 
 - Evidência: `.checks/code-review/verifier4-g3-shell-fix-red.txt`, `…-green-targets.txt`, `…-doctor.txt`,
   `…-npm-test.txt`. Preservado sem alteração: `.checks/code-review/verifier4-g3-shell-fix.md`
   (encaminhamento).
+
+## 16. Correção dos três achados bloqueantes da segunda revisão formal (13/10/2026)
+
+A segunda revisão formal (`.checks/code-review/issue-3/response.json`, HEAD `fd4258f`, `changes_requested`,
+AC3/AC5 `unmet`) confirmou três defeitos na avaliação de configuração do Codex, todos da mesma classe:
+`configuration=configured`/`status=complete` para instrumentação que o Codex 0.162.1 real desligaria ou
+rejeitaria. Encaminhamento do orquestrador: `.checks/code-review/formal2-codex-fixes.md`. Autor: Claude.
+Nenhuma mudança na task, nos critérios, em `.verified.md`, no motor comum de `scripts/code-review/` (paridade
+SHA-256/diff reconfirmada abaixo), em `AGENTS.md` ou nos limites/raias de governança. Sem commit, push,
+`review:run`/`pr:create` nem nova verificação independente nesta rodada — as duas tentativas formais já
+estavam consumidas; autorização explícita só para esta correção pontual.
+
+### Os três achados e seu alcance real
+
+Fontes primárias da tag `rust-v0.162.1` obtidas pelo orquestrador via GitHub API e preservadas byte a byte em
+`.checks/code-review/native-codex-0.162.1/` (`hook_config.rs`, `hooks_tests.rs`, `legacy.rs`, `lib.rs`), só
+para leitura, nunca para execução.
+
+1. **Alias `features.codex_hooks` descartado (`config-projection.mjs:36`)**: `legacy.rs` define `Alias {
+   legacy_key: "codex_hooks", feature: Feature::CodexHooks }`; `lib.rs` confirma `Feature::CodexHooks.key()
+   == "hooks"` — mesma feature, chave legada. `extractSafeFields` só lia `parsed.features.hooks`; um usuário
+   com `[features]\ncodex_hooks = false` e hooks nativos válidos, sem override de projeto, aparecia
+   `configured` em vez de `disabled`. Quando as duas chaves coexistem no MESMO escopo, `FeaturesToml::entries`/
+   `Features::apply_map` (`lib.rs`) as achatam num único `BTreeMap<String, bool>`, cuja iteração alfabética
+   aplica "codex_hooks" antes de "hooks" — a canônica, por último, sobrescreve a legada; nunca um OR de
+   "false" entre as duas.
+2. **`input` do `mcp_tool` com `null` aninhado (`hooks-shape.mjs:144`)**: `deserialize_mcp_tool_input`
+   (`hook_config.rs`) roda `toml::Value::try_from` sobre o mapa inteiro de `input`; TOML não tem `null`, então
+   qualquer profundidade de objeto/array com `null` falha a deserialização. `hooks_tests.rs::
+   hooks_file_rejects_mcp_tool_handler_with_null_input` prova três formas: objeto raso (`{"optional": null}`),
+   aninhado em objeto (`{"metadata": {"optional": null}}`) e aninhado em array (`{"values": [null]}`) — as
+   três rejeitadas pela fonte. `isValidDefaultedField(handler, "input", isPlainObject)` só conferia o
+   container externo, então as três formas apareciam `configured`.
+3. **Envelope de `hooks.json` não validado (`config-projection.mjs:21`)**: `HooksFile` tem `#[serde(
+   deny_unknown_fields)]` na raiz, `description: Option<String>` e `hooks: HookEventsToml` (default só na
+   AUSÊNCIA da chave, não um `Option`). `hooks_tests.rs::hooks_file_rejects_events_outside_hooks_object` prova
+   que um campo de raiz fora de `description`/`hooks` falha a deserialização do arquivo inteiro.
+   `extractSafeFields` nunca validava a raiz antes de projetar: `description=42` ao lado de um
+   `hooks.PreToolUse` válido aparecia `configured`, embora o Codex real rejeitasse o arquivo inteiro.
+
+### Ordem seguida (TDD)
+
+Leitura das quatro fontes primárias (só texto, nunca importadas/executadas) → regressões novas na própria
+camada (`config-projection.unit.test.mjs`, 11 casos novos) e na fronteira real da CLI
+(`configuration-trust.cli.test.mjs`, 8 casos novos) → RED confirmado por execução real (`git stash push --
+` dos dois arquivos de produto desta rodada para o estado anterior — `fd4258f` —, suíte afetada rodada sobre
+o produto antigo, depois `stash pop`) → implementação → GREEN com os alvos afetados, depois `test:doctor`
+completo isolado e `npm test` completo uma única vez.
+
+RED real, produto no estado anterior a esta rodada (testes desta rodada já presentes), saída completa em
+`.checks/code-review/formal2-codex-fixes-red.txt`:
+
+```
+node --test tests/doctor/config-projection.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+  -> tests 79, pass 68, fail 11
+EXIT_CODE=1
+```
+
+As 11 falhas são exatamente os casos novos desta rodada que discriminam os três achados (6 em
+`config-projection.unit.test.mjs`: alias isolado, null aninhado em profundidade variável, `description=42`,
+campo de raiz desconhecido, `hooks: null`, raiz não-objeto; 5 em `configuration-trust.cli.test.mjs`: alias em
+usuário, alias em projeto, `description=42` na fronteira real, raiz desconhecida na fronteira real, `null`
+aninhado na fronteira real). Os demais 68 casos (antigos e os novos que já valiam sem a correção, ex.: a
+chave canônica decidindo o conflito, dados válidos preservados, config.toml/Claude não afetados pela
+whitelist de hooks.json) já passavam no produto antigo — cobertura da alternativa que a correção precisa
+preservar sem quebrar, não regressão deste achado.
+
+### Decisão e correção
+
+1. **`config-projection.mjs` — alias de `features.hooks`**: `extractSafeFields` agora lê
+   `parsed.features.hooks` (canônica) e, só quando esta não é booleana, cai para `parsed.features.codex_hooks`
+   (alias) — reproduzindo a sobrescrita alfabética do `BTreeMap` nativo sem reimplementar o merge inteiro de
+   features (fora do escopo: só a feature de hooks importa aqui). A restrição de confiança de projeto em
+   `config-reader.mjs` (`isDisabled` do Codex) já operava sobre o campo final `fields.featuresHooksEnabled`,
+   então passou a cobrir o alias automaticamente, sem alteração própria nesse arquivo.
+2. **`hooks-shape.mjs` — `input` do `mcp_tool` sem `null` em nenhuma profundidade**: nova `hasNullDeep`
+   (pilha explícita com `Array.prototype.push`/`pop`, sem recursão de chamada, para não depender da
+   profundidade de um `input` arbitrário — o limite de 1 MiB já aplicado à leitura do arquivo limita o número
+   de nós, não a profundidade de pilha de uma recursão) e `isTomlRepresentableMcpInput` (objeto E sem `null`
+   em nenhuma profundidade), substituindo o `isPlainObject` raso em `isValidDefaultedField(handler, "input",
+   ...)`. Reproduz só a regra de `null` (não um parser de representabilidade TOML completo — fora do escopo:
+   nenhum outro caso de não-representabilidade foi identificado pela fonte revisada).
+3. **`config-projection.mjs` — envelope de `hooks.json`**: nova `hooksFileEnvelopeReasonCode`, chamada em
+   `projectConfig` só quando `agentId === "codex" && format === "json"` (hooks.json é o único arquivo JSON do
+   Codex; `config.toml` é sempre format `"toml"`, nunca passa por esta checagem; Claude/Hermes nunca têm
+   `agentId === "codex"`). Raiz fora de objeto, campo desconhecido fora de `description`/`hooks`,
+   `description` de outro tipo que não string/null, ou `hooks` explicitamente `null` (tipo errado para um
+   campo não-`Option`, distinto da ausência da chave, que usa o default vazio) retornam
+   `invalid/hooks_file_envelope_invalid` antes de `extractSafeFields`. Um `hooks` presente de outro tipo
+   (array/string/número) continua decidido por `inspectNativeHooks`, como antes — não duplicado aqui, para
+   preservar o `reasonCode hooks_structure_invalid` já coberto por teste aprovado
+   (`config-projection-C8 Codex: hooks.json e config.toml com forma diferente da documentada são inválidos`).
+
+### Resultados
+
+Alvos afetados, logo após a implementação (saída completa em
+`.checks/code-review/formal2-codex-fixes-green-targets.txt`):
+
+```
+node --test tests/doctor/config-projection.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs tests/doctor/config-reader.unit.test.mjs tests/doctor/scope-merge.unit.test.mjs tests/doctor/trust-resolution.unit.test.mjs
+  -> tests 113, pass 113, fail 0, skipped 0
+EXIT_CODE=0
+```
+
+`test:doctor` completo isolado (saída em `.checks/code-review/formal2-codex-fixes-doctor.txt`):
+
+```
+node --test "tests/doctor/**/*.test.mjs"
+  -> tests 271, pass 270, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+`npm test` completo, uma única execução após as alterações finais (saída completa em
+`.checks/code-review/formal2-codex-fixes-npm-test.txt`, sem pipe mascarando o exit):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 271, pass 270, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a rodada 4 verificada (252 → 271): 19 testes — 11 novos em
+`config-projection.unit.test.mjs` (alias isolado; canônica decidindo o conflito nos dois sentidos; cinco
+casos de envelope de hooks.json inválido; dois casos de envelope válido preservado; dois casos de não-
+interferência em Claude/config.toml; null aninhado em até 4 níveis de profundidade; dados aninhados válidos
+preservados) e 8 novos em `configuration-trust.cli.test.mjs` (reprodução exata na fronteira real da CLI,
+JSON e texto, dos mesmos três achados). O único skip continua `agent-resolution-C2 realpath/symlink real …
+(POSIX)`, condicional ao executor, não um skip novo. Paridade do motor comum reconfirmada nesta data: `git
+diff --exit-code 4242520 -- scripts/code-review/{cli.mjs,review.mjs,review.test.mjs,schema.json,README.md}`
+sem diff.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0 (mesma limitação das seções anteriores). Nenhuma fonte, agente,
+  hook, intérprete ou config ativa da máquina foi executada, importada ou alterada nesta rodada — só leitura
+  textual das quatro fontes primárias da tag `rust-v0.162.1` já citadas pelo encaminhamento, preservadas em
+  `.checks/code-review/native-codex-0.162.1/`.
+- `isTomlRepresentableMcpInput` reproduz só a rejeição de `null` do deserializer customizado; outros valores
+  que o JSON permite e o TOML eventualmente não represente (nenhum identificado pela fonte revisada) ficam
+  fora do escopo desta checagem — mesma lacuna já registrada em `docs/agent-compatibility.md` para o restante
+  de `input`/comandos/URLs/prompts.
+- `hooksFileEnvelopeReasonCode` não distingue, dentro do mesmo `reasonCode`, qual das quatro condições (raiz
+  não-objeto, campo desconhecido, `description` de tipo errado, `hooks: null`) disparou a invalidação — mesmo
+  nível de granularidade já aceito para `hooks_structure_invalid` (forma interna de `hooks`), não ampliado nem
+  reduzido nesta correção.
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/config-projection.mjs` (`isPlainObject`/`hooksFileEnvelopeReasonCode` novos; alias
+  `codex_hooks` em `extractSafeFields`; chamada do envelope em `projectConfig`), `src/doctor/hooks-shape.mjs`
+  (`hasNullDeep`/`isTomlRepresentableMcpInput` novos, usados por `classifyCodexMcpTool`).
+- Testes: `tests/doctor/config-projection.unit.test.mjs` (11 novos), `tests/doctor/configuration-trust.cli.
+  test.mjs` (8 novos).
+- Documentação/checklist: `docs/agent-compatibility.md` (linha Codex de alias/precedência; linha Codex de
+  `hooks.json`/`input` do `mcp_tool` com a checagem de `null` e o novo envelope de raiz),
+  `.checks/issue-3-agent-diagnostics.md` (nova subseção "Landing da correção dos três achados bloqueantes da
+  segunda revisão formal" e frase adicional na entrada C8) e esta seção.
+  `.checks/issue-3-agent-diagnostics.verified.md` não foi editado (relatório independente, preservado).
+- Evidência: `.checks/code-review/formal2-codex-fixes-red.txt`, `…-green-targets.txt`, `…-doctor.txt`,
+  `…-npm-test.txt`. Preservados sem alteração: `.checks/code-review/formal2-codex-fixes.md` (encaminhamento),
+  `.checks/code-review/issue-3/response.json` (segunda revisão formal),
+  `.checks/code-review/native-codex-0.162.1/*.rs` (fontes primárias).

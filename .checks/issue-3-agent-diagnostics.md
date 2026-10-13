@@ -129,6 +129,41 @@ autor.
 | --- | --- | --- |
 | Pertencer a `VALID_HOOKS` não implica shell hook aceito: `SHELL_UNSUPPORTED_HOOKS` é checada antes, só na confirmação de configuração shell (G3, variante shell) | O Verifier provou com a fonte real (`hermes_cli/plugins.py:208`, `agent/shell_hooks.py:220`-223) que `transform_api_error_classification` pertence a `VALID_HOOKS` (contrato geral de plugin hooks, sustenta `verified` em C5/mechanisms) E a `SHELL_UNSUPPORTED_HOOKS` (recusado pelo parser de shell hooks ANTES de checar `VALID_HOOKS`) — duas superfícies do mesmo agente, nunca a mesma pergunta. `config-reader.mjs` cruzava só contra `VALID_HOOKS`, afirmando `configured` para um shell hook que a instalação real ignora. `contract-evidence.mjs` ganhou `extractHermesShellUnsupportedHooks`, reaproveitando o MESMO extrator léxico de conjunto (`extractTopLevelStringSet`, generalizado por nome) e a MESMA leitura de texto já feita para `VALID_HOOKS` — nenhum parser novo, nenhuma leitura extra, nenhum catálogo de produto inventado. `readAgentConfiguration` só aplica a exclusão depois que ao menos um evento já bate com `VALID_HOOKS` (preserva `hooks_event_not_in_installed_catalog` quando nenhum bate): todos os eventos catalogados sendo também shell-unsupported vira `not_configured/hooks_event_shell_unsupported`; um evento shell aceito ao lado preserva `configured`; tabela de exclusão ausente/ilegível/não reconhecida vira `unknown/hooks_shell_exclusion_unavailable`, nunca presume conjunto vazio. `mechanisms`/`validHooks` (C5) nunca são tocados por este ramo — a exclusão só altera a decisão de `configuration` do Hermes. Fixture positiva (`hermesPluginsSource`) corrigida para listar `transform_api_error_classification` também em `VALID_HOOKS` (já estava em `SHELL_UNSUPPORTED_HOOKS`), reproduzindo a mesma forma do arquivo real — a fixture anterior escondia justamente o caso que a fonte real reproduz | Misturar a exclusão de shell na matriz de capacidades/`mechanisms` (confundiria C5, que mede o contrato de PLUGIN hooks, com a decisão de shell hooks de `config.yaml`); presumir conjunto vazio de exclusões quando a tabela não é reconhecida (afirmaria "nenhuma exclusão" sem prova); escrever um segundo parser de conjunto Python só para esta tabela (o extrator já existente é genérico por nome) |
 
+### Landing da correção dos três achados bloqueantes da segunda revisão formal, registrado antes do código
+
+Segunda revisão formal (`.checks/code-review/issue-3/response.json`, HEAD `fd4258f`, `changes_requested`):
+`.checks/code-review/formal2-codex-fixes.md`. Três classes de defeito, todas C8/C12 (configuração anunciada
+como `configured`/`complete` quando o Codex real rejeitaria ou já teria desligado hooks). Autor: Claude.
+Nenhum critério da task muda; `.verified.md` não é editado por este autor.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| `codex_hooks` é alias depreciado da MESMA feature que `features.hooks`; a canônica decide quando coexistem | `legacy.rs`/`lib.rs` (rust-v0.162.1): `Alias { legacy_key: "codex_hooks", feature: Feature::CodexHooks }`, `Feature::CodexHooks.key() == "hooks"`. As duas chaves achatam num único `BTreeMap<String, bool>` (`FeaturesToml::entries`/`apply_map`); a iteração alfabética aplica "codex_hooks" antes de "hooks", e a canônica, por último, sobrescreve a legada — nunca um OR de "false". `extractSafeFields` (`config-projection.mjs`) agora lê `parsed.features.codex_hooks` como fallback só quando `parsed.features.hooks` não é booleano; a restrição de confiança de projeto em `config-reader.mjs` já operava sobre o campo final (`featuresHooksEnabled`), então passou a cobrir o alias sem alteração própria | Tratar as duas chaves como um OR aditivo de "false" (inventaria uma semântica que a fonte não tem); dar à legada a mesma prioridade da canônica quando ambas presentes (inverteria a ordem real de sobrescrita do BTreeMap) |
+| `input` do `mcp_tool` rejeita `null` em QUALQUER profundidade de objeto/array, não só no container externo | `deserialize_mcp_tool_input` (`hook_config.rs`) roda `toml::Value::try_from` sobre o mapa inteiro; TOML não tem `null`. `hooks_tests.rs::hooks_file_rejects_mcp_tool_handler_with_null_input` prova objeto raso (`{"optional": null}`), aninhado em objeto (`{"metadata": {"optional": null}}`) e aninhado em array (`{"values": [null]}`), as três rejeitadas. `hooks-shape.mjs` ganhou `hasNullDeep` (pilha explícita, sem recursão de chamada, para não depender da profundidade de um `input` arbitrário dentro do limite de 1 MiB já aplicado à leitura) e `isTomlRepresentableMcpInput`, substituindo o `isPlainObject` raso usado antes em `isValidDefaultedField(handler, "input", ...)` | Reproduzir um parser de representabilidade TOML completo (escopo maior que o achado, dependência nova); limitar a checagem a um nível fixo de profundidade (não cobriria o terceiro caso do teste nativo) |
+| Envelope de `hooks.json` (`HooksFile`): raiz com `deny_unknown_fields`, `description: Option<String>`, `hooks: HookEventsToml` (default só na ausência da chave) | `hook_config.rs`: `#[serde(deny_unknown_fields)] struct HooksFile { description: Option<String>, hooks: HookEventsToml }`. `hooks_tests.rs::hooks_file_rejects_events_outside_hooks_object` prova raiz com campo desconhecido rejeitada. `config-projection.mjs` ganhou `hooksFileEnvelopeReasonCode`, aplicada só quando `agentId === "codex" && format === "json"` (hooks.json; nunca `config.toml`, que tem raiz própria, nem Claude/Hermes, que têm schemas de raiz distintos): raiz fora de objeto, campo desconhecido, `description` de outro tipo que não string/null, ou `hooks` explicitamente `null` (campo não-`Option`) viram `invalid/hooks_file_envelope_invalid`. Um `hooks` presente de outro tipo (array/string/número) continua decidido por `inspectNativeHooks` como antes (`hooks_structure_invalid`), sem duplicar a checagem | Aplicar a mesma whitelist de raiz a `config.toml` ou a outros agentes (misturaria schemas de raiz distintos); tratar `hooks: null` como ausência (contradiria `HookEventsToml` não ser `Option`) |
+
+Regressões RED contra `fd4258f` (produto no estado anterior a esta correção, testes desta rodada já
+presentes), saída completa em `.checks/code-review/formal2-codex-fixes-red.txt`:
+
+```
+node --test tests/doctor/config-projection.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+  -> tests 79, pass 68, fail 11
+EXIT_CODE=1
+```
+
+As 11 falhas são exatamente os casos novos desta rodada que discriminam os três achados (6 na própria camada
+de `config-projection.unit.test.mjs`, 5 na fronteira real da CLI em `configuration-trust.cli.test.mjs`);
+os demais 68 casos (antigos e os novos que já valiam sem a correção, ex.: dados válidos preservados)
+continuavam verdes. GREEN dos mesmos alvos mais `config-reader`/`scope-merge`/`trust-resolution` (113/113,
+`.checks/code-review/formal2-codex-fixes-green-targets.txt`), `test:doctor` completo isolado (271 testes,
+270 pass, 1 skip condicional ao executor — o mesmo já registrado desde a rodada 3 —,
+`.checks/code-review/formal2-codex-fixes-doctor.txt`) e `npm test` completo uma única execução após as
+alterações finais (`test:governance` 6/6, `test:code-review` 10/10, `test:doctor` 271 testes/270 pass/1
+skip, `.checks/code-review/formal2-codex-fixes-npm-test.txt`). Delta de `test:doctor` contra a rodada 4
+verificada (252 → 271): 19 testes novos (11 em `config-projection.unit.test.mjs`, 8 em
+`configuration-trust.cli.test.mjs`). Paridade do motor comum reconfirmada nesta data sem diff: `git diff
+--exit-code 4242520 -- scripts/code-review/{cli.mjs,review.mjs,review.test.mjs,schema.json,README.md}`.
+
 ## Checks
 
 ### S1 - Saber quais agentes foram encontrados sem iniciar os agentes · 6 arquivos · ~26 KB · ~7k
@@ -242,6 +277,22 @@ sendo também Python-plugin-only vira `not_configured/hooks_event_shell_unsuppor
 ao lado preserva `configured`; a tabela de exclusão ausente/ilegível/não reconhecida vira
 `unknown/hooks_shell_exclusion_unavailable`, nunca um conjunto vazio presumido. `mechanisms`/`validHooks`
 (C5) não mudam — é uma superfície de decisão distinta do mesmo contrato.
+**Corrigido na correção dos três achados bloqueantes da segunda revisão formal
+(`.checks/code-review/formal2-codex-fixes.md`)**: (1) `codex_hooks` (alias depreciado de `features.hooks`,
+mesma feature, `legacy.rs`/`lib.rs`) era descartado — um usuário com só o alias em `false` e hooks nativos
+válidos aparecia `configured`; agora `featuresHooksEnabled` lê a canônica OU, só na ausência/tipo inválido
+dela, o alias, preservando a mesma restrição de confiança de projeto já existente para a feature (qualquer
+valor explícito em escopo de PROJETO, por qualquer uma das duas chaves, continua `unknown/policy_precedence_
+undetermined`). (2) `input` do `mcp_tool` com `null` aninhado em objeto/array (`{"optional": null}`,
+`{"metadata": {"optional": null}}`, `{"values": [null]}`) aparecia `configured`, apesar de
+`deserialize_mcp_tool_input` (hook_config.rs) rejeitar `null` em qualquer profundidade (TOML não tem `null`);
+`hooks-shape.mjs` ganhou uma checagem iterativa (sem recursão de chamada) que cobre a mesma regra. (3) a raiz
+de `hooks.json` (`HooksFile`, `#[serde(deny_unknown_fields)]`, `description: Option<String>`, `hooks:
+HookEventsToml` com default só na ausência da chave) não era validada antes da projeção: `description=42` ou
+um campo desconhecido na raiz (ex.: um evento fora de `hooks`) aparecia `configured`, embora o Codex real
+rejeite o arquivo inteiro; `config-projection.mjs` ganhou `hooksFileEnvelopeReasonCode`, aplicada só a
+hooks.json (`agentId === "codex" && format === "json"`), nunca a `config.toml` nem a outros agentes. Ver
+Landing da correção dos três achados bloqueantes.
 Proof: `node --test --test-name-pattern="config-projection-C8" tests/doctor/config-projection.unit.test.mjs`
 Proof: `node --test tests/doctor/config-sources.unit.test.mjs`
 Proof: `node --test tests/doctor/config-reader.unit.test.mjs`

@@ -4,6 +4,36 @@ import { inspectNativeHooks } from "./hooks-shape.mjs";
 
 export const ONE_MIB_BYTES = 1024 * 1024;
 
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// `HooksFile` (hook_config.rs, rust-v0.162.1) é a raiz exclusiva de
+// hooks.json: `#[serde(deny_unknown_fields)]`, `description: Option<String>`
+// e `hooks: HookEventsToml` (default só quando a CHAVE está ausente, não um
+// `Option`). Só se aplica a hooks.json (json do Codex); config.toml tem raiz
+// própria (features/hooks/etc.), nunca esta whitelist, e Claude/Hermes têm
+// schemas de raiz distintos. Campo desconhecido na raiz, `description` de
+// outro tipo que não string/null, ou `hooks` explicitamente `null` (tipo
+// errado para um campo não-Option, ao contrário da ausência da chave, que usa
+// o default vazio) falham a deserialização do arquivo inteiro
+// (hooks_tests.rs: `hooks_file_rejects_events_outside_hooks_object`). Um
+// `hooks` presente de outro tipo (array/string/número) continua decidido
+// adiante por `inspectNativeHooks`, que já rejeita essa forma com o mesmo
+// resultado haja ou não esta checagem.
+function hooksFileEnvelopeReasonCode(parsed) {
+  if (!isPlainObject(parsed)) return "hooks_file_envelope_invalid";
+  for (const key of Object.keys(parsed)) {
+    if (key !== "description" && key !== "hooks") return "hooks_file_envelope_invalid";
+  }
+  if (Object.hasOwn(parsed, "description")) {
+    const description = parsed.description;
+    if (description !== null && typeof description !== "string") return "hooks_file_envelope_invalid";
+  }
+  if (Object.hasOwn(parsed, "hooks") && parsed.hooks === null) return "hooks_file_envelope_invalid";
+  return null;
+}
+
 // Projeção segura: a saída nunca inclui o conteúdo bruto nem os valores de
 // comandos/credenciais/prompts de um hook, só os booleanos/estrutura
 // necessários para decidir "configuration". Cada chave aqui corresponde a um
@@ -33,8 +63,22 @@ function extractSafeFields(parsed, agentId, platform) {
   if (typeof parsed.allowManagedHooksOnly === "boolean") {
     fields.allowManagedHooksOnly = parsed.allowManagedHooksOnly;
   }
-  if (parsed.features && typeof parsed.features.hooks === "boolean") {
-    fields.featuresHooksEnabled = parsed.features.hooks;
+  // `features.hooks` é a chave real; `codex_hooks` é o alias depreciado para
+  // a MESMA feature (legacy.rs, rust-v0.162.1: `Alias { legacy_key:
+  // "codex_hooks", feature: Feature::CodexHooks }`, `feature.key() == "hooks"`
+  // em lib.rs). As duas viram entradas de um único `BTreeMap<String, bool>`
+  // achatado (`FeaturesToml::entries`, `apply_map` em lib.rs); a ordem de
+  // iteração do BTreeMap é alfabética, então "codex_hooks" é aplicada antes
+  // de "hooks" quando as duas chaves coexistem, e a canônica, aplicada por
+  // último, sobrescreve a legada — nunca um OR de "false" entre as duas. Por
+  // isso, com os dois presentes e booleanos, a canônica decide; o alias só
+  // decide na ausência (ou tipo inválido) da canônica.
+  if (parsed.features) {
+    if (typeof parsed.features.hooks === "boolean") {
+      fields.featuresHooksEnabled = parsed.features.hooks;
+    } else if (typeof parsed.features.codex_hooks === "boolean") {
+      fields.featuresHooksEnabled = parsed.features.codex_hooks;
+    }
   }
   if (typeof parsed.hooks_auto_accept === "boolean") {
     fields.hooksAutoAccept = parsed.hooks_auto_accept;
@@ -97,6 +141,12 @@ export function projectConfig({ rawText, format, agentId, platform }) {
       reasonCode: error.reasonCode ?? "config_malformed",
       fields: {},
     };
+  }
+  if (agentId === "codex" && format === "json") {
+    const envelopeReasonCode = hooksFileEnvelopeReasonCode(parsed);
+    if (envelopeReasonCode) {
+      return { configuration: "invalid", reasonCode: envelopeReasonCode, fields: {} };
+    }
   }
   const { fields, hooksShape, hooksReasonCode } = extractSafeFields(parsed, agentId, platform);
   if (hooksShape) {

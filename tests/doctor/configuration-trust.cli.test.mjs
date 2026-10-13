@@ -105,6 +105,76 @@ test("configuration-trust-C8 features.hooks=true do Codex em PROJETO (--cwd) + f
   }
 });
 
+// Achados bloqueantes da segunda revisão formal (.checks/code-review/issue-3/
+// response.json, AC3/AC5): `codex_hooks` é o alias depreciado de
+// `features.hooks` para a MESMA feature (legacy.rs/lib.rs, rust-v0.162.1,
+// `Feature::CodexHooks.key() == "hooks"`). Só no escopo de USUÁRIO (sem gate
+// de confiança de projeto) um valor explícito resolve de verdade.
+test("configuration-trust-C8 features.codex_hooks=false (alias) do Codex em USUÁRIO fica disabled/not_applicable, igual a features.hooks", () => {
+  const scratch = makeScratch("doctor-c8-codex-alias-disabled-");
+  try {
+    const home = path.join(scratch, "home");
+    writeAgentConfig(home, "codex", "[features]\ncodex_hooks = false\n[hooks]\nPreToolUse = []\n");
+    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "disabled");
+    assert.equal(codex.configReasonCode, "features_hooks_disabled");
+    assert.equal(codex.trust, "not_applicable");
+
+    const text = runDoctor([], { env: homeEnv(home) });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /features_hooks_disabled/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// As entradas de `[features]` do config.toml achatam num único
+// `BTreeMap<String, bool>` (FeaturesToml::entries/apply_map, lib.rs);
+// "codex_hooks" < "hooks" alfabeticamente, então a canônica é aplicada por
+// último e sobrescreve a legada quando as duas coexistem — nunca um OR de
+// "false" entre as duas chaves.
+test("configuration-trust-C8 features.hooks e features.codex_hooks coexistindo: a chave canônica decide no relatório real, nunca um OR de false", () => {
+  const scratch = makeScratch("doctor-c8-codex-alias-conflito-");
+  try {
+    const home = path.join(scratch, "home");
+    writeAgentConfig(
+      home,
+      "codex",
+      "[features]\nhooks = true\ncodex_hooks = false\n[hooks]\nPreToolUse = []\n",
+    );
+    const { report } = runDoctorJson([], { env: homeEnv(home) });
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.notEqual(codex.configuration, "disabled");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// A restrição de confiança de PROJETO (achado original, já coberta acima para
+// a chave canônica) também se aplica ao alias: qualquer valor explícito da
+// MESMA feature em escopo de projeto fica unknown, nunca disabled/configured
+// por suposição — a chave usada para endereçá-la não muda essa regra.
+test("configuration-trust-C8 features.codex_hooks (alias) explícito em PROJETO (--cwd) fica unknown, nunca disabled/configured", () => {
+  const scratch = makeScratch("doctor-c8-codex-alias-projeto-");
+  try {
+    const home = path.join(scratch, "home");
+    const project = path.join(scratch, "project");
+    const projectConfigDir = path.join(project, ".codex");
+    mkdirSync(projectConfigDir, { recursive: true });
+    writeFileSync(path.join(projectConfigDir, "config.toml"), "[features]\ncodex_hooks = false\n");
+
+    const { status, report } = runDoctorJson(["--cwd", project], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "unknown");
+    assert.equal(codex.configReasonCode, "policy_precedence_undetermined");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 test("configuration-trust-C8 config.toml do Codex com [hooks] definido fica configured/unknown no relatório real", () => {
   const scratch = makeScratch("doctor-c8-codex-configured-");
   try {
@@ -698,6 +768,165 @@ test("configuration-trust-C8 handler command do Codex com timeout de tipo errado
     const text = runDoctor([], { env });
     assert.equal(text.status, 0);
     assert.match(text.stdout, /hooks_structure_invalid/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+function writeCodexHooksJson(home, content) {
+  const dir = path.join(home, ".codex");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "hooks.json"), content);
+}
+
+// Achado bloqueante da segunda revisão formal (response.json, AC3/AC5):
+// `HooksFile` (hook_config.rs, rust-v0.162.1) tem `#[serde(deny_unknown_
+// fields)]` na raiz e `description: Option<String>` — um `description` de
+// outro tipo falha a deserialização do hooks.json inteiro, mesmo ao lado de
+// um handler válido em `hooks`.
+test("configuration-trust-C8 hooks.json do Codex com description=42 fica invalid/hooks_file_envelope_invalid no relatório real, partial, preservando os demais", () => {
+  const scratch = makeScratch("doctor-c8-hooksjson-envelope-");
+  try {
+    const home = path.join(scratch, "home");
+    writeCodexHooksJson(
+      home,
+      JSON.stringify({
+        description: 42,
+        hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "x" }] }] },
+      }),
+    );
+    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "invalid");
+    assert.equal(codex.configReasonCode, "hooks_file_envelope_invalid");
+    assert.equal(codex.trust, "unknown");
+    for (const id of ["claude", "hermes"]) {
+      assert.equal(report.agents.find((a) => a.id === id).configuration, "not_configured", id);
+    }
+
+    const text = runDoctor([], { env: homeEnv(home) });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /hooks_file_envelope_invalid/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// `deny_unknown_fields` na raiz rejeita qualquer chave fora de
+// description/hooks (hooks_tests.rs, `hooks_file_rejects_events_outside_
+// hooks_object`) — um evento colocado na raiz, fora de `hooks`, nunca é
+// alcançado pelo Codex real.
+test("configuration-trust-C8 hooks.json do Codex com evento na raiz (fora de hooks) fica invalid/hooks_file_envelope_invalid, nunca configured", () => {
+  const scratch = makeScratch("doctor-c8-hooksjson-raiz-desconhecida-");
+  try {
+    const home = path.join(scratch, "home");
+    writeCodexHooksJson(
+      home,
+      JSON.stringify({ SessionStart: [{ hooks: [{ type: "command", command: "x" }] }] }),
+    );
+    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "invalid");
+    assert.equal(codex.configReasonCode, "hooks_file_envelope_invalid");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Forma válida preservada: description ausente/nulo/string e hooks
+// ausente/vazio continuam configured/not_configured conforme o conteúdo real
+// de `hooks`, nunca invalid por causa do envelope.
+test("configuration-trust-C8 hooks.json do Codex com description ausente/nulo/string continua válido no relatório real", () => {
+  const scratch = makeScratch("doctor-c8-hooksjson-envelope-valido-");
+  try {
+    const home = path.join(scratch, "home");
+    for (const content of [
+      {},
+      { description: null },
+      { description: "gate de revisão" },
+      { description: "gate", hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "x" }] }] } },
+    ]) {
+      writeCodexHooksJson(home, JSON.stringify(content));
+      const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+      const label = JSON.stringify(content);
+      assert.equal(status, 0, label);
+      const codex = report.agents.find((a) => a.id === "codex");
+      assert.notEqual(codex.configReasonCode, "hooks_file_envelope_invalid", label);
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Achado bloqueante da segunda revisão formal (response.json, AC3/AC5):
+// `input` (serde_json::Map, desserializador customizado) rejeita `null` em
+// qualquer profundidade — objeto raso, aninhado em objeto e aninhado em
+// array (hooks_tests.rs, `hooks_file_rejects_mcp_tool_handler_with_null_
+// input`) — não só no container externo.
+test("configuration-trust-C8 hooks.json do Codex com mcp_tool input contendo null aninhado fica invalid/hooks_structure_invalid no relatório real", () => {
+  for (const input of [{ optional: null }, { metadata: { optional: null } }, { values: [null] }]) {
+    const scratch = makeScratch("doctor-c8-mcp-input-null-aninhado-");
+    try {
+      const home = path.join(scratch, "home");
+      writeCodexHooksJson(
+        home,
+        JSON.stringify({
+          hooks: {
+            PostToolUse: [{ hooks: [{ type: "mcp_tool", server: "security", tool: "scan", input }] }],
+          },
+        }),
+      );
+      const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+      const label = JSON.stringify(input);
+      assert.equal(status, 0, label);
+      assert.equal(report.status, "partial", label);
+      const codex = report.agents.find((a) => a.id === "codex");
+      assert.equal(codex.configuration, "invalid", label);
+      assert.equal(codex.configReasonCode, "hooks_structure_invalid", label);
+      assert.equal(codex.trust, "unknown", label);
+
+      const text = runDoctor([], { env: homeEnv(home) });
+      assert.equal(text.status, 0, label);
+      assert.match(text.stdout, /hooks_structure_invalid/);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+});
+
+// Dados válidos preservados: `input` sem `null` em nenhuma profundidade
+// continua configured, incluindo valores aninhados reais.
+test("configuration-trust-C8 hooks.json do Codex com mcp_tool input aninhado sem null continua configured no relatório real", () => {
+  const scratch = makeScratch("doctor-c8-mcp-input-valido-aninhado-");
+  try {
+    const home = path.join(scratch, "home");
+    writeCodexHooksJson(
+      home,
+      JSON.stringify({
+        hooks: {
+          PostToolUse: [
+            {
+              hooks: [
+                {
+                  type: "mcp_tool",
+                  server: "security",
+                  tool: "scan",
+                  input: { file_path: "x", nested: { ok: true, list: [1, "a", true] } },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "configured");
+    assert.equal(codex.configReasonCode, "hooks_configured");
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

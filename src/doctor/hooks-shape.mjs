@@ -126,22 +126,52 @@ function classifyCodexCommand(handler, platform) {
   return effective.trim() !== "" ? "targeted" : "untargeted";
 }
 
+// `null` não existe em TOML; o desserializador customizado do Codex
+// (`deserialize_mcp_tool_input`, hook_config.rs) tenta `toml::Value::try_from`
+// sobre o mapa inteiro e rejeita qualquer `null`, em QUALQUER profundidade de
+// objeto/array dentro de `input` — não só no container externo
+// (hooks_tests.rs, `hooks_file_rejects_mcp_tool_handler_with_null_input`:
+// objeto raso `{"optional": null}`, aninhado em objeto `{"metadata": {...}}`
+// e aninhado em array `{"values": [null]}`, as três rejeitadas). Reproduz só
+// essa regra (não um parser TOML completo: outros valores não representáveis
+// em TOML, se algum dia existirem via JSON, ficam fora do escopo desta
+// checagem). Pilha explícita (sem recursão de chamada) para não depender da
+// profundidade de um `input` arbitrário — o limite de 1 MiB já aplicado à
+// leitura do arquivo limita o número de nós, não a profundidade de pilha.
+function hasNullDeep(root) {
+  const stack = [root];
+  while (stack.length > 0) {
+    const value = stack.pop();
+    if (value === null) return true;
+    if (Array.isArray(value)) {
+      for (const item of value) stack.push(item);
+    } else if (isPlainObject(value)) {
+      for (const item of Object.values(value)) stack.push(item);
+    }
+  }
+  return false;
+}
+
+function isTomlRepresentableMcpInput(value) {
+  return isPlainObject(value) && !hasNullDeep(value);
+}
+
 // Campos opcionais de `HookHandlerConfig::McpTool` que a fonte tipa:
 // `timeout`/`statusMessage` são `Option<T>` (mesmos tipos do Command, null
 // válido). `input` (`serde_json::Map` com desserializador customizado, NÃO
-// Option — a checagem extra de representabilidade TOML do desserializador não
-// é reproduzida) só aceita ausência ou um objeto; `null` presente é tipo
-// errado, como qualquer outro tipo (ver isValidDefaultedField e achado G1 da
-// rodada 3). discovery.rs: um `mcp_tool` sob o evento SessionEnd é lido e
-// pulado com aviso ("SessionEnd MCP hooks are not supported"), antes mesmo de
-// checar server/tool vazios — mas só depois de a struct deserializar com
-// tipos corretos, então a checagem de tipo decide primeiro.
+// Option) só aceita ausência ou um objeto sem `null` em nenhuma profundidade
+// (ver isTomlRepresentableMcpInput); um `null` presente no container externo
+// também é tipo errado, como qualquer outro tipo (ver isValidDefaultedField e
+// achado G1 da rodada 3). discovery.rs: um `mcp_tool` sob o evento SessionEnd
+// é lido e pulado com aviso ("SessionEnd MCP hooks are not supported"), antes
+// mesmo de checar server/tool vazios — mas só depois de a struct
+// deserializar com tipos corretos, então a checagem de tipo decide primeiro.
 function classifyCodexMcpTool(handler, event) {
   const base = classifyRequiredTargets(handler, ["server", "tool"]);
   if (base === "invalid") return "invalid";
   if (!isValidOptionalField(handler, "timeout", isNonNegativeInteger)) return "invalid";
   if (!isValidOptionalField(handler, "statusMessage", isString)) return "invalid";
-  if (!isValidDefaultedField(handler, "input", isPlainObject)) return "invalid";
+  if (!isValidDefaultedField(handler, "input", isTomlRepresentableMcpInput)) return "invalid";
   if (event === "SessionEnd") return "untargeted";
   return base;
 }

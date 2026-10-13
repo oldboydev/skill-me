@@ -98,6 +98,48 @@ test("config-projection-C8 features.hooks=false (Codex) vira disabled", () => {
   assert.equal(result.reasonCode, "features_hooks_disabled");
 });
 
+// Achados bloqueantes da segunda revisão formal (.checks/code-review/issue-3/
+// response.json, AC3/AC5): `codex_hooks` é o alias depreciado de
+// `features.hooks` para a MESMA feature (legacy.rs, rust-v0.162.1: `Alias {
+// legacy_key: "codex_hooks", feature: Feature::CodexHooks }`; `feature.key()
+// == "hooks"` em lib.rs).
+test("config-projection-C8 features.codex_hooks=false (alias depreciado) vira disabled, igual a features.hooks", () => {
+  const result = projectConfig({
+    rawText: "[features]\ncodex_hooks = false\n[hooks]\nPreToolUse = []\n",
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(result);
+  assert.equal(result.configuration, "disabled");
+  assert.equal(result.reasonCode, "features_hooks_disabled");
+  assert.equal(result.fields.featuresHooksEnabled, false);
+});
+
+// As entradas de `[features]` achatam num único `BTreeMap<String, bool>`
+// (FeaturesToml::entries/apply_map, lib.rs); a iteração alfabética aplica
+// "codex_hooks" antes de "hooks", e a canônica, aplicada por último,
+// sobrescreve a legada — nunca um OR de "false" entre as duas chaves.
+test("config-projection-C8 features.hooks e features.codex_hooks coexistindo: a chave canônica decide, nos dois sentidos", () => {
+  const canonicalTrueAliasFalse = projectConfig({
+    rawText: "[features]\nhooks = true\ncodex_hooks = false\n[hooks]\nPreToolUse = []\n",
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(canonicalTrueAliasFalse);
+  assert.equal(canonicalTrueAliasFalse.fields.featuresHooksEnabled, true);
+  assert.notEqual(canonicalTrueAliasFalse.configuration, "disabled");
+
+  const canonicalFalseAliasTrue = projectConfig({
+    rawText: "[features]\nhooks = false\ncodex_hooks = true\n[hooks]\nPreToolUse = []\n",
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(canonicalFalseAliasTrue);
+  assert.equal(canonicalFalseAliasTrue.fields.featuresHooksEnabled, false);
+  assert.equal(canonicalFalseAliasTrue.configuration, "disabled");
+  assert.equal(canonicalFalseAliasTrue.reasonCode, "features_hooks_disabled");
+});
+
 test("config-projection-C8 arquivo sem seção hooks fica not_configured, mesmo com outras chaves", () => {
   const result = projectConfig({
     rawText: JSON.stringify({ theme: "dark" }),
@@ -486,6 +528,126 @@ test("config-projection-C8 Codex: managed_dir/windows_managed_dir fora do tipo s
   invalidStructure('[hooks]\nwindows_managed_dir = ["C:/x"]\n', "toml", "codex");
   invalidStructure('[hooks.managed_dir]\npath = "/x"\n', "toml", "codex");
   invalidStructure(JSON.stringify({ hooks: { windows_managed_dir: 7 } }), "json", "codex");
+});
+
+// --- Achado bloqueante da segunda revisão formal: envelope de hooks.json ---
+// `HooksFile` (hook_config.rs, rust-v0.162.1): `#[serde(deny_unknown_fields)]`
+// na raiz, `description: Option<String>`, `hooks: HookEventsToml` (default só
+// na AUSÊNCIA da chave). Só se aplica a hooks.json (json do Codex); nunca a
+// config.toml (raiz própria) nem a Claude/Hermes (schemas de raiz distintos).
+
+test("config-projection-C8 Codex hooks.json: description=42 com handler válido vira invalid/hooks_file_envelope_invalid", () => {
+  const result = projectConfig({
+    rawText: JSON.stringify({
+      description: 42,
+      hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "x" }] }] },
+    }),
+    format: "json",
+    agentId: "codex",
+  });
+  assertShape(result);
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "hooks_file_envelope_invalid");
+  assert.deepEqual(result.fields, {});
+});
+
+test("config-projection-C8 Codex hooks.json: campo desconhecido na raiz (evento fora de hooks) vira invalid/hooks_file_envelope_invalid", () => {
+  const result = projectConfig({
+    rawText: JSON.stringify({ SessionStart: [{ hooks: [{ type: "command", command: "x" }] }] }),
+    format: "json",
+    agentId: "codex",
+  });
+  assertShape(result);
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "hooks_file_envelope_invalid");
+});
+
+test("config-projection-C8 Codex hooks.json: hooks=null é tipo errado (HookEventsToml não é Option), vira invalid/hooks_file_envelope_invalid", () => {
+  const result = projectConfig({ rawText: JSON.stringify({ hooks: null }), format: "json", agentId: "codex" });
+  assertShape(result);
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "hooks_file_envelope_invalid");
+});
+
+test("config-projection-C8 Codex hooks.json: raiz que não é objeto (array/string/número) vira invalid/hooks_file_envelope_invalid", () => {
+  for (const rawText of [JSON.stringify(["x"]), JSON.stringify("x"), JSON.stringify(42)]) {
+    const result = projectConfig({ rawText, format: "json", agentId: "codex" });
+    assertShape(result);
+    assert.equal(result.configuration, "invalid", rawText);
+    assert.equal(result.reasonCode, "hooks_file_envelope_invalid", rawText);
+  }
+});
+
+test("config-projection-C8 Codex hooks.json: description ausente/nulo/string e hooks ausente/vazio continuam fora do envelope inválido", () => {
+  for (const content of [
+    {},
+    { description: null },
+    { description: "gate de revisão" },
+    { hooks: {} },
+    { description: "gate", hooks: { PreToolUse: [] } },
+  ]) {
+    const result = projectConfig({ rawText: JSON.stringify(content), format: "json", agentId: "codex" });
+    assertShape(result);
+    assert.notEqual(result.reasonCode, "hooks_file_envelope_invalid", JSON.stringify(content));
+  }
+});
+
+test("config-projection-C8 Claude settings.json (mesmo formato json) não herda a whitelist de raiz do HooksFile do Codex", () => {
+  const result = projectConfig({
+    rawText: JSON.stringify({
+      description: 42,
+      hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "x" }] }] },
+    }),
+    format: "json",
+    agentId: "claude",
+  });
+  assertShape(result);
+  assert.equal(result.configuration, "configured");
+});
+
+test("config-projection-C8 Codex config.toml (mesmo agente, formato toml) não passa pelo envelope de hooks.json", () => {
+  const result = projectConfig({
+    rawText: "[hooks]\nPreToolUse = []\n",
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(result);
+  assert.notEqual(result.reasonCode, "hooks_file_envelope_invalid");
+});
+
+// --- Achado bloqueante da segunda revisão formal: null aninhado no input de mcp_tool ---
+// `deserialize_mcp_tool_input` (hook_config.rs) tenta `toml::Value::try_from`
+// sobre o mapa inteiro: TOML não tem `null`, então QUALQUER profundidade de
+// objeto/array com `null` falha a deserialização, não só o container externo
+// (hooks_tests.rs, `hooks_file_rejects_mcp_tool_handler_with_null_input`).
+
+test("config-projection-C8 Codex: input do mcp_tool com null aninhado em objeto/array (qualquer profundidade) invalida o documento, nunca configured", () => {
+  for (const input of [
+    { optional: null },
+    { metadata: { optional: null } },
+    { values: [null] },
+    { a: { b: { c: [{ d: null }] } } },
+  ]) {
+    invalidStructure(
+      withHandlers([{ type: "mcp_tool", server: "s", tool: "t", input }]),
+      "json",
+      "codex",
+    );
+  }
+});
+
+test("config-projection-C8 Codex: input do mcp_tool sem null em nenhuma profundidade continua configured, dados aninhados preservados", () => {
+  const handler = {
+    type: "mcp_tool",
+    server: "s",
+    tool: "t",
+    input: {
+      file_path: "${tool_input.file_path}",
+      include_ignored: false,
+      nested: { ok: true, list: [1, "a", true] },
+    },
+  };
+  assert.equal(projectHandlers("codex", [handler]).configuration, "configured", JSON.stringify(handler));
 });
 
 // --- Achado 2 da pré-revisão formal da rodada 3: nomes de evento ---
