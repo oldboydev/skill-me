@@ -170,6 +170,55 @@ test("config-reader-C9 features.hooks=true do Codex em PROJETO + false em USUÁR
   assert.notEqual(result.configuration, "disabled");
 });
 
+// Complementação do mesmo achado (.checks/code-review/formal2-flag-types-
+// residual.md): um tipo inválido numa das duas chaves conhecidas de
+// `[features]` precisa chegar ao relatório como `invalid/sem trust
+// concedido`, nunca `configured/trusted` por fallback indevido entre
+// canônica e alias.
+test("config-reader-C9 features.hooks com tipo inválido não cai para codex_hooks válido, fica invalid/features_hooks_flag_invalid_type", async () => {
+  const home = "/fixture/codex-home-flagtype";
+  const cwd = "/fixture/codex-project-flagtype";
+  const platform = "linux";
+  const scopes = codexConfigScopes({ home: codexHome({ env: { HOME: home }, platform }), cwd, platform });
+  const userConfigPath = scopes.find((s) => s.scope === "user" && s.format === "toml").path;
+
+  const result = await readAgentConfiguration({
+    agentId: "codex",
+    env: { HOME: home, USERPROFILE: home },
+    platform,
+    cwd,
+    fs: fsWithFiles({
+      [userConfigPath]:
+        '[features]\nhooks = "yes"\ncodex_hooks = true\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    }),
+  });
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.configReasonCode, "features_hooks_flag_invalid_type");
+  assert.notEqual(result.trust, "trusted");
+});
+
+test("config-reader-C9 features.codex_hooks com tipo inválido não fica escondido atrás de features.hooks válido, fica invalid", async () => {
+  const home = "/fixture/codex-home-flagtype2";
+  const cwd = "/fixture/codex-project-flagtype2";
+  const platform = "linux";
+  const scopes = codexConfigScopes({ home: codexHome({ env: { HOME: home }, platform }), cwd, platform });
+  const userConfigPath = scopes.find((s) => s.scope === "user" && s.format === "toml").path;
+
+  const result = await readAgentConfiguration({
+    agentId: "codex",
+    env: { HOME: home, USERPROFILE: home },
+    platform,
+    cwd,
+    fs: fsWithFiles({
+      [userConfigPath]:
+        '[features]\nhooks = true\ncodex_hooks = "no"\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    }),
+  });
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.configReasonCode, "features_hooks_flag_invalid_type");
+  assert.notEqual(result.trust, "trusted");
+});
+
 // Achado formal 6 — JSON válido com seção de hooks estruturalmente inválida
 // precisa chegar ao relatório como `invalid` (e daí `partial`), nunca
 // `configured/hooks_configured`.

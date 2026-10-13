@@ -67,16 +67,29 @@ function extractSafeFields(parsed, agentId, platform) {
   // a MESMA feature (legacy.rs, rust-v0.162.1: `Alias { legacy_key:
   // "codex_hooks", feature: Feature::CodexHooks }`, `feature.key() == "hooks"`
   // em lib.rs). As duas viram entradas de um único `BTreeMap<String, bool>`
-  // achatado (`FeaturesToml::entries`, `apply_map` em lib.rs); a ordem de
-  // iteração do BTreeMap é alfabética, então "codex_hooks" é aplicada antes
-  // de "hooks" quando as duas chaves coexistem, e a canônica, aplicada por
-  // último, sobrescreve a legada — nunca um OR de "false" entre as duas. Por
-  // isso, com os dois presentes e booleanos, a canônica decide; o alias só
-  // decide na ausência (ou tipo inválido) da canônica.
+  // achatado (`FeaturesToml::entries`, `apply_map` em lib.rs:869–871); a
+  // ordem de iteração do BTreeMap é alfabética, então "codex_hooks" é
+  // aplicada antes de "hooks" quando as duas chaves coexistem, e a canônica,
+  // aplicada por último, sobrescreve a legada — nunca um OR de "false" entre
+  // as duas. Mas o `BTreeMap<String, bool>` rejeita, na própria
+  // deserialização, qualquer uma das duas chaves presente com tipo diferente
+  // de bool — antes mesmo de aplicar essa precedência. Por isso um tipo
+  // inválido numa chave CONHECIDA presente invalida o documento mesmo que a
+  // outra chave seja um bool válido: a canônica errada não cai para o alias,
+  // e um alias errado não fica escondido atrás de uma canônica válida. Só a
+  // AUSÊNCIA da chave (não um tipo inválido dela) abre espaço para a outra
+  // decidir; com as duas presentes e booleanas, a canônica decide.
   if (parsed.features) {
-    if (typeof parsed.features.hooks === "boolean") {
+    const hasCanonical = Object.hasOwn(parsed.features, "hooks");
+    const hasAlias = Object.hasOwn(parsed.features, "codex_hooks");
+    const canonicalIsBoolean = typeof parsed.features.hooks === "boolean";
+    const aliasIsBoolean = typeof parsed.features.codex_hooks === "boolean";
+    if ((hasCanonical && !canonicalIsBoolean) || (hasAlias && !aliasIsBoolean)) {
+      return { fields: {}, featuresFlagsReasonCode: "features_hooks_flag_invalid_type" };
+    }
+    if (canonicalIsBoolean) {
       fields.featuresHooksEnabled = parsed.features.hooks;
-    } else if (typeof parsed.features.codex_hooks === "boolean") {
+    } else if (aliasIsBoolean) {
       fields.featuresHooksEnabled = parsed.features.codex_hooks;
     }
   }
@@ -148,7 +161,14 @@ export function projectConfig({ rawText, format, agentId, platform }) {
       return { configuration: "invalid", reasonCode: envelopeReasonCode, fields: {} };
     }
   }
-  const { fields, hooksShape, hooksReasonCode } = extractSafeFields(parsed, agentId, platform);
+  const { fields, hooksShape, hooksReasonCode, featuresFlagsReasonCode } = extractSafeFields(
+    parsed,
+    agentId,
+    platform,
+  );
+  if (featuresFlagsReasonCode) {
+    return { configuration: "invalid", reasonCode: featuresFlagsReasonCode, fields: {} };
+  }
   if (hooksShape) {
     return { configuration: HOOKS_SHAPE_CONFIGURATION[hooksShape], reasonCode: hooksReasonCode, fields: {} };
   }

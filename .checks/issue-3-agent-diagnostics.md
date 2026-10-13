@@ -293,6 +293,19 @@ um campo desconhecido na raiz (ex.: um evento fora de `hooks`) aparecia `configu
 rejeite o arquivo inteiro; `config-projection.mjs` ganhou `hooksFileEnvelopeReasonCode`, aplicada só a
 hooks.json (`agentId === "codex" && format === "json"`), nunca a `config.toml` nem a outros agentes. Ver
 Landing da correção dos três achados bloqueantes.
+**Complementação residual do mesmo achado 1 (`.checks/code-review/formal2-flag-types-residual.md`)**: a
+correção acima só cobria a AUSENCIA da chave canônica como gatilho de fallback para o alias; a fonte real
+(`FeaturesToml::entries: BTreeMap<String, bool>`, `lib.rs:869-871`, tag `rust-v0.162.1`) rejeita, na própria
+deserialização, qualquer uma das duas chaves conhecidas presente com tipo diferente de bool, antes mesmo de
+aplicar a precedência entre canônica e alias. Três casos com handlers nativos válidos ao lado apareciam
+`configured` indevidamente: canônica com tipo errado caindo para um alias bool válido
+(`hooks="yes"`+`codex_hooks=true`), alias com tipo errado escondido atrás de uma canônica bool válida
+(`hooks=true`+`codex_hooks="no"`), e o alias sozinho com tipo errado (`codex_hooks="no"`, sem a canônica).
+`config-projection.mjs` agora valida o tipo das duas chaves conhecidas presentes antes de escolher a flag
+efetiva: qualquer uma delas presente com tipo diferente de bool vira `invalid/features_hooks_flag_invalid_type`
+(sem projetar campos, sem trust concedido), mesmo sozinha; só a ausência de uma das chaves (não um tipo
+inválido dela) continua abrindo espaço para a outra decidir, e dois bools válidos continuam decididos pela
+canônica (comportamento já provado acima, preservado).
 Proof: `node --test --test-name-pattern="config-projection-C8" tests/doctor/config-projection.unit.test.mjs`
 Proof: `node --test tests/doctor/config-sources.unit.test.mjs`
 Proof: `node --test tests/doctor/config-reader.unit.test.mjs`

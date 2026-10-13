@@ -140,6 +140,84 @@ test("config-projection-C8 features.hooks e features.codex_hooks coexistindo: a 
   assert.equal(canonicalFalseAliasTrue.reasonCode, "features_hooks_disabled");
 });
 
+// Complementação do mesmo achado (.checks/code-review/formal2-flag-types-
+// residual.md): `FeaturesToml::entries` é um `BTreeMap<String, bool>`
+// (lib.rs:869–871) — a deserialização nativa rejeita qualquer uma das duas
+// chaves conhecidas presente com tipo diferente de bool, antes mesmo de
+// aplicar a precedência entre canônica e alias. Não é um fallback por
+// ausência: a canônica com tipo errado não cai para o alias, mesmo que o
+// alias seja um bool válido, e um alias com tipo errado não fica escondido
+// atrás de uma canônica válida. Handlers nativos válidos ao lado não mudam o
+// resultado — o arquivo inteiro falha a deserialização.
+test("config-projection-C8 features.hooks com tipo inválido não cai para codex_hooks válido, mesmo com hooks nativos válidos", () => {
+  const result = projectConfig({
+    rawText: '[features]\nhooks = "yes"\ncodex_hooks = true\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(result);
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "features_hooks_flag_invalid_type");
+  assert.deepEqual(result.fields, {});
+});
+
+test("config-projection-C8 features.codex_hooks com tipo inválido não fica escondido atrás de features.hooks válido", () => {
+  const result = projectConfig({
+    rawText: '[features]\nhooks = true\ncodex_hooks = "no"\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(result);
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "features_hooks_flag_invalid_type");
+  assert.deepEqual(result.fields, {});
+});
+
+test("config-projection-C8 features.codex_hooks sozinho com tipo inválido (sem features.hooks) também invalida, não vira not_configured/configured", () => {
+  const result = projectConfig({
+    rawText: '[features]\ncodex_hooks = "no"\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(result);
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "features_hooks_flag_invalid_type");
+});
+
+test("config-projection-C8 features.hooks sozinho com tipo inválido (sem codex_hooks) também invalida", () => {
+  const result = projectConfig({
+    rawText: '[features]\nhooks = "yes"\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(result);
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "features_hooks_flag_invalid_type");
+});
+
+// Preservação explícita: ausência de uma das duas chaves (nunca tipo
+// inválido) continua delegando normalmente para a outra, e os dois bools
+// válidos continuam decididos pela canônica (já provado acima).
+test("config-projection-C8 features.hooks ausente delega a features.codex_hooks válido; o inverso também preserva a canônica", () => {
+  const aliasOnly = projectConfig({
+    rawText: "[features]\ncodex_hooks = true\n[hooks]\nPreToolUse = []\n",
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(aliasOnly);
+  assert.notEqual(aliasOnly.configuration, "invalid");
+  assert.equal(aliasOnly.fields.featuresHooksEnabled, true);
+
+  const canonicalOnly = projectConfig({
+    rawText: "[features]\nhooks = true\n[hooks]\nPreToolUse = []\n",
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(canonicalOnly);
+  assert.notEqual(canonicalOnly.configuration, "invalid");
+  assert.equal(canonicalOnly.fields.featuresHooksEnabled, true);
+});
+
 test("config-projection-C8 arquivo sem seção hooks fica not_configured, mesmo com outras chaves", () => {
   const result = projectConfig({
     rawText: JSON.stringify({ theme: "dark" }),

@@ -175,6 +175,63 @@ test("configuration-trust-C8 features.codex_hooks (alias) explícito em PROJETO 
   }
 });
 
+// Complementação do mesmo achado (.checks/code-review/formal2-flag-types-
+// residual.md): `FeaturesToml::entries` (lib.rs:869–871) é um
+// `BTreeMap<String, bool>` — a deserialização nativa rejeita qualquer uma das
+// duas chaves conhecidas presente com tipo diferente de bool ANTES de aplicar
+// a precedência entre canônica e alias. Com handlers nativos válidos ao lado,
+// o relatório real precisa mostrar `invalid/partial`, sem trust concedido —
+// nunca `configured/trusted` por um fallback indevido entre as duas chaves.
+test("configuration-trust-C8 features.hooks com tipo inválido não cai para codex_hooks válido no relatório real, fica invalid/partial", () => {
+  const scratch = makeScratch("doctor-c8-codex-flagtype-canonica-");
+  try {
+    const home = path.join(scratch, "home");
+    writeAgentConfig(
+      home,
+      "codex",
+      '[features]\nhooks = "yes"\ncodex_hooks = true\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    );
+    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "invalid");
+    assert.equal(codex.configReasonCode, "features_hooks_flag_invalid_type");
+    assert.notEqual(codex.trust, "trusted");
+
+    const text = runDoctor([], { env: homeEnv(home) });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /features_hooks_flag_invalid_type/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("configuration-trust-C8 features.codex_hooks com tipo inválido não fica escondido atrás de features.hooks válido no relatório real, fica invalid/partial", () => {
+  const scratch = makeScratch("doctor-c8-codex-flagtype-alias-");
+  try {
+    const home = path.join(scratch, "home");
+    writeAgentConfig(
+      home,
+      "codex",
+      '[features]\nhooks = true\ncodex_hooks = "no"\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    );
+    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "invalid");
+    assert.equal(codex.configReasonCode, "features_hooks_flag_invalid_type");
+    assert.notEqual(codex.trust, "trusted");
+
+    const text = runDoctor([], { env: homeEnv(home) });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /features_hooks_flag_invalid_type/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 test("configuration-trust-C8 config.toml do Codex com [hooks] definido fica configured/unknown no relatório real", () => {
   const scratch = makeScratch("doctor-c8-codex-configured-");
   try {

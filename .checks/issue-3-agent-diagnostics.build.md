@@ -1773,3 +1773,126 @@ sem diff.
   `…-npm-test.txt`. Preservados sem alteração: `.checks/code-review/formal2-codex-fixes.md` (encaminhamento),
   `.checks/code-review/issue-3/response.json` (segunda revisão formal),
   `.checks/code-review/native-codex-0.162.1/*.rs` (fontes primárias).
+
+## 17. Complementação residual do mesmo achado 1: tipos inválidos nas duas flags conhecidas (13/10/2026)
+
+Encaminhamento: `.checks/code-review/formal2-flag-types-residual.md`. Autor: Claude. A correção do item 16.1
+(alias `codex_hooks`) só tratava a AUSÊNCIA da chave canônica como gatilho de fallback para o alias; o
+próprio encaminhamento original (`.checks/code-review/formal2-codex-fixes.md`, "Alcance da mesma decisão de
+flags conhecidas") já exigia não descartar silenciosamente um tipo inválido nem deixar um alias válido
+esconder um erro nativo de desserialização — lacuna não fechada na rodada 16. Nenhuma mudança na task, nos
+critérios, em `.verified.md`, em `AGENTS.md`, no motor comum de `scripts/code-review/` ou nos limites de
+governança. Sem commit, push, `review:run`/`pr:create` nem nova verificação independente.
+
+### O achado residual
+
+Probes reais (`.checks/code-review/probe-formal2-flag-types.mjs`) com handlers nativos válidos ao lado
+mostravam `configured` em três casos que a fonte (`FeaturesToml::entries: BTreeMap<String, bool>`,
+`lib.rs:869–871`, tag `rust-v0.162.1`) rejeita antes mesmo de aplicar a precedência entre canônica e alias:
+
+1. `hooks="yes"` + `codex_hooks=true` — canônica de tipo errado caindo para um alias bool válido.
+2. `hooks=true` + `codex_hooks="no"` — alias de tipo errado escondido atrás de uma canônica bool válida.
+3. `codex_hooks="no"` (sozinho, sem `hooks`) — alias de tipo errado sem a canônica presente.
+
+Não é um conflito válido entre dois booleans (já coberto na rodada 16): é um tipo errado numa chave CONHECIDA
+presente, que a deserialização nativa do `BTreeMap<String, bool>` rejeita por inteiro, independente de a outra
+chave estar ausente ou ser um bool válido.
+
+### Decisão e correção
+
+`extractSafeFields` (`config-projection.mjs`) agora confere, antes de escolher a flag efetiva, se cada chave
+conhecida presente (`features.hooks`, `features.codex_hooks`) é booleana. Qualquer uma presente com outro tipo
+retorna `{ fields: {}, featuresFlagsReasonCode: "features_hooks_flag_invalid_type" }`, que `projectConfig`
+traduz para `invalid/features_hooks_flag_invalid_type` sem projetar campos — mesmo sozinha, sem a outra chave.
+Só a ausência de uma das duas chaves (nunca um tipo inválido dela) continua abrindo espaço para a outra
+decidir; com as duas presentes e booleanas, a canônica continua vencendo (comportamento da rodada 16,
+preservado e agora também coberto por teste de não-regressão explícito). Nenhum parser novo, nenhuma
+dependência nova, nenhuma extensão a outras chaves de `[features]` ou a schema geral — só as duas chaves já
+conhecidas por este diagnóstico.
+
+### Ordem seguida (TDD) e evidência de execução real
+
+Derivação das regressões a partir da fonte primária já citada (`lib.rs:869–871`, preservada byte a byte em
+`.checks/code-review/native-codex-0.162.1/lib.rs`) → RED confirmado por execução real (`git stash push
+--keep-index -- src/doctor/config-projection.mjs`, suíte afetada rodada sobre o produto anterior, depois
+`stash pop`) → implementação → GREEN nos alvos afetados → `test:doctor` completo isolado → `npm test` completo
+uma única vez.
+
+RED real, produto no estado anterior a esta rodada (testes desta rodada já presentes), saída completa em
+`.checks/code-review/formal2-flag-types-red.txt`:
+
+```
+node --test tests/doctor/config-projection.unit.test.mjs tests/doctor/config-reader.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+  -> tests 103, pass 95, fail 8
+EXIT_CODE=1
+```
+
+As 8 falhas são exatamente os casos novos desta rodada que discriminam o achado residual (4 em
+`config-projection.unit.test.mjs`: canônica inválida não cai para alias válido, alias inválido não fica
+escondido atrás de canônica válida, alias sozinho inválido, canônica sozinha inválida; 2 em
+`config-reader.unit.test.mjs`: mesmos dois primeiros casos na camada de leitura de escopos/trust; 2 em
+`configuration-trust.cli.test.mjs`: mesmos dois primeiros casos na fronteira real da CLI, JSON e texto). Um
+nono caso novo (ausência de uma das chaves delegando normalmente à outra, em `config-projection.unit.test.mjs`)
+já passava no produto antigo — preservação da alternativa que a correção não pode quebrar, não regressão deste
+achado.
+
+Alvos afetados, logo após a implementação, incluindo as camadas vizinhas que dependem do campo
+`featuresHooksEnabled` (saída completa em `.checks/code-review/formal2-flag-types-green-targets.txt`):
+
+```
+node --test tests/doctor/config-projection.unit.test.mjs tests/doctor/config-reader.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs tests/doctor/scope-merge.unit.test.mjs tests/doctor/trust-resolution.unit.test.mjs
+  -> tests 122, pass 122, fail 0
+EXIT_CODE=0
+```
+
+`test:doctor` completo isolado (saída em `.checks/code-review/formal2-flag-types-doctor.txt`):
+
+```
+node --test "tests/doctor/**/*.test.mjs"
+  -> tests 280, pass 279, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+`npm test` completo, uma única execução após as alterações finais (saída completa em
+`.checks/code-review/formal2-flag-types-npm-test.txt`, sem pipe mascarando o exit):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 280, pass 279, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a rodada 16 (271 → 280): 9 testes novos — 5 em
+`config-projection.unit.test.mjs` (os 4 casos de tipo inválido acima e 1 caso de preservação da ausência de
+chave), 2 em `config-reader.unit.test.mjs`, 2 em `configuration-trust.cli.test.mjs`. O único skip continua
+`agent-resolution-C2 realpath/symlink real … (POSIX)`, condicional ao executor, não um skip novo.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0 (mesma limitação das seções anteriores). Nenhuma fonte, agente,
+  hook, intérprete ou config ativa da máquina foi executada, importada ou alterada nesta rodada — só leitura
+  textual de `lib.rs`, já preservado de rodadas anteriores em `.checks/code-review/native-codex-0.162.1/`.
+- `features_hooks_flag_invalid_type` não distingue, dentro do mesmo `reasonCode`, qual das duas chaves
+  (`hooks` ou `codex_hooks`) carregava o tipo errado quando as duas estão presentes — mesmo nível de
+  granularidade já aceito para `hooks_file_envelope_invalid`/`hooks_structure_invalid` em rodadas anteriores,
+  não ampliado nem reduzido aqui.
+- Esta checagem continua restrita às duas chaves já conhecidas por este diagnóstico
+  (`features.hooks`/`features.codex_hooks`); nenhuma outra chave de `[features]`, feature desconhecida do
+  agente ou schema geral foi validada — fora do escopo deste achado e desta entrega.
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/config-projection.mjs` (validação de tipo das duas chaves conhecidas de `[features]`
+  antes de escolher a flag efetiva, nova saída `featuresFlagsReasonCode`/`features_hooks_flag_invalid_type`).
+- Testes: `tests/doctor/config-projection.unit.test.mjs` (5 novos), `tests/doctor/config-reader.unit.test.mjs`
+  (2 novos), `tests/doctor/configuration-trust.cli.test.mjs` (2 novos).
+- Documentação/checklist: `docs/agent-compatibility.md` (linha Codex de alias/precedência, frase adicional
+  sobre a validação de tipo antes da precedência), `.checks/issue-3-agent-diagnostics.md` (frase adicional na
+  entrada C8, logo após a "Landing da correção dos três achados bloqueantes") e esta seção.
+  `.checks/issue-3-agent-diagnostics.verified.md` não foi editado (relatório independente, preservado).
+- Evidência: `.checks/code-review/formal2-flag-types-red.txt`, `…-green-targets.txt`, `…-doctor.txt`,
+  `…-npm-test.txt`. Preservados sem alteração: `.checks/code-review/formal2-flag-types-residual.md`
+  (encaminhamento), `.checks/code-review/formal2-codex-fixes.md` (encaminhamento original),
+  `.checks/code-review/probe-formal2-flag-types.mjs` (probe), `.checks/code-review/native-codex-0.162.1/lib.rs`
+  (fonte primária).
