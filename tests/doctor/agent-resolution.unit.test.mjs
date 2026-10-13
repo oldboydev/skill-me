@@ -360,6 +360,55 @@ test("agent-resolution-C10 package.json do Codex acima de 1 MiB vira input_too_l
   assert.equal(result.reasonCode, "input_too_large");
 });
 
+// Achado P2 da revisão formal3 (.checks/code-review/formal3-fixes.md, item 1):
+// `package.json` com JSON válido `null` fazia `parsed.name` lançar TypeError,
+// escapando para o catch de `resolveOneAgent` e virando `presence: unknown`
+// mesmo com o artefato encontrado e lido com sucesso — contrariando o
+// critério 3 (artefato presente com metadado ilegível nunca é confundido com
+// presença indeterminável). Primitivos e arrays no mesmo contêiner não
+// lançam (acesso a `.name` de string/número/booleano/array não lança), mas
+// são provados aqui ao lado do `null` porque nenhum deles tem `name`: todos
+// caem na mesma resposta de "não reconhecido", nunca um erro de acesso.
+test("agent-resolution-formal3-1 package.json do Codex com JSON null/primitivo/array não lança; vira launcher_not_recognized, nunca unknown_error", async () => {
+  const cases = {
+    null: "null",
+    string: JSON.stringify("@openai/codex"),
+    number: "42",
+    boolean: "true",
+    array: JSON.stringify(["@openai/codex", "0.162.1"]),
+  };
+  for (const [label, packageJson] of Object.entries(cases)) {
+    const tree = buildFsTree();
+    const dir = `/path/codex-metadata-${label}`;
+    installCodexShShim(tree, dir, packageJson);
+    const result = await resolveCodexVersion(dir + "/codex", { fs: createFakeFsAdapter(tree) });
+    assert.equal(result.version, null, label);
+    assert.equal(result.reasonCode, "launcher_not_recognized", label);
+  }
+});
+
+test("agent-resolution-formal3-1 package.json do Codex com JSON null preserva presence: present na resolução completa, nunca unknown", async () => {
+  const tree = buildFsTree();
+  const dir = "/path/codex-metadata-null-full";
+  installCodexShShim(tree, dir, "null");
+  const results = await resolveAgents({ pathDirs: [dir], platform: "linux", env: {}, fs: createFakeFsAdapter(tree) });
+  const codex = results.find((r) => r.id === "codex");
+  assert.equal(codex.presence, "present");
+  assert.equal(codex.version, null);
+  assert.equal(codex.reasonCode, "launcher_not_recognized");
+});
+
+// Controle: package.json válido ao lado dos casos acima continua resolvendo
+// a versão normalmente (a correção não afeta o caminho feliz).
+test("agent-resolution-formal3-1 package.json do Codex válido continua resolvendo a versão normalmente", async () => {
+  const tree = buildFsTree();
+  const dir = "/path/codex-metadata-valid-control";
+  installCodexShShim(tree, dir);
+  const result = await resolveCodexVersion(dir + "/codex", { fs: createFakeFsAdapter(tree) });
+  assert.equal(result.version, "0.162.1");
+  assert.equal(result.versionSource, "package_metadata");
+});
+
 test("agent-resolution-C10 hermes_cli/__init__.py acima de 1 MiB vira input_too_large, não version_unreadable", async () => {
   const tree = buildFsTree();
   const binDir = "/path/hermes-oversized/bin";

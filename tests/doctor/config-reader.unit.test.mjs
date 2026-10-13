@@ -219,6 +219,61 @@ test("config-reader-C9 features.codex_hooks com tipo inválido não fica escondi
   assert.notEqual(result.trust, "trusted");
 });
 
+// Achado P2 da revisão formal3 (.checks/code-review/formal3-fixes.md, item 2):
+// `shell_tool` (chave desconhecida do `BTreeMap<String, bool>` achatado) com
+// tipo inválido em config.toml de PROJETO, com handlers nativos válidos no
+// MESMO arquivo — o escopo de projeto é o de maior precedência em
+// `codexConfigScopes`, então um `invalid` ali precisa decidir o relatório
+// inteiro (`mergeConfigScopes`/`blockingResult`), sem config de usuário
+// ajudando a mascarar o defeito.
+test("config-reader-C9 features com chave desconhecida (shell_tool) de tipo inválido em config.toml de PROJETO fica invalid/features_hooks_flag_invalid_type", async () => {
+  const home = "/fixture/codex-home-shelltool";
+  const cwd = "/fixture/codex-project-shelltool";
+  const platform = "linux";
+  const scopes = codexConfigScopes({ home: codexHome({ env: { HOME: home }, platform }), cwd, platform });
+  const projectConfigPath = scopes.find((s) => s.scope === "project" && s.format === "toml").path;
+
+  const result = await readAgentConfiguration({
+    agentId: "codex",
+    env: { HOME: home, USERPROFILE: home },
+    platform,
+    cwd,
+    fs: fsWithFiles({
+      [projectConfigPath]:
+        '[features]\nhooks = true\nshell_tool = "yes"\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    }),
+  });
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.configReasonCode, "features_hooks_flag_invalid_type");
+  assert.notEqual(result.trust, "trusted");
+});
+
+// Achado residual da revisão formal3 (.checks/code-review/formal3-residual-
+// fixes.md, item 1): `features = true` (bool solto, não `[features]` tabela)
+// em escopo de USUÁRIO, com handlers nativos válidos — `FeaturesToml`
+// desserializa de uma tabela, então um bool solto falha o documento inteiro.
+test("config-reader-C9 features=true (bool solto, não tabela) em config.toml de USUÁRIO fica invalid/features_hooks_flag_invalid_type", async () => {
+  const home = "/fixture/codex-home-features-bool";
+  const cwd = "/fixture/codex-project-features-bool";
+  const platform = "linux";
+  const scopes = codexConfigScopes({ home: codexHome({ env: { HOME: home }, platform }), cwd, platform });
+  const userConfigPath = scopes.find((s) => s.scope === "user" && s.format === "toml").path;
+
+  const result = await readAgentConfiguration({
+    agentId: "codex",
+    env: { HOME: home, USERPROFILE: home },
+    platform,
+    cwd,
+    fs: fsWithFiles({
+      [userConfigPath]:
+        'features = true\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    }),
+  });
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.configReasonCode, "features_hooks_flag_invalid_type");
+  assert.notEqual(result.trust, "trusted");
+});
+
 // Achado formal 6 — JSON válido com seção de hooks estruturalmente inválida
 // precisa chegar ao relatório como `invalid` (e daí `partial`), nunca
 // `configured/hooks_configured`.

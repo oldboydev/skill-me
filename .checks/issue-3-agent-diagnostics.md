@@ -204,6 +204,12 @@ cabeçalho (nunca `input_too_large`); Hermes com dois `pythonX.Y` e shebang sem 
 Proof (camada de permissão, simulação cross-SO declarada abaixo, e regressão de launcher alheio):
 `node --test --test-name-pattern="agent-resolution-C3" tests/doctor/agent-resolution.unit.test.mjs`
 Proof (cabeçalho de executável nativo): `node --test --test-name-pattern="agent-resolution-C14" tests/doctor/agent-resolution.unit.test.mjs`
+**Corrigido na revisão formal3 (achado 1)**: `package.json` com JSON válido `null` (ou outro
+primitivo/array) no lugar do objeto de metadado fazia `parsed.name` lançar `TypeError`, escapando
+para `presence: unknown/unknown_error` mesmo com o artefato encontrado e lido com sucesso — agora cai
+na mesma resposta de "não reconhecido" (`present/version null/launcher_not_recognized`) que um `name`
+divergente já usava. Ver `.checks/issue-3-agent-diagnostics.build.md` seção 18.
+Proof: `node --test --test-name-pattern="agent-resolution-formal3-1" tests/doctor/agent-resolution.unit.test.mjs`
 
 **C4** - Uma fixture com efeitos colaterais simulados não aciona nenhum launcher; inventário de
 arquivos/tamanho/mtime antes e depois não muda; nenhuma chamada a `child_process` ocorre na resolução.
@@ -306,6 +312,35 @@ efetiva: qualquer uma delas presente com tipo diferente de bool vira `invalid/fe
 (sem projetar campos, sem trust concedido), mesmo sozinha; só a ausência de uma das chaves (não um tipo
 inválido dela) continua abrindo espaço para a outra decidir, e dois bools válidos continuam decididos pela
 canônica (comportamento já provado acima, preservado).
+**Corrigido na revisão formal3 (achado 2)**: a restrição acima ainda só cobria `features.hooks`/
+`features.codex_hooks`, mas `FeaturesToml::entries` (`lib.rs:838-871`) é o `BTreeMap<String, bool>`
+INTEIRO de `[features]` via `#[serde(flatten)]` — uma chave desconhecida do `doctor` (ex.:
+`shell_tool = "yes"`) com valor não booleano já derruba a deserialização do mapa inteiro na fonte,
+mesmo com `hooks=true` e handlers nativos válidos ao lado. `codexFeaturesEntriesReasonCode`
+(`config-projection.mjs`, só para `agentId === "codex"`) agora exige booleano em toda chave que não
+seja um dos 13 campos nomeados/tipados de `FeaturesToml` (não reimplementa o schema deles, só a
+decisão de exclusão do mapa achatado); Claude não tem essa struct, então a regra não se aplica lá.
+**Resíduo do mesmo achado** (`.checks/code-review/formal3-residual-fixes.md`, item 1): `FeaturesToml`
+desserializa de uma TABELA — `features = true`/`features = false` soltos (sem `[features]`) falhavam
+em silêncio (a checagem antiga era um teste de truthiness: `true` passava sem validação, `false` pulava
+o bloco inteiro). O `doctor` agora exige `[features]` como objeto antes de ler qualquer chave interna;
+`[features]` vazio continua válido.
+Ver `.checks/issue-3-agent-diagnostics.build.md` seções 18-19.
+**Corrigido na revisão formal3 (achado 3)**: `timeout` (`Command`/`McpTool`, `Option<u64>`) e
+`additionalContextLimit` (`Command`, `Option<usize>`) tinham sinal e integralidade conferidos, mas
+nunca o teto superior (2^64-1) — um `timeout` de `18446744073709551616` (2^64, inválido) em
+`hooks.json` aparecia `configured`. Um `Number` do `JSON.parse` não representa 2^64-1 com exatidão
+(arredonda para o MESMO double que o primeiro valor inválido acima dele), então a checagem usa o
+reviver de três argumentos do `JSON.parse` do Node 24 (`context.source`) para comparar o texto-fonte
+exato do inteiro via `BigInt`, só em `hooks.json`.
+**Resíduos do mesmo achado** (`.checks/code-review/formal3-residual-fixes.md`, itens 2 e 3): (a)
+serde_json roteia um token com ponto decimal/expoente para `ParserNumber::F64`, não para o visitor
+inteiro de `u64`/`usize` — `timeout: 1.0`/`1e0` eram aceitos porque `JSON.parse` apaga a distinção
+lexical com `1`; o `doctor` agora exige, pelo texto-fonte, um token puramente decimal. (b)
+`config.toml` tem seu próprio teto de formato (`i64`, não `u64`) e `smol-toml` com `integersAsBigInt:
+true` (opção já existente no pacote) preserva o inteiro TOML exato sem o antigo limite de precisão
+de double (que rejeitava um `i64::MAX` legítimo como `config_malformed`) e mantém um FLOAT TOML
+(`1.0`) como `Number`, nunca `BigInt` — recusado pelo mesmo motivo do `1.0` em JSON.
 Proof: `node --test --test-name-pattern="config-projection-C8" tests/doctor/config-projection.unit.test.mjs`
 Proof: `node --test tests/doctor/config-sources.unit.test.mjs`
 Proof: `node --test tests/doctor/config-reader.unit.test.mjs`
@@ -353,6 +388,17 @@ para completo/parcial; flag desconhecida usa exit `2`; erro com `--json` preserv
 stack bruta.
 Proof: `node --test --test-name-pattern="envelope-C12" tests/doctor/envelope.cli.test.mjs`
 Proof (exit `1`/erro interno, limitação declarada abaixo): `node --test --test-name-pattern="envelope-failure-C12" tests/doctor/envelope-failure.unit.test.mjs`
+**Corrigido na revisão formal3 (achado 4)**: `matcherGroupHandlers`/`inspectMatcherGroupHooks`
+(`hooks-shape.mjs`) espalhavam a lista de handlers de um grupo como argumentos de
+`.push(...)`/`.push(...array.map(...))`; um `hooks.json` sintaticamente válido com um grupo
+`PreToolUse` de 300.000 objetos vazios (~900 KB, abaixo do limite de 1 MiB) estourava o limite de
+argumentos do V8 (`RangeError`) ANTES de qualquer classificação, e a exceção escapava da leitura de
+configuração — a CLI emitia `failed/internal_error`, `agents: []` e exit 1, perdendo o diagnóstico
+inteiro por causa de um único agente. Os dois pontos agora usam laço simples, sem teto de argumentos;
+`matcherGroupHandlers` é compartilhada por Claude e Codex, então a mesma correção cobre os dois.
+Ver `.checks/issue-3-agent-diagnostics.build.md` seção 18.
+Proof: `node --test --test-name-pattern="config-projection-C12" tests/doctor/config-projection.unit.test.mjs`
+Proof (fronteira real da CLI, 3 agentes e collector preservados): `node --test --test-name-pattern="configuration-trust-C12" tests/doctor/configuration-trust.cli.test.mjs`
 
 **C13** - `--help` lista exatamente `--json, --cwd, --collector, --help` com defaults documentados; diretório
 inexistente ou flag desconhecida usa exit `2`; `--help` usa exit `0` sem inspecionar agentes; não existe

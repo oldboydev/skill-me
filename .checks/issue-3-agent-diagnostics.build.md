@@ -1896,3 +1896,354 @@ chave), 2 em `config-reader.unit.test.mjs`, 2 em `configuration-trust.cli.test.m
   (encaminhamento), `.checks/code-review/formal2-codex-fixes.md` (encaminhamento original),
   `.checks/code-review/probe-formal2-flag-types.mjs` (probe), `.checks/code-review/native-codex-0.162.1/lib.rs`
   (fonte primária).
+
+## 18. Correção dos quatro achados bloqueantes da revisão formal3 (13/10/2026)
+
+A revisão formal3 (`.checks/code-review/issue-3-formal3-response.json`, HEAD `9f98068`,
+`changes_requested`, AC1/AC3/AC5 `unmet`) confirmou quatro defeitos novos, nenhum dos três achados
+anteriores reaberto. Encaminhamento do orquestrador: `.checks/code-review/formal3-fixes.md`. Autor:
+Claude. Responsabilidade exclusiva do alcance direto dos quatro achados: `src/doctor/launcher-link/
+codex.mjs`, `src/doctor/config-projection.mjs`, `src/doctor/hooks-shape.mjs` e os testes
+correspondentes. Nenhuma mudança na task, nos critérios, em `.verified.md`, em `AGENTS.md`, no motor
+comum de `scripts/code-review/` (paridade sem diff reconfirmada abaixo) ou nos limites de governança.
+Sem commit, push, stash definitivo, `review:run`/`pr:create` nem nova verificação independente nesta
+rodada.
+
+### Os quatro achados e seu alcance real
+
+Fontes primárias da tag `rust-v0.162.1`, já preservadas byte a byte em `.checks/code-review/
+native-codex-0.162.1/` (`hook_config.rs`, `hooks_tests.rs`, `legacy.rs`, `lib.rs`), só para leitura,
+nunca para execução.
+
+1. **Metadado JSON `null` do pacote Codex (`launcher-link/codex.mjs:81`)**: um launcher reconhecido
+   (shim ligado de verdade a `node_modules/@openai/codex`) com `package.json` contendo o JSON válido
+   `null` fazia `parsed.name` lançar `TypeError`; o `catch` de `resolveOneAgent`
+   (`agent-resolution.mjs`) convertia a falha em `presence: unknown/unknown_error`, embora o artefato
+   já tivesse sido encontrado e lido com sucesso — violando o critério 3 (artefato presente com
+   metadado ilegível nunca é confundido com presença indeterminável).
+2. **Mapa `[features]` inteiro do Codex não validado (`config-projection.mjs:87`)**: a correção da
+   rodada 17 só conferia `features.hooks`/`features.codex_hooks`. `FeaturesToml::entries`
+   (`lib.rs:838–871`) é o `BTreeMap<String, bool>` que absorve QUALQUER outra chave de `[features]`
+   via `#[serde(flatten)]` — uma chave desconhecida do `doctor` (ex.: `shell_tool = "yes"`) com valor
+   não booleano já derruba a deserialização do mapa inteiro na fonte, mesmo com `hooks=true` e
+   handlers nativos válidos ao lado. O `doctor` anunciava `configured`/`complete` para um arquivo que
+   o Codex real rejeitaria.
+3. **Campos inteiros nativos sem teto (`hooks-shape.mjs:121,124,172`)**: `timeout` (`Command` e
+   `McpTool`) é `Option<u64>`; `additionalContextLimit` (só `Command`) é `Option<usize>`
+   (`hook_config.rs`). `isNonNegativeInteger` conferia sinal e integralidade, nunca o teto superior
+   (2^64-1). Um `timeout` de `18446744073709551616` (2^64, inválido) em `hooks.json` aparecia
+   `configured`/`complete`.
+4. **Lista grande de hooks derruba a CLI inteira (`hooks-shape.mjs:219,278`)**:
+   `matcherGroupHandlers`/`inspectMatcherGroupHooks` espalhavam a lista de handlers de um grupo como
+   argumentos de `.push(...)`/`.push(...array.map(...))`. Um `hooks.json` sintaticamente válido com um
+   grupo `PreToolUse` de 300.000 objetos vazios (~900 KB, abaixo do limite de 1 MiB) estourava o
+   limite de argumentos do V8 (`RangeError: Maximum call stack size exceeded`) ANTES de qualquer
+   classificação rodar; a exceção escapava da leitura de configuração e a CLI real emitia
+   `failed/internal_error`, `agents: []` e exit 1 — todo o diagnóstico perdido por causa de um único
+   agente, violando o isolamento de falha exigido pelo critério 12.
+
+### Decisão e correção
+
+1. **Metadado `null`**: `parsed === null || parsed.name !== "@openai/codex"` — o curto-circuito do
+   `||` evita o acesso a `.name` quando `parsed` é `null`, sem mudar o resultado para os demais casos
+   (primitivos/arrays já não lançavam, só não tinham `name`, então já caíam na mesma resposta de
+   "não reconhecido").
+2. **Mapa `[features]`**: nova função `codexFeaturesEntriesReasonCode`, chamada só para
+   `agentId === "codex"`, que percorre `Object.entries(parsed.features)` e exige booleano em toda
+   chave que não seja um dos 13 campos nomeados/tipados de `FeaturesToml` (`tool_registry`,
+   `code_mode`, `code_mode_host`, `non_prefixed_mcp_tool_names`, `guardianv2`, `multi_agent_v2`,
+   `token_budget`, `context_management`, `rollout_budget`, `current_time_reminder`, `sleep_tool`,
+   `apps_mcp_path_override`, `network_proxy`). Não reimplementa o schema desses 13 campos — só a
+   decisão de exclusão do mapa achatado. Restrito ao Codex: Claude não tem essa struct.
+3. **Teto dos campos inteiros**: `isValidOptionalU64Field` substitui `isNonNegativeInteger` nos três
+   pontos (`timeout` de `Command`/`McpTool`, `additionalContextLimit` de `Command`). Decisão
+   documentada antes de implementar: um `Number` do `JSON.parse` não representa 2^64-1 com exatidão
+   (arredonda para o MESMO double que o primeiro valor inválido acima dele, 2^64) — e um literal
+   `18446744073709551615` escrito como `Number` no próprio código sofreria o mesmo arredondamento, por
+   isso o teto é um `BigInt` (`18446744073709551615n`) comparado contra o texto-fonte exato do número,
+   não contra o `value` já convertido. Esse texto-fonte vem do reviver de três argumentos do
+   `JSON.parse` do Node 24 (`context.source`, confirmado disponível nesta versão — Node 24.21.0):
+   `parseCodexHooksJson` (`config-projection.mjs`) guarda o texto por campo (`timeout`,
+   `additionalContextLimit`) numa propriedade de `Symbol` (`CODEX_INTEGER_SOURCE`, exportado de
+   `hooks-shape.mjs`) no próprio objeto do handler — invisível a `Object.keys`/`JSON.stringify`/
+   `Object.values`, então nunca vaza na projeção nem atrapalha as checagens estruturais existentes.
+   Só usado para `format: "json"` do Codex. **Nota de correção (ver seção 19)**: a frase original
+   aqui afirmava que `config.toml` nunca precisaria de checagem de teto, porque `smol-toml` rejeitava
+   (`config_malformed`) qualquer inteiro fora da faixa segura de um double — incluindo um `i64::MAX`
+   legítimo e nativo (`9223372036854775807`), que é um FALSO NEGATIVO: essa afirmação tratava uma
+   limitação do parser padrão como se fosse o comportamento correto do formato, rejeitando uma
+   configuração que o Codex real aceita. A correção residual da seção 19 substitui o parsing padrão
+   por `integersAsBigInt: true` (já existente no pacote) e aplica o teto real do PRÓPRIO formato TOML
+   (`i64::MAX`, menor que o teto do campo Rust `u64`). Nenhum parser novo, nenhuma dependência nova.
+4. **Lista grande de hooks**: os dois `.push(...)` viram laço simples (`for (const x of arr)
+   target.push(x)`), sem teto de argumentos. `matcherGroupHandlers` é compartilhada por Claude e
+   Codex (`HOOKS_INSPECTORS`): a mesma correção cobre os dois agentes que a usam, sem duplicar lógica.
+
+### Ordem seguida (TDD) e evidência de execução real
+
+Leitura das quatro fontes primárias (só texto, nunca importadas/executadas) → regressões novas nas
+três camadas afetadas (`agent-resolution.unit.test.mjs`, `config-projection.unit.test.mjs`,
+`config-reader.unit.test.mjs`, `configuration-trust.cli.test.mjs`) → RED confirmado por execução real
+(`git stash push -- src/doctor/launcher-link/codex.mjs src/doctor/config-projection.mjs
+src/doctor/hooks-shape.mjs`, suíte afetada rodada sobre o produto anterior ao achado, depois
+`stash pop`) → implementação dos quatro pontos → GREEN nos alvos afetados → `test:doctor` completo
+isolado → `npm test` completo uma única vez, após as últimas alterações.
+
+RED real, produto no estado anterior a esta rodada (testes desta rodada já presentes), saída completa
+em `.checks/code-review/formal3-red.txt`:
+
+```
+node --test tests/doctor/config-projection.unit.test.mjs tests/doctor/config-reader.unit.test.mjs tests/doctor/agent-resolution.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+  -> tests 159, pass 149, fail 9
+EXIT_CODE=1
+```
+
+As 9 falhas isolam exatamente os quatro achados: 2 em `agent-resolution.unit.test.mjs` (metadado
+`null`/primitivo/array lançando e `presence: unknown` na resolução completa — o terceiro caso novo,
+controle com `package.json` válido, já passava no produto antigo); 2 em
+`config-projection.unit.test.mjs` para o achado 2 (`shell_tool` inválido) e 1 em
+`config-reader.unit.test.mjs` (mesmo achado na fronteira de escopo de projeto); 2 em
+`config-projection.unit.test.mjs` para o achado 3 (`timeout`/`additionalContextLimit` imediatamente
+acima do teto do u64 — o caso "no teto máximo válido" já passava no produto antigo, já que o `Number`
+arredondado coincidia com o teto); 3 em `config-projection.unit.test.mjs` e 1 em
+`configuration-trust.cli.test.mjs` para o achado 4 (lista grande inválida/válida na camada pura e na
+fronteira real da CLI — `AssertionError: 1 !== 0` no exit code, confirmando o `failed`/exit 1 relatado
+pela revisão). Os demais 149 casos (antigos e os novos que já valiam sem a correção) preservavam a
+alternativa que cada correção não pode quebrar.
+
+Alvos afetados, GREEN após a implementação (saída completa em
+`.checks/code-review/formal3-green-targets.txt`):
+
+```
+node --test tests/doctor/config-projection.unit.test.mjs tests/doctor/config-reader.unit.test.mjs tests/doctor/agent-resolution.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+  -> tests 159, pass 158, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+`test:doctor` completo isolado (saída em `.checks/code-review/formal3-doctor.txt`):
+
+```
+node --test "tests/doctor/**/*.test.mjs"
+  -> tests 297, pass 296, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+`npm test` completo, uma única execução após as alterações finais (saída completa em
+`.checks/code-review/formal3-npm-test.txt`, sem pipe mascarando o exit):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 297, pass 296, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a rodada 17 (280 → 297): 17 testes novos — 3 em
+`agent-resolution.unit.test.mjs` (metadado `null`/primitivo/array, `presence: present` na resolução
+completa, controle com `package.json` válido); 5 em `config-projection.unit.test.mjs` para o achado 2
+(chave desconhecida inválida, booleano desconhecido preservado, campo nomeado/tipado como objeto
+preservado, regra restrita ao Codex); 6 em `config-projection.unit.test.mjs` para o achado 3 (teto
+válido e acima do teto em `Command`/`McpTool`, `additionalContextLimit`, faixa própria do TOML); 4 em
+`config-projection.unit.test.mjs` para o achado 4 (lista inválida grande, lista válida em larga
+escala, mesmo helper do Claude, limite de bytes independente preservado); 1 em
+`config-reader.unit.test.mjs` (achado 2 em escopo de projeto); 1 em `configuration-trust.cli.test.mjs`
+(achado 4 na fronteira real, com paridade texto/JSON e isolamento dos três agentes/collector). Paridade
+dos cinco arquivos comuns de `scripts/code-review/` contra a base (`4242520`) reconfirmada sem diff. O
+único skip continua `agent-resolution-C2 realpath/symlink real … (POSIX)`, condicional ao executor.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0 (mesma limitação das seções anteriores). Nenhum
+  agente, hook, intérprete, Python ou script de instalação foi executado, importado ou alterado nesta
+  rodada — só leitura textual das fontes Rust já preservadas em `.checks/code-review/
+  native-codex-0.162.1/`.
+- O teto exato de `isValidOptionalU64Field` depende do texto-fonte do número (`CODEX_INTEGER_SOURCE`)
+  estar presente; como o `doctor` sempre usa o reviver próprio (`parseCodexHooksJson`) para
+  `format: "json"` do Codex, essa fonte nunca falta nesse caminho — mas se faltasse (nunca observado),
+  a decisão cai para `invalid` por falta de prova, nunca para "dentro do limite" por omissão.
+- A faixa representável de `usize` depende da plataforma nativa; esta correção assume 64 bits em
+  todas as plataformas que o Codex 0.162.1 publica binário nativo (Windows x64/arm64, macOS, Linux
+  x64/arm64 — inspeção local já registrada na tabela de compatibilidade), sem confirmar uma
+  plataforma de 32 bits hipotética fora desse conjunto.
+- A prova de "lista válida grande" para `Command`/`McpTool` usa 30.000 handlers mínimos (não 300.000):
+  um handler visado de verdade exige `type`+`command` não vazios (≥32 bytes), bem mais pesado que o
+  `{}` inválido (2 bytes) do caso de regressão — 300.000 handlers válidos excedem o teto de 1 MiB do
+  próprio arquivo antes de alcançar o código corrigido. 30.000 já excede com folga a contagem mínima
+  de handlers que o `doctor` processa em qualquer fixture existente, provando a ausência de teto
+  implícito de argumentos sem depender de um tamanho de arquivo inviável.
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/launcher-link/codex.mjs` (guarda contra `parsed === null` antes de `.name`),
+  `src/doctor/config-projection.mjs` (`codexFeaturesEntriesReasonCode`, seleção do parser
+  `parseCodexHooksJson` para `format: "json"` do Codex), `src/doctor/hooks-shape.mjs`
+  (`isValidOptionalU64Field`/`CODEX_INTEGER_SOURCE`/`CODEX_U64_MAX`, laços simples em
+  `matcherGroupHandlers`/`inspectMatcherGroupHooks` no lugar de `.push(...)`).
+- Testes: `tests/doctor/agent-resolution.unit.test.mjs` (3 novos), `tests/doctor/
+  config-projection.unit.test.mjs` (15 novos), `tests/doctor/config-reader.unit.test.mjs` (1 novo),
+  `tests/doctor/configuration-trust.cli.test.mjs` (1 novo).
+- Documentação/checklist: `docs/agent-compatibility.md` (três frases adicionais: metadado `null` do
+  Codex, mapa `[features]` inteiro, teto dos campos inteiros, isolamento de lista grande — todas
+  marcadas "Corrigido na revisão formal3"), esta seção. `.checks/issue-3-agent-diagnostics.md` recebe
+  só a entrada aditiva da Landing (ver seção própria); `.checks/issue-3-agent-diagnostics.verified.md`
+  não foi editado (relatório independente, preservado).
+- Evidência: `.checks/code-review/formal3-red.txt`, `…-green-targets.txt`, `…-doctor.txt`,
+  `…-npm-test.txt`. Preservados sem alteração: `.checks/code-review/formal3-fixes.md`
+  (encaminhamento), `.checks/code-review/issue-3-formal3-response.json` (revisão formal),
+  `.checks/code-review/native-codex-0.162.1/*.rs` (fontes primárias).
+
+## 19. Correção dos três resíduos concretos dos achados 2 e 3 da revisão formal3 (13/10/2026)
+
+Após a seção 18, a raiz (Codex) registrou dois encaminhamentos de acompanhamento com probes reais da
+CLI (`.checks/code-review/probe-formal3-after-initial.txt`, produzido por `probe-formal3-native-cli.mjs`):
+`.checks/code-review/formal3-number-token-note.md` (nota de investigação, fontes `serde`/`serde_json`
+na tag exata do `Cargo.lock`) e `.checks/code-review/formal3-residual-fixes.md` (encaminhamento com os
+três casos concretos). Autor: Claude; Codex raiz só revisa. Mesmo escopo da issue #3, achados 2 e 3 já
+corrigidos na seção 18 — nenhum achado novo, nenhuma mudança de critério. `.verified.md`, `.tasks`,
+AGENTS.md, core vendorizado e `code-review.config.json` não tocados. Sem commit/stash/push/PR/review
+nesta rodada.
+
+### Os três resíduos
+
+1. **`features=true`/`features=false` (bool solto) no lugar de `[features]`**: `FeaturesToml`
+   desserializa de uma TABELA (struct); um booleano solto falha a deserialização do documento inteiro
+   antes mesmo de qualquer chave interna existir. A checagem da seção 18 testava
+   `if (parsed.features)` (truthiness): `features = true` entrava no bloco mas
+   `Object.hasOwn(true, "hooks")` retorna `false` sem lançar, então passava sem validação alguma;
+   `features = false` era falsy e pulava o bloco inteiro. Os dois casos apareciam
+   `configured`/`not_configured` quando o Codex real rejeitaria o arquivo.
+2. **`timeout`/`additionalContextLimit` como token decimal/exponencial do JSON**: serde_json
+   (`serde_json` 1.0.149, `de.rs::parse_number`, confirmado via `Cargo.lock` da tag `rust-v0.162.1`)
+   roteia um token com ponto decimal ou expoente para `ParserNumber::F64`; o visitor de inteiro que
+   `u64`/`usize` exigem (`serde` 1.0.228, `impls.rs`) não aceita float. `timeout: 1.0` e `timeout: 1e0`
+   são portanto REJEITADOS pelo Codex real, mas `JSON.parse`/`Number.isInteger` apagam essa distinção
+   lexical — `1.0`, `1e0` e `1` viram o mesmo `Number` 1 — então a correção da seção 18 (que só
+   consultava o texto-fonte para valores FORA da faixa segura de um double) aceitava os três como
+   `configured`. `-0` não tem ponto nem expoente: continua um token inteiro válido (zero).
+3. **`config.toml`: teto de precisão incorreto e float não distinguido do inteiro**: a correção da
+   seção 18 confiava no comportamento padrão do `smol-toml`, que rejeita (`config_malformed`) qualquer
+   inteiro fora da faixa segura de um double (2^53) — isso incluía um `timeout = 9223372036854775807`
+   (`i64::MAX`, legítimo e nativo), um FALSO NEGATIVO: uma configuração válida rejeitada como inválida.
+   Além disso, `timeout = 1.0` (float TOML, sintaticamente distinto de `timeout = 1` no próprio formato)
+   virava o mesmo `Number` 1 que o inteiro, então era aceito como `configured`, igual ao problema 2 mas
+   do lado do TOML.
+
+### Decisão e correção
+
+1. **Container de `[features]`**: `extractSafeFields` agora testa `parsed.features !== undefined`
+   (presença, não truthiness) e, para `agentId === "codex"`, exige `isPlainObject(parsed.features)`
+   antes de ler `hooks`/`codex_hooks`/o mapa achatado — um valor que não é objeto vira
+   `invalid/features_hooks_flag_invalid_type` imediatamente. `[features]` vazio (`{}`) continua válido
+   (tabela real, só sem chaves).
+2. **Token lexical do JSON**: `isValidOptionalU64Field` (`hooks-shape.mjs`) agora SEMPRE consulta o
+   texto-fonte exato (`CODEX_INTEGER_SOURCE`) para um `Number`, não só quando o valor excede a faixa
+   segura de um double — `PLAIN_INTEGER_TOKEN` (`/^-?\d+$/`) exige um token puramente decimal (sinal
+   opcional + dígitos, sem `.`/`e`/`E`). Como o reviver de `parseCodexHooksJson` já capturava
+   `context.source` para QUALQUER `Number` de `timeout`/`additionalContextLimit` (não só os fora da
+   faixa segura, decisão já tomada na seção 18), nenhuma mudança foi necessária no reviver — só na
+   função que decide com essa fonte.
+3. **TOML — teto do próprio formato e distinção de tipo**: `parseCodexToml` (`config-projection.mjs`)
+   agora chama `smol-toml` com `{ integersAsBigInt: true }` (opção `ParseOptions` já existente no
+   pacote instalado, confirmada em `node_modules/smol-toml/dist/parse.d.ts`; nenhuma dependência nova).
+   Com essa opção, TODO inteiro TOML vira `BigInt` exato, qualquer magnitude, sem jamais perder
+   precisão; um FLOAT do TOML (`1.0`) nunca vira `BigInt`, só `Number` — a mesma distinção de tipo que
+   o `toml`/`serde` nativos fazem. `isValidOptionalU64Field` decide por tipo: `BigInt` é comparado
+   contra `CODEX_TOML_I64_MAX` (`9223372036854775807n`, teto do PRÓPRIO formato TOML — `i64` assinado,
+   sempre menor que o teto do campo Rust `u64`/`usize`, e decide primeiro porque o toml-rs real falha
+   ao desserializar o documento ANTES de alcançar a conversão para o campo); um `Number` nessa posição
+   (sem fonte de texto JSON, já que `config.toml` nunca passa por `JSON.parse`) só pode ser um float
+   TOML, recusado. Confirmado por execução real: `smol-toml` com `integersAsBigInt: true` parseia
+   `9223372036854775807` (`i64::MAX`) e até `18446744073709551615` (u64::MAX, acima do i64::MAX) sem
+   lançar — a biblioteca não impõe o teto i64 da spec TOML sozinha, então o `doctor` precisa impor seu
+   próprio teto (`CODEX_TOML_I64_MAX`) para replicar a rejeição real do toml-rs.
+
+### Ordem seguida e evidência de execução real
+
+Leitura das fontes citadas pelo encaminhamento (`Cargo.lock` da tag `rust-v0.162.1`, preservado em
+`.checks/code-review/native-codex-0.162.1/Cargo.lock`; `serde-rs/json` `de.rs` e `serde-rs/serde`
+`impls.rs` nas tags exatas via GitHub; `node_modules/smol-toml/dist/parse.d.ts` local) → reprodução
+direta dos três resíduos por execução real (scripts Node ad-hoc, abaixo) confirmando o comportamento
+ANTES da correção → implementação dos três pontos → GREEN nos alvos afetados → `test:doctor` completo
+isolado → `npm test` completo uma única vez, após as últimas alterações.
+
+RED real (produto no estado da seção 18, antes desta correção), confirmado por execução direta:
+
+```
+features=true (TOML, só [hooks] válido ao lado)  -> not_configured/no_config_found (esperado: invalid)
+features=false (TOML, idem)                       -> not_configured/no_config_found (esperado: invalid)
+timeout=9223372036854775807 (TOML, i64::MAX)      -> invalid/config_malformed (esperado: configured)
+timeout=1.0 (TOML)                                -> configured/hooks_configured (esperado: invalid)
+timeout=1.0 (JSON)                                -> configured/hooks_configured (esperado: invalid)
+timeout=1e0 (JSON)                                -> configured/hooks_configured (esperado: invalid)
+```
+
+GREEN real, mesmos seis casos após a implementação, mais os existentes preservados: alvos afetados
+(saída completa em `.checks/code-review/formal3-residual-green-targets.txt`):
+
+```
+node --test tests/doctor/config-projection.unit.test.mjs tests/doctor/config-reader.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+  -> tests 124, pass 124, fail 0
+EXIT_CODE=0
+```
+
+`test:doctor` completo isolado (saída em `.checks/code-review/formal3-residual-doctor.txt`):
+
+```
+node --test "tests/doctor/**/*.test.mjs"
+  -> tests 304, pass 303, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+`npm test` completo, uma única execução após as alterações finais (saída completa em
+`.checks/code-review/formal3-residual-npm-test.txt`):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 304, pass 303, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a seção 18 (297 → 304): 7 testes novos — 4 em
+`config-projection.unit.test.mjs` (float TOML, token decimal/exponencial do JSON, `features` bool
+solto, `[features]` vazio válido; um teste existente da seção 18 — teto do TOML — foi reescrito para o
+novo teto `i64::MAX`/`i64::MAX+1`/`u64::MAX`, sem mudar a contagem), 1 em `config-reader.unit.test.mjs`
+(`features=true` em escopo de usuário), 2 em `configuration-trust.cli.test.mjs` (residuais 1+3 em TOML
+e residual 2 em JSON, ambos na fronteira real da CLI). Paridade dos cinco arquivos comuns de
+`scripts/code-review/` contra a base (`4242520`) reconfirmada sem diff. O único skip continua
+`agent-resolution-C2 realpath/symlink real … (POSIX)`.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0. Nenhum agente, hook, intérprete ou script de
+  instalação foi executado, importado ou alterado nesta rodada.
+- A nota de investigação (`formal3-number-token-note.md`) registra que consultas a URLs versionadas de
+  `docs.rs` não abriram na ferramenta da raiz; as fontes efetivamente usadas para decidir (código-fonte
+  de `serde-rs/json`/`serde-rs/serde` nas tags exatas do `Cargo.lock`, e a documentação TypeScript local
+  de `smol-toml`) foram lidas com sucesso e são as citadas acima — nenhuma alegação de execução nativa
+  do Codex/Rust.
+- `smol-toml` com `integersAsBigInt: true` não impõe sozinho o teto `i64` da spec TOML (parseia além
+  dele sem lançar); o `doctor` precisa do próprio `CODEX_TOML_I64_MAX` para replicar a rejeição real do
+  toml-rs — uma dependência de comportamento específico desta versão do `smol-toml` (`1.9.1`, já
+  instalada), não uma garantia documentada da biblioteca.
+- O teto de `additionalContextLimit` em `config.toml` segue a mesma regra do `timeout` (`i64::MAX`),
+  por não haver razão na fonte para um teto de formato diferente entre os dois campos quando a origem
+  é a mesma tabela TOML.
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/config-projection.mjs` (`parsed.features !== undefined` + checagem de
+  container antes das chaves; `parseCodexToml` com `integersAsBigInt: true`), `src/doctor/
+  hooks-shape.mjs` (`isValidOptionalU64Field` decide por tipo `BigInt`/`Number`+fonte;
+  `PLAIN_INTEGER_TOKEN`; `CODEX_TOML_I64_MAX`).
+- Testes: `tests/doctor/config-projection.unit.test.mjs` (4 novos, 1 reescrito), `tests/doctor/
+  config-reader.unit.test.mjs` (1 novo), `tests/doctor/configuration-trust.cli.test.mjs` (2 novos).
+- Documentação/checklist: `docs/agent-compatibility.md` (frases residuais nas células de achado 2 e 3
+  do Codex), `.checks/issue-3-agent-diagnostics.md` (frases residuais aditivas na entrada C8, achados 2
+  e 3), correção da frase imprecisa da seção 18 sobre o comportamento padrão do `smol-toml` (acima,
+  nota de correção), esta seção.
+- Evidência: `.checks/code-review/formal3-residual-green-targets.txt`, `…-doctor.txt`,
+  `…-npm-test.txt`. Preservados sem alteração: `.checks/code-review/formal3-number-token-note.md`,
+  `.checks/code-review/formal3-residual-fixes.md` (encaminhamentos), `.checks/code-review/
+  probe-formal3-after-initial.txt` (probe da raiz), `.checks/code-review/native-codex-0.162.1/Cargo.lock`
+  (fonte primária de versões).

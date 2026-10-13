@@ -830,6 +830,35 @@ test("configuration-trust-C8 handler command do Codex com timeout de tipo errado
   }
 });
 
+// Achados residuais da revisão formal3 (.checks/code-review/formal3-residual-
+// fixes.md, itens 1 e 3): `features=true` em config.toml e `timeout=1.0` em
+// config.toml invalidam o documento na fronteira real da CLI, com os mesmos
+// motivos já provados na camada pura.
+test("configuration-trust-C8 features=true (bool solto) e timeout=1.0 (float TOML) ficam invalid/partial no relatório real", () => {
+  for (const rawText of [
+    'features = true\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\n',
+    '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\ntimeout = 1.0\n',
+  ]) {
+    const scratch = makeScratch("doctor-c8-residual-toml-");
+    try {
+      const home = path.join(scratch, "home");
+      const env = homeEnv(home);
+      writeAgentConfig(home, "codex", rawText);
+      const { status, report } = runDoctorJson([], { env });
+      assert.equal(status, 0, rawText);
+      assert.equal(report.status, "partial", rawText);
+      const codex = report.agents.find((a) => a.id === "codex");
+      assert.equal(codex.configuration, "invalid", rawText);
+      assert.equal(codex.trust, "unknown", rawText);
+
+      const text = runDoctor([], { env });
+      assert.equal(text.status, 0, rawText);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+});
+
 function writeCodexHooksJson(home, content) {
   const dir = path.join(home, ".codex");
   mkdirSync(dir, { recursive: true });
@@ -986,5 +1015,79 @@ test("configuration-trust-C8 hooks.json do Codex com mcp_tool input aninhado sem
     assert.equal(codex.configReasonCode, "hooks_configured");
   } finally {
     rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Achado P2 da revisão formal3 (.checks/code-review/formal3-fixes.md, item 4):
+// `hooks.json` com um grupo PreToolUse cuja lista `hooks` tem 300.000 objetos
+// vazios (~900 KB, abaixo do limite de 1 MiB) derrubava `matcherGroupHandlers`/
+// `inspectMatcherGroupHooks` com `RangeError: Maximum call stack size
+// exceeded` (`.push(...array)` espalhado como argumentos) ANTES de qualquer
+// classificação — a exceção escapava da leitura de configuração e a CLI
+// emitia `failed/internal_error`, `agents: []` e exit 1, perdendo o
+// diagnóstico inteiro por causa de UM agente. Esperado: `partial`/exit 0,
+// Codex `invalid/hooks_structure_invalid`, e Claude/Hermes/collector
+// preservados (isolamento de falha, critério 12).
+test("configuration-trust-C12 hooks.json do Codex com 300.000 handlers inválidos (~900 KB) fica partial/exit 0, preservando os 3 agentes e o collector", () => {
+  const scratch = makeScratch("doctor-c12-hooks-lista-grande-");
+  try {
+    const home = path.join(scratch, "home");
+    const content = JSON.stringify({ hooks: { PreToolUse: [{ hooks: new Array(300000).fill({}) }] } });
+    assert.ok(Buffer.byteLength(content, "utf8") < 1024 * 1024, "fixture precisa caber abaixo de 1 MiB");
+    writeCodexHooksJson(home, content);
+
+    const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    assert.equal(report.agents.length, 3);
+    assert.deepEqual(
+      report.agents.map((a) => a.id).sort(),
+      ["claude", "codex", "hermes"],
+    );
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "invalid");
+    assert.equal(codex.configReasonCode, "hooks_structure_invalid");
+    assert.equal(codex.trust, "unknown");
+    for (const id of ["claude", "hermes"]) {
+      assert.equal(report.agents.find((a) => a.id === id).configuration, "not_configured", id);
+    }
+    assert.ok(report.collector, "collector precisa continuar presente no envelope");
+
+    const text = runDoctor([], { env: homeEnv(home) });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /hooks_structure_invalid/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Achado residual da revisão formal3 (.checks/code-review/formal3-residual-
+// fixes.md, item 2): `timeout=1.0`/`timeout=1e0` em hooks.json são tokens
+// decimal/exponencial do JSON — serde_json roteia para `ParserNumber::F64`,
+// recusado pelo visitor de `u64`; `JSON.parse` apaga essa distinção lexical
+// (vira o mesmo `Number` que `1`), então a checagem real precisa do
+// texto-fonte exato na fronteira da CLI, não só na camada pura.
+test("configuration-trust-C8 hooks.json do Codex com timeout=1.0/1e0 (token decimal/exponencial) fica invalid/partial no relatório real", () => {
+  for (const literal of ["1.0", "1e0"]) {
+    const scratch = makeScratch("doctor-c8-timeout-decimal-token-");
+    try {
+      const home = path.join(scratch, "home");
+      writeCodexHooksJson(
+        home,
+        `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo ok","timeout":${literal}}]}]}}`,
+      );
+      const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+      assert.equal(status, 0, literal);
+      assert.equal(report.status, "partial", literal);
+      const codex = report.agents.find((a) => a.id === "codex");
+      assert.equal(codex.configuration, "invalid", literal);
+      assert.equal(codex.configReasonCode, "hooks_structure_invalid", literal);
+
+      const text = runDoctor([], { env: homeEnv(home) });
+      assert.equal(text.status, 0, literal);
+      assert.match(text.stdout, /hooks_structure_invalid/);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   }
 });

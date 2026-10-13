@@ -1,11 +1,50 @@
 import { parseDocument } from "yaml";
 import { parse as parseToml } from "smol-toml";
-import { inspectNativeHooks } from "./hooks-shape.mjs";
+import { inspectNativeHooks, CODEX_INTEGER_SOURCE } from "./hooks-shape.mjs";
 
 export const ONE_MIB_BYTES = 1024 * 1024;
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// `timeout` (Command e McpTool) e `additionalContextLimit` (Command) são
+// `Option<u64>`/`Option<usize>` nativos cujo teto superior (2^64-1) um
+// `Number` do JSON.parse já não representa com exatidão (ver comentário de
+// `CODEX_U64_MAX` em hooks-shape.mjs). O reviver de três argumentos do Node
+// 24 expõe `context.source`, o texto-fonte exato de cada número do
+// documento, só para valores primitivos (nunca para objetos/arrays — `this`
+// nesse ponto é sempre o contêiner imediato daquela chave). Guardamos esse
+// texto numa propriedade de Symbol no PRÓPRIO objeto que tem o campo: invisível
+// a `Object.keys`/`JSON.stringify`/`Object.values` (nunca vaza na projeção
+// nem atrapalha as checagens estruturais existentes), e sem ambiguidade entre
+// um `timeout` do handler e uma chave do mesmo nome dentro de `input`
+// (McpTool), que é outro objeto. Só para `hooks.json` do Codex: config.toml
+// nunca passa por `JSON.parse`, e outros agentes não têm esses dois campos
+// nativos tipados.
+function parseCodexHooksJson(rawText) {
+  return JSON.parse(rawText, function (key, value, context) {
+    if (context !== undefined && typeof value === "number" && (key === "timeout" || key === "additionalContextLimit")) {
+      (this[CODEX_INTEGER_SOURCE] ??= {})[key] = context.source;
+    }
+    return value;
+  });
+}
+
+// `smol-toml` por padrão converte todo inteiro TOML para `Number`, perdendo
+// precisão acima de 2^53 (lança `config_malformed` para um `i64::MAX` válido
+// e nativo) e, pior, apaga a distinção lexical entre `timeout = 1` (inteiro)
+// e `timeout = 1.0` (float): as duas formas, distintas no TOML e tratadas de
+// forma diferente pelo `toml`/`serde` nativos, viram o mesmo `Number`
+// JavaScript. `ParseOptions.integersAsBigInt: true` (já incluído no pacote
+// instalado, sem dependência nova) faz TODO inteiro virar `BigInt` exato,
+// qualquer magnitude — só um FLOAT continua `Number`, nunca `BigInt` — então
+// `isValidOptionalU64Field` (hooks-shape.mjs) decide pelo tipo do próprio
+// valor: `BigInt` é sempre um inteiro nativo exato; `Number` nessa posição só
+// pode ser um float (sem fonte de texto JSON para provar o contrário), logo
+// inválido. Escopo só do Codex: é o único agente com `format: "toml"`.
+function parseCodexToml(rawText) {
+  return parseToml(rawText, { integersAsBigInt: true });
 }
 
 // `HooksFile` (hook_config.rs, rust-v0.162.1) é a raiz exclusiva de
@@ -79,13 +118,35 @@ function extractSafeFields(parsed, agentId, platform) {
   // e um alias errado não fica escondido atrás de uma canônica válida. Só a
   // AUSÊNCIA da chave (não um tipo inválido dela) abre espaço para a outra
   // decidir; com as duas presentes e booleanas, a canônica decide.
-  if (parsed.features) {
+  if (parsed.features !== undefined) {
+    // `FeaturesToml` deserializa de uma TABELA (struct), nunca de um
+    // booleano/array/string/número soltos — `features = true` ou `features =
+    // false` no lugar de `[features]` falha a deserialização do documento
+    // antes mesmo de qualquer chave interna existir. Checagem de container
+    // primeiro, antes de ler `hooks`/`codex_hooks`: um `[features]` vazio
+    // (`{}`) continua válido (tabela real, só sem chaves). Só para Codex —
+    // Claude/Hermes não têm essa struct.
+    if (agentId === "codex" && !isPlainObject(parsed.features)) {
+      return { fields: {}, featuresFlagsReasonCode: "features_hooks_flag_invalid_type" };
+    }
     const hasCanonical = Object.hasOwn(parsed.features, "hooks");
     const hasAlias = Object.hasOwn(parsed.features, "codex_hooks");
     const canonicalIsBoolean = typeof parsed.features.hooks === "boolean";
     const aliasIsBoolean = typeof parsed.features.codex_hooks === "boolean";
     if ((hasCanonical && !canonicalIsBoolean) || (hasAlias && !aliasIsBoolean)) {
       return { fields: {}, featuresFlagsReasonCode: "features_hooks_flag_invalid_type" };
+    }
+    // Restrição anterior insuficiente: só `hooks`/`codex_hooks` eram
+    // conferidas, mas `FeaturesToml::entries` é o `BTreeMap<String, bool>`
+    // inteiro — uma chave desconhecida com tipo errado (ex.: `shell_tool =
+    // "yes"`) já derruba o documento na fonte, mesmo que as duas chaves de
+    // hooks estejam corretas. Restrito a `agentId === "codex"`: é o contrato
+    // de `[features]` do Codex, não um schema genérico de `[features]`.
+    if (agentId === "codex") {
+      const entriesReasonCode = codexFeaturesEntriesReasonCode(parsed.features);
+      if (entriesReasonCode) {
+        return { fields: {}, featuresFlagsReasonCode: entriesReasonCode };
+      }
     }
     if (canonicalIsBoolean) {
       fields.featuresHooksEnabled = parsed.features.hooks;
@@ -97,6 +158,41 @@ function extractSafeFields(parsed, agentId, platform) {
     fields.hooksAutoAccept = parsed.hooks_auto_accept;
   }
   return { fields };
+}
+
+// `FeaturesToml` (lib.rs, rust-v0.162.1) tem campos nomeados/tipados (cada um
+// um struct/enum próprio, não bool) e um `#[serde(flatten)] entries:
+// BTreeMap<String, bool>` que absorve QUALQUER outra chave de `[features]` —
+// inclusive uma desconhecida do doctor, como `shell_tool`. Um valor não
+// booleano em qualquer uma dessas outras chaves falha a deserialização do
+// MAPA INTEIRO (não só de uma chave isolada), derrubando o documento TOML
+// inteiro — o mesmo efeito que já vale para `hooks`/`codex_hooks` tipados
+// errado (checagem acima). Esta lista é só os nomes dos campos tipados
+// (`lib.rs:838-868`), não o schema de cada um: não reimplementamos
+// `tool_registry`/`guardianv2`/etc., só a decisão de que ELES não entram
+// nesta regra de bool.
+const CODEX_TYPED_FEATURE_KEYS = new Set([
+  "tool_registry",
+  "code_mode",
+  "code_mode_host",
+  "non_prefixed_mcp_tool_names",
+  "guardianv2",
+  "multi_agent_v2",
+  "token_budget",
+  "context_management",
+  "rollout_budget",
+  "current_time_reminder",
+  "sleep_tool",
+  "apps_mcp_path_override",
+  "network_proxy",
+]);
+
+function codexFeaturesEntriesReasonCode(features) {
+  for (const [key, value] of Object.entries(features)) {
+    if (CODEX_TYPED_FEATURE_KEYS.has(key)) continue;
+    if (typeof value !== "boolean") return "features_hooks_flag_invalid_type";
+  }
+  return null;
 }
 
 // Tipo/evento não reconhecido não é erro de forma (uma versão do agente pode
@@ -143,7 +239,9 @@ export function projectConfig({ rawText, format, agentId, platform }) {
   if (Buffer.byteLength(rawText, "utf8") > ONE_MIB_BYTES) {
     return { configuration: "unknown", reasonCode: "input_too_large", fields: {} };
   }
-  const parse = PARSERS[format];
+  let parse = PARSERS[format];
+  if (agentId === "codex" && format === "json") parse = parseCodexHooksJson;
+  if (agentId === "codex" && format === "toml") parse = parseCodexToml;
   if (!parse) throw new Error(`formato de configuração desconhecido: ${format}`);
   let parsed;
   try {

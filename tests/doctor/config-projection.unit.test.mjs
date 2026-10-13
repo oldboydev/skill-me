@@ -218,6 +218,99 @@ test("config-projection-C8 features.hooks ausente delega a features.codex_hooks 
   assert.equal(canonicalOnly.fields.featuresHooksEnabled, true);
 });
 
+// Achado P2 da revisão formal3 (.checks/code-review/formal3-fixes.md, item 2):
+// `FeaturesToml::entries` (lib.rs:838-871) é o `BTreeMap<String, bool>`
+// INTEIRO de `[features]`, não só `hooks`/`codex_hooks` — a restrição
+// anterior só conferia essas duas chaves. Qualquer outra chave (conhecida do
+// doctor ou não, como `shell_tool`) com valor não booleano derruba o
+// documento inteiro na própria deserialização nativa, mesmo com handlers
+// nativos válidos ao lado.
+test("config-projection-C8 features com chave desconhecida (shell_tool) de tipo inválido invalida o documento, mesmo com hooks nativos válidos", () => {
+  const result = projectConfig({
+    rawText:
+      '[features]\nhooks = true\nshell_tool = "yes"\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="echo ok"\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(result);
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "features_hooks_flag_invalid_type");
+  assert.deepEqual(result.fields, {});
+});
+
+// Tabela de tipos/contêiner do mapa achatado: booleano válido (conhecida ou
+// desconhecida) preserva a resolução normal; os campos NOMEADOS/tipados de
+// `FeaturesToml` (struct/enum próprios, não bool) ficam fora desta regra —
+// não reimplementamos o schema deles, só a decisão de exclusão do mapa.
+test("config-projection-C8 features: booleano em chave desconhecida é preservado; campo nomeado/tipado (objeto) não entra na regra de bool do mapa achatado", () => {
+  const unknownBoolean = projectConfig({
+    rawText:
+      "[features]\nhooks = true\nmy_future_toggle = false\n[hooks]\nPreToolUse = []\n",
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(unknownBoolean);
+  assert.notEqual(unknownBoolean.configuration, "invalid");
+  assert.equal(unknownBoolean.fields.featuresHooksEnabled, true);
+
+  const typedFieldAsObject = projectConfig({
+    rawText: "[features.tool_registry]\nenabled = true\n[features]\nhooks = true\n[hooks]\nPreToolUse = []\n",
+    format: "toml",
+    agentId: "codex",
+  });
+  assertShape(typedFieldAsObject);
+  assert.notEqual(typedFieldAsObject.configuration, "invalid");
+  assert.equal(typedFieldAsObject.fields.featuresHooksEnabled, true);
+});
+
+// A regra é o contrato de `[features]` do CODEX (`FeaturesToml`), não um
+// schema genérico: Claude não tem essa struct, então uma chave desconhecida
+// de `features` com tipo não booleano no settings.json do Claude nunca
+// invalida o arquivo por essa regra.
+test("config-projection-C8 features com chave desconhecida de tipo inválido não invalida settings.json do Claude (regra é só do Codex)", () => {
+  const result = projectConfig({
+    rawText: JSON.stringify({
+      hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "x" }] }] },
+      features: { shell_tool: "yes" },
+    }),
+    format: "json",
+    agentId: "claude",
+  });
+  assertShape(result);
+  assert.equal(result.configuration, "configured");
+});
+
+// Achado residual da revisão formal3 (.checks/code-review/formal3-residual-
+// fixes.md, item 1): `FeaturesToml` desserializa de uma TABELA — `features =
+// true` ou `features = false` no lugar de `[features]` falha a
+// deserialização do documento ANTES de qualquer chave interna existir, não
+// um booleano "sem efeito". `{ parsed.features }` (truthy) deixava passar
+// `features = true` sem checagem alguma e pulava `features = false` por
+// inteiro (falsy) — os dois casos apareciam `configured`/`not_configured`
+// silenciosamente, nunca `invalid`.
+test("config-projection-C8 Codex: features=true ou features=false (bool solto, não tabela) invalida o documento, mesmo com hooks nativos válidos", () => {
+  for (const literal of ["true", "false"]) {
+    const result = projectConfig({
+      rawText: `features = ${literal}\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\n`,
+      format: "toml",
+      agentId: "codex",
+    });
+    assert.equal(result.configuration, "invalid", literal);
+    assert.equal(result.reasonCode, "features_hooks_flag_invalid_type", literal);
+    assert.deepEqual(result.fields, {}, literal);
+  }
+});
+
+// `[features]` vazio continua uma tabela real, só sem chaves: válido.
+test("config-projection-C8 Codex: [features] vazio (tabela sem chaves) continua válido, decidido só pelos hooks", () => {
+  const result = projectConfig({
+    rawText: '[features]\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assert.equal(result.configuration, "configured");
+});
+
 test("config-projection-C8 arquivo sem seção hooks fica not_configured, mesmo com outras chaves", () => {
   const result = projectConfig({
     rawText: JSON.stringify({ theme: "dark" }),
@@ -893,6 +986,140 @@ test("config-projection-C8 Codex: null em timeout/statusMessage/additionalContex
   assert.equal(projectHandlers("codex", [handler]).configuration, "configured", JSON.stringify(handler));
 });
 
+// Achado P2 da revisão formal3 (.checks/code-review/formal3-fixes.md, item 3):
+// `timeout` (`Option<u64>`, Command e McpTool) e `additionalContextLimit`
+// (`Option<usize>`, Command) têm teto nativo 2^64-1 (hook_config.rs). Um
+// `Number` do `JSON.parse` não representa esse teto com exatidão: o valor
+// válido máximo (2^64-1, ímpar) arredonda para o MESMO double que o primeiro
+// valor inválido acima dele (2^64) — por isso os literais abaixo são escritos
+// como TEXTO num template de JSON bruto, nunca como `Number` num objeto JS
+// passado a `JSON.stringify` (o literal já arredondaria na própria autoria do
+// teste, mascarando o defeito que esta prova existe para pegar).
+function codexHandlerRawJson(handlerJson, platform = "linux") {
+  const rawText = `{"hooks":{"PreToolUse":[{"hooks":[${handlerJson}]}]}}`;
+  return projectConfig({ rawText, format: "json", agentId: "codex", platform });
+}
+
+test("config-projection-C8 Codex: timeout no teto máximo válido do u64 (2^64-1) continua configured, em Command e McpTool", () => {
+  const command = codexHandlerRawJson(
+    '{"type":"command","command":"echo ok","timeout":18446744073709551615}',
+  );
+  assert.equal(command.configuration, "configured");
+  assert.equal(command.fields.hasHooksSection, true);
+
+  const mcpTool = codexHandlerRawJson(
+    '{"type":"mcp_tool","server":"s","tool":"t","timeout":18446744073709551615}',
+  );
+  assert.equal(mcpTool.configuration, "configured");
+});
+
+test("config-projection-C8 Codex: timeout imediatamente acima do teto do u64 (2^64) invalida o documento, em Command e McpTool", () => {
+  const command = codexHandlerRawJson(
+    '{"type":"command","command":"echo ok","timeout":18446744073709551616}',
+  );
+  assert.equal(command.configuration, "invalid");
+  assert.equal(command.reasonCode, "hooks_structure_invalid");
+  assert.deepEqual(command.fields, {});
+
+  const mcpTool = codexHandlerRawJson(
+    '{"type":"mcp_tool","server":"s","tool":"t","timeout":18446744073709551616}',
+  );
+  assert.equal(mcpTool.configuration, "invalid");
+  assert.equal(mcpTool.reasonCode, "hooks_structure_invalid");
+});
+
+test("config-projection-C8 Codex: additionalContextLimit no teto do usize (2^64-1) continua configured; 2^64 invalida (só Command)", () => {
+  const atMax = codexHandlerRawJson(
+    '{"type":"command","command":"echo ok","additionalContextLimit":18446744073709551615}',
+  );
+  assert.equal(atMax.configuration, "configured");
+
+  const aboveMax = codexHandlerRawJson(
+    '{"type":"command","command":"echo ok","additionalContextLimit":18446744073709551616}',
+  );
+  assert.equal(aboveMax.configuration, "invalid");
+  assert.equal(aboveMax.reasonCode, "hooks_structure_invalid");
+});
+
+// Achados residuais da revisão formal3 (.checks/code-review/formal3-residual-
+// fixes.md, item 3): TOML tipa inteiro como `i64` assinado — um literal além
+// de `i64::MAX` nunca é um inteiro TOML válido, mesmo que o campo Rust seja
+// `u64`/`usize` (o teto do FORMATO decide primeiro). `smol-toml` com
+// `integersAsBigInt` preserva o inteiro exato (sem o limite de precisão de
+// double antigo), então `9223372036854775807` (i64::MAX, válido e nativo)
+// precisa ficar `configured`; qualquer coisa acima, mesmo um `u64::MAX`
+// matematicamente válido para o CAMPO, nunca é um `i64` TOML válido.
+test("config-projection-C8 Codex: timeout no teto do i64 TOML (i64::MAX) continua configured; acima dele é invalid mesmo dentro do u64 do campo", () => {
+  const atI64Max = projectConfig({
+    rawText: '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\ntimeout = 9223372036854775807\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assert.equal(atI64Max.configuration, "configured");
+
+  const aboveI64Max = projectConfig({
+    rawText: '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\ntimeout = 9223372036854775808\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assert.equal(aboveI64Max.configuration, "invalid");
+  assert.equal(aboveI64Max.reasonCode, "hooks_structure_invalid");
+
+  // u64::MAX (2^64-1) é válido para o CAMPO Rust, mas excede o teto do
+  // próprio formato TOML (i64): o formato decide primeiro, nunca configured.
+  const u64MaxInToml = projectConfig({
+    rawText: '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\ntimeout = 18446744073709551615\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assert.equal(u64MaxInToml.configuration, "invalid");
+  assert.equal(u64MaxInToml.reasonCode, "hooks_structure_invalid");
+});
+
+test("config-projection-C8 Codex: timeout pequeno e dentro da faixa segura em config.toml continua configured", () => {
+  const result = projectConfig({
+    rawText: '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\ntimeout = 86400\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assert.equal(result.configuration, "configured");
+});
+
+// Achado residual (item 3): um FLOAT do TOML (`1.0`) nunca vira o mesmo
+// `Number` convertido pelo smol-toml quanto um inteiro — com
+// `integersAsBigInt`, só um inteiro vira `BigInt`; um float continua
+// `Number`, sem fonte de texto JSON, e é recusado mesmo com valor matemático
+// inteiro (o campo nativo é `Option<u64>`, não float).
+test("config-projection-C8 Codex: timeout como float do TOML (1.0) invalida o documento, mesmo com valor matemático inteiro", () => {
+  const result = projectConfig({
+    rawText: '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\ntimeout = 1.0\n',
+    format: "toml",
+    agentId: "codex",
+  });
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "hooks_structure_invalid");
+});
+
+// Achado residual (item 2): serde_json roteia um token com ponto decimal ou
+// expoente para `ParserNumber::F64`, nunca para o visitor inteiro de
+// `u64`/`usize` — `1.0`/`1e0`/`1e2` em JSON são recusados mesmo com valor
+// matemático inteiro, porque `JSON.parse`/`Number.isInteger` apagam essa
+// distinção lexical (viram o mesmo `Number` que `1`). `-0` não tem ponto nem
+// expoente: continua um inteiro válido (zero).
+test("config-projection-C8 Codex: timeout como token decimal/exponencial do JSON (1.0, 1e0, 1e2) invalida; -0 continua válido (zero)", () => {
+  for (const literal of ["1.0", "1e0", "1e2", "30.0", "3e1"]) {
+    const result = codexHandlerRawJson(
+      `{"type":"command","command":"echo ok","timeout":${literal}}`,
+    );
+    assert.equal(result.configuration, "invalid", literal);
+    assert.equal(result.reasonCode, "hooks_structure_invalid", literal);
+  }
+  const negativeZero = codexHandlerRawJson(
+    '{"type":"command","command":"echo ok","timeout":-0}',
+  );
+  assert.equal(negativeZero.configuration, "configured");
+});
+
 test("config-projection-C8 Codex: null em async (bool) ou input (Map) não é Option — invalida o documento, nunca configured", () => {
   invalidStructure(withHandlers([{ type: "command", command: "echo ok", async: null }]), "json", "codex");
   invalidStructure(
@@ -930,4 +1157,79 @@ test("config-projection-C8 Codex: matcher:null é Option<String> válido (config
       agentId,
     );
   }
+});
+
+// --- Achado P2 da revisão formal3 (.checks/code-review/formal3-fixes.md,
+// item 4): grupo de matcher com uma lista muito grande de hooks ---
+// `matcherGroupHandlers`/`inspectMatcherGroupHooks` espalhavam a lista como
+// argumentos de `.push(...)`/`.push(...array.map(...))`; um grupo com
+// dezenas de milhares de handlers (`hooks.json` sintaticamente válido, abaixo
+// do limite de 1 MiB) estourava o limite de argumentos do V8 (`RangeError:
+// Maximum call stack size exceeded`) ANTES de qualquer classificação, e a
+// exceção escapava da leitura de configuração. `matcherGroupHandlers` é
+// compartilhada por Claude e Codex (`HOOKS_INSPECTORS`): a mesma prova cobre
+// os dois agentes que a usam.
+
+test("config-projection-C12 Codex: grupo com 300.000 handlers inválidos (sem type) classifica invalid sem lançar RangeError, nunca escapa como erro interno", () => {
+  const rawText = JSON.stringify({ hooks: { PreToolUse: [{ hooks: new Array(300000).fill({}) }] } });
+  assert.ok(Buffer.byteLength(rawText, "utf8") < ONE_MIB_BYTES, "fixture precisa caber abaixo de 1 MiB");
+  const result = projectConfig({ rawText, format: "json", agentId: "codex", platform: "linux" });
+  assertShape(result);
+  assert.equal(result.configuration, "invalid");
+  assert.equal(result.reasonCode, "hooks_structure_invalid");
+  assert.deepEqual(result.fields, {});
+});
+
+// Um handler válido e visado precisa de `type`+`command` não vazios
+// (≥32 bytes cada), bem mais pesado que o `{}` inválido (2 bytes) do caso
+// acima — 300.000 deles não cabem no mesmo teto de 1 MiB. A contagem abaixo
+// (30.000) é a maior que ainda cabe com esse handler mínimo, mantendo a
+// prova sob o mesmo limite de arquivo que o relatório real aplicaria.
+const LARGE_VALID_HANDLER_COUNT = 30000;
+
+test("config-projection-C12 Codex: grupo com handlers válidos em larga escala classifica configured sem lançar RangeError", () => {
+  const validHandler = { type: "command", command: "x" };
+  const rawText = JSON.stringify({
+    hooks: { PreToolUse: [{ hooks: new Array(LARGE_VALID_HANDLER_COUNT).fill(validHandler) }] },
+  });
+  assert.ok(Buffer.byteLength(rawText, "utf8") < ONE_MIB_BYTES, "fixture precisa caber abaixo de 1 MiB");
+  const result = projectConfig({ rawText, format: "json", agentId: "codex", platform: "linux" });
+  assertShape(result);
+  assert.equal(result.configuration, "configured");
+  assert.equal(result.fields.hasHooksSection, true);
+});
+
+test("config-projection-C12 Claude usa o mesmo helper de grupos de matcher: 300.000 handlers inválidos ou handlers válidos em larga escala não lançam RangeError", () => {
+  const invalid = projectConfig({
+    rawText: JSON.stringify({ hooks: { PreToolUse: [{ hooks: new Array(300000).fill({}) }] } }),
+    format: "json",
+    agentId: "claude",
+  });
+  assertShape(invalid);
+  assert.equal(invalid.configuration, "invalid");
+  assert.equal(invalid.reasonCode, "hooks_structure_invalid");
+
+  const validHandler = { type: "command", command: "x" };
+  const validRawText = JSON.stringify({
+    hooks: { PreToolUse: [{ hooks: new Array(LARGE_VALID_HANDLER_COUNT).fill(validHandler) }] },
+  });
+  assert.ok(Buffer.byteLength(validRawText, "utf8") < ONE_MIB_BYTES, "fixture precisa caber abaixo de 1 MiB");
+  const valid = projectConfig({ rawText: validRawText, format: "json", agentId: "claude" });
+  assertShape(valid);
+  assert.equal(valid.configuration, "configured");
+});
+
+// Limite de bytes independente: o mesmo payload de lista grande, empurrado
+// para cima de 1 MiB, continua `unknown/input_too_large` — a correção do
+// limite de argumentos não substitui nem enfraquece o teto de leitura.
+test("config-projection-C12/C14 lista grande de hooks acima de 1 MiB continua input_too_large, não invalid nem RangeError", () => {
+  const marker = "x".repeat(2000);
+  const rawText = JSON.stringify({
+    hooks: { PreToolUse: [{ hooks: new Array(300000).fill({}) }] },
+    padding: marker,
+  }).padEnd(ONE_MIB_BYTES + 1, " ");
+  assert.ok(Buffer.byteLength(rawText, "utf8") > ONE_MIB_BYTES);
+  const result = projectConfig({ rawText, format: "json", agentId: "codex", platform: "linux" });
+  assert.equal(result.configuration, "unknown");
+  assert.equal(result.reasonCode, "input_too_large");
 });

@@ -78,7 +78,12 @@ async function readCodexPackageVersion(pkgRootPath, sep, fs) {
   } catch {
     return { version: null, reasonCode: "launcher_not_recognized" };
   }
-  if (parsed.name !== "@openai/codex") {
+  // `parsed` pode ser `null` (JSON válido) ou outro primitivo/array: o
+  // acesso a `.name` não lança nesses casos (exceto `null`, por isso a ordem
+  // do `||` abaixo), mas nenhum deles tem `name`, então caem na mesma
+  // resposta de "não reconhecido" — presença e leitura já aconteceram, só a
+  // identificação do pacote falhou (critério 3).
+  if (parsed === null || parsed.name !== "@openai/codex") {
     return { version: null, reasonCode: "launcher_not_recognized" };
   }
   // Um "version" com formato implausível (canário, credencial, texto

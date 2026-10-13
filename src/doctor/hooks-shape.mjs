@@ -19,10 +19,6 @@ function isString(value) {
   return typeof value === "string";
 }
 
-function isNonNegativeInteger(value) {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
-}
-
 // `null` é o `None` de um `Option<T>` em JSON (TOML não tem `null`, então a
 // ausência da chave é a única forma lá); um valor presente de outro tipo é
 // erro de deserialização na fonte, nunca um valor ignorado em silêncio.
@@ -30,6 +26,66 @@ function isValidOptionalField(handler, field, isValidValue) {
   if (!Object.hasOwn(handler, field)) return true;
   const value = handler[field];
   return value === null || isValidValue(value);
+}
+
+// Teto comum dos dois campos nativos de magnitude que o doctor confere:
+// `timeout` (`Option<u64>`, Command e McpTool) e `additionalContextLimit`
+// (`Option<usize>`, só Command) — hook_config.rs, rust-v0.162.1. O Codex
+// 0.162.1 só publica binário nativo para plataformas de 64 bits (Windows
+// x64/arm64, macOS, Linux x64/arm64 — ver docs/agent-compatibility.md,
+// instalação local inspecionada), onde `usize` tem a mesma largura de `u64`;
+// por isso os dois campos compartilham o mesmo teto.
+const CODEX_U64_MAX = 18446744073709551615n; // 2^64 - 1
+
+// `JSON.parse` não lança para um inteiro acima da faixa segura de um double
+// (2^53): ele arredonda para o double mais próximo. O valor nativo máximo
+// válido (2^64-1, ímpar) arredonda para o MESMO double que o primeiro valor
+// inválido acima dele (2^64, já exatamente representável nessa magnitude) —
+// comparar só o `value` já arredondado não distingue os dois, e um literal
+// `18446744073709551615n` escrito como `Number` no nosso próprio código
+// sofreria o mesmo arredondamento. O limite superior por isso precisa do
+// texto-fonte exato do número, preservado só para `format: "json"` do Codex
+// em `CODEX_INTEGER_SOURCE` (config-projection.mjs, reviver de `JSON.parse`
+// do Node 24 com acesso a `context.source`).
+export const CODEX_INTEGER_SOURCE = Symbol("codexIntegerSource");
+
+// serde_json (de.rs, `parse_number`) roteia um token com ponto decimal ou
+// expoente para `ParserNumber::F64`, nunca para o visitor inteiro que
+// `u64`/`usize` exigem — `timeout: 1.0` ou `timeout: 1e2` falham a
+// deserialização do campo mesmo com valor matemático inteiro, porque
+// `Number.isInteger`/`JSON.parse` apagam essa distinção lexical (`1.0` e `1`
+// viram o mesmo `Number`). Só um token puramente decimal (sinal opcional +
+// dígitos, sem `.`/`e`/`E`) é um inteiro nativo de verdade.
+const PLAIN_INTEGER_TOKEN = /^-?\d+$/;
+
+// TOML tipa inteiro como `i64` assinado (spec TOML, "64-bit signed long"); um
+// literal além de `i64::MAX` nunca é um inteiro TOML válido, mesmo que o
+// campo Rust de destino seja `u64`/`usize` — o toml-rs real falha ao
+// desserializar o PRÓPRIO documento TOML antes de alcançar a conversão para
+// o campo (o teto do formato decide primeiro, nunca o teto do campo). Teto
+// menor que `CODEX_U64_MAX`, então só se aplica à origem TOML (`BigInt`).
+const CODEX_TOML_I64_MAX = 9223372036854775807n; // 2^63 - 1
+
+// `null` é o `None` do `Option<T>`, como a ausência da chave. Um valor
+// presente precisa ser um inteiro não negativo dentro do teto nativo.
+// `value` chega como `BigInt` quando a origem é `config.toml`
+// (`integersAsBigInt: true` em `parseCodexToml`, config-projection.mjs, faz
+// TODO inteiro TOML virar `BigInt` exato, qualquer magnitude, sem jamais
+// perder precisão — e um FLOAT do TOML, como `1.0`, nunca vira `BigInt`, só
+// `Number`, então cai no ramo de baixo sem fonte de texto JSON e é recusado)
+// ou `Number` quando a origem é `hooks.json`, caso em que o texto-fonte exato
+// (`CODEX_INTEGER_SOURCE`) decide tanto o teto quanto a forma lexical
+// (inteiro vs. float — ver `PLAIN_INTEGER_TOKEN`). Sem fonte de texto para
+// confirmar um `Number`, a configuração não pode ser anunciada como válida —
+// nunca presume "dentro do limite"/"é inteiro nativo" por omissão da prova.
+function isValidOptionalU64Field(handler, field) {
+  if (!Object.hasOwn(handler, field)) return true;
+  const value = handler[field];
+  if (value === null) return true;
+  if (typeof value === "bigint") return value >= 0n && value <= CODEX_TOML_I64_MAX;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return false;
+  const source = handler[CODEX_INTEGER_SOURCE]?.[field];
+  return typeof source === "string" && PLAIN_INTEGER_TOKEN.test(source) && BigInt(source) <= CODEX_U64_MAX;
 }
 
 // Campo com `#[serde(default)]` mas tipo NÃO `Option<T>` (`async: bool` do
@@ -118,10 +174,10 @@ function classifyCodexCommand(handler, platform) {
   // `null` em JSON é o `None` de Option<String>, como a ausência.
   const override = overrideKeys.length === 1 ? handler[overrideKeys[0]] : null;
   if (override !== null && !isString(override)) return "invalid";
-  if (!isValidOptionalField(handler, "timeout", isNonNegativeInteger)) return "invalid";
+  if (!isValidOptionalU64Field(handler, "timeout")) return "invalid";
   if (!isValidDefaultedField(handler, "async", (value) => typeof value === "boolean")) return "invalid";
   if (!isValidOptionalField(handler, "statusMessage", isString)) return "invalid";
-  if (!isValidOptionalField(handler, "additionalContextLimit", isNonNegativeInteger)) return "invalid";
+  if (!isValidOptionalU64Field(handler, "additionalContextLimit")) return "invalid";
   const effective = platform === "win32" && override !== null ? override : handler.command;
   return effective.trim() !== "" ? "targeted" : "untargeted";
 }
@@ -169,7 +225,7 @@ function isTomlRepresentableMcpInput(value) {
 function classifyCodexMcpTool(handler, event) {
   const base = classifyRequiredTargets(handler, ["server", "tool"]);
   if (base === "invalid") return "invalid";
-  if (!isValidOptionalField(handler, "timeout", isNonNegativeInteger)) return "invalid";
+  if (!isValidOptionalU64Field(handler, "timeout")) return "invalid";
   if (!isValidOptionalField(handler, "statusMessage", isString)) return "invalid";
   if (!isValidDefaultedField(handler, "input", isTomlRepresentableMcpInput)) return "invalid";
   if (event === "SessionEnd") return "untargeted";
@@ -216,7 +272,12 @@ function matcherGroupHandlers(groups, { hooksFieldOptional = false, matcherAllow
     if (!matcherValid) return null;
     if (group.hooks === undefined && hooksFieldOptional) continue;
     if (!Array.isArray(group.hooks)) return null;
-    handlers.push(...group.hooks);
+    // Nunca espalhar `group.hooks` como argumentos de `push`: um grupo com
+    // dezenas de milhares de handlers (`hooks.json` sintaticamente válido,
+    // abaixo do limite de 1 MiB) estoura o limite de argumentos do V8 e
+    // lança `RangeError` antes de qualquer classificação rodar — achado P2
+    // da revisão formal3, item 4. Laço simples não tem esse teto.
+    for (const hook of group.hooks) handlers.push(hook);
   }
   return handlers;
 }
@@ -275,7 +336,9 @@ function inspectMatcherGroupHooks(
     }
     const handlers = matcherGroupHandlers(value, { hooksFieldOptional, matcherAllowsNull });
     if (handlers === null) return INVALID;
-    classifications.push(...handlers.map((handler) => classifyHandler(handler, key)));
+    // Mesmo motivo do laço em `matcherGroupHandlers`: `.push(...array.map(...))`
+    // espalha o resultado do `map` como argumentos, sujeito ao mesmo teto do V8.
+    for (const handler of handlers) classifications.push(classifyHandler(handler, key));
   }
   return summarizeGroupHooks(classifications, hasUnrecognizedEvent);
 }
