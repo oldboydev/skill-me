@@ -191,3 +191,9 @@ A rodada13 independente será scoped sobre00cb167a5b38f182cf2ed214c1664b06970845
 Rodada13 PASS18/18 na HEADa770aee67b8950d69e6c8a6fb9147cd3b0c341c1, fixdiff00cb167..a770aee. Verificador reexecutou uma suítecompleta:6governança+10motor+382doctor=398PASS/0FAIL/2skipPOSIX,400contabilizados,exit0. QuatrovariantesWindows, seiscontroles e CLIuppercase.PYD executaram e fecharam oP2 anterior nos quatrocritérios. Assertions/citações touched atualizadas; demais análise carriedfrom8b05234 explícita. Relatório salvo sem novosprobes/suítes/findings bloqueantes; HEADpreservada e somente relatório modificado. MacOS/CIremota ainda nãoexecutados.
 
 Root reconferiu após a última correção os quatro arquivos reais de configuração por tamanho/SHA256: todos iguais ao baseline. Core5 byteigual à base4242520. A formal8 segue agora no commitlimpo com o relatório13; sete tentativasanteriores/max8 autorizado permanecem preservados. Push/PR somente se o motor retornarready para esta versão. Sem merge/publicação automática.
+
+## Oitava revisão formal
+
+Formal8 naHEAD2038822b0f04be00c3e1a3a205f80e9d2655edb2 confirmou intérprete/env corrigidos, mas retornou changes_requested/insufficient comquatroP2: __init__ compilado pretere fonteHermes dentrodo pacote; subpacote/extensão plugins pretere plugins.py; HOMEausente lançaerroglobal perdendo inventário; configuraçãoFIFO bloqueiaopen anteslimitebytes. Resposta preservada em .checks/code-review/issue-3-formal8-response.json; todosoitoresultados seguem no histórico.
+
+Os quatrocasos seguem aoClaude dentrodos critérios de vínculo/evidência/isolamentoleitura, com RED/GREEN camada+CLI e probePOSIX protegido por timeout, sem executarPython/agentes/hooks. A autorização humana “pode fazer as revisoes necessarias” cobre independente14 e formal9; override9 somenteissue3, padrõesmax2 e core5 preservados. O motor não será contornado. Nenhum push/PR/merge/publicação atéesteregistro.
