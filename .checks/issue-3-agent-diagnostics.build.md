@@ -3589,3 +3589,77 @@ pacote só no outro diretório e o diretório sem `__init__.py`. Eles conferem 0
 - A execução foi só em Windows 11 Pro, com Node 24.21.0. Na CLI, o Windows exercita o `.cmd` (`-m`, `--cwd`). O ramo
   POSIX do mesmo teste (vizinho no diretório do launcher) depende da execução Linux do orquestrador; macOS não foi
   observado.
+
+## 31. `hermes_cli` sombreado por bytecode solto ou extensão nativa — fecha o primeiro resíduo da seção 30 (13/10/2026)
+
+Encaminhamento: `.checks/code-review/hermes-compiled-shadow-fixes.md`. Fecha o primeiro limite residual que a seção 30
+registrou e deixou aberto para decisão do proprietário: "Um módulo de extensão (`.so`/`.pyd`), um `.pyc` sem fonte ou um
+`hermes_cli/__init__.pyc` no primeiro diretório também seriam importados antes (PEP 420)." É o mesmo vínculo de
+C2/C3, C5 e C8, e o proprietário autorizou a correção: não é critério novo nem achado fora do escopo. Esta seção
+**supera** especificamente esse primeiro limite da seção 30; o restante da seção 30 (`PYTHONPATH`/`PYTHONHOME`,
+diretório desconhecido, módulo/pacote fonte, demais limites) fica como registro, intacto. Autor: Claude; o Codex local
+só revisa. Arquivos alterados: `src/doctor/launcher-link/hermes.mjs`, os testes de resolução
+(`agent-resolution.unit.test.mjs`) e de CLI (`configuration-trust.cli.test.mjs`), `docs/agent-compatibility.md`, o
+Landing e esta seção. Nenhuma mutação Git, stash, agente extra, hook, execução de Python nem configuração real.
+
+**Defeito.** Com o pacote fonte (`hermes_cli.py`/`__init__.py`) ausente do primeiro diretório de import, mas um
+bytecode solto (`hermes_cli.pyc`, `hermes_cli/__init__.pyc`) ou uma extensão nativa (`hermes_cli[.ABI].so/.pyd`,
+`hermes_cli/__init__[.ABI].so/.pyd`) presente nesse mesmo diretório, o Python ainda importa esse vizinho antes do
+site-packages (PEP 420), mas o doctor publicava a versão e o catálogo do site-packages como vinculados.
+
+**Fontes**, lidas só como texto:
+
+- PEP 420, "Specification" — `<directory>/foo.{py,pyc,so,pyd}` é módulo —, já citada na seção 30.
+- CPython v3.13.0, `importlib.machinery.EXTENSION_SUFFIXES` (documentação de `importlib.machinery`): descreve o
+  marcador de ABI entre o nome e a extensão real (ex. `cpython-313-x86_64-linux-gnu` antes de `.so`, `cp313-win_amd64`
+  antes de `.pyd`), lido apenas como texto, nunca interpretado.
+
+**Decisão.** `mayImportBeforeSitePackages` (`hermes.mjs`) ganha quatro candidatos novos, nos mesmos dois diretórios que
+a seção 30 já decidia (o primeiro diretório de import e `<primeiro diretório>/hermes_cli`): `hermes_cli.pyc` e
+`hermes_cli/__init__.pyc`, pelo `fileExists` existente (nome exato, sem marcador); e `hermes_cli[.ABI].so/.pyd` e
+`hermes_cli/__init__[.ABI].so/.pyd`, por `fs.listDir` do mesmo diretório contra uma regex (`COMPILED_HERMES_CLI_NAME`/
+`COMPILED_INIT_NAME`) que casa o nome com ou sem o marcador de ABI, sempre como texto. `fs.listDir` é o mesmo contrato
+já usado por `findSitePackagesInitFile`; o `ENOENT` do diretório ausente vira lista vazia, como lá. Um diretório
+`hermes_cli` sem nenhum dos quatro candidatos (py/pyc/so/pyd) continua porção de namespace (PEP 420): a busca não para
+aí, e o pacote regular do site-packages vence. `__pycache__` nunca é listado: o bytecode cacheado lá depende do `.py`
+ao lado para ser alcançado pelo import, caso já coberto pelo candidato `hermes_cli.py`/`hermes_cli.pyc` direto. A
+versão do vizinho continua nunca lida.
+
+**RED** (`src/` intacto; `.checks/code-review/compiled-shadow-red.txt`): alvo
+`--test-name-pattern="hermes-shadow"` nos dois arquivos de teste → tests 16, pass 13, fail 3, `EXIT_CODE=1`. As 3
+falhas: a matriz de vizinhos da camada (6 combinações novas × 4 formas, todas ainda publicando 0.21.4/`packageDir` do
+site-packages), o controle do link simbólico (mesma causa, agora com os novos kinds no mesmo loop) e o cenário
+plausível da CLI (`hermes_cli.pyc`, publicando `"0.21.4"` em vez de `null`). Os 13 que já passavam: os dois testes de
+controle de posição da seção 30 (nenhum dos candidatos novos impede o vínculo nos casos que não deveriam), o novo
+teste de controles de nome (parecido/sem relação/`__pycache__`, que já passava por não existir guarda nenhuma ainda) e
+os demais testes do bloco, inalterados.
+
+**GREEN** (`.checks/code-review/compiled-shadow-green.txt`): mesmo alvo → tests 16, pass 16, fail 0, `EXIT_CODE=0`.
+
+**`npm test` único** (`.checks/code-review/compiled-shadow-npm-test.txt`): `test:governance` 6/6, `test:code-review`
+10/10 e `test:doctor` com 381 testes / 379 pass / 0 fail / 2 skip, `EXIT_CODE=0`. Os skips são os dois POSIX já
+registrados na seção 30. O delta 378 → 381 são os 3 testes novos (1 de resolução, 2 de CLI), todos executados no log.
+
+**Provas.** Os casos derivam do cenário do encaminhamento e das fontes (PEP 420, `EXTENSION_SUFFIXES`), não do código.
+
+- Matriz da camada: bytecode solto (módulo e pacote) e extensão nativa (módulo e pacote), cada um com e sem marcador
+  de ABI — 6 combinações novas × as 4 formas de launcher da seção 30. Cada caso exige o resultado inconclusivo exato,
+  sem `packageDir`, e confere que nenhum caminho do vizinho foi lido (mesma asserção `neighborReads` da seção 30).
+- Controles de posição: os mesmos 6 candidatos só no outro diretório mantêm o vínculo (reaproveita o teste de
+  controles de posição da seção 30, agora com 8 kinds no total).
+- Controles de nome (teste novo): um nome parecido (`hermes_client.so`/`.pyd`), um nome sem relação (`nao_hermes.pyc`)
+  e bytecode cacheado em `__pycache__` sem o `.py` ao lado — nenhum impede o vínculo.
+- Link simbólico: a mesma matriz, agora com 8 kinds (antes 2), repete a prova da seção 30 — o vizinho no diretório
+  real do script, não do link, é quem decide.
+- Na CLI: um cenário plausível (`hermes_cli.pyc` no primeiro diretório de import) confere 3 agentes, exit 0, Hermes
+  `present`, versão nula, `launcher_not_recognized`, 5 linhas `unverified/version_unresolved` e
+  `configuration`/`trust` `unknown` — mesmas asserções já parametrizadas para os demais casos da seção 30. Um
+  controle legítimo (`hermes_cli.pyc` só no outro diretório) confere 0.21.4, `configured`, `trusted` e as 5 linhas
+  `verified/local_contract_lists_events`.
+
+**Limites.** Os mesmos da seção 30 continuam, exceto o primeiro, fechado por esta seção: `.pth`, site do usuário,
+`sys.path` alterado em tempo de execução, finders, reflexão e `PYTHONSAFEPATH`/`-P` continuam fora da leitura
+estática; sistema de arquivos sem distinção de maiúsculas conta um vizinho com outra caixa, pelo lado conservador
+(herdado, não reavaliado nesta seção); `realScriptPath` continua a mesma dívida de `codex.mjs`, junto com
+`stripCommentLines` da seção 29; execução só em Windows 11 Pro com Node 24.21.0, POSIX dependente da execução Linux
+do orquestrador, macOS não observado.

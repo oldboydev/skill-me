@@ -730,6 +730,9 @@ function runHermesShadowScenario(scratch, { neighbor = null, neighborIn = "first
   const [firstDir, otherDir] = windows ? [project, hermesBinDir] : [hermesBinDir, project];
   const neighborDir = neighborIn === "first" ? firstDir : otherDir;
   if (neighbor === "module") writeFileSync(path.join(neighborDir, "hermes_cli.py"), '__version__ = "9.9.9"\n');
+  // Residual da seção 30 (seção 31 do build): bytecode solto sem o .py ao
+  // lado é importado antes do site-packages tanto quanto o módulo fonte.
+  if (neighbor === "pyc_module") writeFileSync(path.join(neighborDir, "hermes_cli.pyc"), "\0");
   if (neighbor === "package" || neighbor === "namespace") {
     mkdirSync(path.join(neighborDir, "hermes_cli"), { recursive: true });
     const fileName = neighbor === "package" ? "__init__.py" : "main.py";
@@ -755,6 +758,7 @@ function runHermesShadowScenario(scratch, { neighbor = null, neighborIn = "first
 const HERMES_SHADOW_UNBOUND_CLI_CASES = {
   "hermes_cli.py no primeiro diretório de import": () => ({ neighbor: "module" }),
   "hermes_cli/__init__.py no primeiro diretório de import": () => ({ neighbor: "package" }),
+  "hermes_cli.pyc no primeiro diretório de import": () => ({ neighbor: "pyc_module" }),
   "PYTHONPATH não vazio": (scratch) => ({ extraEnv: { PYTHONPATH: path.join(scratch, "outro") } }),
   "PYTHONHOME não vazio": (scratch) => ({ extraEnv: { PYTHONHOME: path.join(scratch, "outro") } }),
 };
@@ -806,6 +810,7 @@ const HERMES_SHADOW_BOUND_CLI_CASES = {
   "hermes_cli.py só no outro diretório": { neighbor: "module", neighborIn: "other" },
   "hermes_cli/__init__.py só no outro diretório": { neighbor: "package", neighborIn: "other" },
   "diretório hermes_cli sem __init__.py no primeiro diretório de import": { neighbor: "namespace" },
+  "hermes_cli.pyc só no outro diretório": { neighbor: "pyc_module", neighborIn: "other" },
 };
 
 for (const [label, scenario] of Object.entries(HERMES_SHADOW_BOUND_CLI_CASES)) {

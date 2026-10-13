@@ -371,6 +371,14 @@ Claude; o Codex local só revisa. Fonte, RED/GREEN e limites estão na seção 3
 
 Proof: `node --test --test-name-pattern="hermes-shadow" tests/doctor/agent-resolution.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs`
 
+**Aditivo — seção 31 do build (`.checks/code-review/hermes-compiled-shadow-fixes.md`):** fecha o primeiro limite
+residual registrado acima ("Ler a versão do vizinho... modelar o `sys.path` inteiro" não cobria bytecode solto nem
+extensão nativa). `mayImportBeforeSitePackages` passa a considerar também `hermes_cli.pyc`/`hermes_cli/__init__.pyc`
+(nome exato) e `hermes_cli[.ABI].so/.pyd`/`hermes_cli/__init__[.ABI].so/.pyd` (via `fs.listDir`, marcador de ABI só
+casado como texto) nos dois mesmos diretórios da tabela acima. `__pycache__` continua fora da leitura: o bytecode
+cacheado lá depende do `.py` ao lado. A mesma proof acima cobre o residual (matriz ampliada para 8 kinds na camada,
+mais o cenário de CLI `hermes_cli.pyc`); prova completa, RED/GREEN e limites restantes na seção 31 do build.
+
 ## Checks
 
 ### S1 - Saber quais agentes foram encontrados sem iniciar os agentes · 6 arquivos · ~26 KB · ~7k

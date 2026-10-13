@@ -169,20 +169,50 @@ async function firstImportDirectory(launcherPath, { fs, cwd }) {
   return dirnameGeneric(await realScriptPath(launcherPath, fs));
 }
 
+// Bytecode solto (hermes_cli.pyc, hermes_cli/__init__.pyc) e extensão nativa
+// (hermes_cli[.ABI].so/.pyd, hermes_cli/__init__[.ABI].so/.pyd) são
+// importados antes do __init__.py do site-packages tanto quanto o módulo ou
+// pacote fonte (PEP 420, "Specification": "<directory>/foo.{py,pyc,so,pyd}" é
+// módulo). O marcador de ABI entre o nome e a extensão real
+// (`importlib.machinery.EXTENSION_SUFFIXES`, ex. "cpython-313-x86_64-linux-
+// gnu" ou "cp313-win_amd64") não é interpretado, só casado como texto; listar
+// o diretório é a única forma de alcançar esse nome, que o fileExists exato
+// não cobre. __pycache__ nunca é olhado: um .pyc lá dentro depende do .py ao
+// lado para ser alcançado pelo import, não de si só, e esse caso já é coberto
+// pelo candidato hermes_cli.py/hermes_cli.pyc direto.
+const COMPILED_HERMES_CLI_NAME = /^hermes_cli(?:\.[^/\\]+)?\.(?:so|pyd)$/;
+const COMPILED_INIT_NAME = /^__init__(?:\.[^/\\]+)?\.(?:so|pyd)$/;
+
+async function hasCompiledSibling(dirPath, namePattern, fs) {
+  let entries = [];
+  try {
+    entries = await fs.listDir(dirPath);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return entries.some((name) => namePattern.test(name));
+}
+
 // Verdadeiro quando outro hermes_cli pode ser importado antes do
-// site-packages do intérprete fixado: um módulo hermes_cli.py ou um pacote
-// regular hermes_cli/__init__.py no primeiro diretório de import, esse
-// diretório desconhecido ou PYTHONPATH/PYTHONHOME definidos. Um diretório
-// hermes_cli sem __init__.py é só porção de namespace (PEP 420): a busca
-// continua e o pacote regular do site-packages vence. A versão do vizinho
-// nunca é lida, e o resto do sys.path (.pth, site do usuário) não é modelado.
+// site-packages do intérprete fixado: um módulo hermes_cli.py/.pyc/.so/.pyd
+// ou um pacote regular hermes_cli/__init__.py/.pyc/.so/.pyd no primeiro
+// diretório de import, esse diretório desconhecido ou PYTHONPATH/PYTHONHOME
+// definidos. Um diretório hermes_cli sem nenhum deles é só porção de
+// namespace (PEP 420): a busca continua e o pacote regular do site-packages
+// vence. A versão do vizinho nunca é lida, e o resto do sys.path (.pth, site
+// do usuário) não é modelado.
 async function mayImportBeforeSitePackages(launcherPath, { fs, cwd, env }) {
   if (IMPORT_PATH_ENV_VARS.some((name) => (env[name] ?? "") !== "")) return true;
   const firstDir = await firstImportDirectory(launcherPath, { fs, cwd });
   if (firstDir === null) return true;
+  const packageDir = joinPath(firstDir, "hermes_cli");
   return (
     (await fileExists(joinPath(firstDir, "hermes_cli.py"), fs)) ||
-    (await fileExists(joinPath(joinPath(firstDir, "hermes_cli"), "__init__.py"), fs))
+    (await fileExists(joinPath(firstDir, "hermes_cli.pyc"), fs)) ||
+    (await fileExists(joinPath(packageDir, "__init__.py"), fs)) ||
+    (await fileExists(joinPath(packageDir, "__init__.pyc"), fs)) ||
+    (await hasCompiledSibling(firstDir, COMPILED_HERMES_CLI_NAME, fs)) ||
+    (await hasCompiledSibling(packageDir, COMPILED_INIT_NAME, fs))
   );
 }
 
@@ -256,7 +286,7 @@ export async function resolveHermesVersion(launcherPath, { fs, cwd = null, env =
   // O site-packages desse prefixo só é o hermes_cli importado se nada vier
   // antes dele em sys.path. Com um candidato anterior observável, ou sem
   // como saber, o vínculo não é demonstrável: a presença continua, sem
-  // versão nem pacote. Ver .checks/issue-3-agent-diagnostics.build.md, seção 30.
+  // versão nem pacote. Ver .checks/issue-3-agent-diagnostics.build.md, seções 30 e 31.
   if (await mayImportBeforeSitePackages(launcherPath, { fs, cwd, env })) {
     return { version: null, reasonCode: "launcher_not_recognized" };
   }

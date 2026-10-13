@@ -1489,6 +1489,42 @@ const SHADOW_NEIGHBORS = {
   "módulo hermes_cli.py": (tree, dir) => addFile(tree, dir, "hermes_cli.py", '__version__ = "9.9.9"\n'),
   "pacote regular hermes_cli/__init__.py": (tree, dir, sep) =>
     addFile(tree, dir + sep + "hermes_cli", "__init__.py", '__version__ = "9.9.9"\n'),
+  // Residual da seção 30 (.checks/code-review/hermes-compiled-shadow-fixes.md,
+  // seção 31 do build): bytecode solto e extensão nativa, com e sem marcador
+  // de ABI, são importados antes do site-packages tanto quanto o módulo/
+  // pacote fonte (PEP 420; EXTENSION_SUFFIXES).
+  "bytecode solto hermes_cli.pyc": (tree, dir) => addFile(tree, dir, "hermes_cli.pyc", "\0"),
+  "bytecode solto hermes_cli/__init__.pyc": (tree, dir, sep) =>
+    addFile(tree, dir + sep + "hermes_cli", "__init__.pyc", "\0"),
+  "extensão hermes_cli sem marcador de ABI": (tree, dir, sep) =>
+    addFile(tree, dir, sep === "\\" ? "hermes_cli.pyd" : "hermes_cli.so", "\0"),
+  "extensão hermes_cli com marcador de ABI": (tree, dir, sep) =>
+    addFile(
+      tree,
+      dir,
+      sep === "\\" ? "hermes_cli.cp313-win_amd64.pyd" : "hermes_cli.cpython-313-x86_64-linux-gnu.so",
+      "\0",
+    ),
+  "extensão hermes_cli/__init__ sem marcador de ABI": (tree, dir, sep) =>
+    addFile(tree, dir + sep + "hermes_cli", sep === "\\" ? "__init__.pyd" : "__init__.so", "\0"),
+  "extensão hermes_cli/__init__ com marcador de ABI": (tree, dir, sep) =>
+    addFile(
+      tree,
+      dir + sep + "hermes_cli",
+      sep === "\\" ? "__init__.cp313-win_amd64.pyd" : "__init__.cpython-313-x86_64-linux-gnu.so",
+      "\0",
+    ),
+};
+
+// Controles de nome do mesmo residual: um nome parecido, um nome qualquer sem
+// relação e o bytecode cacheado em __pycache__ (que depende do .py ao lado
+// para ser alcançado pelo import, não de si só) nunca impedem o vínculo.
+const SHADOW_NAME_CONTROLS = {
+  "nome parecido (hermes_client)": (tree, dir, sep) =>
+    addFile(tree, dir, sep === "\\" ? "hermes_client.pyd" : "hermes_client.so", "\0"),
+  "nome sem relação (nao_hermes.pyc)": (tree, dir) => addFile(tree, dir, "nao_hermes.pyc", "\0"),
+  "__pycache__ sem o .py ao lado": (tree, dir, sep) =>
+    addFile(tree, dir + sep + "__pycache__", "hermes_cli.cpython-313.pyc", "\0"),
 };
 
 function readRecordingFs(tree) {
@@ -1518,7 +1554,7 @@ test("agent-resolution-hermes-shadow hermes_cli no primeiro diretório de import
       }
     }
   }
-  assert.equal(checked, 4 * 2);
+  assert.equal(checked, 4 * 8);
   assert.deepEqual(published, []);
 });
 
@@ -1549,7 +1585,29 @@ test("agent-resolution-hermes-shadow controles: vizinho só no outro diretório 
   for (const form of Object.keys(SHADOW_BOUND_LAUNCHERS).filter((name) => name !== SHADOW_CMD_FORM)) {
     await expectBound(`${form}/sem cwd`, installShadowableHermes(form), {});
   }
-  assert.equal(checked, 4 * 2 + 4 + 3);
+  assert.equal(checked, 4 * 8 + 4 + 3);
+  assert.deepEqual(lost, []);
+});
+
+test("agent-resolution-hermes-shadow controles de nome: parecido, sem relação e __pycache__ sem o .py ao lado mantêm o pacote do site-packages", async () => {
+  const lost = [];
+  let checked = 0;
+  for (const form of Object.keys(SHADOW_BOUND_LAUNCHERS)) {
+    for (const [kind, addControl] of Object.entries(SHADOW_NAME_CONTROLS)) {
+      checked += 1;
+      const installation = installShadowableHermes(form);
+      addControl(installation.tree, installation.firstDir, installation.sep);
+      const result = await resolveHermesVersion(installation.launcher, {
+        fs: createFakeFsAdapter(installation.tree),
+        cwd: installation.cwd,
+        env: {},
+      });
+      if (!isDeepStrictEqual(result, installation.bound)) {
+        lost.push(`${form}/${kind} -> ${JSON.stringify(result)}`);
+      }
+    }
+  }
+  assert.equal(checked, 4 * 3);
   assert.deepEqual(lost, []);
 });
 
