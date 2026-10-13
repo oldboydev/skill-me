@@ -208,3 +208,9 @@ Claude corrigiu os quatro findings em6ace98cff2eb6de44f33c416a20da384575934be e 
 - Root conferiu os diffs e provas atuais. Seus probes diretos confirmaram a rejeição EACCES antes da barreira; a regressão pública independente do author testou a mesma fronteira. Core5 byteigualbase4242520, task/critério intactos, histórico8/override9 preservados. Nenhum Git/stash/agente/Python/hook/configuração real pelo autor. O wrapper de fault do fake-fs é aditivo e tem dois consumidores de teste; a análise14 incluirá seu blast.
 
 A independente14 será scoped sobre2038822b0f04be00c3e1a3a205f80e9d2655edb2..HEAD, com todos18 checks/provas reexecutados, incluindo seleção de fonte/catalogo, home, adaptador nativo/recursos e helpers compartilhados. ApósPASS, formal9 ainda obrigatória antes de push/PR. macOS/CIremota nãoobservados; nenhum push/PR/merge/publicação atéesteregistro. Limites dinâmicos e desempenho da linha Python longa seguem declarados.
+
+## Décima quarta verificação independente aprovada
+
+Rodada14 PASS18/18 na HEAD967ff95efd579d4c0e974193d6130883ad74f777. Uma execução independente:6governança+10motor+410doctor=426PASS/0FAIL/7skipPOSIX,433contabilizados,exit0. QuatroP2 formal8 e dois caminhos de erro do delta reavaliados; assertions/citações tocadas atualizadas, demais análise carriedfroma770aee explícita. Nenhum novo gap bloqueante concreto; reporte qualifica RED/seam, fstat double, fechamento simultaneamente falhando e FIFO nativo não executado no Windows. MacOS/CIremota nãoexecutados. Verificador encerrou com HEADigual e apenas verified.md modificado, sem novasprovas/probes/source/Git.
+
+Root reconferiu os quatro arquivos reais de configuração depois do último produto: todos tamanhos/SHA256 iguais ao baseline. Core5 byteigualbase4242520. Formal9 segue no commitlimpo com PASS14; oito tentativasanteriores e max9 exclusivoissue3 autorizado continuam preservados. Push/PR condicionado a ready para essa identidade; sem merge/publicação automática.
