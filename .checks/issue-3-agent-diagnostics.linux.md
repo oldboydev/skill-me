@@ -26,7 +26,7 @@ A suíte verde não elimina os defeitos concretos encontrados na rodada3 indepen
 
 - Commit de produto executado: `e3f9f78a20fe0e452e21a565686dddaf6cce2adf`, extraído novamente por `git archive` em outro diretório temporário, sem alterações de produto. Inclui as correções G1–G4 e as variantes Hermes de catálogo ausente e intérprete absoluto sem X.Y; autoria Claude.
 - Mesmo Ubuntu22.04/Node24.13.0/Git2.49.0 e dependências isoladas descritos acima.
-- `npm test`: **6 governança +10 motor comum +243 doctor =259 PASS, 0FAIL, 0SKIP; exit0**. Resultado integral preservado em `.checks/code-review/linux-final-npm-test.txt`.
+- `npm test`: **6 governança +10 motor comum +243 doctor =259 PASS, 0FAIL, 0SKIP; exit0**. Resultado dessa execução preservado em `.checks/code-review/linux-e3f9f78-npm-test.txt`.
 - Execução Windows pelo autor: **6+10+242 =258 PASS, 0FAIL, 1SKIP**. O único skip continua sendo o teste de symlink real POSIX. RED das novas regressões e GREEN estão registrados nas seções13–14 do `.build.md`; não houve substituição do relatório independente por esse self-report.
 
 Probes complementares pela CLI POSIX da mesma cópia: launcherA aponta para `/b/bin/python3`; com pacoteB0.20.0, a CLI publica0.20.0 e mantém as cinco capacidades locais unverified (perfil não examinado). Com pacoteB0.21.4 e tabela nativa sintética ligada, publica0.21.4 e as cinco linhas verified têm `evidence.source.path` no pacoteB, nuncaA. Configuração com handler e sem tabela vinculada resulta `partial/unknown/hooks_catalog_unavailable/trustunknown`. Fixtures e interpretador stub não foram executados; nenhuma sentinela foi criada. Log local: `.checks/code-review/linux-final-probes.txt`. A primeira impressão do probe consultava uma propriedade inexistente (`availability`); foi corrigida para `support` e repetida, sem alteração de produto. Estes probes são complementares, não assertions substitutas dos testes nem uma quarta rodada do Verifier.
@@ -40,3 +40,16 @@ O FAIL independente da rodada3 foi preservado em `c4a4d45`; o arquivo `.verified
 ## Autorização da rodada4 — 13/10/2026
 
 O proprietário autorizou nesta conversa: “pode fazer a quarta rodada de verificação independente da issue #3 e, se passar na revisão, abra o PR”. A autorização permite uma quarta rodada TLC da issue3, preservando o histórico das três anteriores, seguida da revisão formal e da abertura do PR se aprovadas. O teto de duas tentativas do motor formal não foi alterado; há uma tentativa restante. Não autoriza merge, publicação ou exceções para outras issues.
+
+## Resultado da rodada4 e correção aplicada
+
+Rodada4 independente no produto `6d073b69351a2884d46bf6056aaf8e6ecb7574b8`: **FAIL,17/18PASS**; somente C8 permaneceu reprovado. Relatório preservado no commit `c3ce992cd8ffe9eeb1e26aa86db20771baa1a3f6`. O residual G3 era a tabela `SHELL_UNSUPPORTED_HOOKS`: o Hermes permite `transform_api_error_classification` para plugins Python, mas recusa seu registro shell antes de conferir `VALID_HOOKS`. A fixture anterior omitia esse cruzamento entre os dois conjuntos.
+
+Claude aplicou a correção no commit `7f4eecbe5d082f98998f3363413cb4a6103bedef`; fontes, regressões, RED/GREEN e limites estão na seção15 do `.build.md`. O leitor usa as duas tabelas do mesmo texto vinculado, preserva o contrato de plugins da matriz e filtra a configuração shell. Exclusão sem fonte reconhecida fica unknown, sem inventar conjunto vazio.
+
+- Windows, autor: `npm test` completo, **6+10+251 =267PASS,0FAIL,1SKIP**, exit0. O skip permanece o symlink POSIX. Saída preservada em `.checks/code-review/verifier4-g3-shell-fix-npm-test.txt`.
+- Linux, orquestrador: novo snapshot isolado do commit7f4eecb, mesmo Ubuntu22.04/Node24.13.0/Git2.49.0; `npm test` completo, **6+10+252 =268PASS,0FAIL,0SKIP**, exit0. Saída em `.checks/code-review/linux-final-npm-test.txt`.
+- Repetição complementar da reprodução nativa: plugins.py real copiado como dado para fixture0.21.4, sem importar/executar Python. Evento recusado sozinho: `complete/not_configured/hooks_event_shell_unsupported/trustnot_applicable`. Mistura com pre_tool_call: `complete/configured/hooks_configured/trustunknown`. Nos dois casos, o suporte de plugin permanece verified nas cinco linhas locais, mostrando a separação C5/C8; nenhuma sentinela foi criada. Script local ignorado: `.checks/code-review/probe-verifier4-native.mjs`.
+- Hash/tamanho das quatro configurações ativas reconferidos: todos iguais ao baseline anterior à implementação. Nenhuma configuração ativa foi alterada; core5/task/AGENTS/relatório independente preservados.
+
+Essas execuções são provas do autor/orquestrador e não concedem PASS independente. A quarta rodada autorizada terminou FAIL; uma quinta não foi iniciada. A decisão do proprietário sobre verificação adicional permanece necessária antes da segunda revisão formal e de qualquer PR. O histórico e o teto formal original seguem intactos.
