@@ -6,6 +6,75 @@
 - package.json contém ferramentas de governança, não um pacote autorizado para publicação.
 - Novas regras de domínio e verificações específicas serão definidas com o trabalho aprovado.
 
+## Boas práticas de desenvolvimento
+
+Estas regras valem para o código e as ferramentas que forem aprovados neste repositório.
+Não definem uma arquitetura, um framework ou um produto antes de existir essa necessidade.
+
+### Responsabilidades e limites dos módulos
+
+- Cada função ou método tem uma responsabilidade clara e um nome que a expressa.
+  Misturar busca de dados, decisões e apresentação, usar um booleano para alternar tarefas
+  distintas ou precisar montar o sistema inteiro para testar uma regra são sinais para
+  revisar a separação. Quantidade de linhas, sozinha, não determina essa separação.
+- Uma função que coordena passos pode permanecer linear; delegue as decisões e os efeitos
+  a peças com contratos claros, sem fragmentar cada linha em uma função.
+- Quando houver regras de domínio, mantenha uma fonte de verdade para elas. Apresentação
+  e integrações consomem os resultados; não reimplementam a regra para chegar ao mesmo número.
+- Separe decisões puras de efeitos externos quando isso permitir testar a regra diretamente.
+  Respeite as fronteiras e interfaces públicas dos módulos que existirem; uma necessidade
+  nova não autoriza acessar detalhes internos ou inventar pacotes antes de haver consumidores.
+
+### Comentários que preservam decisões
+
+- Use nomes e estrutura para explicar o que o código faz. Evite comentários que apenas
+  repetem a instrução, o nome da função ou acrescentam separadores decorativos.
+- Registre o porquê que o código não consegue expressar: uma restrição, uma alternativa
+  descartada, uma armadilha conhecida ou uma consequência não óbvia. Preserve esse contexto
+  mesmo quando o trecho de código for simples.
+- Explicações extensas ficam na documentação ou no registro da decisão, com referência
+  no código quando necessária. Mantenha a explicação coerente ao alterar o comportamento.
+
+### Reúso e solução mínima
+
+- Antes de criar uma função, módulo ou ferramenta, procure uma solução existente no
+  repositório. Reutilize um contrato compatível; não copie uma implementação em silêncio.
+- Generalize apenas o que consumidores reais precisam. Uma abstração deve resolver uma
+  necessidade demonstrada; não crie extensões, camadas ou dependências para usos hipotéticos.
+- Quando houver duplicação relevante, consolide dentro do escopo autorizado ou registre
+  a dívida e sua justificativa na entrega. Uma regra de reúso não autoriza uma refatoração
+  fora do escopo aprovado.
+- Prefira a menor solução que atende aos critérios e permanece compreensível. Não reduza
+  a análise do problema nem remova validação em fronteiras de confiança, segurança,
+  integridade dos dados ou precisão para encurtar o código.
+- Otimizações exigem medida do comportamento real antes e depois em condições comparáveis.
+  Cache, paralelismo e novas dependências precisam de uma necessidade demonstrada;
+  não invente metas de desempenho ou infraestrutura que o trabalho não definiu.
+
+### Testes orientados ao comportamento
+
+- Derive os casos dos critérios de aceite, dos contratos e dos cenários de falha, antes
+  de usar a implementação como referência. Um teste deve distinguir o comportamento
+  correto de um erro plausível; reproduzir a lógica do código no teste não prova a regra.
+- Mudanças de comportamento incluem suas provas na mesma entrega. Teste decisões na
+  própria camada e cubra cada caso relevante da tabela de decisão, incluindo limites,
+  entradas inválidas e transições de estado quando fizerem parte do contrato.
+- Quando a alteração afetar uma fronteira externa, prove também o contrato nessa
+  fronteira. Um teste que atravessa uma regra não substitui as asserções sobre suas decisões.
+  Para uma ferramenta que fiscaliza uma regra, prove que detecta um caso inválido e aceita
+  um caso válido. Encaminhamento sem decisão pode ser provado pelo teste do consumidor.
+- Em correções de defeitos, demonstre que o caso de regressão falha no comportamento
+  anterior e passa com a correção, quando for viável; declare qualquer limitação dessa prova.
+- Confira que os testes selecionados realmente executaram e quais casos afirmaram.
+  Código de saída zero com nenhum teste executado não comprova sucesso. Informe falhas,
+  omissões e skips com os motivos; não pule casos apenas para concluir a entrega.
+- Não enfraqueça asserções, tolerâncias ou critérios para obter verde. Se o teste estiver
+  errado, justifique sua correção. Valores exatos e limites definidos pelo contrato exigem
+  asserções correspondentes, não apenas verificações genéricas de presença ou valor positivo.
+- Execute as verificações afetadas pela mudança e amplie quando houver risco ou falha
+  que justifique. Documentação pura e encaminhamento sem comportamento novo não exigem
+  testes artificiais; preserve os checks e o rigor aplicáveis à entrega.
+
 ## Governança GitHub
 
 - Issue contém problema, resultado, critérios em lista e aprovações. Plano técnico fica
