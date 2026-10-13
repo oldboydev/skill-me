@@ -353,3 +353,97 @@ test("config-reader-G3 Hermes sem catálogo vinculado preserva not_configured (s
   assert.equal(formaInvalida.configuration, "invalid");
   assert.equal(formaInvalida.configReasonCode, "hooks_structure_invalid");
 });
+
+// Residual G3 (rodada 4, .checks/code-review/verifier4-g3-shell-fix.md):
+// pertencer a VALID_HOOKS prova o contrato de plugin hooks (C5), mas
+// `agent/shell_hooks.py::_parse_hooks_block` recusa um nome de
+// SHELL_UNSUPPORTED_HOOKS ANTES de checar VALID_HOOKS — duas superfícies
+// distintas do mesmo agente. `transform_api_error_classification` é o caso
+// real: está nas DUAS tabelas do `plugins.py` instalado.
+test("config-reader-G3 Hermes: único handler cujo evento é Python-plugin-only (SHELL_UNSUPPORTED_HOOKS) fica not_configured/hooks_event_shell_unsupported, nunca configured", async () => {
+  const home = "/fixture/hermes-shell-unsupported";
+  const platform = "linux";
+  const configPath = hermesConfigPath(home, platform);
+
+  const result = await readAgentConfiguration({
+    agentId: "hermes",
+    env: { HOME: home, USERPROFILE: home },
+    platform,
+    cwd: "/fixture/cwd",
+    fs: fsWithFiles({
+      [configPath]: 'hooks:\n  transform_api_error_classification:\n    - command: "echo forbidden"\n',
+    }),
+    hermesValidHooks: new Set(["transform_api_error_classification", "pre_tool_call"]),
+    hermesShellUnsupportedHooks: new Set(["transform_api_error_classification"]),
+  });
+  assert.equal(result.configuration, "not_configured");
+  assert.equal(result.configReasonCode, "hooks_event_shell_unsupported");
+  assert.equal(result.trust, "not_applicable");
+  assert.equal(result.trustReasonCode, "configuration_not_configured");
+});
+
+test("config-reader-G3 Hermes: evento shell-unsupported ao lado de um evento shell aceito continua configured", async () => {
+  const home = "/fixture/hermes-shell-mixed";
+  const platform = "linux";
+  const configPath = hermesConfigPath(home, platform);
+
+  const result = await readAgentConfiguration({
+    agentId: "hermes",
+    env: { HOME: home, USERPROFILE: home },
+    platform,
+    cwd: "/fixture/cwd",
+    fs: fsWithFiles({
+      [configPath]:
+        'hooks:\n  transform_api_error_classification:\n    - command: "echo forbidden"\n' +
+        '  pre_tool_call:\n    - command: "echo real"\n',
+    }),
+    hermesValidHooks: new Set(["transform_api_error_classification", "pre_tool_call"]),
+    hermesShellUnsupportedHooks: new Set(["transform_api_error_classification"]),
+  });
+  assert.equal(result.configuration, "configured");
+  assert.equal(result.configReasonCode, "hooks_configured");
+});
+
+test("config-reader-G3 Hermes: catálogo bate mas tabela de exclusão de shell não reconhecida (null) fica unknown/hooks_shell_exclusion_unavailable, sem presumir conjunto vazio", async () => {
+  const home = "/fixture/hermes-shell-exclusion-unavailable";
+  const platform = "linux";
+  const configPath = hermesConfigPath(home, platform);
+
+  const result = await readAgentConfiguration({
+    agentId: "hermes",
+    env: { HOME: home, USERPROFILE: home },
+    platform,
+    cwd: "/fixture/cwd",
+    fs: fsWithFiles({
+      [configPath]: 'hooks:\n  transform_api_error_classification:\n    - command: "echo forbidden"\n',
+    }),
+    hermesValidHooks: new Set(["transform_api_error_classification", "pre_tool_call"]),
+    hermesShellUnsupportedHooks: null,
+  });
+  assert.equal(result.configuration, "unknown");
+  assert.equal(result.configReasonCode, "hooks_shell_exclusion_unavailable");
+  assert.equal(result.trust, "unknown");
+  assert.equal(result.trustReasonCode, "configuration_not_determined");
+});
+
+// A exclusão de shell só se aplica depois que ao menos um evento bate com
+// VALID_HOOKS; quando nenhum bate, o motivo continua sendo o catálogo geral
+// (not_configured/hooks_event_not_in_installed_catalog), nunca o novo
+// unknown de exclusão indisponível — evita confundir as duas classes de C8.
+test("config-reader-G3 Hermes: evento fora de VALID_HOOKS preserva hooks_event_not_in_installed_catalog mesmo sem tabela de exclusão de shell", async () => {
+  const home = "/fixture/hermes-fora-catalogo-sem-exclusao";
+  const platform = "linux";
+  const configPath = hermesConfigPath(home, platform);
+
+  const result = await readAgentConfiguration({
+    agentId: "hermes",
+    env: { HOME: home, USERPROFILE: home },
+    platform,
+    cwd: "/fixture/cwd",
+    fs: fsWithFiles({ [configPath]: 'hooks:\n  made_up_event:\n    - command: "echo ok"\n' }),
+    hermesValidHooks: new Set(["pre_tool_call"]),
+    hermesShellUnsupportedHooks: null,
+  });
+  assert.equal(result.configuration, "not_configured");
+  assert.equal(result.configReasonCode, "hooks_event_not_in_installed_catalog");
+});

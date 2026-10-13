@@ -29,9 +29,15 @@ const HERMES_EVENTS_BY_MECHANISM = Object.freeze({
 
 const HERMES_CONTRACT_SOURCE_KIND = "hermes_valid_hooks";
 // Procurado no texto bruto, inclusive em strings: na dúvida (um exec() com o
-// mesmo texto, por exemplo), a tabela não é reconhecida.
-const RUNTIME_MUTATION =
-  /VALID_HOOKS[ \t]*[-&^|+]=|VALID_HOOKS\.(?:add|discard|remove|clear|pop|update|difference_update|intersection_update|symmetric_difference_update)\s*\(/;
+// mesmo texto, por exemplo), a tabela não é reconhecida. Parametrizado pelo
+// nome porque o mesmo arquivo traz duas tabelas de conjunto reconhecidas por
+// esta leitura (VALID_HOOKS e SHELL_UNSUPPORTED_HOOKS, ver
+// extractHermesShellUnsupportedHooks abaixo).
+function runtimeMutationPattern(name) {
+  return new RegExp(
+    `${name}[ \\t]*[-&^|+]=|${name}\\.(?:add|discard|remove|clear|pop|update|difference_update|intersection_update|symmetric_difference_update)\\s*\\(`,
+  );
+}
 const EVENT_NAME = /^[a-z_][a-z0-9_]*$/;
 
 // `{ "a", "b", }` — strings simples separadas por vírgula (a final é
@@ -59,20 +65,36 @@ function readStringSetStatement(tokens, start) {
   return names.every((name) => EVENT_NAME.test(name)) ? names : null;
 }
 
-// Lê o literal de conjunto atribuído a VALID_HOOKS no nível do módulo, só
-// como texto (python-source.mjs): comentários, docstrings e demais strings
-// não são código, então uma atribuição citada nelas não conta. Exige
-// exatamente uma ligação do nome em código, e que seja essa atribuição; outra
-// ligação (reatribuição, `:=`, desempacotamento, import) ou qualquer mutação
-// do conjunto torna a forma não reconhecida — o literal deixaria de ser o
+// Lê o literal de conjunto atribuído a `name` no nível do módulo, só como
+// texto (python-source.mjs): comentários, docstrings e demais strings não são
+// código, então uma atribuição citada nelas não conta. Exige exatamente uma
+// ligação do nome em código, e que seja essa atribuição; outra ligação
+// (reatribuição, `:=`, desempacotamento, import) ou qualquer mutação do
+// conjunto torna a forma não reconhecida — o literal deixaria de ser o
 // conjunto efetivo em tempo de execução. Devolve a lista de nomes ou null.
-export function extractHermesValidHooks(text) {
-  if (RUNTIME_MUTATION.test(text)) return null;
+function extractTopLevelStringSet(text, name) {
+  if (runtimeMutationPattern(name).test(text)) return null;
   const tokens = tokenizePython(text);
   if (tokens === null) return null;
-  const sites = findAssignments(tokens, "VALID_HOOKS");
+  const sites = findAssignments(tokens, name);
   if (sites.length !== 1 || !sites[0].moduleLevel) return null;
   return readStringSetStatement(tokens, sites[0].valueIndex);
+}
+
+export function extractHermesValidHooks(text) {
+  return extractTopLevelStringSet(text, "VALID_HOOKS");
+}
+
+// `agent/shell_hooks.py:_parse_hooks_block` recusa um evento listado em
+// SHELL_UNSUPPORTED_HOOKS ANTES de testar presença em VALID_HOOKS: pertencer
+// ao catálogo geral de plugin hooks (usado pelos mecanismos de C5) não basta
+// para que o Hermes registre um shell hook de `config.yaml` — são duas
+// superfícies do mesmo agente. A tabela fica no mesmo `plugins.py`, lida do
+// mesmo texto já obtido para VALID_HOOKS (nenhuma leitura extra). Ausência,
+// forma não reconhecida ou mutação devolvem null: nunca um conjunto vazio
+// presumido, que esconderia uma exclusão real não lida.
+export function extractHermesShellUnsupportedHooks(text) {
+  return extractTopLevelStringSet(text, "SHELL_UNSUPPORTED_HOOKS");
 }
 
 function mechanismsFromListedEvents(listed) {
@@ -113,7 +135,17 @@ async function readHermesContract(packageDir, fs) {
   // `validHooks`: os nomes crus da tabela (não só os mapeados por mecanismo),
   // consumidos por config-reader.mjs para decidir se um evento configurado
   // pelo usuário é registrado pelo Hermes instalado (achado G3 da rodada 3).
-  return { state: "found", source, mechanisms: mechanismsFromListedEvents(listed), validHooks: listed };
+  // `shellUnsupportedHooks`: nomes refusados pelo parser de shell hooks apesar
+  // de listados em VALID_HOOKS (achado G3, variante residual da rodada 4) —
+  // `null` quando a tabela de exclusão não pôde ser lida/reconhecida deste
+  // MESMO texto; nunca afeta `mechanisms`/`validHooks` (C5 preservado).
+  return {
+    state: "found",
+    source,
+    mechanisms: mechanismsFromListedEvents(listed),
+    validHooks: listed,
+    shellUnsupportedHooks: extractHermesShellUnsupportedHooks(read.text),
+  };
 }
 
 // Claude (claude.exe nativo) e Codex (codex.exe nativo dentro do pacote npm,

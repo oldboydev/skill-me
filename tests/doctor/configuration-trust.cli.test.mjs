@@ -520,6 +520,116 @@ test("configuration-trust-C8/G3 Hermes: evento real do catálogo instalado ao la
   }
 });
 
+// Residual G3 (rodada 4, .checks/code-review/verifier4-g3-shell-fix.md):
+// `transform_api_error_classification` pertence a VALID_HOOKS (contrato geral
+// de plugin hooks, sustenta `verified` em C5), mas `agent/shell_hooks.py::
+// _parse_hooks_block` recusa esse MESMO nome como shell hook de `config.yaml`
+// (está em SHELL_UNSUPPORTED_HOOKS, checado antes de VALID_HOOKS) — a
+// instalação real nunca registraria este handler. Reprodução exata do
+// Verifier independente: único evento com handler, fonte real do
+// `plugins.py` copiada para a fixture (ambas as tabelas).
+test("configuration-trust-C8/G3 Hermes: único handler Python-plugin-only (transform_api_error_classification) fica not_configured/hooks_event_shell_unsupported no relatório real, nunca configured", () => {
+  const scratch = makeScratch("doctor-c8-hermes-shell-unsupported-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs } = installAllAgents(dir, {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      hermesContractSource: hermesPluginsSource(),
+    });
+    const home = path.join(scratch, "home");
+    const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
+    writeAgentConfig(
+      home,
+      "hermes",
+      'hooks:\n  transform_api_error_classification:\n    - command: "echo forbidden"\n',
+      { env, platform: process.platform },
+    );
+
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.status, "complete");
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.version, "0.21.4");
+    assert.equal(hermes.configuration, "not_configured");
+    assert.equal(hermes.configReasonCode, "hooks_event_shell_unsupported");
+    assert.equal(hermes.trust, "not_applicable");
+    assert.equal(hermes.trustReasonCode, "configuration_not_configured");
+
+    const text = runDoctor([], { env });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /hooks_event_shell_unsupported/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Ao lado de um evento shell real aceito, o evento Python-plugin-only não
+// impede "configured" — pelo menos um shell hook de verdade seria registrado.
+test("configuration-trust-C8/G3 Hermes: evento Python-plugin-only ao lado de um evento shell real continua configured", () => {
+  const scratch = makeScratch("doctor-c8-hermes-shell-misto-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs } = installAllAgents(dir, {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      hermesContractSource: hermesPluginsSource(),
+    });
+    const home = path.join(scratch, "home");
+    const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
+    writeAgentConfig(
+      home,
+      "hermes",
+      'hooks:\n  transform_api_error_classification:\n    - command: "echo forbidden"\n  pre_tool_call:\n    - command: "echo real"\n',
+      { env, platform: process.platform },
+    );
+
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.configuration, "configured");
+    assert.equal(hermes.configReasonCode, "hooks_configured");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Fonte real ligada e reconhecida (VALID_HOOKS), mas SEM a tabela de exclusão
+// de shell reconhecida: sem ela, o doctor não tem como confirmar se o evento
+// catalogado de fato sobrevive ao parser de shell hooks — fica inconclusivo,
+// nunca presume um conjunto vazio de exclusões para chegar a "configured".
+test("configuration-trust-C8/G3 Hermes: SHELL_UNSUPPORTED_HOOKS não reconhecida/ausente fica unknown/hooks_shell_exclusion_unavailable, nunca configured", () => {
+  const scratch = makeScratch("doctor-c8-hermes-shell-exclusao-indisponivel-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs } = installAllAgents(dir, {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      hermesContractSource: hermesPluginsSource({ shellUnsupportedHooksLine: "" }),
+    });
+    const home = path.join(scratch, "home");
+    const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
+    writeAgentConfig(
+      home,
+      "hermes",
+      'hooks:\n  transform_api_error_classification:\n    - command: "echo forbidden"\n',
+      { env, platform: process.platform },
+    );
+
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.configuration, "unknown");
+    assert.equal(hermes.configReasonCode, "hooks_shell_exclusion_unavailable");
+    assert.equal(hermes.trust, "unknown");
+    assert.equal(hermes.trustReasonCode, "configuration_not_determined");
+
+    const text = runDoctor([], { env });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /hooks_shell_exclusion_unavailable/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 // Achado G3 da rodada 3, variante residual (correção após a primeira rodada
 // de fixes, .checks/code-review/verifier3-fix-residuals.md): Hermes presente
 // e com versão lida (perfil compatível), mas SEM `plugins.py` vinculado —

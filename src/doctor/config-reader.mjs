@@ -134,7 +134,24 @@ function firstParsedFields(scopeResults) {
 // original só decidia quando o catálogo FOI lido; preservar "configured" na
 // ausência dele contradizia o próprio encaminhamento, que já exigia motivo
 // inconclusivo sem fonte vinculada). Vira "unknown" abaixo nesse caso.
-export async function readAgentConfiguration({ agentId, env, platform, cwd, fs, hermesValidHooks = null }) {
+//
+// `hermesShellUnsupportedHooks`: `Set<string>` dos nomes em
+// SHELL_UNSUPPORTED_HOOKS do MESMO pacote (ver contract-evidence.mjs), ou
+// `null` quando essa tabela não foi reconhecida. Pertencer a VALID_HOOKS
+// prova o contrato de PLUGIN hooks (preservado em `mechanisms`/C5); o Hermes
+// real recusa esses mesmos nomes como shell hook em `config.yaml`
+// (`agent/shell_hooks.py::_parse_hooks_block` testa a exclusão ANTES de
+// VALID_HOOKS) — duas superfícies distintas do mesmo agente, nunca
+// confundidas aqui (achado G3, variante residual da rodada 4).
+export async function readAgentConfiguration({
+  agentId,
+  env,
+  platform,
+  cwd,
+  fs,
+  hermesValidHooks = null,
+  hermesShellUnsupportedHooks = null,
+}) {
   const definition = AGENT_CONFIG_DEFINITIONS[agentId];
   const home = definition.resolveHome({ env, platform });
   const scopeDefs = definition.resolveScopes({ home, cwd, platform });
@@ -151,22 +168,40 @@ export async function readAgentConfiguration({ agentId, env, platform, cwd, fs, 
 
   const fields = firstParsedFields(scopeResults);
 
-  // Um evento Hermes fora do catálogo instalado nunca é registrado pelo
-  // agente (`_parse_hooks_block` ignora nomes fora de VALID_HOOKS): a
+  // Um evento Hermes fora do catálogo instalado, ou dentro dele mas recusado
+  // pelo parser de shell hooks, nunca é registrado pelo agente
+  // (`_parse_hooks_block` ignora nomes fora de VALID_HOOKS e recusa os de
+  // SHELL_UNSUPPORTED_HOOKS antes mesmo de checar VALID_HOOKS): a
   // configuração estrutural não pode contar como "configured" quando NENHUM
-  // dos eventos com handler bate com a tabela real, nem quando não há tabela
-  // nenhuma para cruzar — os dois casos abaixo só se aplicam depois que a
-  // forma estrutural já decidiu "configured" (não altera not_configured, que
-  // já significa "nenhum handler", nem invalid, que já significa erro nativo
-  // de forma). `trust` é recalculado a seguir a partir desta `configuration`
-  // final, como qualquer outro resultado (fonte única de verdade).
+  // evento com handler sobreviveria a esse parser real — os ramos abaixo só
+  // se aplicam depois que a forma estrutural já decidiu "configured" (não
+  // altera not_configured, que já significa "nenhum handler", nem invalid,
+  // que já significa erro nativo de forma). `trust` é recalculado a seguir a
+  // partir desta `configuration` final, como qualquer outro resultado (fonte
+  // única de verdade).
   if (agentId === "hermes" && configuration === "configured") {
     if (hermesValidHooks === null) {
       configuration = "unknown";
       configReasonCode = "hooks_catalog_unavailable";
-    } else if (!(fields.hermesTargetedEvents ?? []).some((event) => hermesValidHooks.has(event))) {
-      configuration = "not_configured";
-      configReasonCode = "hooks_event_not_in_installed_catalog";
+    } else {
+      const catalogedEvents = (fields.hermesTargetedEvents ?? []).filter((event) => hermesValidHooks.has(event));
+      if (catalogedEvents.length === 0) {
+        configuration = "not_configured";
+        configReasonCode = "hooks_event_not_in_installed_catalog";
+      } else if (hermesShellUnsupportedHooks === null) {
+        // Pelo menos um evento bate com VALID_HOOKS, mas sem a tabela de
+        // exclusão de shell não há como confirmar se o Hermes de fato
+        // registraria esse evento como shell hook — nunca presume conjunto
+        // vazio (não confirmaria "configured" por omissão da prova).
+        configuration = "unknown";
+        configReasonCode = "hooks_shell_exclusion_unavailable";
+      } else if (catalogedEvents.every((event) => hermesShellUnsupportedHooks.has(event))) {
+        // Todo evento com handler que bate com VALID_HOOKS é, ao mesmo
+        // tempo, Python-plugin-only: `_parse_hooks_block` recusa cada um
+        // deles antes de registrar qualquer shell hook.
+        configuration = "not_configured";
+        configReasonCode = "hooks_event_shell_unsupported";
+      }
     }
   }
 

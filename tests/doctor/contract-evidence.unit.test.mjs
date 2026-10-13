@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  extractHermesShellUnsupportedHooks,
   extractHermesValidHooks,
   readContractEvidence,
 } from "../../src/doctor/contract-evidence.mjs";
@@ -144,6 +145,53 @@ test("contract-evidence-C5 tabela com forma não reconhecida vira state unrecogn
   });
   assert.equal(result.state, "unrecognized");
   assert.equal(result.mechanisms, undefined);
+});
+
+// Residual G3 (rodada 4, .checks/code-review/verifier4-g3-shell-fix.md):
+// `_parse_hooks_block` (agent/shell_hooks.py) recusa um evento de
+// SHELL_UNSUPPORTED_HOOKS antes de checar VALID_HOOKS — pertencer ao
+// catálogo geral de plugin hooks (C5, `mechanisms`) não implica que o Hermes
+// registraria esse mesmo nome como shell hook. A tabela real
+// (hermes_cli/plugins.py:208) lista `transform_api_error_classification` nas
+// DUAS tabelas; a fixture positiva reproduz essa mesma forma.
+test("contract-evidence-C5/G3 SHELL_UNSUPPORTED_HOOKS reconhecida ao lado de VALID_HOOKS, sem afetar mechanisms", async () => {
+  const result = await readContractEvidence({
+    agentId: "hermes",
+    packageDir: PKG_DIR,
+    fs: fsWithPlugins(hermesPluginsSource()),
+  });
+  assert.equal(result.state, "found");
+  assert.deepEqual(result.shellUnsupportedHooks, ["transform_api_error_classification"]);
+  assert.ok(result.validHooks.includes("transform_api_error_classification"));
+  // C5 preservado: mechanisms/missingEvents inalterados pela exclusão de shell.
+  for (const mechanism of MECHANISMS) {
+    assert.deepEqual(result.mechanisms[mechanism].missingEvents, [], mechanism);
+  }
+});
+
+test("contract-evidence-C5/G3 SHELL_UNSUPPORTED_HOOKS ausente, ilegível ou não reconhecida vira shellUnsupportedHooks null, sem derrubar o state found de VALID_HOOKS", async () => {
+  const absent = await readContractEvidence({
+    agentId: "hermes",
+    packageDir: PKG_DIR,
+    fs: fsWithPlugins(hermesPluginsSource({ shellUnsupportedHooksLine: "" })),
+  });
+  assert.equal(absent.state, "found");
+  assert.equal(absent.shellUnsupportedHooks, null);
+  assert.ok(Object.keys(absent.mechanisms).length > 0, "C5 continua disponível sem a tabela de exclusão");
+
+  const unrecognizedForm = await readContractEvidence({
+    agentId: "hermes",
+    packageDir: PKG_DIR,
+    fs: fsWithPlugins(
+      hermesPluginsSource({
+        shellUnsupportedHooksLine: 'SHELL_UNSUPPORTED_HOOKS = frozenset({"transform_api_error_classification"})\n',
+      }),
+    ),
+  });
+  assert.equal(unrecognizedForm.state, "found");
+  assert.equal(unrecognizedForm.shellUnsupportedHooks, null);
+
+  assert.equal(extractHermesShellUnsupportedHooks('SHELL_UNSUPPORTED_HOOKS -= {"x"}\nSHELL_UNSUPPORTED_HOOKS = {"x"}\n'), null);
 });
 
 test("contract-evidence-C5 plugins.py ausente, ilegível, acima de 1 MiB ou mutado nunca vira found", async () => {

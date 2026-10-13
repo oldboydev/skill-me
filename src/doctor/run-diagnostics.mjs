@@ -39,6 +39,13 @@ async function diagnoseAgent({ presence, env, platform, cwd, fs }) {
     cwd,
     fs,
     hermesValidHooks: contract?.state === "found" ? new Set(contract.validHooks) : null,
+    // Exclusão de shell hooks (`SHELL_UNSUPPORTED_HOOKS`, achado G3 residual
+    // da rodada 4): lida do MESMO contrato encontrado; `null` quando a tabela
+    // não foi reconhecida, nunca um conjunto vazio presumido.
+    hermesShellUnsupportedHooks:
+      contract?.state === "found" && contract.shellUnsupportedHooks !== null
+        ? new Set(contract.shellUnsupportedHooks)
+        : null,
   });
   const evidence = {
     presence: presence.presence,

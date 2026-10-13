@@ -1441,3 +1441,172 @@ scripts/code-review/{cli.mjs,review.mjs,review.test.mjs,schema.json,README.md}` 
   `…-fix-residuals-green-targets.txt`, `…-fix-residuals-green.txt`. Preservados sem alteração:
   `.checks/code-review/verifier3-fix-residuals.md` (encaminhamento) e
   `.checks/code-review/probe-verifier3-residual.mjs` (reprodução do orquestrador).
+
+## 15. Correção residual de G3, variante shell, pós-Verifier independente rodada 4 (13/10/2026)
+
+A quarta verificação independente (`.checks/issue-3-agent-diagnostics.verified.md`, gate FAIL 17/18)
+confirmou um único residual bloqueante, C8, da mesma classe G3 de configuração Hermes — não uma rodada nova
+de verificação, e sim o encaminhamento do orquestrador ao autor Claude após ela:
+`.checks/code-review/verifier4-g3-shell-fix.md`. Autor: Claude. Nenhuma mudança na task, nos critérios, em
+`.verified.md`, no motor comum de `scripts/code-review/` (paridade SHA-256 reconfirmada abaixo), em
+`AGENTS.md` ou nos limites/raias de governança. Sem commit, push, stash deixado, `review:run`/`pr:create`
+nem nova verificação independente nesta rodada — autorização explícita só para esta correção pontual, não
+para uma quinta rodada.
+
+### O gap residual
+
+`config-reader.mjs` (estado pós-rodada 3, commit `c3ce992`) cruzava `hermesTargetedEvents` só contra
+`hermesValidHooks` (o literal `VALID_HOOKS` de `hermes_cli/plugins.py`, lido por `contract-evidence.mjs`).
+Mas a fonte nativa real tem DUAS tabelas distintas no mesmo arquivo: `VALID_HOOKS` (contrato geral de
+plugin hooks, usado pela matriz de capacidades/C5) e `SHELL_UNSUPPORTED_HOOKS` (`plugins.py:208`), que
+`agent/shell_hooks.py::_parse_hooks_block` testa ANTES de `VALID_HOOKS` (linhas 220-223, antes das 224-230)
+para recusar — com aviso nativo — um evento cuja diretiva o parser de shell hooks não tem como devolver.
+`transform_api_error_classification` pertence às DUAS tabelas ao mesmo tempo: um `hooks:` de `config.yaml`
+que só o define nunca registraria um shell hook de verdade, mas o `doctor` anunciava `configured`/
+`hooks_configured` porque o nome batia em `VALID_HOOKS`, a única tabela cruzada. Confirmado pelo Verifier
+com a fonte real copiada para uma fixture isolada (reprodução no relatório, não repetida por este autor).
+
+### Ordem seguida (TDD)
+
+Reprodução do achado (fonte nativa lida como texto, só leitura, conforme encaminhamento) → regressões novas
+na própria camada (`contract-evidence.unit.test.mjs`, `config-reader.unit.test.mjs`) e na fronteira real da
+CLI (`configuration-trust.cli.test.mjs`) → RED confirmado por execução real (`git stash push --keep-index`
+dos três arquivos de produto desta rodada para o estado anterior, suíte afetada rodada sobre o produto
+antigo, depois `stash pop`) → implementação → GREEN com os alvos afetados e depois `npm test` completo uma
+única vez.
+
+RED real, produto no estado anterior a esta rodada (testes desta rodada já presentes), saída completa em
+`.checks/code-review/verifier4-g3-shell-fix-red.txt`:
+
+```
+node --test tests/doctor/contract-evidence.unit.test.mjs tests/doctor/config-reader.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+  -> tests 39, pass 34, fail 5
+EXIT_CODE=1
+```
+
+As 5 falhas são exatamente os casos novos desta rodada que discriminam o defeito, mais o erro de import
+esperado (o produto antigo ainda não exporta o novo extrator):
+
+- `tests\doctor\contract-evidence.unit.test.mjs` falha ao carregar o módulo inteiro
+  (`SyntaxError: ... does not provide an export named 'extractHermesShellUnsupportedHooks'`) — as duas
+  provas novas desta suíte ficam dentro desse arquivo, contadas como 1 teste de arquivo no total do runner.
+- `config-reader-G3 Hermes: único handler cujo evento é Python-plugin-only ... fica not_configured/
+  hooks_event_shell_unsupported` — produto antigo devolvia `configured` (reasonCode `hooks_configured`).
+- `config-reader-G3 Hermes: catálogo bate mas tabela de exclusão de shell não reconhecida (null) fica
+  unknown/hooks_shell_exclusion_unavailable` — produto antigo devolvia `configured`.
+- `configuration-trust-C8/G3 Hermes: único handler Python-plugin-only ... no relatório real` — produto
+  antigo devolvia `configured` na fronteira real da CLI (fixture com `plugins.py` real do Verifier
+  reproduzida via `hermesPluginsSource()` corrigida).
+- `configuration-trust-C8/G3 Hermes: SHELL_UNSUPPORTED_HOOKS não reconhecida/ausente ...` — produto antigo
+  devolvia `report.status: complete` (esperado `partial`).
+
+Os outros dois casos novos desta rodada (evento shell-unsupported ao lado de um evento shell aceito, nas
+duas camadas) já passavam no produto antigo — não são regressão deste achado, mas cobertura da alternativa
+"misto" que a correção precisa preservar sem quebrar.
+
+### Decisão e correção
+
+1. **`contract-evidence.mjs` — extrator reaproveitado, nenhuma leitura nova**: a leitura léxica de conjunto
+   Python (antes só `extractHermesValidHooks`, acoplada ao nome `VALID_HOOKS` dentro de
+   `RUNTIME_MUTATION`/`findAssignments`) foi generalizada em `extractTopLevelStringSet(text, name)`,
+   parametrizada pelo NOME da ligação; `extractHermesValidHooks` chama essa função com `"VALID_HOOKS"`
+   (comportamento idêntico, mesma suíte de 12 testes já aprovados continua verde sem alteração) e a nova
+   `extractHermesShellUnsupportedHooks` chama a MESMA função com `"SHELL_UNSUPPORTED_HOOKS"`. `readHermesContract`
+   chama as duas sobre o MESMO `read.text` já obtido (uma única leitura de arquivo, limite de 1 MiB
+   preservado) e devolve `shellUnsupportedHooks` (array de nomes ou `null`) ao lado de `mechanisms`/
+   `validHooks`, sem alterar nenhum dos dois — C5 nunca é tocado por esta correção.
+2. **`run-diagnostics.mjs` — vínculo ao mesmo contrato encontrado**: `hermesShellUnsupportedHooks` só vira
+   `Set` quando `contract.state === "found"` E `contract.shellUnsupportedHooks !== null`; caso contrário
+   `null`, no mesmo padrão já usado para `hermesValidHooks` (nunca presume conjunto vazio).
+3. **`config-reader.mjs` — exclusão só na confirmação de configuração shell**: o ramo que já existia
+   (`agentId === "hermes" && configuration === "configured"`) ganhou dois ramos novos, DEPOIS de filtrar
+   `hermesTargetedEvents` pelos que batem em `hermesValidHooks` (preservando `hooks_event_not_in_installed_
+   catalog` quando nenhum bate, inalterado): se esse subconjunto não é vazio mas `hermesShellUnsupportedHooks`
+   é `null`, vira `unknown/hooks_shell_exclusion_unavailable` (tabela de exclusão não reconhecida — nunca
+   presume ausência de exclusão); se todos os eventos desse subconjunto também estão em
+   `hermesShellUnsupportedHooks`, vira `not_configured/hooks_event_shell_unsupported` (nenhum sobreviveria
+   ao parser real); um evento shell aceito ao lado de um Python-plugin-only preserva `configured`, pois
+   basta UM handler real sobreviver. `not_configured` (sem handler algum) e `invalid` (erro nativo de forma)
+   continuam fora deste bloco inteiro, como já valia para o ramo de catálogo.
+4. **Fixture positiva corrigida com justificativa** (`tests/doctor/helpers/hermes-contract-source.mjs`):
+   `hermesPluginsSource()` já listava `transform_api_error_classification` em `SHELL_UNSUPPORTED_HOOKS`,
+   mas não em `VALID_HOOKS` — diferente da instalação real, que lista o nome nas DUAS tabelas. Essa lacuna
+   escondia exatamente o caso que a fonte real reproduz (um evento válido no catálogo geral E recusado como
+   shell hook); adicionado a `UNMAPPED_EVENTS` (não afeta nenhum mecanismo mapeado nem `EXPECTED_EVENTS` dos
+   testes de C5 já aprovados). Novo parâmetro `shellUnsupportedHooksLine` (default: a forma real
+   reconhecida; string vazia simula ausência da tabela; uma forma alternativa simula "não reconhecida") para
+   provar os dois ramos sem inventar uma segunda função de fixture.
+
+### Resultados
+
+Alvos afetados, logo após a implementação (saída completa em
+`.checks/code-review/verifier4-g3-shell-fix-green-targets.txt`):
+
+```
+node --test tests/doctor/contract-evidence.unit.test.mjs tests/doctor/config-reader.unit.test.mjs tests/doctor/configuration-trust.cli.test.mjs
+  -> tests 50, pass 50, fail 0, skipped 0
+EXIT_CODE=0
+```
+
+`test:doctor` completo isolado (saída em `.checks/code-review/verifier4-g3-shell-fix-doctor.txt`):
+
+```
+node --test "tests/doctor/**/*.test.mjs"
+  -> tests 252, pass 251, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+`npm test` completo, uma única execução após as alterações finais (saída completa em
+`.checks/code-review/verifier4-g3-shell-fix-npm-test.txt`, sem pipe mascarando o exit):
+
+```
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 252, pass 251, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a rodada 4 verificada (243 → 252): 9 testes — 2 novos em
+`contract-evidence.unit.test.mjs` (tabela reconhecida ao lado de VALID_HOOKS, sem afetar mechanisms; tabela
+ausente/ilegível/não reconhecida vira null sem derrubar `state: found`), 4 novos em
+`config-reader.unit.test.mjs` (único evento shell-unsupported; misto continua configured; exclusão
+indisponível vira unknown; evento fora do catálogo geral preserva o motivo antigo mesmo sem tabela de
+exclusão), 3 novos em `configuration-trust.cli.test.mjs` (reprodução exata do Verifier na fronteira real da
+CLI, variante mista, variante de exclusão não reconhecida — JSON e texto nos três). O único skip continua
+`agent-resolution-C2 realpath/symlink real … (POSIX)`, condicional ao executor, não um skip novo. Paridade
+do motor comum reconfirmada nesta data: `git diff --exit-code 4242520 --
+scripts/code-review/{cli.mjs,review.mjs,review.test.mjs,schema.json,README.md}` sem diff.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0 (mesma limitação das seções anteriores). Nenhum
+  launcher/Python/hook/agente/config ativa da máquina foi executado, importado ou alterado nesta rodada —
+  só leitura textual das duas fontes nativas já citadas pelo encaminhamento
+  (`hermes_cli/plugins.py`, `agent/shell_hooks.py`), ambas em `C:/Users/paulo/AppData/Local/hermes/
+  hermes-agent/`, fora do controle de versão deste repositório.
+- `hermesShellUnsupportedHooks === null` continua um agregado único (tabela ausente, ilegível, mutada ou de
+  forma não reconhecida colapsam para `null`, mesmo padrão já aceito para `hermesValidHooks` desde a rodada
+  3): `hooks_shell_exclusion_unavailable` não distingue esses sub-motivos entre si — mesma lacuna já
+  registrada e aceita para `hooks_catalog_unavailable`, não ampliada nem reduzida nesta correção.
+- `extractTopLevelStringSet` continua exigindo exatamente uma atribuição de nível de módulo por nome; duas
+  tabelas distintas no mesmo arquivo não competem entre si (nomes diferentes, buscas independentes sobre o
+  mesmo texto).
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/contract-evidence.mjs` (`extractTopLevelStringSet` generalizado por nome,
+  `extractHermesShellUnsupportedHooks` nova, `shellUnsupportedHooks` no resultado `found`),
+  `src/doctor/run-diagnostics.mjs` (`hermesShellUnsupportedHooks` repassado a `readAgentConfiguration`),
+  `src/doctor/config-reader.mjs` (dois ramos novos: `hooks_shell_exclusion_unavailable`,
+  `hooks_event_shell_unsupported`).
+- Testes/fixtures: `tests/doctor/contract-evidence.unit.test.mjs` (2 novos),
+  `tests/doctor/config-reader.unit.test.mjs` (4 novos), `tests/doctor/configuration-trust.cli.test.mjs` (3
+  novos), `tests/doctor/helpers/hermes-contract-source.mjs` (`transform_api_error_classification` também em
+  `VALID_HOOKS`; parâmetro `shellUnsupportedHooksLine`).
+- Documentação/checklist: `docs/agent-compatibility.md` (linha Hermes de `shell_hooks.py`/G3 — nova frase
+  "Corrigido na correção residual de G3, variante shell"), `.checks/issue-3-agent-diagnostics.md` (nova
+  subseção "Landing da correção residual G3, variante shell" e frase adicional na entrada C8) e esta seção.
+  `.checks/issue-3-agent-diagnostics.verified.md` não foi editado (relatório independente, preservado).
+- Evidência: `.checks/code-review/verifier4-g3-shell-fix-red.txt`, `…-green-targets.txt`, `…-doctor.txt`,
+  `…-npm-test.txt`. Preservado sem alteração: `.checks/code-review/verifier4-g3-shell-fix.md`
+  (encaminhamento).

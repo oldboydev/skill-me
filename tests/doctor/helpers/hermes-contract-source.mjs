@@ -4,7 +4,13 @@
 // contêm aspas, chaves e dicionários de exemplo, e um segundo conjunto
 // (SHELL_UNSUPPORTED_HOOKS) logo depois. Os nomes listados são um subconjunto
 // sintético; não é cópia do arquivo real nem prova a máquina do usuário.
-
+//
+// `transform_api_error_classification` pertence às DUAS tabelas, como na
+// instalação real: VALID_HOOKS (contrato geral de plugin hooks, C5) E
+// SHELL_UNSUPPORTED_HOOKS (recusado como shell hook por `_parse_hooks_block`
+// antes mesmo de checar VALID_HOOKS). Uma fixture que listasse o nome só em
+// SHELL_UNSUPPORTED_HOOKS esconderia o caso real que a correção residual de
+// G3 cobre (achado `.checks/code-review/verifier4-g3-shell-fix.md`).
 export const HERMES_MAPPED_EVENTS = Object.freeze([
   "pre_tool_call",
   "post_tool_call",
@@ -15,9 +21,23 @@ export const HERMES_MAPPED_EVENTS = Object.freeze([
   "subagent_stop",
 ]);
 
-const UNMAPPED_EVENTS = ["transform_tool_result", "pre_llm_call", "post_llm_call", "pre_command"];
+const UNMAPPED_EVENTS = [
+  "transform_tool_result",
+  "pre_llm_call",
+  "post_llm_call",
+  "pre_command",
+  "transform_api_error_classification",
+];
 
-export function hermesPluginsSource({ omit = [], extra = "" } = {}) {
+const SHELL_UNSUPPORTED_HOOKS_LINE =
+  '# Hooks cuja diretiva o parser de shell hooks não tem como devolver: {"x"}\n' +
+  'SHELL_UNSUPPORTED_HOOKS: Set[str] = {"transform_api_error_classification"}\n';
+
+// `shellUnsupportedHooksLine` troca a segunda tabela por outra forma (string
+// vazia simula o arquivo sem essa tabela — versão sem a restrição, ou leitor
+// que não a reconhece; uma forma não reconhecida simula o mesmo "não
+// reconhecida" sem remover a tabela). Default: a forma real reconhecida.
+export function hermesPluginsSource({ omit = [], extra = "", shellUnsupportedHooksLine } = {}) {
   const listed = [...HERMES_MAPPED_EVENTS, ...UNMAPPED_EVENTS].filter((name) => !omit.includes(name));
   const items = listed.map((name, index) => {
     const comment =
@@ -34,8 +54,7 @@ export function hermesPluginsSource({ omit = [], extra = "" } = {}) {
     items.join("") +
     "}\n" +
     "\n" +
-    '# Hooks cuja diretiva o parser de shell hooks não tem como devolver: {"x"}\n' +
-    'SHELL_UNSUPPORTED_HOOKS: Set[str] = {"transform_api_error_classification"}\n' +
+    (shellUnsupportedHooksLine ?? SHELL_UNSUPPORTED_HOOKS_LINE) +
     extra
   );
 }
