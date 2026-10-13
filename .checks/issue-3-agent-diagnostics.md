@@ -54,6 +54,44 @@ sintéticas reutilizáveis (PE mínimo, PATH por SO, configs TOML/YAML, servidor
 - Nada mais nesta fase é difícil de reverter: nenhum arquivo de produto, CI ou npm foi criado ou alterado;
   todo o conteúdo novo é teste e fixture, descartável sem custo caso o formato mude na implementação.
 
+### Landing da rodada formal 1 (achados de `review:run`, registrado antes do código)
+
+Decisões tomadas para os sete achados bloqueantes da primeira revisão formal. Fontes primárias: instalações
+locais desta máquina lidas apenas como texto (sem executar agente, importar Python, rodar hooks ou ler
+transcripts) e as páginas oficiais já citadas na task. Nenhum critério da task muda.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| Evidência de contrato por mecanismo (C5, achado 2) | `support` da CLI local é decidido nesta ordem: launcher ausente no PATH consultado → `unavailable/executable_not_found` (só `cli_local`; IDE/desktop/cloud continuam `unverified/surface_not_inspected`); presença `unknown` → `unverified/presence_undetermined`; versão `null` → `unverified/version_unresolved`; versão fora do perfil → `unverified/version_profile_incompatible`; depois, a **tabela de contrato instalada e ligada ao launcher**. Única tabela reconhecida nesta entrega: `VALID_HOOKS` (literal de conjunto de strings, atribuição única no nível do módulo; refinado na pré-revisão da rodada 2: só em código, fora de comentário/docstring/string, strings separadas por vírgula, nada depois do `}` e nenhuma outra ligação do nome em código) em `hermes_cli/plugins.py`, irmão do `hermes_cli/__init__.py` de onde a versão foi lida — mesma instalação, mesmo vínculo launcher→intérprete→site-packages. A doc local do Hermes declara: "Runtime event-name validity comes from `hermes_cli.plugins.VALID_HOOKS`" e o parser de shell hooks usa a mesma tabela como allow-list. Mapeamento mecanismo→eventos (catálogo de plugin hooks da doc do Hermes): `skill_usage_signal`→`on_skill_lifecycle`; `tool_calls`→`pre_tool_call`,`post_tool_call`; `results_and_errors`→`post_tool_call`; `session_turn`→`on_session_start`,`on_session_end`; `subagents`→`subagent_start`,`subagent_stop`. Todos listados → `verified/local_contract_lists_events` com `evidence.source: { kind: "hermes_valid_hooks", path }` e `evidence.events`; algum ausente → `unverified/contract_event_not_listed` com `evidence.missingEvents` (ausência na tabela não prova ausência de outro caminho de observação, então nunca vira `unavailable`); arquivo ausente/ilegível/acima de 1 MiB/mutado/forma não reconhecida → `unverified` com `contract_source_not_found`/`contract_source_unreadable`/`input_too_large`/`contract_changed_during_read`/`contract_source_unrecognized`. Claude (`claude.exe` nativo) e Codex (`codex.exe` nativo do pacote npm, sem schema textual) não oferecem artefato textual de contrato dentro do limite de 1 MiB nos layouts inspecionados → `unverified/no_static_contract_source`, lacuna explícita | `hasLocalVerifiedContract` constante; versão compatível tratada como contrato; tabela própria no produto, sidecar/manifest inventado ou campo do config do usuário como "prova" do contrato; varrer binários de centenas de MB atrás de strings |
+| Origem da evidência por linha (C5/C16, achado 7) | `evidence.origin: real_environment \| fixture \| documented_contract \| not_inspected`. A CLI declara `real_environment` para `cli_local` (é o ambiente que ela leu, mesmo quando um teste o montou) e `not_inspected` para toda superfície não inspecionada; sem origem informada, o default é `not_inspected`, nunca `fixture`. `fixture` só aparece quando uma prova a passa explicitamente; `documented_contract` só na `exclusion` documentada | Default `fixture`, que fazia o relatório real afirmar 45 linhas de origem sintética |
+| Resolução de launcher no Windows (C1-C3, achado 3) | Para cada diretório do PATH, em ordem, testa `<agente><ext>` para cada extensão de `PATHEXT` do ambiente (entradas validadas `^\.[A-Za-z0-9]{1,8}$`, minúsculas; default `.com;.exe;.bat;.cmd`), como o Windows resolve um comando sem extensão. O primeiro candidato existente vence; formato desconhecido (`codex.exe`, `claude.cmd`) fica `present/version null/launcher_not_recognized`, nunca `absent`; binário nativo (cabeçalho MZ/ELF/Mach-O) de Codex/Hermes não é lido como texto. Preferência do PowerShell por `.ps1` não é modelada (lacuna declarada) | Um único sufixo fixo por agente, que declarava ausência falsa ou pulava para outra instalação |
+| Vínculo de shim npm (C2, achado 4) | Referência ancorada na base do próprio shim, como o `cmd-shim` do npm gera: `%dp0%`/`%~dp0` (`.cmd`) ou `$basedir` (sh), seguida de caminho relativo (refinado na pré-revisão da rodada 2: só como argumento do node na linha de invocação do template — `"%_prog%"  "%dp0%\…" %*` no `.cmd`, `exec … "$basedir/…" "$@"` no sh —, numa linha que começa um comando, no dialeto da extensão; menção por echo/here-document/string/continuação não é vínculo); resolve `.`/`..` a partir do diretório do launcher e exige `node_modules/@openai/codex` no caminho resolvido. Cobre o global Windows (`%dp0%\node_modules\@openai\codex\bin\codex.js`) e o local (`node_modules\.bin\codex.cmd` → `%dp0%\..\@openai\codex\bin\codex.js`), além do symlink POSIX via `realpath`. Mais de um pacote distinto referenciado → `version_source_ambiguous` | Casar o texto `node_modules\@openai\codex` em qualquer lugar e remontá-lo a partir do diretório do launcher (ignorava `..` e o prefixo real) |
+| Vínculo Hermes ↔ intérprete (C2/C3, achado 5) | No layout POSIX, o `pythonX.Y` do shebang do launcher (direto ou via `env`) escolhe `lib/pythonX.Y/site-packages`; sem versão no shebang, um único candidato com `hermes_cli` é usado e dois ou mais viram `version_source_ambiguous`; versão do shebang sem pacote correspondente → `launcher_not_recognized`, nunca a fonte de outro intérprete. Launcher compilado desconhecido continua inconclusivo (C3) | Primeiro diretório em ordem lexical |
+| Forma nativa dos hooks por agente (C8/C12, achado 6) | `configuration: invalid/hooks_structure_invalid` quando a seção `hooks` existe, não é nula e não segue a forma nativa: Claude (`settings.json`) e Codex (`hooks.json`/`config.toml`) — objeto evento → lista de grupos `{ matcher?: string, hooks: [handler-objeto] }`, com `type` string obrigatório só no Claude (doc do Claude o declara obrigatório; a do Codex não declara); a chave `state` sob `[hooks]` do Codex (registro de revisão escrito pelo próprio Codex, observado em `config.toml` local — só cabeçalhos lidos) é reservada e não contada como evento. Hermes (`config.yaml`) — mapeamento evento → `null` ou lista de mapeamentos com `command` string não vazia, como `_parse_hooks_block`/`_parse_single_entry` exigem; `output_spill`/`outbound` são subseções reservadas. Comandos nunca são validados nem executados; nomes de evento não são conferidos. Seção vazia válida continua `not_configured` e a regra `configured` (≥1 evento) não muda. **Refinado na pré-revisão da forma nativa (rodada 2, registrado antes do código)**: `configured` passa a exigir ≥1 handler com alvo. Claude (doc "Hook handler fields"): `type` obrigatório; `command`→`command`, `http`→`url`, `mcp_tool`→`server`+`tool`, `prompt`/`agent`→`prompt`, strings; ausente ou de outro tipo → `invalid/hooks_structure_invalid`. Codex (fonte `openai/codex` na tag `rust-v0.162.1`, a versão instalada: `config/src/hook_config.rs`, `hooks/src/engine/discovery.rs`): `type` também obrigatório (enum com etiqueta `type`); `command`→`command` string obrigatório e `command_windows`\|`commandWindows` string opcional (as duas grafias juntas → inválido); `mcp_tool`→`server`+`tool`; `prompt`/`agent` são lidos e pulados pelo Codex (nunca contam); `hooks` do grupo continua exigido (o código o aceitaria ausente, sem registrar nada). Alvo vazio ou só espaços não conta (no Codex, o efetivo da plataforma: `command_windows`, se houver, no Windows). `type` fora desses → `unknown/hooks_handler_type_unrecognized`, nunca `configured`/`trusted`. `managed_dir`/`windows_managed_dir` sob `[hooks]` do Codex são reservados (string; outro tipo → inválido): não são eventos, o diretório não é aberto nem listado e não gera configuração nem confiança — o Codex só os usa como caminho dos hooks gerenciados de `requirements.toml` e não carrega definições dele. Evento sem handler (`PreToolUse: []`, grupo sem handlers, `null` no Hermes) continua válido, mas não conta mais | Schema comum inventado para os três; aceitar qualquer `typeof object`; validar a linguagem do comando, a URL ou o prompt; abrir `managed_dir`; reproduzir o schema inteiro de settings; tipo futuro como inválido ou como `configured` |
+| Caminhos por plataforma explícita (C8/C16, achado 1) | `config-sources.mjs` monta caminhos com `path.win32` quando `platform === "win32"` e `path.posix` nos demais, nunca com o `path` nativo do executor; em produção isso coincide com o nativo, e as provas com `platform` simulado ficam determinísticas nos três runners | Ajustar o valor esperado ao separador do executor ou pular o teste fora do Windows |
+
+### Landing da pré-revisão formal da rodada 3 — grupo vazio, nomes de evento e campos opcionais tipados dos hooks (achado 6/C8, registrado antes do código)
+
+Três lacunas apontadas pelo orquestrador na forma nativa de `hooks-shape.mjs` (seção 11 do build), com fontes
+primárias novas consultadas nesta data: `codex-rs/config/src/hook_config.rs` e
+`codex-rs/hooks/src/engine/discovery.rs` (e `events/session_end.rs`) na tag `rust-v0.162.1` já usada nas
+rodadas anteriores (API pública do GitHub, só texto); [Codex Hooks](https://learn.chatgpt.com/docs/hooks) e
+[Claude Hooks](https://code.claude.com/docs/en/hooks) (consultadas nesta data). Nenhum critério da task muda;
+nenhum agente é executado, instalado ou importado.
+
+| One-way door | Literal shape | Alternative rejected |
+| --- | --- | --- |
+| Grupo sem `hooks` no Codex (achado 1) | **Corrige a decisão 6 da seção 11 do build** (registrada como "mais estrito que a fonte", que invertia a fonte de verdade): `MatcherGroup { matcher: Option<String>, #[serde(default)] hooks: Vec<HookHandlerConfig> }` em `hook_config.rs` não tem `deny_unknown_fields`, então um grupo sem a chave `hooks` deserializa como `hooks: []` (válido, zero handlers) e qualquer chave estranha ao lado (ex.: `{ command = "x" }`) é ignorada pelo serde, não rejeitada. `matcherGroupHandlers` passa a aceitar `group.hooks === undefined` como grupo vazio **só para o Codex**; Claude preserva a exigência atual (`hooks` ausente continua `invalid`), pois a doc do Claude não declara um default equivalente para esse campo e não há código acessível que confirme um. `configured` continua exigindo ≥1 handler com alvo (decisão 2 da seção 11): um grupo vazio nunca basta sozinho | Replicar a mesma permissividade no Claude sem fonte que a confirme; manter a forma mais estrita no Codex "para nunca levar a configured" quando a própria fonte mostra que não é inválida |
+| Nomes de evento não validados (achado 2) | Cada chave de `hooks` é conferida contra o conjunto nativo de eventos do agente antes de inspecionar o valor: Codex usa os 12 campos renomeados de `HookEventsToml` (`PreToolUse, PermissionRequest, PostToolUse, PreCompact, PostCompact, SessionStart, SessionEnd, UserPromptSubmit, SubagentStart, SubagentStop, Stop, Interrupt` — idêntico à doc pública); Claude usa os 33 nomes da seção "Hook Events" da doc (lifecycle completo, de `SessionStart`/`Setup` a `SessionEnd`). Chave fora desse conjunto (e fora das chaves reservadas já existentes) nunca tem seu valor inspecionado — o Codex real também não inspeciona, pois `HookEventsToml`/`HooksToml` não têm `deny_unknown_fields` e não há campo coletor — e o grupo some: `unknown/hooks_event_name_unrecognized`, nunca `configured` só porque o handler dentro tem alvo. Restrição por evento confirmada em código: `mcp_tool` sob `SessionEnd` no Codex é lido e pulado com aviso (`discovery.rs`, antes mesmo de validar `server`/`tool` vazios) — mesmo tratamento que `prompt`/`agent`, então classifica `untargeted` (não inválido, não desconhecido: a fonte mostra exatamente o que acontece). Restrição só documentada (sem código acessível): Claude só suporta `command`/`mcp_tool` em `SessionStart` ("Only `type: "command"` and `type: "mcp_tool"` hooks are supported"); como a doc não diz se um `http`/`prompt`/`agent` ali é ignorado, rejeitado ou simplesmente nunca invocado, um handler desse tipo sob `SessionStart` vira `unknown/hooks_handler_type_unsupported_for_event` (nunca `configured`), só depois de confirmar que o handler já seria válido fora dessa restrição (um handler malformado continua `invalid`, a restrição de evento não mascara um campo obrigatório ausente) | Tratar evento desconhecido como silenciosamente ignorado sem reasonCode (esconderia do usuário uma seção aparentemente válida que não registra nada); inventar `invalid` para uma chave que o Codex de fato apenas ignora; aplicar a mesma restrição de `SessionStart` como `invalid` no Claude sem fonte do efeito real; usar a tabela de mecanismo→evento de `contract-evidence.mjs`/C5 como prova desta validação de schema — são evidências distintas (schema de config local vs. contrato de capacidade) |
+| Campos opcionais tipados do Codex (achado 3) | Validados só os campos que `hook_config.rs` tipa e que o Codex 0.162.1 realmente lê: `Command` → `timeout` (renomeado de `timeout_sec: Option<u64>` → inteiro não negativo), `async` (`r#async: bool` → booleano), `statusMessage` (`status_message: Option<String>` → string), `additionalContextLimit` (`Option<usize>` → inteiro não negativo); `McpTool` → `timeout`, `statusMessage` (mesmos tipos) e `input` (`serde_json::Map` → objeto simples, sem reproduzir a checagem extra de representabilidade TOML do deserializer customizado). `null`/ausência contam como `None` (como já ocorre para `command_windows`). Um valor presente de tipo errado em qualquer um desses campos vira `invalid/hooks_structure_invalid` — não um estado novo —, porque é exatamente o que acontece na fonte: sem `deny_unknown_fields` mas com tipo exato por campo, o serde falha a deserializar a struct inteira do handler, o que falha o documento TOML/JSON inteiro (o Codex não carrega nada dele), nunca "esse handler específico" isolado. `Prompt {}`/`Agent {}` não têm campo nenhum na fonte, então não são afetados por este achado. Caso concreto do achado: `{type:"command", command:"echo ok", timeout:{bad:true}}` deixa de ser `configured` e passa a `invalid`. Fora desta validação, por decisão (não por omissão não registrada): comandos/URLs/prompts continuam nunca inspecionados; o Claude fica fora (sem código acessível, a doc não declara o efeito de um tipo errado em `timeout`/`once`/`statusMessage`) | Reproduzir o schema inteiro de settings (todo campo opcional de toda doc); validar o conteúdo de `input`/comando/URL; tratar o tipo errado como `unknown` quando a fonte já confirma que é `invalid` (documento inteiro descartado); estender a mesma validação ao Claude sem fonte de código |
+
+Precedência entre os três eixos (handler malformado, evento não reconhecido, tipo não reconhecido,
+restrição por evento): `invalid` (campo obrigatório ausente/tipo errado, em qualquer handler de um evento
+reconhecido) decide antes de qualquer forma de "não sei"; entre as formas de "não sei", evento não
+reconhecido decide antes de tipo de handler não reconhecido, que decide antes de restrição por evento — a
+ordem não muda nenhum resultado hoje coberto por teste (cada caso de prova isola um eixo), só documenta o
+desempate para um caso futuro que combine mais de um.
+
 ## Checks
 
 ### S1 - Saber quais agentes foram encontrados sem iniciar os agentes · 6 arquivos · ~26 KB · ~7k
@@ -70,6 +108,14 @@ artefato encontrado (Claude via `binary_metadata`, Codex via `package_metadata`,
 precisam referenciar de verdade o pacote/fonte (symlink+realpath ou caminho relativo embutido no shim para
 Codex; layout padrão de venv/site-packages para Hermes) — um launcher "stub" sem esse vínculo não basta
 (ver C3 abaixo e `.checks/issue-3-agent-diagnostics.build.md`).
+**Corrigido na rodada formal 1 (achados 3, 4 e 5)**: no Windows a resolução testa cada extensão de
+`PATHEXT` por diretório do PATH (o primeiro candidato existente vence, mesmo de formato não
+reconhecido); o shim npm é ligado ao pacote pela linha de invocação do template do cmd-shim
+(`%dp0%` no `.cmd`, `$basedir` no sh), numa linha que começa um comando, com `..` resolvido (cobre
+`node_modules\.bin\codex.cmd` local) — refinado na pré-revisão da rodada 2, ver
+`.checks/issue-3-agent-diagnostics.build.md` seção 10; no Hermes POSIX o `pythonX.Y` do
+shebang escolhe o `site-packages`. As fixtures usam os templates reais do cmd-shim desta máquina e o
+symlink do npm no POSIX — o shim `require("./node_modules/...")` anterior era fictício.
 Proof: `node --test --test-name-pattern="presence-C2" tests/doctor/presence.cli.test.mjs`
 Proof: `node --test --test-name-pattern="agent-resolution-C2" tests/doctor/agent-resolution.unit.test.mjs`
 
@@ -78,8 +124,14 @@ Proof: `node --test --test-name-pattern="agent-resolution-C2" tests/doctor/agent
 SO, sem interromper o diagnóstico dos demais agentes. Inclui regressão de launcher alheio com
 package.json/hermes_cli vizinho mas não referenciado, que continua `launcher_not_recognized`.
 Proof: `node --test --test-name-pattern="presence-C3" tests/doctor/presence.cli.test.mjs`
+**Corrigido na rodada formal 1 (achados 3 e 5)**: `codex.exe`/`claude.cmd` (ou launcher POSIX de
+formato desconhecido) no primeiro diretório do PATH ficam `present/version null/launcher_not_recognized`,
+nunca `absent` nem com a versão de uma instalação posterior; executável nativo é lido só pelo
+cabeçalho (nunca `input_too_large`); Hermes com dois `pythonX.Y` e shebang sem versão fica
+`version_source_ambiguous`, e versão do shebang sem pacote correspondente fica `launcher_not_recognized`.
 Proof (camada de permissão, simulação cross-SO declarada abaixo, e regressão de launcher alheio):
 `node --test --test-name-pattern="agent-resolution-C3" tests/doctor/agent-resolution.unit.test.mjs`
+Proof (cabeçalho de executável nativo): `node --test --test-name-pattern="agent-resolution-C14" tests/doctor/agent-resolution.unit.test.mjs`
 
 **C4** - Uma fixture com efeitos colaterais simulados não aciona nenhum launcher; inventário de
 arquivos/tamanho/mtime antes e depois não muda; nenhuma chamada a `child_process` ocorre na resolução.
@@ -97,7 +149,17 @@ diretamente"). A fronteira de CLI permanece provada para os demais estados do cr
 **C5** - Cada mecanismo/capacidade tem `support`, `reasonCode` e evidência; `verified` exige evidência local
 vinculada à versão identificada; versão sem perfil compatível ou documentação sem vínculo de versão não
 chegam a `verified`; fixture validada nunca é marcada como prova do ambiente real.
+**Corrigido na rodada formal 1 (achado 2)**: `hasLocalVerifiedContract` constante foi removido. A CLI
+lê a tabela de contrato da própria instalação (Hermes: `VALID_HOOKS` em `hermes_cli/plugins.py` do
+mesmo pacote da versão, só como texto, até 1 MiB) e decide por mecanismo: `verified/local_contract_lists_events`
+com `evidence.source`/`evidence.events`; launcher ausente → `unavailable/executable_not_found` só na CLI
+local; versão/fonte inconclusiva → `unverified` com motivo específico. Claude e Codex ficam
+`unverified/no_static_contract_source` (sem artefato textual nos layouts inspecionados). Ver Landing da
+rodada formal 1.
 Proof: `node --test --test-name-pattern="capability-matrix-C5" tests/doctor/capability-matrix.unit.test.mjs`
+Proof (leitura da tabela instalada, estados inconclusivos): `node --test tests/doctor/contract-evidence.unit.test.mjs`
+Proof (fronteira real da CLI — verified com fonte, evento ausente, versão sem perfil, launcher ausente):
+`node --test --test-name-pattern="capability-evidence-C5" tests/doctor/capability-evidence.cli.test.mjs`
 
 **C6** - `support`, `configuration` e `runtimeVerification` são representados separadamente; configuração
 existente nunca produz `runtimeVerification: verified`; nesta entrega `runtimeVerification` é sempre
@@ -127,7 +189,14 @@ determinável por leitura usa `unknown`. **Corrigido na implementação**: um ca
 arbitrário dentro do próprio arquivo de configuração nunca é projetado nem concede confiança — a única
 origem nativa de confiança lida nesta entrega é `hooks_auto_accept` do Hermes, validada contra uma lista de
 origens reconhecidas em `trust-resolution.mjs` (ver `.checks/issue-3-agent-diagnostics.build.md`).
+**Corrigido na rodada formal 1 (achados 1 e 6)**: seção `hooks` fora da forma nativa de cada agente
+(Claude/Codex: grupos `{ matcher?, hooks: [...] }`; Hermes: lista de mapeamentos com `command`) vira
+`invalid/hooks_structure_invalid` e o relatório `partial`; vazio válido, `[hooks.state]` do Codex e
+`outbound`/`output_spill` do Hermes continuam válidos. Caminhos de config seguem `path.win32`/`path.posix`
+pela `platform` recebida, determinísticos nos três runners.
 Proof: `node --test --test-name-pattern="config-projection-C8" tests/doctor/config-projection.unit.test.mjs`
+Proof: `node --test tests/doctor/config-sources.unit.test.mjs`
+Proof: `node --test tests/doctor/config-reader.unit.test.mjs`
 Proof: `node --test tests/doctor/scope-merge.unit.test.mjs`
 Proof: `node --test tests/doctor/trust-resolution.unit.test.mjs`
 Proof: `node --test --test-name-pattern="configuration-trust-C8" tests/doctor/configuration-trust.cli.test.mjs`
@@ -157,7 +226,9 @@ texto reduzia cada capacidade a uma contagem por estado e nunca imprimia `agent.
 (`environment.platform/cwd/generatedAt`), então os dois formatos não apresentavam os mesmos fatos/códigos do
 mesmo modelo. `src/doctor/render-text.mjs` agora expõe, por agente, o caminho e, por capacidade, mecanismo ×
 superfície, `support`, `reasonCode`, `evidence.origin`, `configuration` e a exclusão documentada quando
-presente (ver C7).
+presente (ver C7). **Rodada formal 1**: o texto também mostra, por linha, a fonte de contrato, os
+eventos e os eventos ausentes que o JSON passou a ter (achado 2), e a paridade CLI usa uma instalação
+com linhas `verified` e com evento ausente.
 Proof: `node --test --test-name-pattern="envelope-C11" tests/doctor/envelope.cli.test.mjs` (inclui a nova
 paridade texto/JSON na fronteira real da CLI, duas invocações de processo distintas sobre a mesma fixture,
 com motivos/origens reais e distintos por superfície)
@@ -217,6 +288,13 @@ Proof (versão sem perfil compatível, fronteira real da CLI):
 `node --test --test-name-pattern="presence-C16" tests/doctor/presence.cli.test.mjs`
 Proof (configuração inacessível, fronteira real da CLI, prova portátil via diretório no lugar do arquivo):
 `node --test --test-name-pattern="configuration-trust-C16" tests/doctor/configuration-trust.cli.test.mjs`
+**Corrigido na rodada formal 1 (achados 7 e 1)**: o relatório real não atribui mais origem `fixture` às
+superfícies não inspecionadas — as 45 linhas de IDE/desktop/cloud declaram `not_inspected`, a CLI local
+`real_environment`, e `fixture` só aparece quando uma prova a informa; o registro de cenário segue em
+`fixture-manifest.mjs`. O teste de caminhos Windows que falhava em Linux/macOS agora usa semântica
+explícita de plataforma. Execução real só em Windows (ver build, seção 9).
+Proof (45 linhas não locais nos dois formatos):
+`node --test --test-name-pattern="capability-evidence-C16" tests/doctor/capability-evidence.cli.test.mjs`
 
 **C17** - A documentação de compatibilidade registra fonte, data de consulta, versão/superfície aplicável,
 evidência obtida e lacunas, separando contrato documentado, inspeção estática e execução real; o README
@@ -264,8 +342,12 @@ leitura com snapshot, injetando um `stat()`/`readFile()` que discordam, como aco
 | Set (size) | Member -> proof | Unproven |
 | --- | --- | --- |
 | Fonte de versão (3) | `binary_metadata` C2/C14 (PE) · `package_metadata` C2 (Codex) · `source_literal` C2 (Hermes) | - |
-| Convenções de SO (3) | `win32` C2 · `linux` C2 · `darwin` C2, parametrizado em `agent-resolution.unit.test.mjs` | - |
+| Convenções de SO (3) | `win32` C2 · `linux` C2 · `darwin` C2, parametrizado em `agent-resolution.unit.test.mjs`; caminhos de config por plataforma em `config-sources.unit.test.mjs` | Simulação por `platform` + FS em memória; execução real registrada só em Windows (CI cobre Linux/macOS) |
 | Matriz de capacidades (5 mecanismos × 4 superfícies = 20/agente) | C5-C7, tabela única percorre as 20 combinações por agente, tamanho declarado no teste | - |
+| `support` produzido pela CLI (3) | `verified` C5 (tabela instalada, CLI) · `unavailable` C5 (launcher ausente, CLI) · `unverified` C5/C7 (motivos de versão, contrato e superfície, CLI e unidade) | - |
+| Estado da fonte de contrato (8) | `found` completo/incompleto C5 (CLI) · `no_static_source` C5 (CLI) · `not_found` C5 (CLI) · `unreadable`/`too_large`/`changed_during_read`/`unrecognized` C5 (unidade, `contract-evidence.unit.test.mjs`) | `unreadable`/`too_large`/`changed_during_read` não cruzam a CLI: mesma limitação de permissão/mutação já declarada para C3/C15 |
+| `evidence.origin` (4) | `real_environment` C5/C16 (CLI) · `not_inspected` C16 (45 linhas, CLI) · `fixture` C5 (unidade, só explícita) · `documented_contract` C7 (CLI, `exclusion`) | - |
+| Forma nativa de hooks (3 agentes) | Claude C8 (unidade + CLI, exemplos formais) · Codex C8 (unidade + CLI) · Hermes C8 (unidade + CLI) | - |
 | `configuration` (5) | `configured` C8 · `not_configured` C8 · `disabled` C8 · `invalid` C8 · `unknown` C8/C14 | - |
 | `trust` (4) | `trusted` C8 · `untrusted` C8 · `unknown` C8 · `not_applicable` C8 | - |
 | `collector.status`/motivo (5) | `reachable` C9 · `unreachable/connection_refused` C9 · `unreachable/connection_timeout` C10 · `unknown/endpoint_not_provided` C10 · `unknown/invalid_endpoint` C10 | - |

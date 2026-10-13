@@ -12,12 +12,32 @@ import {
 
 const SUPPORT_STATES = new Set(["verified", "unavailable", "unverified"]);
 
+// Contrato "encontrado" com a forma que contract-evidence.mjs devolve: cada
+// mecanismo com os eventos exigidos e os que faltaram na tabela instalada.
+function foundContract(missingByMechanism = {}) {
+  const mechanisms = {};
+  for (const mechanism of MECHANISMS) {
+    mechanisms[mechanism] = {
+      events: [`${mechanism}_event`],
+      missingEvents: missingByMechanism[mechanism] ?? [],
+    };
+  }
+  return {
+    state: "found",
+    source: { kind: "hermes_valid_hooks", path: "/venv/hermes_cli/plugins.py" },
+    mechanisms,
+  };
+}
+
 const FAVORABLE_EVIDENCE = {
+  presence: "present",
+  version: "0.21.4",
   versionProfileCompatible: true,
-  hasLocalVerifiedContract: true,
   documentationOnly: false,
+  contract: foundContract(),
   configuration: "configured",
   trust: "trusted",
+  origin: "real_environment",
 };
 
 test("capability-matrix-C5 mecanismo/superfície sempre tem support, reasonCode e evidence", () => {
@@ -44,7 +64,8 @@ test("capability-matrix-C5 versão sem perfil compatível não herda suporte por
     evidence: { ...FAVORABLE_EVIDENCE, versionProfileCompatible: false },
   });
   assert.equal(row.support, "unverified");
-  assert.notEqual(row.reasonCode, "local_evidence_matches_contract");
+  assert.equal(row.reasonCode, "version_profile_incompatible");
+  assert.notEqual(row.reasonCode, "local_contract_lists_events");
 });
 
 test("capability-matrix-C5 documentação sem vínculo com a versão não basta para verified", () => {
@@ -54,7 +75,7 @@ test("capability-matrix-C5 documentação sem vínculo com a versão não basta 
     surface: "cli_local",
     evidence: {
       ...FAVORABLE_EVIDENCE,
-      hasLocalVerifiedContract: false,
+      contract: null,
       documentationOnly: true,
     },
   });
@@ -158,7 +179,7 @@ test("capability-matrix-C7 superfície cloud do Codex não verificada pela CLI l
 
 // Critério: nunca anunciar o evento nativo "SkillStart" do Codex sem
 // evidência — não afirmar indisponibilidade genérica do mecanismo. Mesmo
-// com evidência local favorável (hasLocalVerifiedContract: true), o
+// com uma tabela de contrato que lista todos os eventos, o
 // mecanismo fica unverified/skill_start_not_documented na CLI local, nunca
 // verified (evidência genérica não prova esse contrato específico) e nunca
 // unavailable (ausência do evento documentado não prova ausência de
@@ -185,9 +206,9 @@ test("capability-matrix-C7 Codex não anuncia SkillStart nativo sem evidência (
 // local. Essa exclusão vem do CONTRATO DOCUMENTADO (fonte própria, origem
 // "documented_contract"), não de uma inspeção desta instalação — por isso
 // fica num campo `exclusion` separado, sem sobrescrever a avaliação genérica
-// de support/reasonCode/evidence.origin da linha (que continua
-// no_local_evidence com evidência favorável, igual a qualquer outro
-// mecanismo). Só se aplica à própria CLI local: as demais superfícies já não
+// de support/reasonCode/evidence.origin da linha (que segue a tabela de
+// contrato recebida, igual a qualquer outro mecanismo). Só se aplica à
+// própria CLI local: as demais superfícies já não
 // afirmam cobertura nenhuma (surface_not_inspected), então a exclusão
 // específica de hosted tools não acrescenta fato novo ali.
 test("capability-matrix-C7 Codex tool_calls: exclusão de hosted tools é um fato documentado separado, não sobrescreve support/reasonCode/origin da linha", () => {
@@ -198,7 +219,7 @@ test("capability-matrix-C7 Codex tool_calls: exclusão de hosted tools é um fat
     evidence: FAVORABLE_EVIDENCE,
   });
   assert.equal(localRow.support, "verified");
-  assert.equal(localRow.reasonCode, "local_evidence_matches_contract");
+  assert.equal(localRow.reasonCode, "local_contract_lists_events");
   assert.deepEqual(localRow.exclusion, {
     reasonCode: "hosted_tools_outside_local_hooks",
     origin: "documented_contract",
@@ -218,8 +239,8 @@ test("capability-matrix-C7 Codex tool_calls: exclusão de hosted tools é um fat
   }
 });
 
-// Regressão: sem evidência local favorável, tool_calls/cli_local do Codex
-// segue a avaliação genérica (no_local_evidence ou version_profile_
+// Regressão: sem tabela de contrato, tool_calls/cli_local do Codex segue a
+// avaliação genérica (no_static_contract_source ou version_profile_
 // incompatible) normalmente — a exclusão documentada continua presente ao
 // lado, nunca substituindo o motivo real pelo qual a linha não foi avaliada.
 test("capability-matrix-C5/C7 Codex tool_calls: motivo genérico da linha nunca é substituído pela exclusão documentada", () => {
@@ -227,10 +248,10 @@ test("capability-matrix-C5/C7 Codex tool_calls: motivo genérico da linha nunca 
     agentId: "codex",
     mechanism: "tool_calls",
     surface: "cli_local",
-    evidence: { ...FAVORABLE_EVIDENCE, versionProfileCompatible: true, hasLocalVerifiedContract: false },
+    evidence: { ...FAVORABLE_EVIDENCE, versionProfileCompatible: true, contract: { state: "no_static_source" } },
   });
   assert.equal(compatibleRow.support, "unverified");
-  assert.equal(compatibleRow.reasonCode, "no_local_evidence");
+  assert.equal(compatibleRow.reasonCode, "no_static_contract_source");
   assert.equal(compatibleRow.exclusion.reasonCode, "hosted_tools_outside_local_hooks");
 
   const incompatibleRow = buildCapabilityRow({
@@ -270,4 +291,125 @@ test("capability-matrix-C5/C7 Codex skill_usage_signal: versão incompatível re
   assert.equal(incompatibleRow.support, "unverified");
   assert.equal(incompatibleRow.reasonCode, "version_profile_incompatible");
   assert.notEqual(incompatibleRow.reasonCode, "skill_start_not_documented");
+});
+
+// --- Evidência de contrato por mecanismo e indisponibilidade (achado formal 2) ---
+
+test("capability-matrix-C5 launcher ausente no ambiente consultado: CLI local unavailable/executable_not_found; outras superfícies continuam não inspecionadas", () => {
+  for (const agentId of ["claude", "codex", "hermes"]) {
+    const matrix = buildCapabilityMatrix({
+      agentId,
+      evidenceBySurface: {
+        cli_local: { presence: "absent", version: null, origin: "real_environment" },
+      },
+    });
+    for (const row of matrix) {
+      if (row.surface === "cli_local") {
+        assert.equal(row.support, "unavailable", `${agentId}/${row.mechanism}`);
+        assert.equal(row.reasonCode, "executable_not_found", `${agentId}/${row.mechanism}`);
+        assert.equal(row.evidence.origin, "real_environment");
+      } else {
+        assert.equal(row.support, "unverified", `${agentId}/${row.mechanism}/${row.surface}`);
+        assert.equal(row.reasonCode, "surface_not_inspected");
+        assert.equal(row.evidence.origin, "not_inspected");
+      }
+    }
+  }
+});
+
+test("capability-matrix-C5 ordem da decisão: presença desconhecida, versão nula e perfil incompatível vêm antes da tabela de contrato", () => {
+  const cases = [
+    [{ presence: "unknown", version: null }, "presence_undetermined"],
+    [{ presence: "present", version: null, versionProfileCompatible: false }, "version_unresolved"],
+    [{ presence: "present", version: "9.9.0", versionProfileCompatible: false }, "version_profile_incompatible"],
+  ];
+  for (const [overrides, reasonCode] of cases) {
+    const row = buildCapabilityRow({
+      agentId: "hermes",
+      mechanism: "tool_calls",
+      surface: "cli_local",
+      evidence: { ...FAVORABLE_EVIDENCE, ...overrides },
+    });
+    assert.equal(row.support, "unverified", reasonCode);
+    assert.equal(row.reasonCode, reasonCode);
+    assert.equal(row.evidence.source, undefined, `${reasonCode}: tabela não sustentou esta decisão`);
+  }
+});
+
+test("capability-matrix-C5 tabela instalada que lista os eventos do mecanismo vira verified com fonte e eventos na evidência", () => {
+  const row = buildCapabilityRow({
+    agentId: "hermes",
+    mechanism: "subagents",
+    surface: "cli_local",
+    evidence: FAVORABLE_EVIDENCE,
+  });
+  assert.equal(row.support, "verified");
+  assert.equal(row.reasonCode, "local_contract_lists_events");
+  assert.deepEqual(row.evidence, {
+    origin: "real_environment",
+    source: { kind: "hermes_valid_hooks", path: "/venv/hermes_cli/plugins.py" },
+    events: ["subagents_event"],
+  });
+  assert.equal(row.runtimeVerification, "not_performed");
+});
+
+test("capability-matrix-C5 evento ausente da tabela fica unverified/contract_event_not_listed, nunca unavailable", () => {
+  const row = buildCapabilityRow({
+    agentId: "hermes",
+    mechanism: "skill_usage_signal",
+    surface: "cli_local",
+    evidence: { ...FAVORABLE_EVIDENCE, contract: foundContract({ skill_usage_signal: ["on_skill_lifecycle"] }) },
+  });
+  assert.equal(row.support, "unverified");
+  assert.equal(row.reasonCode, "contract_event_not_listed");
+  assert.deepEqual(row.evidence.missingEvents, ["on_skill_lifecycle"]);
+  assert.equal(row.evidence.source.kind, "hermes_valid_hooks");
+});
+
+test("capability-matrix-C5 cada estado inconclusivo da fonte de contrato tem motivo próprio e nunca verified", () => {
+  const cases = {
+    no_static_source: "no_static_contract_source",
+    not_found: "contract_source_not_found",
+    unreadable: "contract_source_unreadable",
+    too_large: "input_too_large",
+    changed_during_read: "contract_changed_during_read",
+    unrecognized: "contract_source_unrecognized",
+  };
+  for (const [state, reasonCode] of Object.entries(cases)) {
+    const row = buildCapabilityRow({
+      agentId: "hermes",
+      mechanism: "tool_calls",
+      surface: "cli_local",
+      evidence: { ...FAVORABLE_EVIDENCE, contract: { state } },
+    });
+    assert.equal(row.support, "unverified", state);
+    assert.equal(row.reasonCode, reasonCode, state);
+  }
+  const withoutContract = buildCapabilityRow({
+    agentId: "hermes",
+    mechanism: "tool_calls",
+    surface: "cli_local",
+    evidence: { ...FAVORABLE_EVIDENCE, contract: null },
+  });
+  assert.equal(withoutContract.reasonCode, "no_local_evidence");
+});
+
+// --- Origem da evidência (achado formal 7) ---
+
+test("capability-matrix-C5/C16 sem origem informada a linha declara not_inspected, nunca fixture; superfície não inspecionada nunca herda a origem da CLI local", () => {
+  const bare = buildCapabilityRow({ agentId: "claude", mechanism: "tool_calls", surface: "cli_local" });
+  assert.equal(bare.evidence.origin, "not_inspected");
+  const matrix = buildCapabilityMatrix({
+    agentId: "codex",
+    evidenceBySurface: {
+      cli_local: FAVORABLE_EVIDENCE,
+      cloud: { ...FAVORABLE_EVIDENCE, origin: "real_environment" },
+    },
+  });
+  const nonLocal = matrix.filter((row) => row.surface !== "cli_local");
+  assert.equal(nonLocal.length, 15);
+  for (const row of nonLocal) {
+    assert.equal(row.evidence.origin, "not_inspected", `${row.mechanism}/${row.surface}`);
+    assert.notEqual(row.evidence.origin, "fixture");
+  }
 });

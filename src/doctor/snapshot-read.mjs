@@ -49,6 +49,19 @@ export async function readSnapshot(filePath, { fs, maxBytes } = {}) {
   }
 }
 
+// Lê só os primeiros `length` bytes: basta para reconhecer o cabeçalho de um
+// executável nativo sem ler um binário de centenas de MB.
+export async function readHead(filePath, { fs, length }) {
+  const handle = await toOpenableFsAdapter(fs).open(filePath);
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
 // Leitor de texto limitado compartilhado por codex.mjs/hermes.mjs, com teto
 // real aplicado pela leitura posicional (ver readBounded acima), não por um
 // stat() prévio. ENOENT vira "missing" (resultado normal: artefato ausente);

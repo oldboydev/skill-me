@@ -30,13 +30,22 @@ export function joinPath(dirPath, name) {
   return `${dirPath}${detectSeparator(dirPath)}${name}`;
 }
 
-// Normaliza uma referência textual extraída de um shim (pode usar "/" ou
-// "\\" independente da plataforma de destino) para o separador esperado.
-export function normalizeReference(reference, sep) {
-  return reference
-    .replace(/^\.[\\/]/, "")
-    .split(/[\\/]/)
-    .join(sep);
+// Resolve uma referência relativa extraída de um shim (com "/" ou "\\",
+// independente da plataforma) a partir de um diretório já resolvido,
+// tratando "." e ".." sem tocar o filesystem. Devolve null se ".." tentar
+// subir acima da raiz do caminho base (unidade do Windows ou "/").
+export function resolveRelative(baseDir, relative, sep) {
+  const segments = baseDir.split(/[\\/]/);
+  for (const part of relative.split(/[\\/]/)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (segments.length <= 1) return null;
+      segments.pop();
+      continue;
+    }
+    segments.push(part);
+  }
+  return segments.join(sep);
 }
 
 // Remove linhas inteiras de comentário (shell/Python "#", batch "REM"/"::")

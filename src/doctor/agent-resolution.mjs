@@ -5,17 +5,28 @@ import { joinPath } from "./launcher-link/path-helpers.mjs";
 
 export const AGENT_ORDER = Object.freeze(["claude", "codex", "hermes"]);
 
-// Lista de nomes candidatos em ordem de precedência (como PATHEXT: a
-// primeira extensão reconhecida em cada diretório do PATH vence). O launcher
-// real de um console-script do pip no Windows é `hermes.exe` (um executável
-// compilado, não um script de texto); `hermes.cmd` fica como candidato
-// secundário para layouts que produzam um shim de texto.
-function launcherFileNames(agentId, platform) {
+// No Windows um comando sem extensão é resolvido, em cada diretório do PATH,
+// tentando cada extensão de PATHEXT na ordem — então `codex.exe` (app do
+// Codex), `claude.cmd` (shim do npm) ou `hermes.exe` (launcher compilado) são
+// candidatos tanto quanto os formatos que o doctor sabe ler. Entradas que
+// não são uma extensão simples são ignoradas para que um PATHEXT estranho
+// nunca forme um caminho fora do diretório examinado. A preferência do
+// PowerShell por `.ps1` é do shell, não do SO, e não é modelada.
+const DEFAULT_WINDOWS_PATHEXT = Object.freeze([".com", ".exe", ".bat", ".cmd"]);
+
+function windowsLauncherExtensions(env) {
+  const raw = env?.PATHEXT;
+  if (typeof raw !== "string") return DEFAULT_WINDOWS_PATHEXT;
+  const extensions = raw
+    .split(";")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => /^\.[a-z0-9]{1,8}$/.test(entry));
+  return extensions.length > 0 ? [...new Set(extensions)] : DEFAULT_WINDOWS_PATHEXT;
+}
+
+function launcherFileNames(agentId, platform, env) {
   if (platform !== "win32") return [agentId];
-  if (agentId === "claude") return ["claude.exe"];
-  if (agentId === "codex") return ["codex.cmd"];
-  if (agentId === "hermes") return ["hermes.exe", "hermes.cmd"];
-  throw new Error(`agente desconhecido: ${agentId}`);
+  return windowsLauncherExtensions(env).map((extension) => agentId + extension);
 }
 
 function isExecutableMode(mode) {
@@ -61,9 +72,11 @@ async function readVersion(agentId, launcherPath, fs) {
 // alta primeiro), tenta cada sufixo candidato nessa ordem — um diretório com
 // o nome do agente (sem ser um arquivo) nunca é aceito, e no POSIX um
 // arquivo sem nenhum bit de execução é tratado como "não encontrado" nesse
-// candidato (segue procurando), não como presença válida.
-async function findLauncherPath(agentId, pathDirs, platform, fs) {
-  const names = launcherFileNames(agentId, platform);
+// candidato (segue procurando), não como presença válida. O primeiro
+// candidato existente vence mesmo que seu formato não seja reconhecido:
+// pular para outro diretório atribuiria a versão de outra instalação.
+async function findLauncherPath(agentId, pathDirs, platform, env, fs) {
+  const names = launcherFileNames(agentId, platform, env);
   for (const dir of pathDirs) {
     for (const name of names) {
       const candidate = joinPath(dir, name);
@@ -82,10 +95,10 @@ async function findLauncherPath(agentId, pathDirs, platform, fs) {
   return null;
 }
 
-async function resolveOneAgent(agentId, { pathDirs, platform, fs }) {
+async function resolveOneAgent(agentId, { pathDirs, platform, env, fs }) {
   let launcherPath;
   try {
-    launcherPath = await findLauncherPath(agentId, pathDirs, platform, fs);
+    launcherPath = await findLauncherPath(agentId, pathDirs, platform, env, fs);
   } catch (error) {
     return {
       id: agentId,
@@ -94,6 +107,7 @@ async function resolveOneAgent(agentId, { pathDirs, platform, fs }) {
       versionSource: null,
       path: null,
       reasonCode: error.code ?? "unknown_error",
+      packageDir: null,
     };
   }
   if (launcherPath === null) {
@@ -104,6 +118,7 @@ async function resolveOneAgent(agentId, { pathDirs, platform, fs }) {
       versionSource: null,
       path: null,
       reasonCode: "executable_not_found",
+      packageDir: null,
     };
   }
   try {
@@ -115,6 +130,10 @@ async function resolveOneAgent(agentId, { pathDirs, platform, fs }) {
       versionSource: result.versionSource ?? null,
       path: launcherPath,
       reasonCode: result.version === null ? result.reasonCode : null,
+      // Pacote de onde a versão foi lida (hoje só o hermes_cli do Hermes):
+      // é nele, e só nele, que a fonte de contrato desta instalação é
+      // procurada. Não entra no relatório.
+      packageDir: result.packageDir ?? null,
     };
   } catch (error) {
     return {
@@ -124,6 +143,7 @@ async function resolveOneAgent(agentId, { pathDirs, platform, fs }) {
       versionSource: null,
       path: launcherPath,
       reasonCode: error.code ?? "unknown_error",
+      packageDir: null,
     };
   }
 }
@@ -131,11 +151,12 @@ async function resolveOneAgent(agentId, { pathDirs, platform, fs }) {
 // Leitura puramente estática: nenhuma chamada a child_process acontece aqui
 // nem nos módulos que esta função usa (ver testes com um childProcess que
 // lança exceção em toda chamada). `fs`/`childProcess` são sempre recebidos
-// por injeção para permitir um adaptador de teste em memória.
-export async function resolveAgents({ pathDirs, platform, fs }) {
+// por injeção para permitir um adaptador de teste em memória. `env` só
+// fornece PATHEXT para a resolução no Windows.
+export async function resolveAgents({ pathDirs, platform, env = {}, fs }) {
   const results = [];
   for (const agentId of AGENT_ORDER) {
-    results.push(await resolveOneAgent(agentId, { pathDirs, platform, fs }));
+    results.push(await resolveOneAgent(agentId, { pathDirs, platform, env, fs }));
   }
   return results;
 }

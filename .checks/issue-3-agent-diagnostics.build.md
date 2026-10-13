@@ -147,6 +147,8 @@ Paridade do motor comum confirmada nesta data:
   presença é reconhecida normalmente (`presence: present`), mas a entrega não reproduz o formato binário
   exato do launcher do pip para extrair `source_literal` dele — isso permanece fora do escopo mínimo desta
   issue, e o resultado honesto é `version: null`/`launcher_not_recognized` (critério 3), não uma falha.
+  **Registro histórico — generalizado na seção 9, achado 3**: a lista fixa por agente deu lugar à
+  resolução por `PATHEXT` em cada diretório do PATH, para os três agentes.
 - Nenhum teste foi pulado para "fechar" a entrega além do skip de symlink POSIX acima, que é condicional à
   plataforma do executor, não uma omissão.
 
@@ -170,7 +172,8 @@ foram corrigidas, com regressão RED→GREEN para cada uma):
    inspecionado); `capability-matrix.mjs` continua capaz de produzir `verified` quando receber essa evidência
    (prova isolada em `capability-matrix.unit.test.mjs`), mas `run-diagnostics.mjs` nunca a fornece hoje.
    Regressão de fronteira real: `capability-evidence.cli.test.mjs` (versão conhecida/compatível, zero
-   `verified`).
+   `verified`). **Registro histórico — substituído na seção 9, achado 2**: o valor constante deixava a CLI
+   sem nenhuma avaliação de contrato; a rodada formal 1 passou a ler a tabela instalada por mecanismo.
 2. **C7 — superfície não é "hosted tool"**: removido `CODEX_HOSTED_SURFACES`, que marcava todo
    desktop/cloud do Codex como `unavailable` para os cinco mecanismos. Agora qualquer superfície que não seja
    `cli_local` cai no mesmo tratamento genérico (`unverified/surface_not_inspected`) para todos os agentes,
@@ -236,7 +239,9 @@ foram corrigidas, com regressão RED→GREEN para cada uma):
     (`__version__`/`package.json`) aceitava qualquer string não vazia, inclusive um canário/credencial;
     corrigido com `isPlausibleVersionString` (`version-sources/validate.mjs`). Arquivos de vínculo/versão
     acima de 1 MiB agora produzem `input_too_large` (reasonCode específico), não mais confundidos com
-    `launcher_not_recognized`.
+    `launcher_not_recognized`. **Registro histórico — refinado na seção 10**: tirar linhas de comentário
+    não bastava (echo, docstring, string); o Codex passou à linha de invocação do template e o Hermes
+    (versão, import do launcher Python e `VALID_HOOKS`) a um leitor léxico de Python.
 
 Resultado real após os fixes (rodado nesta máquina, Windows, nesta data):
 
@@ -462,3 +467,626 @@ do envelope presentes no stderr do texto, e ausência do canário e de frame de 
   mesmo skip POSIX de symlink da seção 3), `EXIT_CODE=0`.
 
 Arquivos desta complementação: `src/doctor/cli.mjs` (`emitFailure`) e `tests/doctor/envelope.cli.test.mjs`.
+
+## 9. Rodada formal 1 — sete achados bloqueantes de `review:run` (13/10/2026)
+
+A primeira revisão formal (`.checks/code-review/issue-3/response.json`, HEAD revisada `a41001c`) devolveu
+`changes_requested` com sete achados bloqueantes e AC1, AC2, AC3 e AC6 como `unmet`. Esta seção registra
+as correções do autor (Claude), dentro do escopo decidido: nenhum critério da task mudou; `.verified.md`,
+task, core vendorizado, `code-review.config.json` e regras de governança não foram tocados; nada foi
+instalado, executado de agente, capturado, confiado ou reparado; nenhuma flag nova. Sem commit, push,
+stash ou subagente nesta rodada; `review:run` fica com o orquestrador.
+
+### Ordem seguida
+
+1. **Landing antes do código**: as sete decisões foram registradas em `.checks/issue-3-agent-diagnostics.md`,
+   seção "Landing da rodada formal 1", antes de qualquer linha de produto.
+2. **Regressões escritas antes da correção** e executadas contra o produto anterior. RED real (saída
+   completa em `.checks/code-review/formal-round1-red.txt`, sem pipe mascarando o exit):
+   `tests 190, pass 148, fail 41, skipped 1, EXIT_CODE=1`. Falharam todas as regressões novas dos sete
+   achados, inclusive as de fronteira CLI (Hermes `verified`, launcher ausente `unavailable`, 45 linhas
+   `not_inspected`, `codex.exe`/`claude.cmd` no primeiro diretório, shim npm local, hooks
+   estruturalmente inválidos) — no Windows, o teste POSIX de caminhos (`config-sources`) falhou de forma
+   simétrica ao achado 1.
+3. Implementação e GREEN (abaixo). Durante o GREEN, uma asserção que eu mesmo acrescentara estava errada
+   (`configuration` das linhas de IDE/desktop/cloud é `unknown` por desenho; só a CLI local carrega a
+   configuração lida) e foi restringida às linhas `cli_local` — não é um critério da task nem um
+   enfraquecimento de prova anterior.
+
+### Decisões e correções por achado
+
+1. **Caminhos Hermes sob `platform: "win32"` (P1)** — `config-sources.mjs` passou a montar todos os
+   caminhos (Claude, Codex, Hermes) com `path.win32` quando `platform === "win32"` e `path.posix` nos
+   demais, nunca com o `path` nativo do executor. Em produção coincide com o nativo. O teste corrigido
+   compara com literais exatos do contrato para win32, linux e darwin (o caso POSIX antigo comparava com
+   `path.join` nativo e por isso falharia no Windows depois da correção); a garantia de descoberta do home
+   nativo (`%LOCALAPPDATA%/hermes`, fallback `<HOME>/AppData/Local/hermes`, `HERMES_HOME` exato) e dos
+   overrides `CLAUDE_CONFIG_DIR`/`CODEX_HOME` foi mantida e ampliada. Outros usos de separador conferidos:
+   `fixture-agent-config.mjs` usa a mesma função com `process.platform` (coincide com a CLI);
+   `agent-resolution`/`launcher-link` detectam o separador no próprio caminho; os testes com plataforma
+   simulada usam FS em memória.
+2. **Avaliação efetiva de contrato (P2)** — removido `hasLocalVerifiedContract` constante. Novo
+   `src/doctor/contract-evidence.mjs`: para o Hermes, lê como texto (até 1 MiB, snapshot, sem import) o
+   literal `VALID_HOOKS` de `hermes_cli/plugins.py` no MESMO pacote do `__init__.py` de onde veio a versão
+   (o `packageDir` agora devolvido por `resolveHermesVersion` e repassado por `agent-resolution.mjs`, sem
+   entrar no relatório). Atribuição única no nível do módulo, sem mutação, só strings simples; comentários
+   descartados. `capability-matrix.mjs` decide por mecanismo, nesta ordem: superfície não local →
+   `surface_not_inspected`; launcher ausente → `unavailable/executable_not_found` (só CLI local); presença
+   `unknown` → `presence_undetermined`; versão nula → `version_unresolved`; perfil incompatível →
+   `version_profile_incompatible`; depois a tabela: todos os eventos mapeados listados →
+   `verified/local_contract_lists_events` com `evidence.source {kind, path}` e `evidence.events`; algum
+   ausente → `unverified/contract_event_not_listed` com `evidence.missingEvents`; fonte ausente, ilegível,
+   grande, mutada ou com forma não reconhecida → `unverified` com motivo próprio. Claude e Codex →
+   `unverified/no_static_contract_source`. `runtimeVerification` continua sempre `not_performed`.
+3. **Resolução Windows (P2)** — candidatos por `PATHEXT` do ambiente em cada diretório do PATH (entradas
+   validadas `^\.[a-z0-9]{1,8}$`; default `.com;.exe;.bat;.cmd`); primeiro candidato existente vence;
+   formato desconhecido → `present/version null/launcher_not_recognized`. Novo
+   `launcher-link/native-executable.mjs` + `readHead` (`snapshot-read.mjs`): executável nativo (PE/ELF/
+   Mach-O) de Codex/Hermes é reconhecido só pelos 4 primeiros bytes, sem leitura como texto (antes, um
+   `codex.exe` de 333 MB daria `input_too_large`). Nenhum `--version` é executado.
+4. **Shim npm local do Codex (P2)** — a referência passa a ser ancorada na base do shim
+   (`%dp0%`/`%~dp0`/`$basedir`) e resolvida com `.`/`..` a partir do diretório do launcher
+   (`resolveRelative` em `path-helpers.mjs`, que substituiu `normalizeReference`), exigindo
+   `node_modules/@openai/codex` no caminho resolvido; mais de um pacote distinto → ambíguo. O código
+   anterior também remontava qualquer `node_modules/@openai/codex` encontrado no texto a partir do
+   diretório do launcher, ignorando o prefixo real. Fixtures trocadas pelos templates reais do cmd-shim
+   (global `"%dp0%\node_modules\@openai\codex\bin\codex.js"` e local `"%dp0%\..\<pacote>\..."`, conferidos
+   em `C:\nvm4w\nodejs\codex.cmd` e em `node_modules/.bin/yaml.cmd` deste repositório) e pelo symlink do
+   npm no POSIX; o shim `require("./node_modules/...")` anterior era fictício. Recusas de launcher alheio,
+   comentário (`#`, `REM`, `::`, inclusive na forma ancorada) e referência que sai de `node_modules`
+   preservadas e provadas. **Registro histórico — refinado na seção 10**: a referência ancorada ainda
+   valia em qualquer posição (um `echo` dela ligava o pacote); agora só a linha de invocação do template.
+5. **Hermes com vários `pythonX.Y` (P2)** — `pythonX.Y` do shebang (direto, via `env`, com flags como
+   `-S`) escolhe `lib/pythonX.Y/site-packages`; sem versão no shebang, um único candidato com `hermes_cli`
+   é usado e dois ou mais → `version_source_ambiguous`; versão do shebang sem pacote →
+   `launcher_not_recognized`. A extração de versão de launcher compilado não foi ampliada (C3 admite
+   inconclusivo).
+6. **Hooks estruturalmente inválidos (P2)** — novo `src/doctor/hooks-shape.mjs`, uma forma por agente
+   (sem schema comum): Claude e Codex com grupos `{ matcher?: string, hooks: [handler] }` (`type` string
+   obrigatório só no Claude, conforme as duas docs oficiais consultadas nesta data); Codex com `state`
+   reservado; Hermes com mapeamento evento → `null` ou lista de mapeamentos com `command` não vazio e
+   `output_spill`/`outbound` reservados (do parser instalado). Fora da forma →
+   `invalid/hooks_structure_invalid` → `partial`, preservando os demais agentes. Vazio válido,
+   `disabled`, consentimento e a regra `configured` (≥1 evento) inalterados. Fixtures corrigidas: o TOML
+   `PreToolUse = [{ command = "x" }]` não era a forma documentada do Codex, e `agent:start` é evento de
+   gateway hook, não de shell hook em `config.yaml`. **Registro histórico — refinado na seção 11**: alvo
+   obrigatório por tipo de handler, `type` também obrigatório no Codex, `managed_dir`/`windows_managed_dir`
+   reservados, e `configured` passa a exigir ≥1 handler com alvo.
+7. **Origem `fixture` por default (P2)** — `evidence.origin` agora é `not_inspected` por default e em
+   qualquer superfície não inspecionada; a CLI local declara `real_environment`; `fixture` só quando uma
+   prova a passa; `documented_contract` só na `exclusion`. Texto e JSON trazem as 45 linhas não locais
+   como `not_inspected`.
+
+### Fontes primárias examinadas (somente leitura como texto; nada importado ou executado)
+
+- Hermes instalado (`%LOCALAPPDATA%\hermes\hermes-agent`, 0.21.4): `hermes_cli/plugins.py`
+  (`VALID_HOOKS`, `SHELL_UNSUPPORTED_HOOKS`), `agent/shell_hooks.py` (`_parse_hooks_block`,
+  `_parse_single_entry`), `website/docs/user-guide/features/hooks.md` (catálogo de plugin hooks e a frase
+  "Runtime event-name validity comes from `hermes_cli.plugins.VALID_HOOKS`"), `hermes_cli/__init__.py`;
+  `bin/hermes.exe` e `venv/Scripts/hermes.exe` lidos só nos últimos bytes (launcher de 47 KB sem
+  conteúdo de texto anexado; `pyvenv.cfg` com `version_info = 3.11`; instalação editável). Nenhum outro
+  conteúdo do perfil (config, `.env`, auth, sessões) foi aberto.
+- Codex npm global (`C:\nvm4w\nodejs`): `codex.cmd`, `codex` (sh), `node_modules/@openai/codex/package.json`,
+  pacote de plataforma e `codex-package.json` — só wrapper JS e binário nativo, sem tabela de eventos.
+  `~/.codex/config.toml`: apenas os cabeçalhos de tabela ligados a hooks, com valores ocultados
+  (`[hooks.state]` e subtabelas escritas pelo Codex).
+- Claude nativo (`~/.local/bin/claude.exe`, `~/.local/share/claude/versions`): só listagem; nenhum
+  artefato textual de contrato.
+- Docs oficiais (WebFetch nesta data): [Codex Hooks](https://learn.chatgpt.com/docs/hooks) — forma de
+  `hooks.json`/`config.toml`, `matcher` opcional, `type` sem obrigatoriedade declarada, nenhum `[hooks.state]`
+  documentado; [Claude Hooks](https://code.claude.com/docs/en/hooks) — três níveis, `type` obrigatório,
+  `matcher` opcional.
+
+### Evidência local obtida
+
+- `node src/doctor/cli.mjs --json` nesta máquina (resumo, saída bruta não versionada): `status: complete`;
+  Claude `present` (`.local\bin\claude.exe`, 2.1.295, `binary_metadata`), config `configured`, CLI local
+  `unverified/no_static_contract_source`; Codex `present` no `codex.cmd` do prefixo npm (antes do
+  `codex.exe` do app, mais adiante no PATH), 0.162.1 (`package_metadata`), config `configured` (o
+  `config.toml` com `[hooks.state]` não é mais tratado como hook definido nem como inválido), CLI local
+  `no_static_contract_source`/`skill_start_not_documented`; Hermes `present` em `hermes.exe`, versão
+  `null`/`launcher_not_recognized`, CLI local `version_unresolved`. Origens no relatório: só
+  `real_environment` e `not_inspected`.
+- `readContractEvidence` contra o `hermes_cli/plugins.py` real (124.598 bytes): `state: found`, 41 nomes
+  lidos (conferidos à mão contra o arquivo), todos os eventos mapeados presentes. Na CLI real esse arquivo
+  não é alcançado porque o launcher compilado não liga ao pacote — lacuna declarada, não contornada.
+- Fixtures sintéticas comprovam o algoritmo; não comprovam a máquina do usuário.
+
+### Resultados
+
+```
+npm test   (saída completa em .checks/code-review/formal-round1-npm-test.txt, sem pipe)
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 197, pass 196, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Provas nomeadas do checklist rodadas isoladamente com contagem não nula: `capability-evidence-C5` 5/5,
+`capability-evidence-C16` 1/1, `agent-resolution-C14` 1/1, `configuration-trust-C8` 11/11,
+`presence-C2` 3/3, `presence-C3` 5/5, `contract-evidence` + `config-sources` + `config-reader` 21/21.
+Paridade do motor comum: `git diff --exit-code 4242520 -- scripts/code-review/{cli.mjs,review.mjs,
+review.test.mjs,schema.json,README.md}` sem diff. `package.json`, `package-lock.json`, CI, task,
+`.verified.md` e `code-review.config.json` sem diff.
+
+### Plataforma e limitações
+
+- Executado de verdade só em **Windows 11 Pro, Node 24.21.0**. Linux e macOS **não** foram executados:
+  há WSL Ubuntu e Docker nesta máquina, mas sem Node e sem imagem Node local, e instalar algo está fora do
+  escopo. A matriz da CI é a primeira execução real nesses SOs.
+- O que roda em qualquer runner por simulação: caminhos com `platform` explícito (`path.win32`/
+  `path.posix`), resolução com FS em memória para `win32`/`linux`/`darwin` (inclusive symlink simulado e
+  dois `pythonX.Y`). Os caminhos POSIX da CLI (symlink real do npm global e local, launcher ELF opaco)
+  foram revisados estaticamente e só rodam na CI; os testes CLI se adaptam ao SO do runner, sem skip.
+- Skip: só o mesmo `agent-resolution-C2 realpath/symlink real ... (POSIX)` da seção 3, condicional ao
+  executor.
+- Estados `unreadable`/`too_large`/`changed_during_read` da fonte de contrato são provados na camada de
+  `contract-evidence`, não pela CLI (mesma limitação de permissão/mutação já declarada para C3/C15).
+
+### Riscos e lacunas declaradas
+
+- Claude e Codex nunca chegam a `verified` nesta entrega: não há fonte textual de contrato nos layouts
+  inspecionados. O Hermes só chega lá com layout padrão de venv; instalação editável e launcher compilado
+  ficam `version_unresolved`, como nesta máquina.
+- O mapeamento mecanismo→evento é decisão do doctor (fonte: catálogo da doc do Hermes); a tabela prova o
+  que o mecanismo de hooks aceita, não captura real. Evento ausente nunca vira `unavailable`.
+- `[hooks.state]` do Codex é reservado com base em observação local, não em contrato publicado.
+- A validação estrutural não confere nomes de evento nem comandos; `{"hooks":{"PreToolUse":[]}}` continua
+  `configured` pela regra anterior (≥1 evento), que esta rodada não mudou.
+- `PATHEXT` do ambiente é respeitado com validação; a preferência do PowerShell por `.ps1` e o
+  `pyvenv.cfg` não são modelados.
+- Fora do escopo, só registrado: `tests/doctor/helpers/fixture-configs.mjs` mantém escritores sem uso
+  (`writeValidYamlConfig` etc.) com formas inventadas na preparação; não foram alterados nem usados.
+
+### Arquivos desta rodada
+
+- Produto novo: `src/doctor/contract-evidence.mjs`, `src/doctor/hooks-shape.mjs`,
+  `src/doctor/launcher-link/native-executable.mjs`.
+- Produto alterado: `agent-resolution.mjs`, `capability-matrix.mjs`, `config-projection.mjs`,
+  `config-reader.mjs`, `config-sources.mjs`, `launcher-link/codex.mjs`, `launcher-link/hermes.mjs`,
+  `launcher-link/path-helpers.mjs`, `render-text.mjs`, `run-diagnostics.mjs`, `snapshot-read.mjs`.
+- Testes novos: `tests/doctor/contract-evidence.unit.test.mjs`, `helpers/npm-shims.mjs`,
+  `helpers/hermes-contract-source.mjs`.
+- Testes alterados: `agent-resolution.unit`, `capability-evidence.cli`, `capability-matrix.unit`,
+  `config-projection.unit`, `config-reader.unit`, `config-sources.unit`, `configuration-trust.cli`,
+  `envelope.cli`, `mid-read-mutation.unit`, `presence.cli`, `render-text.unit`, `helpers/fake-fs-adapter`
+  (symlink simulado), `helpers/fixture-agents` (layouts reais do npm, `plugins.py` opcional, sem a tabela
+  `HOOKS` inventada no `__init__.py`), `helpers/fixture-manifest` (cenários novos).
+- Documentação/checklist: `docs/agent-compatibility.md`, `README.md`, `.checks/issue-3-agent-diagnostics.md`
+  (Landing da rodada formal 1, C2, C3, C5, C8, C11, C16, Coverage) e esta seção.
+
+## 10. Pré-revisão formal da rodada 2 — vínculo e fonte só em código (13/10/2026)
+
+Antes da nova revisão, o orquestrador registrou em `.checks/code-review/formal-source-hints.md` probes
+concretos sobre o código da seção 9, todos do mesmo tipo: texto que só MENCIONA o vínculo ou a fonte era
+aceito como vínculo/fonte. Autor: Claude. Escopo: os três casos abaixo (achados 4, 2 e 5 da rodada formal
+1; critérios C2-C3 e C5), sem mudar critério, task, `.verified.md`, core vendorizado ou
+`code-review.config.json`; nada instalado, importado ou executado (Python e Hermes nunca foram chamados);
+sem commit, push, stash, subagente ou `review:run`.
+
+### Ordem seguida (TDD)
+
+1. Regressões escritas antes do produto, na própria camada e na CLI. RED real (saída em
+   `.checks/code-review/formal-round2-red.txt`, sem pipe mascarando o exit): `tests 10, pass 1, fail 9,
+   EXIT_CODE=1` — as nove regressões novas falharam pelo motivo esperado (o único `pass` é um teste
+   anterior que casou o filtro de nome). Como o runner só mostra a primeira asserção de cada teste, o mesmo
+   arquivo traz a tabela caso a caso do produto anterior (script temporário fora do repositório): os 10
+   casos de shim que não invocam o pacote davam `0.162.1`; comentário, comentário após código, docstring e
+   outra string davam `__version__` `0.21.4`; a forma instalada com uma docstring de função citando outra
+   versão dava `version_source_ambiguous` (falso ambíguo); as três fontes do probe davam 11 nomes de
+   `VALID_HOOKS` (logo `verified`).
+2. Implementação e GREEN: a mesma tabela passou a dar `launcher_not_recognized`, `version_unreadable`/
+   `version_source_ambiguous`, `0.21.4` e `null` nos casos correspondentes, com os dois templates nativos
+   ainda em `0.162.1` (mesmo script depois da correção, anexado ao fim do mesmo arquivo).
+
+### Decisões
+
+1. **Codex: vínculo só pela invocação do template npm** (`launcher-link/codex.mjs`). A referência ao
+   arquivo de entrada só conta como argumento do node na linha com que o cmd-shim executa o pacote: no
+   `.cmd`, `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\<ref>" %*`; no sh,
+   as duas linhas `exec "$basedir/node"`/`exec node  "$basedir/<ref>" "$@"`. O dialeto vem da extensão
+   (`.cmd`/`.bat` → cmd; sem extensão → sh) e a linha precisa começar um comando segundo o contexto léxico
+   do dialeto (novo `launcher-link/shim-lines.mjs`): no sh, fora de aspas que atravessam linhas, de
+   here-document e de continuação com `\`; no cmd (sem string multilinha), não depois de uma linha
+   terminada em `^`. O resto (resolução de `..`, exigência de `node_modules/@openai/codex`, ambiguidade,
+   symlink por `realpath`) não mudou. Um `echo` da referência, a linha de invocação impressa por `echo`,
+   dentro de here-document ou string, continuando outra linha ou no dialeto errado →
+   `launcher_not_recognized`. O `%~dp0` de templates antigos do cmd-shim deixou de ser aceito: os shims
+   reais conferidos e as fixtures usam o template atual; um template diferente fica
+   `launcher_not_recognized`/versão nula (inconclusivo admitido por C3), nunca uma versão errada.
+2. **`VALID_HOOKS` só como literal atribuído em código** (`contract-evidence.mjs`). Novo leitor léxico
+   compartilhado `src/doctor/python-source.mjs` (tokenizador mínimo: nomes, strings, pontuação, fim de
+   linha lógica, profundidade de colchetes; sem import/eval/compilação). Exige exatamente uma ligação do
+   nome em código, que seja `VALID_HOOKS[: T] = {` no início de instrução, coluna 0 e fora de colchetes; os
+   itens são strings simples (sem prefixo, sem três aspas, sem `\`) separadas por vírgula (vírgula final
+   opcional); depois do `}` a instrução termina (comentário permitido). Strings adjacentes (concatenação
+   implícita do Python), operador depois do literal, `;`, continuação com `\`, `{}` (dict), atribuição em
+   docstring/comentário/string, argumento nomeado em chamada, cadeia, `:=`, reatribuição indentada e as
+   demais ligações (desempacotamento, `for`, `import`/`as`, `del`/`global`, `def`/`class`) → forma não
+   reconhecida → `unverified/contract_source_unrecognized`. A busca de mutação (`|=`, `.add(` etc.)
+   continua no texto bruto, conservadora. Nomes citados em docstring deixam de contar como segunda
+   atribuição.
+3. **`__version__` só como atribuição reconhecida em código** (`launcher-link/hermes.mjs`, mesmo leitor).
+   Versão = literal simples de `__version__ = "..."`/`__version__: T = "..."` no nível do módulo,
+   encerrando a instrução. Comentário, docstring ou outra string → `version_unreadable` (sem
+   `source_literal`, sem `packageDir`, logo sem fonte de contrato). Literal seguido de expressão
+   (`"0.21.4" + "-dev"`, `; ...`) ou valor calculado → `version_unreadable`. Literal reconhecido junto de
+   outra ligação do nome em código (reatribuição indentada ou calculada) ou de literais distintos →
+   `version_source_ambiguous`.
+4. **Mesma fronteira no import do launcher Hermes** (extensão do item 3 no mesmo arquivo, sem caso novo de
+   produto): quando o shebang é de Python, o `from hermes_cli… import`/`import hermes_cli` precisa ser
+   instrução em código, não docstring. Launchers que não são Python pelo shebang (o `.cmd` simplificado, o
+   trampolim `#!/bin/sh` do pip) seguem a leitura por linha sem comentários da seção 9.
+5. **Fail-closed do leitor**: string não terminada, `\` fora de string sem fim de linha, colchetes
+   desbalanceados e f-string cujo fim cairia dentro de um campo `{…}` (aspas aninhadas do Python 3.12) fazem
+   o arquivo inteiro não ser reconhecido; nada é adivinhado.
+
+### Provas
+
+| Caso | Camada própria | Fronteira CLI |
+| --- | --- | --- |
+| (1) shim Codex echo-only + `package.json` real ao lado | `agent-resolution-C3 shim do Codex que só menciona a referência…` (6 casos sh + 4 cmd, com controle positivo dos dois templates no mesmo layout) | `presence-C3 shim do Codex que só imprime a referência ao pacote (echo)…` (JSON `launcher_not_recognized`/`versionSource null`; texto sem `0.162.1`) |
+| (2) strings adjacentes, diferença após o literal, atribuição em docstring | `contract-evidence-C5 strings adjacentes, expressão depois do literal…` e `…só a atribuição literal em código…` (12 formas recusadas, 2 aceitas) | `capability-evidence-C5 fonte que só parece VALID_HOOKS…` (as três fontes, versão/perfil compatíveis como premissa: 5 linhas `unverified/contract_source_unrecognized`, texto sem `local_contract_lists_events`) |
+| (3) `__version__` só em comentário | `agent-resolution-C3 __version__ só em comentário, docstring ou outra string…` e `…__version__ em código: literal no nível do módulo…` (positivo com a forma instalada) | `capability-evidence-C5 __version__ só em comentário…` (com `VALID_HOOKS` válido ao lado: versão nula, `version_unreadable`, 5 linhas `version_unresolved`, texto sem `0.21.4`) |
+| import do launcher só em docstring | `agent-resolution-C3 launcher Python do Hermes que cita o import…` (com controle positivo) | — (mesma regra do item 3, provada na camada) |
+
+As variantes de (2) vêm de `hermesPluginsLookalikeSources()` (`helpers/hermes-contract-source.mjs`),
+derivadas da fonte sintética completa, com todos os eventos mapeados escritos: só a forma explica a
+recusa. O fixture `writeHermes` ganhou `initSource` opcional (default inalterado).
+
+### Formas reais preservadas (leitura só como dados, ≤ 1 MiB, nada importado ou executado)
+
+- `hermes_cli/plugins.py` instalado (124.598 bytes): tokenizado sem falha, exatamente uma ligação de
+  `VALID_HOOKS` em código (a do nível do módulo), 41 nomes, todos os eventos mapeados presentes.
+- `hermes_cli/__init__.py` instalado, num layout sintético de venv: `0.21.4`/`source_literal`.
+- Shims npm reais `C:\nvm4w\nodejs\codex.cmd` e `C:\nvm4w\nodejs\codex` (sh), pelo adaptador de produção:
+  `0.162.1`/`package_metadata`.
+- `node src/doctor/cli.mjs --json` nesta máquina (resumo): igual à seção 9 — Claude 2.1.295
+  (`binary_metadata`), Codex `codex.cmd` 0.162.1 (`package_metadata`), Hermes `hermes.exe`
+  `null`/`launcher_not_recognized`; origens só `real_environment` e `not_inspected`.
+
+### Resultados
+
+```
+npm test   (saída completa em .checks/code-review/formal-round2-npm-test.txt, sem pipe)
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 206, pass 205, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+As nove regressões novas aparecem como `✔` pelo nome na saída. Skip: só o mesmo
+`agent-resolution-C2 realpath/symlink real … (POSIX)` das seções 3 e 9, condicional ao executor.
+Paridade do motor comum: `git diff --exit-code 4242520 -- scripts/code-review/{cli.mjs,review.mjs,
+review.test.mjs,schema.json,README.md}` sem diff; `package.json`, `package-lock.json`, CI e task sem diff.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0 (mesma limitação da seção 9). Os casos sh e POSIX desta
+  seção rodam em FS em memória em qualquer runner; a regressão CLI do echo usa `codex.cmd` no Windows e o sh
+  no POSIX (este último só na CI).
+- O vínculo do Codex é léxico: fluxo de controle (`goto`, `exit`, `if`) e valores de variáveis/funções do
+  shim (`_prog`, `basedir`, `node`) não são avaliados. A regra do `^` no cmd é conservadora (pode recusar
+  um shim alterado à mão; nunca liga um que não invoca).
+- O leitor Python não é um parser: reconhece só as formas descritas; qualquer outra fica não reconhecida
+  (contrato) ou ilegível/ambígua (versão). A busca de mutação no texto bruto pode recusar um arquivo que
+  só cite `VALID_HOOKS.add(` numa string — falso negativo admitido.
+- `docs/agent-compatibility.md` (células de Codex e Hermes) e o checklist (landing da rodada 1: linhas de
+  contrato e de shim, e o resumo de C2) foram ajustados só para descrever a regra refinada.
+
+### Arquivos desta seção
+
+- Produto novo: `src/doctor/python-source.mjs`, `src/doctor/launcher-link/shim-lines.mjs`.
+- Produto alterado: `src/doctor/launcher-link/codex.mjs`, `src/doctor/launcher-link/hermes.mjs`,
+  `src/doctor/contract-evidence.mjs`.
+- Testes: `agent-resolution.unit`, `contract-evidence.unit`, `capability-evidence.cli`, `presence.cli`,
+  `helpers/hermes-contract-source.mjs` (`hermesPluginsLookalikeSources`), `helpers/fixture-agents.mjs`
+  (`initSource`).
+- Evidência: `.checks/code-review/formal-round2-red.txt`, `.checks/code-review/formal-round2-npm-test.txt`
+  e esta seção; documentação e checklist como acima.
+
+## 11. Pré-revisão formal da rodada 2 — forma nativa dos handlers de hooks (13/10/2026)
+
+Último parágrafo de `.checks/code-review/formal-source-hints.md` (achado 6 / C8): `managed_dir`/
+`windows_managed_dir` do Codex davam `invalid`, e Claude `{type:"command"}` sem `command` e Codex `{}`
+davam `configured`. Autor: Claude. Escopo: só `hooks-shape.mjs` e o necessário em `config-projection`/
+`config-reader`/`scope-merge` para o estado seguro; launchers, contrato e leitores Python intocados; sem
+mudar critério, task, `.verified.md`, core vendorizado, `code-review.config.json`, CI ou `package.json`;
+sem commit, push, stash, subagente ou `review:run`. Decisão registrada no Landing (linha "Forma nativa dos
+hooks") antes do código.
+
+### Fontes primárias (leitura como texto; nada executado nem enviado)
+
+- [Claude Hooks](https://code.claude.com/docs/en/hooks), "Hook handler fields": cinco tipos; `type`
+  obrigatório; `command` (command), `url` (http), `server`+`tool` (mcp_tool), `prompt` (prompt/agent)
+  marcados "Required: yes". A página não diz o que acontece com tipo fora dos cinco.
+- [Codex Hooks](https://learn.chatgpt.com/docs/hooks), "Managed hooks": `managed_dir` (macOS/Linux) e
+  `windows_managed_dir` (Windows) sob `[hooks]` de `requirements.toml`, como strings; "Codex doesn't
+  distribute the scripts in `managed_dir`"; "`command` and `mcp_tool` handlers are supported. `prompt` and
+  `agent` handlers are parsed but skipped".
+- Código do Codex na tag `rust-v0.162.1` (a versão instalada nesta máquina), via API pública do GitHub:
+  `codex-rs/config/src/hook_config.rs` — `HookHandlerConfig` é `#[serde(tag = "type")]` (`type`
+  obrigatório), `Command { command: String, command_windows (rename commandWindows, alias
+  command_windows): Option<String>, … }`, `McpTool { server: String, tool: String, … }`, `Prompt {}`,
+  `Agent {}`; `MatcherGroup { matcher: Option<String>, #[serde(default)] hooks }`; `HooksToml` =
+  eventos achatados + `state`, sem `deny_unknown_fields`; `ManagedHooksRequirementsToml { managed_dir,
+  windows_managed_dir: Option<PathBuf>, eventos }` só nos requirements. `codex-rs/hooks/src/engine/
+  discovery.rs` — no Windows o comando efetivo é `command_windows.unwrap_or(command)`; comando efetivo
+  vazio, `mcp_tool` com `server`/`tool` vazios e `prompt`/`agent` são pulados com aviso; o diretório
+  gerenciado só vira o caminho-rótulo dos hooks de requirements (`managed_hooks_source_path`); `hooks.json`
+  só é lido da pasta da camada, nunca de `managed_dir`. Requirements e o diretório gerenciado não estão
+  entre os arquivos que o doctor lê.
+
+### Decisões
+
+1. **Classificação por handler** (`hooks-shape.mjs`): com alvo, sem alvo, inválido ou tipo não
+   reconhecido. Claude: `type` string não vazia obrigatória; campos obrigatórios por tipo como na doc.
+   Codex: `type` obrigatório (o doc não o declarava; o código da versão instalada exige); `command` string
+   obrigatório mesmo no Windows; `command_windows`/`commandWindows` string opcional, as duas grafias juntas
+   → inválido (campo duplicado para o serde); `mcp_tool` com `server`/`tool` strings. Campo obrigatório
+   ausente ou de outro tipo → `invalid/hooks_structure_invalid`. Alvo vazio/só espaços e `prompt`/`agent`
+   no Codex → sem alvo: válido, não conta. Nunca se olha a linguagem/conteúdo do comando, da URL ou do
+   prompt; campos opcionais (`timeout`, `async`, `args`, `if`…) não são validados.
+2. **`configured` = ≥1 handler com alvo**, para os três agentes. Antes contava evento endereçado, e um
+   handler sem alvo teria de valer mais que nenhum handler para não contar. Por isso `PreToolUse: []`,
+   grupo sem handlers e `null` no Hermes passam de `configured` a `not_configured` (continuam válidos).
+   Os testes de confiança que usavam `PreToolUse: []` como "configured" passam a usar um handler real;
+   as asserções não mudam.
+3. **Tipo não reconhecido → `unknown/hooks_handler_type_unrecognized`** (arquivo inteiro, campos
+   descartados, como o inválido; inválido tem precedência). A versão instalada do Codex rejeita o arquivo
+   inteiro com variante desconhecida e o Claude não documenta; uma versão futura pode aceitar. Novo estado
+   de escopo `inconclusive` em `config-reader`/`scope-merge`, com a mesma precedência dos estados que
+   bloqueiam; `trust` fica `unknown/configuration_not_determined`.
+4. **`managed_dir`/`windows_managed_dir` reservados no Codex**, ao lado de `state`: string; outro tipo →
+   inválido. Não são eventos e não contam. O diretório não é aberto nem listado, e nenhuma confiança
+   "gerenciada" é inferida: a configuração vem só dos handlers lidos, e `trust` segue a regra existente
+   (`unknown/no_native_consent_evidence` se configurado). A decisão não depende do diretório, pois o
+   Codex não carrega definições dele; se dependesse, o resultado seria `unknown`.
+5. **Plataforma no Codex**: `projectConfig`/`readScope` recebem a `platform` já usada por
+   `config-sources`, para escolher o comando efetivo como o Codex escolhe.
+6. **Grupo sem `hooks` continua inválido** nos dois agentes. O código do Codex o aceitaria como vazio
+   (`#[serde(default)]`, campos extras ignorados), o que faria `PreToolUse = [{ command = "x" }]` deixar de
+   ser inválido e enfraqueceria a asserção da rodada 1. Mais estrito que a fonte, nunca leva a `configured`.
+
+### Ordem seguida (TDD)
+
+1. Testes escritos antes do produto. RED real em `.checks/code-review/formal-round2-hooks-red.txt` (sem
+   pipe mascarando o exit): `tests 64, pass 50, fail 14, EXIT_CODE=1`. As 14 falhas são os testes novos
+   ou ajustados, cada um pelo motivo esperado (`configured` ou `invalid` onde não deveria; o `scope-merge`
+   quebrava com o estado novo). Dois testes novos são guardas e já passavam: tipos conhecidos com alvo e
+   `managed_dir` de outro tipo. O mesmo arquivo traz a tabela caso a caso do produto anterior, gerada por
+   um script temporário fora do repositório. Ela inclui os três probes do hint: `managed_dir` dava
+   `invalid`; `{type:"command"}` e `{}` davam `configured`. Uma nota no fim registra o único caso trocado
+   depois do RED.
+2. GREEN em `.checks/code-review/formal-round2-hooks-green.txt`: `tests 64, pass 64, fail 0, EXIT_CODE=0`,
+   e a mesma tabela depois da correção.
+
+### Provas
+
+| Caso | Camada própria | Montagem (leitor) | Fronteira CLI |
+| --- | --- | --- | --- |
+| `managed_dir`/`windows_managed_dir` | `config-projection-C8 Codex: managed_dir e windows_managed_dir…` (TOML e JSON, win32/linux, com e sem evento) e `…fora do tipo string são inválidos` | — | `configuration-trust-C8 managed_dir/windows_managed_dir do Codex…`: diretório real com `hooks.json` e script canário; só as chaves → `not_configured`/`not_applicable`; com evento → `configured`/`unknown/no_native_consent_evidence`; `complete`, 20 linhas `not_performed`, canário ausente, marcador de execução inexistente |
+| handler sem alvo obrigatório | `config-projection-C8 Claude: handler de tipo conhecido sem o campo obrigatório…` (10 formas) e `…Codex: handler sem type…` (10 JSON + 2 TOML) | — | `configuration-trust-C8 handler sem alvo obrigatório (Claude {type:'command'}, Codex {})…` → `invalid/hooks_structure_invalid`, `partial` |
+| alvo vazio, `prompt`/`agent` no Codex | `…handler sem alvo é válido mas não conta…` (8 formas + caso misto) | — | — |
+| comando efetivo por plataforma | `…Codex usa o comando efetivo da plataforma…` | `config-reader-C8 Codex recebe a plataforma do leitor…` | — |
+| tipo não reconhecido | `…tipo de handler não reconhecido fica unknown…` (4 formas + precedência do inválido) e `scope-merge-C8 escopo inconclusivo…` | `config-reader-C8 tipo de handler não reconhecido em um escopo…` (não é coberto por handler válido de outro escopo) | `configuration-trust-C8 tipo de handler não reconhecido…`: JSON e texto, `trust unknown/configuration_not_determined`, sem canário |
+| evento sem handler | `…evento sem handler é válido e não conta…` (Claude, Codex, Hermes) | — | `configuration-trust-C8 seção de hooks vazia e válida (ou evento sem handler)…` |
+| formas válidas preservadas | `…cada tipo conhecido com o alvo obrigatório fica configured…` e os testes anteriores (state, outbound, disabled, consentimento) | testes anteriores de `config-reader` | testes anteriores de `configuration-trust` |
+
+### Resultados
+
+```
+npm test   (saída completa em .checks/code-review/formal-round2-hooks-npm-test.txt, sem pipe)
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 221, pass 220, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Os 15 testes novos e o ajustado da CLI aparecem como `✔` pelo nome. O único skip continua sendo
+`agent-resolution-C2 realpath/symlink real … (POSIX)`, que depende do executor. `node src/doctor/cli.mjs
+--json` nesta máquina (resumo): `complete`; Claude e Codex `configured`/`unknown/no_native_consent_evidence`
+(os handlers reais têm alvo); Hermes `not_configured`; `runtimeVerification` sempre `not_performed`.
+
+### Testes anteriores ajustados (justificativa)
+
+- `config-projection-C2-trust` e `configuration-trust-C8 campo 'trust' arbitrário…` usavam
+  `PreToolUse: []` como configuração "configured". Pela decisão 2 isso agora é `not_configured`, e a
+  prova de confiança só faz sentido com configuração existente. Por isso passam a usar um handler real;
+  as asserções não mudaram.
+- `configuration-trust-C8 seção de hooks vazia…` ganhou o caso `{"hooks":{"PreToolUse":[]}}`.
+- `config-projection-C14 arquivo exatamente no limite de 1 MiB` usa um handler sem `command`, que agora é
+  inválido. A asserção é só `reasonCode !== input_too_large` e continua válida; o teste não foi alterado.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0. As provas de plataforma do Codex passam `platform`
+  explícito; a CLI usa a do executor.
+- O Codex foi conferido no código da tag da versão instalada, não em outras versões. Tipos futuros ficam
+  inconclusivos de propósito.
+- Fica fora da validação: nomes de evento, campos opcionais (o Codex 0.162.1 descarta os hooks do
+  arquivo com tipo errado neles), restrições por evento (ex.: `mcp_tool` em `SessionEnd` no Codex,
+  `SessionStart` só com command/mcp_tool no Claude) e grupo sem `hooks` no Codex (decisão 6).
+- O comportamento do Claude com alvo vazio não é documentado. O handler apenas não conta; não se afirma
+  que o Claude rejeita o arquivo.
+- `requirements.toml` e o diretório gerenciado continuam fora dos arquivos lidos, como antes.
+
+### Arquivos desta seção
+
+- Produto: `src/doctor/hooks-shape.mjs` (classificação por handler; `inspectNativeHooks` substitui
+  `countNativeHookEvents`), `src/doctor/config-projection.mjs`, `src/doctor/config-reader.mjs`
+  (`platform`, estado `inconclusive`), `src/doctor/scope-merge.mjs` (bloqueio do estado `inconclusive`).
+- Testes: `config-projection.unit`, `config-reader.unit`, `scope-merge.unit`, `configuration-trust.cli`.
+- Documentação/checklist: `docs/agent-compatibility.md` (linhas de forma do Claude, do Codex e do Hermes, e
+  a de `managed_dir`), Landing "Forma nativa dos hooks" em `.checks/issue-3-agent-diagnostics.md` e esta
+  seção.
+- Evidência: `.checks/code-review/formal-round2-hooks-red.txt`, `…-hooks-green.txt` e
+  `…-hooks-npm-test.txt`.
+
+## 12. Pré-revisão formal da rodada 3 — grupo vazio, nomes de evento e campos opcionais tipados dos hooks (achado 6/C8, continuação) (13/10/2026)
+
+O orquestrador apontou três falhas concretas que sobreviviam à seção 11 (a mesma rodada de achado 6/C8),
+recusando que ficassem só numa seção de Limitações. Autor: Claude. Escopo mínimo, como pedido: só
+`src/doctor/hooks-shape.mjs` e o necessário em `config-projection.mjs` para propagar o `reasonCode` por
+shape (sem tocar launchers, `contract-evidence.mjs`, `capability-matrix.mjs`, `config-reader.mjs` nem
+`scope-merge.mjs` — nenhuma mudança foi necessária neles, pois já propagam genericamente qualquer
+`configuration: "unknown"`/`"invalid"` com o `reasonCode` recebido). Nenhum critério da task, `.verified.md`,
+core vendorizado, `code-review.config.json`, CI ou `package.json` foi tocado; nada instalado, importado ou
+executado; sem commit, push, stash, subagente ou `review:run` nesta rodada. Landing "grupo vazio, nomes de
+evento e campos opcionais tipados dos hooks" registrado em `.checks/issue-3-agent-diagnostics.md` antes do
+código.
+
+### Fontes primárias examinadas nesta rodada (somente leitura como texto; nada importado ou executado)
+
+- `codex-rs/config/src/hook_config.rs` e `codex-rs/hooks/src/engine/discovery.rs` (API pública do GitHub, tag
+  `rust-v0.162.1`, já usada nas rodadas anteriores): `MatcherGroup { matcher: Option<String>,
+  #[serde(default)] hooks: Vec<HookHandlerConfig> }`, sem `deny_unknown_fields`; `HookEventsToml` com os 12
+  campos renomeados (`PreToolUse, PermissionRequest, PostToolUse, PreCompact, PostCompact, SessionStart,
+  SessionEnd, UserPromptSubmit, SubagentStart, SubagentStop, Stop, Interrupt`), também sem
+  `deny_unknown_fields`; `HookHandlerConfig::Command` com `timeout` (`timeout_sec: Option<u64>`), `async`
+  (`r#async: bool`), `statusMessage` (`status_message: Option<String>`), `additionalContextLimit`
+  (`Option<usize>`); `HookHandlerConfig::McpTool` com `timeout`, `statusMessage` e `input`
+  (`serde_json::Map`, com um `deserialize_with` extra de representabilidade TOML não reproduzido);
+  `HookHandlerConfig::Prompt {}`/`Agent {}` sem nenhum campo.
+- `codex-rs/hooks/src/engine/discovery.rs` (trecho de `events/session_end.rs` citado no mesmo arquivo): um
+  handler `mcp_tool` sob o evento `SessionEnd` é lido e pulado com aviso ("skipping MCP tool hook in {}:
+  SessionEnd MCP hooks are not supported"), antes mesmo de checar `server`/`tool` vazios — mesmo tratamento
+  que `prompt`/`agent`.
+- [Codex Hooks](https://learn.chatgpt.com/docs/hooks) (consultada nesta data): lista os mesmos 12 nomes de
+  evento do código; confirma "`SessionEnd` doesn't support MCP tool hooks" e os tipos documentados de
+  `timeout`/`statusMessage`/`async`/`additionalContextLimit`.
+- [Claude Hooks](https://code.claude.com/docs/en/hooks) (consultada nesta data, duas buscas independentes
+  com o mesmo resultado): seção "Hook Events" lista 33 nomes (lifecycle completo, de `SessionStart`/`Setup` a
+  `SessionEnd`); seção do evento `SessionStart` declara "Only `type: "command"` and `type: "mcp_tool"` hooks
+  are supported", sem dizer o que acontece com outro tipo ali; tabela "Hook handler fields" confirma
+  `timeout`/`statusMessage`/`once` como campos comuns tipados, mas não especifica o efeito de um tipo errado
+  (sem código acessível do Claude para confirmar, ao contrário do Codex).
+
+### Ordem seguida (TDD)
+
+1. Landing registrado antes do código (tabela acima, três linhas).
+2. Regressões escritas antes do produto, na própria camada (`config-projection.unit.test.mjs`) e na
+   fronteira real da CLI (`configuration-trust.cli.test.mjs`). RED real (saída completa em
+   `.checks/code-review/formal-round3-hooks-red.txt`, sem pipe mascarando o exit):
+   `tests 51, pass 44, fail 7, EXIT_CODE=1` (as duas suítes combinadas). As 7 falhas são exatamente os casos
+   novos/corrigidos, cada um pelo motivo esperado (grupo sem `hooks` dava `invalid` em vez de
+   `not_configured`; evento desconhecido e `mcp_tool`/`SessionEnd` davam `configured`; `SessionStart` com
+   `http` dava `configured`; campo opcional de tipo errado dava `configured`; os dois testes de fronteira CLI
+   replicavam evento desconhecido e campo de tipo errado no relatório real). Um erro no próprio teste de CLI
+   do achado 3 (conteúdo JSON escrito no `config.toml`, formato TOML do Codex) foi corrigido antes do GREEN,
+   sem mudar a asserção.
+3. Implementação em `hooks-shape.mjs`/`config-projection.mjs` e GREEN (abaixo).
+
+### Decisões e correções por achado
+
+1. **Grupo sem a chave `hooks` no Codex (achado 1)** — corrige a decisão 6 da seção 11, que registrava essa
+   forma como "mais estrito que a fonte, nunca leva a `configured`": isso invertia a fonte de verdade, pois
+   a fonte mostra que a forma é válida e vazia, não inválida. `matcherGroupHandlers` (`hooks-shape.mjs`)
+   ganhou `hooksFieldOptional`, `true` só para o Codex: um grupo com `hooks === undefined` conta como `[]`
+   em vez de reprovar a forma. Claude preserva a exigência atual (nenhuma mudança no código do validador de
+   Claude) — não há fonte (doc ou código) que declare um default equivalente para esse campo no Claude, e
+   "preservar quando o campo é obrigatório" aqui significa preservar quando falta prova do contrário. A
+   fixture antiga (`PreToolUse = [{ command = "x" }]` → `invalid`) era a hipótese errada; corrigida para
+   `not_configured`, com o motivo registrado no comentário do teste e no Landing, não apagada em silêncio.
+   `configured` continua exigindo ≥1 handler com alvo (decisão 2 da seção 11), então um grupo vazio nunca
+   basta sozinho, mesmo relaxado.
+2. **Nomes de evento e restrições por evento (achado 2)** — `inspectMatcherGroupHooks` agora recebe
+   `recognizedEvents` (`CODEX_RECOGNIZED_EVENTS`, 12 nomes de `HookEventsToml`; `CLAUDE_RECOGNIZED_EVENTS`,
+   33 nomes da doc) e nunca inspeciona o valor de uma chave fora desse conjunto (e fora das chaves
+   reservadas já existentes) — o próprio Codex também não inspeciona, pois `HookEventsToml`/`HooksToml` não
+   têm `deny_unknown_fields` nem campo coletor. Resultado: `unknown/hooks_event_name_unrecognized`, nunca
+   `configured` só porque o handler dentro tem alvo. Restrição por evento confirmada em código:
+   `classifyCodexMcpTool` retorna `untargeted` quando `event === "SessionEnd"`, depois de validar os tipos
+   (a checagem de tipo é anterior na fonte real: a struct inteira precisa deserializar antes de qualquer
+   despacho por evento). Restrição só documentada: `classifyClaudeHandler` retorna `unsupported_for_event`
+   para `http`/`prompt`/`agent` sob `event === "SessionStart"`, depois de confirmar que o handler já seria
+   válido fora dessa restrição (um handler malformado continua `invalid`). As duas restrições resolvem
+   `configuration: "unknown"` (via o novo shape `unrecognized` com `reasonCode` próprio -
+   `hooks_handler_type_unsupported_for_event`) — nunca `invalid`, pois a forma em si está correta, e nunca
+   `configured`, pois o suporte não está confirmado. Explicitamente **não** usado como prova: a tabela
+   mecanismo→evento de `contract-evidence.mjs`/C5 permanece uma evidência de contrato de capacidade,
+   diferente desta validação de schema de configuração — nenhum dos dois arquivos foi tocado nesta rodada.
+3. **Campos opcionais tipados do Codex (achado 3)** — `classifyCodexCommand` e a nova `classifyCodexMcpTool`
+   (extraída de `classifyRequiredTargets` + checagens adicionais) validam só os campos que `hook_config.rs`
+   tipa e que o Codex 0.162.1 realmente lê: `timeout`/`additionalContextLimit` (inteiro não negativo),
+   `async` (booleano), `statusMessage` (string), `input` (objeto simples, sem reproduzir a checagem extra de
+   representabilidade TOML do deserializer customizado). `null` (o `None` de JSON) continua válido como
+   ausência, igual ao tratamento já existente de `command_windows`. Um valor presente de outro tipo em
+   qualquer um desses campos vira `invalid/hooks_structure_invalid` — não um estado novo —, porque é o que
+   a fonte confirma: sem `deny_unknown_fields` mas com tipo exato por campo, o serde falha a struct do
+   handler inteira, o que falha o documento TOML/JSON inteiro (nunca "esse handler" isolado). `Prompt
+   {}`/`Agent {}` não têm campo nenhum na fonte, então não são afetados. Caso concreto do achado,
+   `{type:"command", command:"echo ok", timeout:{bad:true}}` em `hooks.json`, agora resolve `invalid`, nunca
+   `configured`/`complete` — provado na própria camada e na fronteira real da CLI (hooks.json/JSON e
+   config.toml/TOML). Fora desta validação, por decisão (não por omissão não registrada): o conteúdo de
+   comandos/URLs/`input` continua nunca inspecionado; o Claude fica fora (sem código acessível, a doc não
+   declara o efeito de um tipo errado em `timeout`/`once`/`statusMessage`).
+4. **Propagação do `reasonCode` por shape** — `inspectNativeHooks` passou a devolver `{ shape, reasonCode }`
+   também para `invalid`/`unrecognized` (antes só `{ shape }`, com um mapa fixo em `config-projection.mjs`
+   que não suportava mais de um motivo por shape). `extractSafeFields`/`projectConfig`
+   (`config-projection.mjs`) agora leem `hooks.reasonCode` direto, em vez de `HOOKS_SHAPE_RESULT[shape]`
+   fixo; `HOOKS_SHAPE_CONFIGURATION` mapeia só `shape → configuration` (`invalid`/`unknown`). Nenhuma mudança
+   em `config-reader.mjs`/`scope-merge.mjs`: ambos já propagam genericamente qualquer `reasonCode` recebido
+   de um estado `invalid`/`inconclusive`.
+
+### Precedência entre os eixos
+
+Registrada no Landing: `invalid` (campo obrigatório ausente/tipo errado) decide antes de qualquer forma de
+"não sei"; entre as formas de "não sei", evento não reconhecido decide antes de tipo de handler não
+reconhecido, que decide antes de restrição por evento. Implementada em `summarizeGroupHooks`
+(`hooks-shape.mjs`): a ordem não muda nenhum resultado hoje coberto por teste (cada caso de prova isola um
+eixo), só documenta o desempate para um caso futuro que combine mais de um.
+
+### Resultados
+
+```
+npm test   (saída completa em .checks/code-review/formal-round3-hooks-green.txt, sem pipe)
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 229, pass 228, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a seção 11 (221 → 229): 8 testes novos, todos desta rodada — 6 na própria
+camada (`config-projection.unit.test.mjs`: grupo sem `hooks` no Codex, evento não reconhecido em Claude e
+Codex, `mcp_tool`/`SessionEnd`, `http`/`prompt`/`agent` sob `SessionStart`, campo opcional com tipo errado,
+campo opcional válido/ausente/nulo) e 2 na fronteira real da CLI (`configuration-trust.cli.test.mjs`: evento
+não reconhecido do Codex, `timeout` de tipo errado do Codex). O único skip continua
+`agent-resolution-C2 realpath/symlink real … (POSIX)`, condicional ao executor, não um skip novo. Paridade
+do motor comum reconfirmada nesta data: `git diff --exit-code 4242520 -- scripts/code-review/{cli.mjs,
+review.mjs,review.test.mjs,schema.json,README.md}` sem diff.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0 (mesma limitação das seções 9-11); nenhum caso novo desta
+  rodada depende de symlink real, permissão de SO ou mutação concorrente.
+- O catálogo de 33 eventos do Claude vem de duas leituras independentes da mesma página pública (não de
+  código, que é fechado); um nome documentado incorretamente nessa página propagaria para
+  `CLAUDE_RECOGNIZED_EVENTS` sem um segundo meio de checagem.
+- A restrição `SessionStart`/Claude é tratada como inconclusiva por desenho: não se afirma que o Claude
+  ignora, rejeita ou simplesmente nunca invoca um `http`/`prompt`/`agent` ali — só que o doctor não tem
+  fonte para decidir, então não assume `configured`.
+- O deserializer customizado de `input` (`McpTool`) no Codex rejeita valores não representáveis em TOML
+  (ex.: `null` aninhado); o doctor só confere que `input` é um objeto simples, sem essa checagem extra —
+  admitido, não contornado.
+- Claude permanece sem validação de tipo para `timeout`/`once`/`statusMessage`/`async`/outros campos comuns:
+  não há código acessível e a doc não declara o efeito de um tipo errado, diferente do Codex. Estender essa
+  validação ao Claude exigiria inventar um comportamento sem fonte, o que a task e o `AGENTS.md` proíbem.
+- Hermes não ganhou validação de nomes de evento nesta rodada: seus eventos são extensíveis por plugin e só
+  são conhecidos lendo `VALID_HOOKS` da instalação (`contract-evidence.mjs`, evidência de contrato C5), uma
+  preocupação distinta da forma estrutural local decidida aqui — misturar as duas inverteria a separação já
+  registrada no achado 2 (schema de config local vs. evidência de contrato).
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/hooks-shape.mjs` (reescrito: `hooksFieldOptional`, `recognizedEvents`,
+  `classifyCodexMcpTool`, restrição `SessionStart`/Claude e `SessionEnd`/Codex, `isValidOptionalField`/
+  `isNonNegativeInteger`, `reasonCode` por shape), `src/doctor/config-projection.mjs`
+  (`HOOKS_SHAPE_CONFIGURATION`, propagação de `hooksReasonCode`). Nenhuma mudança em
+  `config-reader.mjs`/`scope-merge.mjs`/`contract-evidence.mjs`/`capability-matrix.mjs`/launchers.
+- Testes: `tests/doctor/config-projection.unit.test.mjs` (6 novos, 1 existente corrigido com comentário de
+  justificativa), `tests/doctor/configuration-trust.cli.test.mjs` (2 novos).
+- Documentação/checklist: `docs/agent-compatibility.md` (linhas de forma do Claude e do Codex), Landing
+  "grupo vazio, nomes de evento e campos opcionais tipados dos hooks" em
+  `.checks/issue-3-agent-diagnostics.md` e esta seção.
+- Evidência: `.checks/code-review/formal-round3-hooks-red.txt`, `…-hooks-green.txt`.

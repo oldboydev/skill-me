@@ -6,6 +6,13 @@
 export function createFakeFsAdapter(tree) {
   const faults = new Map();
 
+  // Um link simbólico registrado por addSymlink guarda o alvo já resolvido
+  // (o que realpath devolveria); stat/readFile seguem o link como o SO faz,
+  // lstat o enxerga como link.
+  function follow(filePath) {
+    return tree.links?.get(filePath) ?? filePath;
+  }
+
   function raise(filePath) {
     const fault = faults.get(filePath);
     if (fault) {
@@ -33,8 +40,9 @@ export function createFakeFsAdapter(tree) {
       if (!node) return [];
       return [...node];
     },
-    async readFile(filePath) {
-      raise(filePath);
+    async readFile(linkOrFilePath) {
+      raise(linkOrFilePath);
+      const filePath = follow(linkOrFilePath);
       const node = tree.files.get(filePath);
       if (node === undefined) {
         const error = new Error(`ENOENT: ${filePath}`);
@@ -43,8 +51,9 @@ export function createFakeFsAdapter(tree) {
       }
       return node;
     },
-    async stat(filePath) {
-      raise(filePath);
+    async stat(linkOrFilePath) {
+      raise(linkOrFilePath);
+      const filePath = follow(linkOrFilePath);
       const node = tree.files.get(filePath);
       if (node === undefined) {
         if (tree.dirs.has(filePath)) {
@@ -68,12 +77,11 @@ export function createFakeFsAdapter(tree) {
         mode,
       };
     },
-    // Esta árvore em memória não modela links simbólicos: todo arquivo é
-    // "comum", então a resolução de Codex cai sempre para a leitura de
-    // conteúdo do shim, nunca para o atalho de realpath — ver
-    // src/doctor/launcher-link/codex.mjs.
+    // Só links registrados por addSymlink são simbólicos; todo o resto é
+    // arquivo comum, e a resolução de Codex cai para a leitura do shim.
     async lstat(filePath) {
       raise(filePath);
+      if (tree.links?.has(filePath)) return { isSymbolicLink: () => true };
       if (!tree.files.has(filePath)) {
         const error = new Error(`ENOENT: ${filePath}`);
         error.code = "ENOENT";
@@ -83,7 +91,7 @@ export function createFakeFsAdapter(tree) {
     },
     async realpath(filePath) {
       raise(filePath);
-      return filePath;
+      return follow(filePath);
     },
   };
 }
@@ -104,6 +112,19 @@ export function addDir(tree, parentDirPath, dirName) {
   const entries = tree.dirs.get(parentDirPath) ?? [];
   if (!entries.includes(dirName)) entries.push(dirName);
   tree.dirs.set(parentDirPath, entries);
+}
+
+// Registra `dirPath/linkName` como link simbólico para `targetPath`, já no
+// formato absoluto e normalizado que realpath devolveria (ex.: o link
+// relativo `node_modules/.bin/codex -> ../@openai/codex/bin/codex.js` que o
+// npm cria no POSIX). O alvo precisa existir na árvore via addFile.
+export function addSymlink(tree, dirPath, linkName, targetPath) {
+  const sep = dirPath.includes("\\") ? "\\" : "/";
+  const entries = tree.dirs.get(dirPath) ?? [];
+  if (!entries.includes(linkName)) entries.push(linkName);
+  tree.dirs.set(dirPath, entries);
+  tree.links ??= new Map();
+  tree.links.set(dirPath + sep + linkName, targetPath);
 }
 
 export function addFile(tree, dirPath, fileName, content) {

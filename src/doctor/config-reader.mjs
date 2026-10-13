@@ -94,7 +94,7 @@ const AGENT_CONFIG_DEFINITIONS = {
   },
 };
 
-async function readScope({ path: filePath, format, scope }, { fs }) {
+async function readScope({ path: filePath, format, scope }, { agentId, fs, platform }) {
   let snapshot;
   try {
     snapshot = await readSnapshot(filePath, { fs, maxBytes: ONE_MIB_BYTES });
@@ -107,9 +107,14 @@ async function readScope({ path: filePath, format, scope }, { fs }) {
   const projected = projectConfig({
     rawText: snapshot.content.toString("utf8"),
     format,
+    agentId,
+    platform,
   });
   if (projected.configuration === "invalid") {
     return { scope, state: "invalid", reasonCode: projected.reasonCode };
+  }
+  if (projected.configuration === "unknown") {
+    return { scope, state: "inconclusive", reasonCode: projected.reasonCode };
   }
   return { scope, state: "parsed", parsed: projected.fields };
 }
@@ -125,7 +130,7 @@ export async function readAgentConfiguration({ agentId, env, platform, cwd, fs }
 
   const scopeResults = [];
   for (const scopeDef of scopeDefs) {
-    scopeResults.push(await readScope(scopeDef, { fs }));
+    scopeResults.push(await readScope(scopeDef, { agentId, fs, platform }));
   }
 
   const { configuration, configReasonCode } = mergeConfigScopes(scopeResults, {

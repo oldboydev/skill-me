@@ -33,6 +33,18 @@ export const FIXTURE_SCENARIOS = [
   { id: "C15-mutacao-durante-leitura", origin: "fixture", os: ["any"], file: "mid-read-mutation.unit.test.mjs" },
   { id: "C16-versao-sem-perfil-cli", origin: "fixture", os: ["host"], file: "presence.cli.test.mjs" },
   { id: "C16-config-inacessivel-cli", origin: "fixture", os: ["host"], file: "configuration-trust.cli.test.mjs" },
+  { id: "C8-caminhos-por-plataforma", origin: "fixture", os: ["windows", "linux", "macos"], file: "config-sources.unit.test.mjs" },
+  { id: "C5-contrato-tabela-instalada", origin: "fixture", os: ["any"], file: "contract-evidence.unit.test.mjs" },
+  { id: "C5-contrato-tabela-instalada-cli", origin: "fixture", os: ["host"], file: "capability-evidence.cli.test.mjs" },
+  { id: "C5-indisponivel-launcher-ausente-cli", origin: "fixture", os: ["host"], file: "capability-evidence.cli.test.mjs" },
+  { id: "C16-origem-superficies-nao-inspecionadas-cli", origin: "fixture", os: ["host"], file: "capability-evidence.cli.test.mjs" },
+  { id: "C2-C3-windows-pathext", origin: "fixture", os: ["windows"], file: "agent-resolution.unit.test.mjs" },
+  { id: "C3-formato-desconhecido-primeiro-path-cli", origin: "fixture", os: ["host"], file: "presence.cli.test.mjs" },
+  { id: "C2-codex-shim-npm-local", origin: "fixture", os: ["windows", "linux", "macos"], file: "agent-resolution.unit.test.mjs" },
+  { id: "C2-codex-instalacao-local-cli", origin: "fixture", os: ["host"], file: "presence.cli.test.mjs" },
+  { id: "C2-C3-hermes-interpretador-shebang", origin: "fixture", os: ["linux", "macos"], file: "agent-resolution.unit.test.mjs" },
+  { id: "C8-forma-nativa-hooks", origin: "fixture", os: ["any"], file: "config-projection.unit.test.mjs" },
+  { id: "C8-forma-nativa-hooks-cli", origin: "fixture", os: ["host"], file: "configuration-trust.cli.test.mjs" },
 ];
 
 // "any"/"host" cobrem SO-independente ou o SO real do executor da suíte;

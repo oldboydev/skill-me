@@ -1,5 +1,6 @@
 import { parseDocument } from "yaml";
 import { parse as parseToml } from "smol-toml";
+import { inspectNativeHooks } from "./hooks-shape.mjs";
 
 export const ONE_MIB_BYTES = 1024 * 1024;
 
@@ -9,11 +10,17 @@ export const ONE_MIB_BYTES = 1024 * 1024;
 // campo real e documentado de um dos três agentes (ver docs/agent-
 // compatibility.md); um campo desconhecido/arbitrário no arquivo nunca entra
 // neste objeto, então nunca alcança a resolução de confiança.
-function extractSafeFields(parsed) {
-  if (parsed === null || typeof parsed !== "object") return {};
+// `hasHooksSection` só é verdadeiro com ≥1 handler que o agente registraria
+// com alvo. Uma seção `hooks` presente (não nula) fora da forma nativa, ou
+// com tipo de handler não reconhecido, devolve só `hooksShape`: nenhum campo
+// do arquivo é aproveitado.
+function extractSafeFields(parsed, agentId, platform) {
+  if (parsed === null || typeof parsed !== "object") return { fields: {} };
   const fields = {};
-  if (parsed.hooks && typeof parsed.hooks === "object") {
-    fields.hasHooksSection = Object.keys(parsed.hooks).length > 0;
+  if (parsed.hooks !== undefined && parsed.hooks !== null) {
+    const hooks = inspectNativeHooks(agentId, parsed.hooks, { platform });
+    if (hooks.shape !== "valid") return { hooksShape: hooks.shape, hooksReasonCode: hooks.reasonCode };
+    fields.hasHooksSection = hooks.handlersWithTarget > 0;
   }
   if (typeof parsed.disableAllHooks === "boolean") {
     fields.disableAllHooks = parsed.disableAllHooks;
@@ -27,8 +34,17 @@ function extractSafeFields(parsed) {
   if (typeof parsed.hooks_auto_accept === "boolean") {
     fields.hooksAutoAccept = parsed.hooks_auto_accept;
   }
-  return fields;
+  return { fields };
 }
+
+// Tipo/evento não reconhecido não é erro de forma (uma versão do agente pode
+// aceitá-lo), mas também não sustenta configured, disabled nem trusted; o
+// `reasonCode` exato vem de `inspectNativeHooks` (vários motivos possíveis
+// por shape — ver hooks-shape.mjs), não de um valor fixo por shape aqui.
+const HOOKS_SHAPE_CONFIGURATION = {
+  invalid: "invalid",
+  unrecognized: "unknown",
+};
 
 function hasNonEmptyHooks(fields) {
   return fields.hasHooksSection === true;
@@ -58,7 +74,7 @@ const PARSERS = {
   json: JSON.parse,
 };
 
-export function projectConfig({ rawText, format }) {
+export function projectConfig({ rawText, format, agentId, platform }) {
   if (rawText === null || rawText === undefined) {
     return { configuration: "not_configured", reasonCode: "no_config_found", fields: {} };
   }
@@ -77,7 +93,10 @@ export function projectConfig({ rawText, format }) {
       fields: {},
     };
   }
-  const fields = extractSafeFields(parsed);
+  const { fields, hooksShape, hooksReasonCode } = extractSafeFields(parsed, agentId, platform);
+  if (hooksShape) {
+    return { configuration: HOOKS_SHAPE_CONFIGURATION[hooksShape], reasonCode: hooksReasonCode, fields: {} };
+  }
   if (fields.disableAllHooks === true) {
     return { configuration: "disabled", reasonCode: "hooks_disabled", fields };
   }

@@ -10,6 +10,7 @@ import { readAgentConfiguration } from "../../src/doctor/config-reader.mjs";
 import { claudeConfigScopes, claudeHome } from "../../src/doctor/config-sources.mjs";
 import { resolveCodexVersion } from "../../src/doctor/launcher-link/codex.mjs";
 import { resolveHermesVersion } from "../../src/doctor/launcher-link/hermes.mjs";
+import { CODEX_GLOBAL_SH_TARGET, npmShShim } from "./helpers/npm-shims.mjs";
 
 test("mid-read-mutation-C15 tamanho mudou entre stat e readFile vira limitação, não repete a leitura", async () => {
   let statCalls = 0;
@@ -175,9 +176,7 @@ test("mid-read-mutation-C15/G3 readBoundedText propaga mutação detectada como 
 test("mid-read-mutation-C15/G3 resolveCodexVersion: package.json mutado durante a leitura fica version null/version_changed_during_read", async () => {
   const launcherPath = "/fixture/bin/codex";
   const pkgJsonPath = "/fixture/bin/node_modules/@openai/codex/package.json";
-  const shimContent = Buffer.from(
-    '#!/usr/bin/env node\nrequire("./node_modules/@openai/codex/bin/codex.js");\n',
-  );
+  const shimContent = Buffer.from(npmShShim(CODEX_GLOBAL_SH_TARGET));
   const pkgContent = Buffer.from(JSON.stringify({ name: "@openai/codex", version: "0.162.1" }));
   const fs = {
     async stat(filePath) {
@@ -206,9 +205,7 @@ test("mid-read-mutation-C15/G3 resolveCodexVersion: package.json mutado durante 
 // pacote.
 test("mid-read-mutation-C15/G3 resolveCodexVersion: shim do launcher mutado durante a leitura fica version null/version_changed_during_read", async () => {
   const launcherPath = "/fixture/bin/codex";
-  const shimContent = Buffer.from(
-    '#!/usr/bin/env node\nrequire("./node_modules/@openai/codex/bin/codex.js");\n',
-  );
+  const shimContent = Buffer.from(npmShShim(CODEX_GLOBAL_SH_TARGET));
   const fs = {
     async stat(filePath) {
       if (filePath === launcherPath) return { size: shimContent.length + 3 };

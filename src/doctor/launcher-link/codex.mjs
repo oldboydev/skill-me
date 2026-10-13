@@ -1,19 +1,23 @@
-import {
-  detectSeparator,
-  dirnameGeneric,
-  joinGeneric,
-  normalizeReference,
-  stripCommentLines,
-} from "./path-helpers.mjs";
+import { detectSeparator, dirnameGeneric, joinGeneric, resolveRelative } from "./path-helpers.mjs";
+import { isNativeExecutable } from "./native-executable.mjs";
+import { commandStartLines } from "./shim-lines.mjs";
 import { readBoundedText } from "../snapshot-read.mjs";
 import { isPlausibleVersionString } from "../version-sources/validate.mjs";
 
 const ONE_MIB_BYTES = 1024 * 1024;
-const PACKAGE_SEGMENTS = ["node_modules", "@openai", "codex"];
-// Casa a referência real que um shim gerado pelo npm embute (local ou
-// global): algo como "node_modules/@openai/codex/bin/codex.js" ou
-// "node_modules\@openai\codex\bin\codex.js" dentro do texto do script.
-const PACKAGE_REFERENCE_PATTERN = /node_modules[\\/]@openai[\\/]codex[\\/][^"'\s)]+/;
+
+// Linhas com que o cmd-shim do npm EXECUTA o node com o arquivo de entrada do
+// pacote, relativo ao diretório do shim — no prefixo global
+// `node_modules\@openai\codex\bin\codex.js`, numa instalação local
+// `..\@openai\codex\bin\codex.js` (a partir de node_modules\.bin). No .cmd é
+// a última linha do template, com o prefixo fixo que ele grava; no sh são as
+// duas linhas `exec` do if/else. A referência só conta como argumento do node
+// nessa posição, numa linha que começa um comando (shim-lines.mjs): a mesma
+// referência impressa por echo, dentro de here-document/string, numa linha
+// que continua outra ou no dialeto errado não executa o pacote.
+const CMD_SHIM_INVOCATION =
+  /^[ \t]*endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & "%_prog%"[ \t]+"%dp0%\\([^"%]+)"[ \t]+%\*[ \t]*$/;
+const SH_SHIM_INVOCATION = /^[ \t]*exec[ \t]+(?:"\$basedir\/node"|node)[ \t]+"\$basedir\/([^"$`\\]+)"[ \t]+"\$@"[ \t]*$/;
 
 // Resultado de três estados (não só texto|null): "too_large" precisa de um
 // reasonCode próprio (input_too_large), distinto de "não reconhecido".
@@ -23,9 +27,11 @@ async function readLinkedText(filePath, fs) {
   return readBoundedText(filePath, { fs, maxBytes: ONE_MIB_BYTES });
 }
 
-function packageRootFromAbsolutePath(resolvedPath) {
-  const normalized = resolvedPath.replace(/\\/g, "/");
-  const segments = normalized.split("/");
+// Só um caminho que atravessa node_modules/@openai/codex chega ao pacote;
+// "@openai/codex" fora de um node_modules (ex.: uma referência que sobe com
+// ".." para fora dele) não é a instalação que o npm criou.
+function packageRootFromAbsolutePath(resolvedPath, sep) {
+  const segments = resolvedPath.split(/[\\/]/);
   const index = segments.findIndex(
     (segment, i) =>
       segment === "node_modules" &&
@@ -33,7 +39,25 @@ function packageRootFromAbsolutePath(resolvedPath) {
       segments[i + 2] === "codex",
   );
   if (index === -1) return null;
-  return segments.slice(0, index + 3).join("/");
+  return segments.slice(0, index + 3).join(sep);
+}
+
+// O dialeto vem da extensão do launcher, como o SO decide quem interpreta o
+// arquivo: .cmd/.bat pelo cmd.exe, o shim sem extensão pelo sh.
+function packageRootsInvokedByShim(text, launcherPath, sep) {
+  const dialect = /\.(?:cmd|bat)$/i.test(launcherPath) ? "cmd" : "sh";
+  const invocation = dialect === "cmd" ? CMD_SHIM_INVOCATION : SH_SHIM_INVOCATION;
+  const launcherDir = dirnameGeneric(launcherPath);
+  const roots = new Set();
+  for (const line of commandStartLines(text, dialect)) {
+    const reference = invocation.exec(line)?.[1];
+    if (reference === undefined) continue;
+    const resolved = resolveRelative(launcherDir, reference, sep);
+    if (resolved === null) continue;
+    const root = packageRootFromAbsolutePath(resolved, sep);
+    if (root) roots.add(root);
+  }
+  return [...roots];
 }
 
 async function readCodexPackageVersion(pkgRootPath, sep, fs) {
@@ -67,12 +91,14 @@ async function readCodexPackageVersion(pkgRootPath, sep, fs) {
 
 // Linka o launcher ao pacote @openai/codex de duas formas, as mesmas que um
 // npm real produz: (1) o launcher é um link simbólico cujo alvo (via
-// realpath) atravessa node_modules/@openai/codex — instalação global típica
-// em POSIX; (2) o conteúdo do launcher (shim .cmd do Windows, ou script
-// .bin local em POSIX) embute uma referência relativa ao arquivo de entrada
-// do pacote. Um launcher alheio, mesmo com um package.json de @openai/codex
-// ao lado sem nenhuma referência a ele, nunca é reconhecido — proximidade
-// no diretório não é vínculo.
+// realpath) atravessa node_modules/@openai/codex — instalação global ou
+// local no POSIX; (2) o shim de texto do cmd-shim (.cmd no Windows, sh ao
+// lado dele) executa o node com o arquivo de entrada do pacote, a partir do
+// próprio diretório, na linha de invocação do template. Um launcher alheio,
+// mesmo com um package.json de @openai/codex ao lado — sem referência a ele
+// ou só mencionando-o —, nunca é reconhecido: proximidade no diretório ou
+// menção textual não é vínculo. Um executável nativo (codex.exe) fica sem
+// versão: não há metadado de pacote ligado a ele que o doctor reconheça.
 export async function resolveCodexVersion(launcherPath, { fs }) {
   if (typeof fs.lstat === "function" && typeof fs.realpath === "function") {
     const lstat = await fs.lstat(launcherPath).catch((error) => {
@@ -81,10 +107,15 @@ export async function resolveCodexVersion(launcherPath, { fs }) {
     });
     if (lstat?.isSymbolicLink?.()) {
       const real = await fs.realpath(launcherPath);
-      const pkgRoot = packageRootFromAbsolutePath(real);
+      const sep = detectSeparator(real);
+      const pkgRoot = packageRootFromAbsolutePath(real, sep);
       if (!pkgRoot) return { version: null, reasonCode: "launcher_not_recognized" };
-      return readCodexPackageVersion(pkgRoot, "/", fs);
+      return readCodexPackageVersion(pkgRoot, sep, fs);
     }
+  }
+
+  if (await isNativeExecutable(launcherPath, { fs })) {
+    return { version: null, reasonCode: "launcher_not_recognized" };
   }
 
   const linked = await readLinkedText(launcherPath, fs);
@@ -96,30 +127,11 @@ export async function resolveCodexVersion(launcherPath, { fs }) {
   }
   if (linked.state === "missing") return { version: null, reasonCode: "launcher_not_recognized" };
 
-  // Uma referência dentro de um comentário (sem nenhuma execução/require
-  // real) nunca conta como vínculo.
-  const match = PACKAGE_REFERENCE_PATTERN.exec(stripCommentLines(linked.text));
-  if (!match) return { version: null, reasonCode: "launcher_not_recognized" };
-
-  const launcherDir = dirnameGeneric(launcherPath);
   // O separador para montar o caminho do pacote vem do diretório do
-  // launcher já resolvido (estilo nativo e consistente), não do caminho
-  // original — que pode ter uma junção final em estilo diferente (ver
-  // findLauncherPath em agent-resolution.mjs).
-  const sep = detectSeparator(launcherDir);
-  const reference = normalizeReference(match[0], sep);
-  const referenceSegments = reference.split(sep);
-  const pkgIndex = referenceSegments.findIndex(
-    (segment, i) =>
-      segment === PACKAGE_SEGMENTS[0] &&
-      referenceSegments[i + 1] === PACKAGE_SEGMENTS[1] &&
-      referenceSegments[i + 2] === PACKAGE_SEGMENTS[2],
-  );
-  if (pkgIndex === -1) return { version: null, reasonCode: "launcher_not_recognized" };
-  const pkgRoot = joinGeneric(
-    sep,
-    launcherDir,
-    referenceSegments.slice(pkgIndex, pkgIndex + 3).join(sep),
-  );
-  return readCodexPackageVersion(pkgRoot, sep, fs);
+  // launcher já resolvido (estilo nativo e consistente com o PATH).
+  const sep = detectSeparator(dirnameGeneric(launcherPath));
+  const roots = packageRootsInvokedByShim(linked.text, launcherPath, sep);
+  if (roots.length === 0) return { version: null, reasonCode: "launcher_not_recognized" };
+  if (roots.length > 1) return { version: null, reasonCode: "version_source_ambiguous" };
+  return readCodexPackageVersion(roots[0], sep, fs);
 }

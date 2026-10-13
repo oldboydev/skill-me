@@ -9,42 +9,52 @@ export const CLAUDE_MANAGED_SETTINGS_PATH = {
   win32: "C:\\Program Files\\ClaudeCode\\managed-settings.json",
 };
 
+// A junção segue a plataforma recebida, não o `path` nativo do processo:
+// em produção as duas coincidem (platform = process.platform), mas um
+// caminho do Windows montado com path.posix (ou o inverso) misturaria
+// separadores e apontaria para um arquivo que o agente nunca leria.
+function pathFor(platform) {
+  return platform === "win32" ? path.win32 : path.posix;
+}
+
 function homeDir({ env, platform }) {
   return platform === "win32" ? env.USERPROFILE : env.HOME;
 }
 
 export function claudeHome({ env, platform }) {
   if (env.CLAUDE_CONFIG_DIR) return env.CLAUDE_CONFIG_DIR;
-  return path.join(homeDir({ env, platform }), ".claude");
+  return pathFor(platform).join(homeDir({ env, platform }), ".claude");
 }
 
 // Ordem de maior para menor precedência (gerenciado > local do projeto >
 // compartilhado do projeto > usuário), conforme a página de precedência de
 // settings da Claude Code.
 export function claudeConfigScopes({ home, cwd, platform }) {
+  const { join } = pathFor(platform);
   return [
     { scope: "managed", path: CLAUDE_MANAGED_SETTINGS_PATH[platform], format: "json" },
-    { scope: "project_local", path: path.join(cwd, ".claude", "settings.local.json"), format: "json" },
-    { scope: "project_shared", path: path.join(cwd, ".claude", "settings.json"), format: "json" },
-    { scope: "user", path: path.join(home, "settings.json"), format: "json" },
+    { scope: "project_local", path: join(cwd, ".claude", "settings.local.json"), format: "json" },
+    { scope: "project_shared", path: join(cwd, ".claude", "settings.json"), format: "json" },
+    { scope: "user", path: join(home, "settings.json"), format: "json" },
   ];
 }
 
 export function codexHome({ env, platform }) {
   if (env.CODEX_HOME) return env.CODEX_HOME;
-  return path.join(homeDir({ env, platform }), ".codex");
+  return pathFor(platform).join(homeDir({ env, platform }), ".codex");
 }
 
 // Codex carrega hooks.json e as tabelas [hooks] de config.toml lado a lado
 // (aditivo, nunca substituição); o projeto só é ativo quando confiável, algo
 // que o doctor não determina por leitura estática — ver docs/agent-
 // compatibility.md para a lacuna declarada.
-export function codexConfigScopes({ home, cwd }) {
+export function codexConfigScopes({ home, cwd, platform }) {
+  const { join } = pathFor(platform);
   return [
-    { scope: "project", path: path.join(cwd, ".codex", "hooks.json"), format: "json" },
-    { scope: "project", path: path.join(cwd, ".codex", "config.toml"), format: "toml" },
-    { scope: "user", path: path.join(home, "hooks.json"), format: "json" },
-    { scope: "user", path: path.join(home, "config.toml"), format: "toml" },
+    { scope: "project", path: join(cwd, ".codex", "hooks.json"), format: "json" },
+    { scope: "project", path: join(cwd, ".codex", "config.toml"), format: "toml" },
+    { scope: "user", path: join(home, "hooks.json"), format: "json" },
+    { scope: "user", path: join(home, "config.toml"), format: "toml" },
   ];
 }
 
@@ -59,16 +69,15 @@ export function codexConfigScopes({ home, cwd }) {
 // específica.
 export function hermesHome({ env, platform }) {
   if (env.HERMES_HOME) return env.HERMES_HOME;
+  const { join } = pathFor(platform);
   if (platform === "win32") {
     const localAppData = env.LOCALAPPDATA?.trim();
-    const base = localAppData
-      ? localAppData
-      : path.join(homeDir({ env, platform }), "AppData", "Local");
-    return path.join(base, "hermes");
+    const base = localAppData ? localAppData : join(homeDir({ env, platform }), "AppData", "Local");
+    return join(base, "hermes");
   }
-  return path.join(homeDir({ env, platform }), ".hermes");
+  return join(homeDir({ env, platform }), ".hermes");
 }
 
-export function hermesConfigScopes({ home }) {
-  return [{ scope: "user", path: path.join(home, "config.yaml"), format: "yaml" }];
+export function hermesConfigScopes({ home, platform }) {
+  return [{ scope: "user", path: pathFor(platform).join(home, "config.yaml"), format: "yaml" }];
 }

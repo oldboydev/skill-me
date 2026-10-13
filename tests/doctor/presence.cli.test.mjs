@@ -13,6 +13,7 @@ import {
   makeScratch,
   pathEnv,
   writeCodex,
+  writeCodexLocalInstall,
 } from "./helpers/fixture-agents.mjs";
 import { inventory } from "./helpers/fs-inventory.mjs";
 import { buildMinimalPe, corruptFixedFileInfoSignature } from "./helpers/synthetic-pe.mjs";
@@ -225,6 +226,43 @@ test("presence-C3 launcher alheio do Codex com package.json vizinho (não refere
   }
 });
 
+// Pré-revisão formal: a referência exata ao arquivo de entrada do pacote,
+// mas só impressa (echo), não executa o node com ele — não é vínculo, mesmo
+// com o package.json real logo ao lado.
+test("presence-C3 shim do Codex que só imprime a referência ao pacote (echo) continua launcher_not_recognized", () => {
+  const scratch = makeScratch("doctor-c3-echo-codex-");
+  try {
+    const dir = path.join(scratch, "bin");
+    mkdirSync(dir, { recursive: true });
+    const codexFile = path.join(dir, process.platform === "win32" ? "codex.cmd" : "codex");
+    const content =
+      process.platform === "win32"
+        ? '@ECHO off\r\necho "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n'
+        : '#!/bin/sh\necho "$basedir/node_modules/@openai/codex/bin/codex.js"\nexit 0\n';
+    writeFileSync(codexFile, content, { mode: 0o755 });
+    const pkgDir = path.join(dir, "node_modules", "@openai", "codex");
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(
+      path.join(pkgDir, "package.json"),
+      JSON.stringify({ name: "@openai/codex", version: "0.162.1" }),
+    );
+    const env = { PATH: pathEnv([dir]), ...emptyHomeEnv(scratch) };
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.presence, "present");
+    assert.equal(codex.path, codexFile);
+    assert.equal(codex.version, null);
+    assert.equal(codex.versionSource, null);
+    assert.equal(codex.reasonCode, "launcher_not_recognized");
+    const { status: textStatus, stdout } = runDoctor([], { env });
+    assert.equal(textStatus, 0);
+    assert.doesNotMatch(stdout, /0\.162\.1/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 // C16/G4 — fronteira real da CLI: uma instalação RECONHECIDA (shim ligado de
 // verdade ao pacote, não um "launcher alheio" como presence-C3 acima) cuja
 // versão não está em known-version-profiles.mjs. Diferente de
@@ -234,10 +272,12 @@ test("presence-C3 launcher alheio do Codex com package.json vizinho (não refere
 test("presence-C16 instalação reconhecida com versão sem perfil compatível fica version_profile_incompatible na matriz (não launcher_not_recognized)", () => {
   const scratch = makeScratch("doctor-c16-versao-incompativel-");
   try {
-    const dir = path.join(scratch, "bin");
-    writeCodex(dir, { version: "9.9.0", sentinelPath: path.join(scratch, "sentinel.txt") });
+    const { binDir } = writeCodex(path.join(scratch, "npm-prefix"), {
+      version: "9.9.0",
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+    });
     const { status, report } = runDoctorJson([], {
-      env: { PATH: pathEnv([dir]), ...emptyHomeEnv(scratch) },
+      env: { PATH: pathEnv([binDir]), ...emptyHomeEnv(scratch) },
     });
     assert.equal(status, 0);
     const codex = report.agents.find((a) => a.id === "codex");
@@ -276,6 +316,79 @@ test("presence-C4 execução completa não invoca launchers nem altera arquivos 
 
     const snapshotAfter = inventory(scratch);
     assert.deepEqual(snapshotAfter, snapshotBefore);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Achado formal 3 — fronteira real da CLI. O primeiro diretório do PATH
+// contém launchers de formato não reconhecido; o segundo, instalações
+// reconhecíveis. No Windows os nomes são os que a resolução por PATHEXT
+// precisa examinar (`codex.exe`, `claude.cmd`); no POSIX, os nomes sem
+// extensão com conteúdo não reconhecido (binário ELF opaco e script alheio).
+// Em ambos: presença no primeiro diretório, versão nula, nunca a versão da
+// instalação posterior nem `absent`. Nenhum launcher é executado.
+test("presence-C3 launcher de formato não reconhecido no primeiro diretório do PATH fica present/version null e vence a instalação posterior", () => {
+  const scratch = makeScratch("doctor-c3-formato-desconhecido-");
+  try {
+    const first = path.join(scratch, "primeiro");
+    mkdirSync(first, { recursive: true });
+    const windows = process.platform === "win32";
+    const codexName = windows ? "codex.exe" : "codex";
+    const claudeName = windows ? "claude.cmd" : "claude";
+    const nativeHeader = windows ? Buffer.from("MZ") : Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
+    writeFileSync(path.join(first, codexName), Buffer.concat([nativeHeader, Buffer.alloc(256)]), {
+      mode: 0o755,
+    });
+    writeFileSync(
+      path.join(first, claudeName),
+      windows ? "@ECHO off\r\necho launcher alheio\r\n" : "#!/bin/sh\necho launcher alheio\n",
+      { mode: 0o755 },
+    );
+    const { pathDirs } = installAllAgents(path.join(scratch, "segundo"), {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+    });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv([first, ...pathDirs]), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.presence, "present");
+    assert.equal(codex.path, path.join(first, codexName));
+    assert.equal(codex.version, null);
+    assert.equal(codex.reasonCode, "launcher_not_recognized");
+    const claude = report.agents.find((a) => a.id === "claude");
+    assert.equal(claude.presence, "present");
+    assert.equal(claude.path, path.join(first, claudeName));
+    assert.equal(claude.version, null);
+    assert.equal(claude.reasonCode, "launcher_not_recognized");
+    assert.throws(() => statSync(path.join(scratch, "sentinel.txt")));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Achado formal 4 — fronteira real da CLI com a instalação local que o npm
+// cria: `node_modules/.bin/codex.cmd` (cmd-shim, `%dp0%\..\@openai\codex\...`)
+// no Windows e o link simbólico `node_modules/.bin/codex` no POSIX.
+test("presence-C2 instalação local do npm (node_modules/.bin) resolve a versão do pacote real ligado ao shim", () => {
+  const scratch = makeScratch("doctor-c2-codex-local-");
+  try {
+    const project = path.join(scratch, "projeto com espaço");
+    const { launcherPath, binDir } = writeCodexLocalInstall(project, {
+      version: KNOWN_GOOD_VERSION_TEXT.codex,
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+    });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv([binDir]), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.presence, "present");
+    assert.equal(codex.path, launcherPath);
+    assert.equal(codex.version, KNOWN_GOOD_VERSION_TEXT.codex);
+    assert.equal(codex.versionSource, "package_metadata");
+    assert.throws(() => statSync(path.join(scratch, "sentinel.txt")));
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

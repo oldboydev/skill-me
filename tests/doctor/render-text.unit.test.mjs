@@ -12,13 +12,29 @@ import test from "node:test";
 import { renderText } from "../../src/doctor/render-text.mjs";
 import { buildCapabilityMatrix } from "../../src/doctor/capability-matrix.mjs";
 
+// Contrato encontrado com um mecanismo incompleto, para que o texto precise
+// mostrar fonte, eventos e eventos ausentes por linha.
+const SYNTHETIC_CONTRACT = {
+  state: "found",
+  source: { kind: "hermes_valid_hooks", path: "/opt/sintetico/hermes_cli/plugins.py" },
+  mechanisms: {
+    skill_usage_signal: { events: ["on_skill_lifecycle"], missingEvents: ["on_skill_lifecycle"] },
+    tool_calls: { events: ["pre_tool_call", "post_tool_call"], missingEvents: [] },
+    results_and_errors: { events: ["post_tool_call"], missingEvents: [] },
+    session_turn: { events: ["on_session_start", "on_session_end"], missingEvents: [] },
+    subagents: { events: ["subagent_start", "subagent_stop"], missingEvents: [] },
+  },
+};
+
 function buildSyntheticReport() {
   const claudeCapabilities = buildCapabilityMatrix({
     agentId: "claude",
     evidenceBySurface: {
       cli_local: {
+        presence: "present",
+        version: "2.1.295",
         configuration: "configured",
-        hasLocalVerifiedContract: false,
+        contract: SYNTHETIC_CONTRACT,
         documentationOnly: false,
         versionProfileCompatible: true,
         origin: "real_environment",
@@ -29,15 +45,22 @@ function buildSyntheticReport() {
     agentId: "codex",
     evidenceBySurface: {
       cli_local: {
+        presence: "present",
+        version: null,
         configuration: "not_configured",
-        hasLocalVerifiedContract: false,
+        contract: null,
         documentationOnly: false,
-        versionProfileCompatible: true,
+        versionProfileCompatible: false,
         origin: "real_environment",
       },
     },
   });
-  const hermesCapabilities = buildCapabilityMatrix({ agentId: "hermes", evidenceBySurface: {} });
+  const hermesCapabilities = buildCapabilityMatrix({
+    agentId: "hermes",
+    evidenceBySurface: {
+      cli_local: { presence: "absent", version: null, configuration: "not_configured", origin: "real_environment" },
+    },
+  });
 
   return {
     schemaVersion: 1,
@@ -137,13 +160,34 @@ test("render-text-C11 texto expõe o ambiente e, por agente, caminho + mecanismo
     }
   }
 
-  // Estados distintos exigidos pelo critério 11: ausente, desconhecido e não
-  // verificado aparecem no relatório sintético acima ("indisponível" nunca é
-  // produzido pelo produto — ver capability-matrix.mjs — mas seu dicionário
-  // de texto permanece coberto por capability-matrix.unit.test.mjs).
+  // Estados distintos exigidos pelo critério 11: ausente, desconhecido,
+  // indisponível, verificado e não verificado aparecem no relatório acima.
   assert.match(text, /não encontrado/); // hermes ausente
   assert.match(text, /configuração desconhecida/); // codex/configuration unknown
+  assert.match(text, /indisponível \(motivo: executable_not_found/); // hermes cli_local
+  assert.match(text, /verificado \(motivo: local_contract_lists_events/); // claude cli_local
   assert.match(text, /não verificado/); // support unverified
+});
+
+test("render-text-C11 fonte de contrato, eventos e eventos ausentes de cada linha aparecem no texto", () => {
+  const report = buildSyntheticReport();
+  const text = renderText(report);
+  const rows = report.agents[0].capabilities.filter((row) => row.evidence.source);
+  assert.equal(rows.length, 5, "as cinco linhas cli_local do claude sintético usam a tabela");
+  for (const row of rows) {
+    const line = text
+      .split("\n")
+      .find((candidate) => candidate.includes(`${row.mechanism} × ${row.surface}:`));
+    assert.ok(line, `${row.mechanism}: linha ausente`);
+    const block = text.slice(text.indexOf(line), text.indexOf(line) + line.length + 400);
+    assert.ok(block.includes(row.evidence.source.path), `${row.mechanism}: fonte ausente`);
+    for (const event of row.evidence.events ?? []) {
+      assert.ok(block.includes(event), `${row.mechanism}: evento ${event} ausente`);
+    }
+    for (const event of row.evidence.missingEvents ?? []) {
+      assert.ok(block.includes(`eventos ausentes: ${event}`), `${row.mechanism}: ausente ${event} não exibido`);
+    }
+  }
 });
 
 test("render-text-C11 exclusão documentada de hosted tools do Codex aparece no texto com origem própria, distinta da origem da linha", () => {

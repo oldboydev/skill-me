@@ -168,3 +168,27 @@ test("scope-merge-C8 escopo acima do limite de tamanho vira unknown/input_too_la
   assert.equal(result.configuration, "unknown");
   assert.equal(result.configReasonCode, "input_too_large");
 });
+
+// Tipo de handler fora da fonte consultada (ver config-projection): o
+// arquivo não é inválido, mas também não sustenta configured nem disabled.
+test("scope-merge-C8 escopo inconclusivo bloqueia como os demais estados, preservando o motivo, e é ignorado depois dos sinais resolvidos", () => {
+  const blocking = mergeConfigScopes(
+    [
+      { scope: "managed", state: "missing" },
+      { scope: "project_local", state: "inconclusive", reasonCode: "hooks_handler_type_unrecognized" },
+      { scope: "user", state: "parsed", parsed: { hasHooksSection: true } },
+    ],
+    { isDisabled: claudeIsDisabled, hasHooks: hasHooksSection },
+  );
+  assert.equal(blocking.configuration, "unknown");
+  assert.equal(blocking.configReasonCode, "hooks_handler_type_unrecognized");
+
+  const settled = mergeConfigScopes(
+    [
+      { scope: "project_local", state: "parsed", parsed: { disableAllHooks: false, hasHooksSection: true } },
+      { scope: "user", state: "inconclusive", reasonCode: "hooks_handler_type_unrecognized" },
+    ],
+    { isDisabled: claudeIsDisabled, hasHooks: hasHooksSection },
+  );
+  assert.equal(settled.configuration, "configured");
+});

@@ -5,6 +5,7 @@ import { buildCapabilityMatrix } from "./capability-matrix.mjs";
 import { probeCollector } from "./collector-probe.mjs";
 import { buildEnvelope } from "./report-envelope.mjs";
 import { isVersionProfileCompatible } from "./known-version-profiles.mjs";
+import { readContractEvidence } from "./contract-evidence.mjs";
 
 const STATIC_LIMITATIONS = [
   "runtimeVerification não é realizada nesta entrega: mecanismos configurados " +
@@ -26,21 +27,26 @@ async function diagnoseAgent({ presence, env, platform, cwd, fs }) {
     fs,
   });
   const versionProfileCompatible = isVersionProfileCompatible(presence.id, presence.version);
+  // Uma versão compatível com o perfil examinado não é, por si só, evidência
+  // do contrato de nenhum mecanismo: só prova que aquele número foi lido de
+  // um artefato real. O contrato vem da tabela que a própria instalação traz,
+  // procurada no pacote ligado ao launcher, e só quando a versão desse
+  // pacote está num perfil examinado — antes disso a matriz já decide por
+  // presença/versão e a leitura seria inútil.
+  const contract =
+    presence.presence === "present" && versionProfileCompatible
+      ? await readContractEvidence({ agentId: presence.id, packageDir: presence.packageDir, fs })
+      : null;
   const evidence = {
+    presence: presence.presence,
+    version: presence.version,
     configuration: configResult.configuration,
     trust: configResult.trust,
     versionProfileCompatible,
-    // Uma versão compatível com o perfil examinado não é, por si só,
-    // evidência do contrato de nenhum mecanismo específico — só prova que
-    // aquele número de versão foi lido de um artefato real. Esta entrega
-    // não inspeciona nenhum artefato de contrato por mecanismo (hooks/
-    // tools/skills), então nenhuma capacidade chega a "verified" por este
-    // caminho; capability-matrix.mjs continua capaz de produzir "verified"
-    // quando receber essa evidência (ver capability-matrix.unit.test.mjs),
-    // mas run-diagnostics.mjs nunca a fornece hoje — a lacuna fica
-    // explícita como "unverified" em vez de presumida a partir da versão.
-    hasLocalVerifiedContract: false,
+    contract,
     documentationOnly: false,
+    // A CLI declara o que leu do ambiente que recebeu; se esse ambiente foi
+    // montado por um teste, é o registro do cenário que diz "fixture".
     origin: "real_environment",
   };
   const capabilities = buildCapabilityMatrix({
@@ -67,7 +73,7 @@ export async function runDiagnostics({ cwd, collectorEndpoint, env, platform, fs
     .split(platformPathDelimiter(platform))
     .filter((entry) => entry.length > 0);
 
-  const agentsPresence = await resolveAgents({ pathDirs, platform, fs });
+  const agentsPresence = await resolveAgents({ pathDirs, platform, env, fs });
   const agents = [];
   for (const presence of agentsPresence) {
     agents.push(await diagnoseAgent({ presence, env, platform, cwd, fs }));

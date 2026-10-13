@@ -8,12 +8,13 @@
 // fixo do SO (ver src/doctor/config-sources.mjs) que este teste não escreve
 // nem sobrescreve; esse cenário é provado em scope-merge.unit.test.mjs.
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { makeScratch } from "./helpers/fixture-agents.mjs";
 import { AGENT_CONFIG_PATH, writeAgentConfig } from "./helpers/fixture-agent-config.mjs";
-import { runDoctorJson } from "./helpers/spawn-doctor.mjs";
+import { CANARY } from "./helpers/fixture-configs.mjs";
+import { runDoctor, runDoctorJson } from "./helpers/spawn-doctor.mjs";
 
 function homeEnv(home) {
   return {
@@ -107,7 +108,11 @@ test("configuration-trust-C8 config.toml do Codex com [hooks] definido fica conf
   const scratch = makeScratch("doctor-c8-codex-configured-");
   try {
     const home = path.join(scratch, "home");
-    writeAgentConfig(home, "codex", '[hooks]\nPreToolUse = [{ command = "x" }]\n');
+    writeAgentConfig(
+      home,
+      "codex",
+      '[[hooks.PreToolUse]]\nmatcher = "^Bash$"\n\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "x"\n',
+    );
     const { status, report } = runDoctorJson([], { env: homeEnv(home) });
     assert.equal(status, 0);
     const codex = report.agents.find((a) => a.id === "codex");
@@ -128,7 +133,7 @@ test("configuration-trust-C8 hooks_auto_accept:true do Hermes é a única origem
     writeAgentConfig(
       home,
       "hermes",
-      'hooks:\n  agent:start:\n    - command: "internal-safe-handler"\nhooks_auto_accept: true\n',
+      'hooks:\n  pre_tool_call:\n    - command: "internal-safe-handler"\nhooks_auto_accept: true\n',
       { env: homeEnv(home), platform: process.platform },
     );
     const { status, report } = runDoctorJson([], { env: homeEnv(home) });
@@ -200,7 +205,7 @@ test("configuration-trust-C8 campo 'trust' arbitrário embutido no próprio arqu
       home,
       "claude",
       JSON.stringify({
-        hooks: { PreToolUse: [] },
+        hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "x" }] }] },
         trust: "trusted",
         trusted: true,
       }),
@@ -211,6 +216,255 @@ test("configuration-trust-C8 campo 'trust' arbitrário embutido no próprio arqu
     assert.equal(claude.configuration, "configured");
     assert.notEqual(claude.trust, "trusted");
     assert.equal(claude.trust, "unknown");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Achado formal 6 — fronteira real da CLI: JSON válido com a seção de hooks
+// fora da forma nativa do Claude não pode virar configured/complete. O agente
+// afetado fica invalid com motivo, o relatório fica partial e os outros dois
+// agentes continuam no relatório com o próprio estado.
+test("configuration-trust-C8 settings.json com hooks:{PreToolUse:42} ou hooks:[\"invalid\"] fica invalid/hooks_structure_invalid, partial, preservando os demais", () => {
+  for (const content of [{ hooks: { PreToolUse: 42 } }, { hooks: ["invalid"] }]) {
+    const scratch = makeScratch("doctor-c8-hooks-estrutura-");
+    try {
+      const home = path.join(scratch, "home");
+      writeAgentConfig(home, "claude", JSON.stringify(content));
+      const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+      const label = JSON.stringify(content);
+      assert.equal(status, 0, label);
+      assert.equal(report.status, "partial", label);
+      assert.equal(report.agents.length, 3, label);
+      const claude = report.agents.find((a) => a.id === "claude");
+      assert.equal(claude.configuration, "invalid", label);
+      assert.equal(claude.configReasonCode, "hooks_structure_invalid", label);
+      assert.equal(claude.trust, "unknown", label);
+      for (const id of ["codex", "hermes"]) {
+        const other = report.agents.find((a) => a.id === id);
+        assert.equal(other.configuration, "not_configured", `${label}: ${id} preservado`);
+      }
+      // A configuração lida pertence à CLI local; superfícies não
+      // inspecionadas continuam com configuration unknown.
+      for (const row of claude.capabilities.filter((r) => r.surface === "cli_local")) {
+        assert.equal(row.configuration, "invalid", `${label}: ${row.mechanism}`);
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+});
+
+test("configuration-trust-C8 config.toml do Codex e config.yaml do Hermes fora da forma nativa ficam invalid no relatório real", () => {
+  const scratch = makeScratch("doctor-c8-hooks-estrutura-codex-hermes-");
+  try {
+    const home = path.join(scratch, "home");
+    const env = homeEnv(home);
+    writeAgentConfig(home, "codex", "[hooks]\nPreToolUse = 42\n");
+    writeAgentConfig(home, "hermes", 'hooks:\n  pre_tool_call:\n    - matcher: "terminal"\n', {
+      env,
+      platform: process.platform,
+    });
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    for (const id of ["codex", "hermes"]) {
+      const agent = report.agents.find((a) => a.id === id);
+      assert.equal(agent.configuration, "invalid", id);
+      assert.equal(agent.configReasonCode, "hooks_structure_invalid", id);
+    }
+    assert.equal(report.agents.find((a) => a.id === "claude").configuration, "not_configured");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("configuration-trust-C8 seção de hooks vazia e válida (ou evento sem handler) continua not_configured, sem partial", () => {
+  for (const content of [{ hooks: {} }, { hooks: { PreToolUse: [] } }]) {
+    const scratch = makeScratch("doctor-c8-hooks-vazio-");
+    try {
+      const home = path.join(scratch, "home");
+      const label = JSON.stringify(content);
+      writeAgentConfig(home, "claude", label);
+      const { status, report } = runDoctorJson([], { env: homeEnv(home) });
+      assert.equal(status, 0, label);
+      assert.equal(report.status, "complete", label);
+      const claude = report.agents.find((a) => a.id === "claude");
+      assert.equal(claude.configuration, "not_configured", label);
+      assert.equal(claude.trust, "not_applicable", label);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+});
+
+// Pré-revisão da forma nativa (achado 6): handler de tipo conhecido sem o
+// alvo obrigatório não registra hook nenhum e não pode chegar a configured.
+test("configuration-trust-C8 handler sem alvo obrigatório (Claude {type:'command'}, Codex {}) fica invalid no relatório real, nunca configured", () => {
+  const scratch = makeScratch("doctor-c8-handler-sem-alvo-");
+  try {
+    const home = path.join(scratch, "home");
+    const env = homeEnv(home);
+    writeAgentConfig(home, "claude", JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: "command" }] }] } }));
+    writeAgentConfig(home, "codex", "[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\n");
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    for (const id of ["claude", "codex"]) {
+      const agent = report.agents.find((a) => a.id === id);
+      assert.equal(agent.configuration, "invalid", id);
+      assert.equal(agent.configReasonCode, "hooks_structure_invalid", id);
+      assert.equal(agent.trust, "unknown", id);
+    }
+    assert.equal(report.agents.find((a) => a.id === "hermes").configuration, "not_configured");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("configuration-trust-C8 tipo de handler não reconhecido fica unknown/hooks_handler_type_unrecognized no relatório real, JSON e texto, sem confiança", () => {
+  const scratch = makeScratch("doctor-c8-handler-tipo-");
+  try {
+    const home = path.join(scratch, "home");
+    const env = homeEnv(home);
+    writeAgentConfig(
+      home,
+      "claude",
+      JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: "future_kind", target: CANARY }] }] } }),
+    );
+    const { status, stdout, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    const claude = report.agents.find((a) => a.id === "claude");
+    assert.equal(claude.configuration, "unknown");
+    assert.equal(claude.configReasonCode, "hooks_handler_type_unrecognized");
+    assert.equal(claude.trust, "unknown");
+    assert.equal(claude.trustReasonCode, "configuration_not_determined");
+    for (const row of claude.capabilities.filter((r) => r.surface === "cli_local")) {
+      assert.equal(row.configuration, "unknown", row.mechanism);
+      assert.equal(row.runtimeVerification, "not_performed", row.mechanism);
+    }
+    assert.doesNotMatch(stdout, new RegExp(CANARY));
+
+    const text = runDoctor([], { env });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /hooks_handler_type_unrecognized/);
+    assert.doesNotMatch(text.stdout, new RegExp(CANARY));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// managed_dir/windows_managed_dir: campos nativos de [hooks] do Codex
+// (https://learn.chatgpt.com/docs/hooks, "Managed hooks"). O diretório
+// recebe um hooks.json e um script com canário: se o doctor lesse o
+// diretório como fonte de hooks, o Codex ficaria configured ou o canário
+// vazaria; se executasse o script, o marcador existiria.
+test("configuration-trust-C8 managed_dir/windows_managed_dir do Codex são forma válida no relatório real, sem abrir o diretório, sem confiança e sem execução", () => {
+  const scratch = makeScratch("doctor-c8-codex-managed-dir-");
+  try {
+    const home = path.join(scratch, "home");
+    const env = homeEnv(home);
+    const managedDir = path.join(scratch, "enterprise-hooks");
+    const marker = path.join(scratch, "executou.txt");
+    mkdirSync(managedDir, { recursive: true });
+    writeFileSync(
+      path.join(managedDir, "hooks.json"),
+      JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: "command", command: CANARY }] }] } }),
+    );
+    writeFileSync(path.join(managedDir, "pre.cmd"), `@echo ${CANARY} > "${marker}"\r\n`);
+    writeFileSync(path.join(managedDir, "pre.sh"), `#!/bin/sh\necho ${CANARY} > '${marker}'\n`);
+    const dirs = `[hooks]\nmanaged_dir = '${managedDir}'\nwindows_managed_dir = '${managedDir}'\n`;
+    const script = path.join(managedDir, process.platform === "win32" ? "pre.cmd" : "pre.sh");
+    const withEvent = `${dirs}\n[[hooks.PreToolUse]]\nmatcher = "^Bash$"\n\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = '${script}'\n`;
+
+    const expected = [
+      [dirs, "not_configured", "no_config_found", "not_applicable", "configuration_not_configured"],
+      [withEvent, "configured", "hooks_configured", "unknown", "no_native_consent_evidence"],
+    ];
+    for (const [content, configuration, configReasonCode, trust, trustReasonCode] of expected) {
+      writeAgentConfig(home, "codex", content);
+      const { status, stdout, report } = runDoctorJson([], { env });
+      assert.equal(status, 0, configuration);
+      assert.equal(report.status, "complete", configuration);
+      const codex = report.agents.find((a) => a.id === "codex");
+      assert.equal(codex.configuration, configuration);
+      assert.equal(codex.configReasonCode, configReasonCode);
+      assert.equal(codex.trust, trust);
+      assert.equal(codex.trustReasonCode, trustReasonCode);
+      for (const row of codex.capabilities) {
+        assert.equal(row.runtimeVerification, "not_performed", `${row.mechanism}/${row.surface}`);
+      }
+      assert.doesNotMatch(stdout, new RegExp(CANARY), configuration);
+      assert.equal(existsSync(marker), false, "o script do diretório gerenciado não pode ser executado");
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Achado 2 da pré-revisão formal da rodada 3 (Landing "Nomes de evento não
+// validados"): uma chave de `[hooks]` que não é um dos 12 eventos nativos do
+// Codex (HookEventsToml, rust-v0.162.1) não pode virar configured só porque o
+// handler dentro dela tem alvo — o Codex real nunca inspeciona esse valor.
+test("configuration-trust-C8 chave de evento não reconhecida do Codex com handler command válido fica unknown/hooks_event_name_unrecognized, nunca configured", () => {
+  const scratch = makeScratch("doctor-c8-evento-nao-reconhecido-");
+  try {
+    const home = path.join(scratch, "home");
+    const env = homeEnv(home);
+    writeAgentConfig(
+      home,
+      "codex",
+      '[[hooks.NotAnEvent]]\n[[hooks.NotAnEvent.hooks]]\ntype = "command"\ncommand = "x"\n',
+    );
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "unknown");
+    assert.equal(codex.configReasonCode, "hooks_event_name_unrecognized");
+    assert.equal(codex.trust, "unknown");
+    assert.equal(codex.trustReasonCode, "configuration_not_determined");
+    for (const row of codex.capabilities.filter((r) => r.surface === "cli_local")) {
+      assert.equal(row.configuration, "unknown", row.mechanism);
+    }
+
+    const text = runDoctor([], { env });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /hooks_event_name_unrecognized/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Achado 3 da pré-revisão formal da rodada 3 (Landing "Campos opcionais
+// tipados do Codex"): um campo opcional conhecido (`timeout`) com tipo errado
+// falha a deserialização do documento inteiro no Codex real — o doctor não
+// pode chamar isso de configured/complete. Caso concreto do achado.
+test("configuration-trust-C8 handler command do Codex com timeout de tipo errado fica invalid no relatório real, nunca configured", () => {
+  const scratch = makeScratch("doctor-c8-timeout-tipo-errado-");
+  try {
+    const home = path.join(scratch, "home");
+    const env = homeEnv(home);
+    writeAgentConfig(
+      home,
+      "codex",
+      '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "echo ok"\ntimeout = { bad = true }\n',
+    );
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.configuration, "invalid");
+    assert.equal(codex.configReasonCode, "hooks_structure_invalid");
+    assert.equal(codex.trust, "unknown");
+    for (const row of codex.capabilities.filter((r) => r.surface === "cli_local")) {
+      assert.equal(row.configuration, "invalid", row.mechanism);
+    }
+
+    const text = runDoctor([], { env });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /hooks_structure_invalid/);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

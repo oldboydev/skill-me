@@ -1,4 +1,10 @@
-const BROKEN_STATES = new Set(["unreadable", "invalid", "too_large", "changed_during_read"]);
+const BROKEN_STATES = new Set([
+  "unreadable",
+  "invalid",
+  "too_large",
+  "changed_during_read",
+  "inconclusive",
+]);
 
 // Combina o resultado de leitura de vários arquivos de configuração (um
 // agente pode ter escopos de usuário, projeto e política gerenciada) em um
@@ -69,6 +75,11 @@ function blockingResult(scope) {
   // nunca um reparo silencioso nem uma reinterpretação como config malformada.
   if (scope.state === "changed_during_read") {
     return { configuration: "unknown", configReasonCode: "config_changed_during_read" };
+  }
+  // Arquivo legível que a forma conhecida não decide (ex.: tipo de handler
+  // fora da fonte consultada): nem inválido nem configurado.
+  if (scope.state === "inconclusive") {
+    return { configuration: "unknown", configReasonCode: scope.reasonCode };
   }
   return {
     configuration: "invalid",

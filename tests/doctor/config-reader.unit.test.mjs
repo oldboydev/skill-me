@@ -8,6 +8,7 @@ import { readAgentConfiguration } from "../../src/doctor/config-reader.mjs";
 import {
   CLAUDE_MANAGED_SETTINGS_PATH,
   claudeConfigScopes,
+  claudeHome,
   codexConfigScopes,
   codexHome,
 } from "../../src/doctor/config-sources.mjs";
@@ -165,4 +166,117 @@ test("config-reader-C9 features.hooks=true do Codex em PROJETO + false em USUÁR
   assert.equal(result.configuration, "unknown");
   assert.equal(result.configReasonCode, "policy_precedence_undetermined");
   assert.notEqual(result.configuration, "disabled");
+});
+
+// Achado formal 6 — JSON válido com seção de hooks estruturalmente inválida
+// precisa chegar ao relatório como `invalid` (e daí `partial`), nunca
+// `configured/hooks_configured`.
+test("config-reader-C8 settings.json do Claude com hooks:{PreToolUse:42} ou hooks:[\"invalid\"] fica invalid/hooks_structure_invalid", async () => {
+  const home = "/fixture/claude-home-invalid";
+  const cwd = "/fixture/claude-project-invalid";
+  const platform = "linux";
+  const userPath = claudeConfigScopes({ home: claudeHome({ env: { HOME: home }, platform }), cwd, platform }).find(
+    (s) => s.scope === "user",
+  ).path;
+  for (const content of [{ hooks: { PreToolUse: 42 } }, { hooks: ["invalid"] }]) {
+    const result = await readAgentConfiguration({
+      agentId: "claude",
+      env: { HOME: home, USERPROFILE: home },
+      platform,
+      cwd,
+      fs: fsWithFiles({ [userPath]: JSON.stringify(content) }),
+    });
+    assert.equal(result.configuration, "invalid", JSON.stringify(content));
+    assert.equal(result.configReasonCode, "hooks_structure_invalid", JSON.stringify(content));
+    assert.equal(result.trust, "unknown");
+  }
+});
+
+// O Codex grava o registro de revisão dos hooks em `[hooks.state]` do
+// config.toml do usuário enquanto os handlers ficam em hooks.json (layout
+// observado localmente). A tabela reservada não pode tornar o config.toml
+// inválido nem contar como hook definido.
+test("config-reader-C8 Codex com só [hooks.state] no config.toml e handlers em hooks.json fica configured pelo hooks.json", async () => {
+  const home = "/fixture/codex-home-state";
+  const cwd = "/fixture/codex-project-state";
+  const platform = "linux";
+  const scopes = codexConfigScopes({ home: codexHome({ env: { HOME: home }, platform }), cwd, platform });
+  const userToml = scopes.find((s) => s.scope === "user" && s.format === "toml").path;
+  const userHooksJson = scopes.find((s) => s.scope === "user" && s.format === "json").path;
+
+  const onlyState = await readAgentConfiguration({
+    agentId: "codex",
+    env: { HOME: home },
+    platform,
+    cwd,
+    fs: fsWithFiles({ [userToml]: "[hooks.state.'x:pre_tool_use:0:0']\n" }),
+  });
+  assert.equal(onlyState.configuration, "not_configured");
+
+  const withHandlers = await readAgentConfiguration({
+    agentId: "codex",
+    env: { HOME: home },
+    platform,
+    cwd,
+    fs: fsWithFiles({
+      [userToml]: "[hooks.state.'x:pre_tool_use:0:0']\n",
+      [userHooksJson]: JSON.stringify({
+        description: "fixture",
+        hooks: { PreToolUse: [{ matcher: "^Bash$", hooks: [{ type: "command", command: "x" }] }] },
+      }),
+    }),
+  });
+  assert.equal(withHandlers.configuration, "configured");
+  assert.equal(withHandlers.configReasonCode, "hooks_configured");
+});
+
+// Pré-revisão da forma nativa: um tipo de handler fora da fonte consultada
+// não pode virar configured nem trusted, nem ser coberto por handlers
+// válidos de outro escopo do Codex (os escopos são aditivos e o arquivo
+// inconclusivo ainda poderia trazer features.hooks).
+test("config-reader-C8 tipo de handler não reconhecido em um escopo fica unknown com motivo e sem confiança", async () => {
+  const home = "/fixture/codex-home-tipo";
+  const cwd = "/fixture/codex-project-tipo";
+  const platform = "linux";
+  const scopes = codexConfigScopes({ home: codexHome({ env: { HOME: home }, platform }), cwd, platform });
+  const projectHooksJson = scopes.find((s) => s.scope === "project" && s.format === "json").path;
+  const userToml = scopes.find((s) => s.scope === "user" && s.format === "toml").path;
+
+  const result = await readAgentConfiguration({
+    agentId: "codex",
+    env: { HOME: home },
+    platform,
+    cwd,
+    fs: fsWithFiles({
+      [projectHooksJson]: JSON.stringify({
+        hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "x" }] }] },
+      }),
+      [userToml]: '[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = "future_kind"\n',
+    }),
+  });
+  assert.equal(result.configuration, "unknown");
+  assert.equal(result.configReasonCode, "hooks_handler_type_unrecognized");
+  assert.equal(result.trust, "unknown");
+  assert.equal(result.trustReasonCode, "configuration_not_determined");
+});
+
+test("config-reader-C8 Codex recebe a plataforma do leitor para escolher o comando efetivo (command_windows no Windows)", async () => {
+  const handlers = JSON.stringify({
+    hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "", command_windows: "x.cmd" }] }] },
+  });
+  const expected = { win32: "configured", linux: "not_configured" };
+  for (const [platform, configuration] of Object.entries(expected)) {
+    const env = platform === "win32" ? { USERPROFILE: "C:\\fixture\\home" } : { HOME: "/fixture/home" };
+    const cwd = platform === "win32" ? "C:\\fixture\\cwd" : "/fixture/cwd";
+    const scopes = codexConfigScopes({ home: codexHome({ env, platform }), cwd, platform });
+    const userHooksJson = scopes.find((s) => s.scope === "user" && s.format === "json").path;
+    const result = await readAgentConfiguration({
+      agentId: "codex",
+      env,
+      platform,
+      cwd,
+      fs: fsWithFiles({ [userHooksJson]: handlers }),
+    });
+    assert.equal(result.configuration, configuration, platform);
+  }
 });

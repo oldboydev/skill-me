@@ -26,16 +26,27 @@ const SUPPORT_TEXT = {
 };
 
 // Cada linha de capacidade expõe exatamente os mesmos campos que o JSON tem
-// por combinação mecanismo×superfície (support, reasonCode, evidence.origin,
-// configuration); reduzir isto a uma contagem (como a versão anterior fazia)
+// por combinação mecanismo×superfície (support, reasonCode, evidence com
+// origem e, quando houver, fonte de contrato e eventos, configuration);
+// reduzir isto a uma contagem (como a versão anterior fazia)
 // esconde por que um mecanismo específico não foi verificado e qual
 // instalação/origem sustenta cada linha — quebrando a paridade de fatos
 // exigida entre texto e JSON (critério 11).
+function renderContractEvidence(evidence) {
+  if (!evidence.source) return "";
+  return (
+    `; fonte: ${evidence.source.path} (${evidence.source.kind})` +
+    `; eventos: ${evidence.events.join(", ")}` +
+    (evidence.missingEvents ? `; eventos ausentes: ${evidence.missingEvents.join(", ")}` : "")
+  );
+}
+
 function renderCapabilityRow(row) {
   const base =
     `    ${row.mechanism} × ${row.surface}: ${SUPPORT_TEXT[row.support]} ` +
     `(motivo: ${row.reasonCode}; origem: ${row.evidence.origin}; ` +
-    `configuração: ${CONFIGURATION_TEXT[row.configuration]})`;
+    `configuração: ${CONFIGURATION_TEXT[row.configuration]}` +
+    `${renderContractEvidence(row.evidence)})`;
   if (!row.exclusion) return base;
   // Exclusão documentada (contrato publicado pelo agente, não inspeção desta
   // instalação): origem/motivo próprios, distintos dos da linha acima.

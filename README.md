@@ -50,7 +50,11 @@ Três estados aparecem em todo relatório e não devem ser confundidos:
   demais entradas continuam presentes. O comando ainda sai com exit `0`.
 - `support: unverified` numa capacidade — não há evidência local vinculada à
   versão encontrada que comprove aquele mecanismo; não significa "não
-  suportado", significa "não comprovado por esta leitura".
+  suportado", significa "não comprovado por esta leitura". O `reasonCode`
+  diz o porquê (ex.: `no_static_contract_source`, `version_unresolved`,
+  `surface_not_inspected`). `verified` exige a tabela de contrato que a
+  própria instalação traz; `unavailable` só aparece na CLI local quando o
+  launcher do agente não está no PATH consultado.
 - `collector.identityVerified: false` — mesmo quando `collector.status` é
   `reachable`, um socket aceitar a conexão não comprova que o processo do
   outro lado é o coletor nem que a captura funciona.

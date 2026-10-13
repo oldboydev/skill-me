@@ -10,6 +10,7 @@ import {
   pathEnv,
 } from "./helpers/fixture-agents.mjs";
 import { writeAgentConfig } from "./helpers/fixture-agent-config.mjs";
+import { hermesPluginsSource } from "./helpers/hermes-contract-source.mjs";
 import { runDoctor, runDoctorJson } from "./helpers/spawn-doctor.mjs";
 
 function emptyHomeEnv(scratch) {
@@ -70,7 +71,10 @@ test("envelope-C11 texto e JSON de processos reais distintos expõem os mesmos f
   const scratch = makeScratch("doctor-c11-paridade-cli-");
   try {
     const dir = path.join(scratch, "bin");
-    const { pathDirs } = installAllAgents(dir, { sentinelPath: path.join(scratch, "sentinel.txt") });
+    const { pathDirs } = installAllAgents(dir, {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      hermesContractSource: hermesPluginsSource({ omit: ["subagent_stop"] }),
+    });
     const env = { PATH: pathEnv(pathDirs), ...emptyHomeEnv(scratch) };
 
     const { status: jsonStatus, report } = runDoctorJson([], { env });
@@ -78,6 +82,12 @@ test("envelope-C11 texto e JSON de processos reais distintos expõem os mesmos f
     const { status: textStatus, stdout } = runDoctor([], { env });
     assert.equal(textStatus, 0);
 
+    const supportsSeen = new Set(report.agents.flatMap((a) => a.capabilities.map((row) => row.support)));
+    assert.ok(supportsSeen.has("verified"), "fixture precisa produzir linhas verified com fonte de contrato");
+    assert.ok(
+      report.agents.some((a) => a.capabilities.some((row) => row.evidence.missingEvents)),
+      "fixture precisa produzir uma linha com eventos ausentes",
+    );
     assert.ok(stdout.includes(report.environment.platform), "plataforma ausente no texto");
     assert.ok(stdout.includes(report.environment.cwd), "cwd ausente no texto");
 
@@ -96,6 +106,17 @@ test("envelope-C11 texto e JSON de processos reais distintos expõem os mesmos f
       const originsSeen = new Set(agent.capabilities.map((row) => row.evidence.origin));
       for (const origin of originsSeen) {
         assert.ok(stdout.includes(origin), `${agent.id}: origem "${origin}" ausente no texto`);
+      }
+      for (const row of agent.capabilities) {
+        if (row.evidence.source) {
+          assert.ok(
+            stdout.includes(row.evidence.source.path),
+            `${agent.id}/${row.mechanism}: fonte de contrato ausente no texto`,
+          );
+          for (const event of [...(row.evidence.events ?? []), ...(row.evidence.missingEvents ?? [])]) {
+            assert.ok(stdout.includes(event), `${agent.id}/${row.mechanism}: evento ${event} ausente no texto`);
+          }
+        }
       }
       for (const row of agent.capabilities) {
         if (!row.exclusion) continue;
