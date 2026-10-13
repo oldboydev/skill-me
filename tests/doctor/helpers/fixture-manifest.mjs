@@ -31,6 +31,8 @@ export const FIXTURE_SCENARIOS = [
   { id: "C14-pe-leitura-parcial", origin: "fixture", os: ["any"], file: "version-metadata.unit.test.mjs" },
   { id: "C15-concorrencia", origin: "fixture", os: ["host"], file: "snapshot-concurrency.cli.test.mjs" },
   { id: "C15-mutacao-durante-leitura", origin: "fixture", os: ["any"], file: "mid-read-mutation.unit.test.mjs" },
+  { id: "C16-versao-sem-perfil-cli", origin: "fixture", os: ["host"], file: "presence.cli.test.mjs" },
+  { id: "C16-config-inacessivel-cli", origin: "fixture", os: ["host"], file: "configuration-trust.cli.test.mjs" },
 ];
 
 // "any"/"host" cobrem SO-independente ou o SO real do executor da suíte;

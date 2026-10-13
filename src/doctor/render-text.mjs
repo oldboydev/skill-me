@@ -25,9 +25,31 @@ const SUPPORT_TEXT = {
   unverified: "não verificado",
 };
 
+// Cada linha de capacidade expõe exatamente os mesmos campos que o JSON tem
+// por combinação mecanismo×superfície (support, reasonCode, evidence.origin,
+// configuration); reduzir isto a uma contagem (como a versão anterior fazia)
+// esconde por que um mecanismo específico não foi verificado e qual
+// instalação/origem sustenta cada linha — quebrando a paridade de fatos
+// exigida entre texto e JSON (critério 11).
+function renderCapabilityRow(row) {
+  const base =
+    `    ${row.mechanism} × ${row.surface}: ${SUPPORT_TEXT[row.support]} ` +
+    `(motivo: ${row.reasonCode}; origem: ${row.evidence.origin}; ` +
+    `configuração: ${CONFIGURATION_TEXT[row.configuration]})`;
+  if (!row.exclusion) return base;
+  // Exclusão documentada (contrato publicado pelo agente, não inspeção desta
+  // instalação): origem/motivo próprios, distintos dos da linha acima.
+  return (
+    base +
+    `\n      exclusão documentada: ${row.exclusion.reasonCode} ` +
+    `(origem: ${row.exclusion.origin}; fonte: ${row.exclusion.source})`
+  );
+}
+
 function renderAgent(agent) {
   const lines = [
     `${agent.id}: ${PRESENCE_TEXT[agent.presence]}` +
+      (agent.path ? ` (caminho: ${agent.path})` : "") +
       (agent.reasonCode ? ` (motivo: ${agent.reasonCode})` : ""),
   ];
   if (agent.presence === "present") {
@@ -41,18 +63,19 @@ function renderAgent(agent) {
     `  configuração: ${CONFIGURATION_TEXT[agent.configuration]} (motivo: ${agent.configReasonCode})`,
   );
   lines.push(`  confiança: ${TRUST_TEXT[agent.trust]} (motivo: ${agent.trustReasonCode})`);
-  const supportCounts = agent.capabilities.reduce((acc, row) => {
-    acc[row.support] = (acc[row.support] ?? 0) + 1;
-    return acc;
-  }, {});
-  const supportSummary = Object.entries(supportCounts)
-    .map(([support, count]) => `${SUPPORT_TEXT[support]}: ${count}`)
-    .join(", ");
-  lines.push(`  cobertura observável (mecanismo × superfície): ${supportSummary}`);
+  lines.push("  cobertura observável (mecanismo × superfície):");
+  for (const row of agent.capabilities) lines.push(renderCapabilityRow(row));
   lines.push(
     "  execução real (runtimeVerification): não verificado nesta entrega (not_performed)",
   );
   return lines.join("\n");
+}
+
+function renderEnvironment(environment) {
+  return (
+    `ambiente: plataforma ${environment.platform}, diretório ${environment.cwd}, ` +
+    `gerado em ${environment.generatedAt}`
+  );
 }
 
 function renderCollector(collector) {
@@ -71,6 +94,7 @@ function renderCollector(collector) {
 export function renderText(report) {
   const lines = [
     `diagnóstico de agentes — schemaVersion ${report.schemaVersion}, status: ${report.status}`,
+    renderEnvironment(report.environment),
     "",
   ];
   for (const agent of report.agents) {

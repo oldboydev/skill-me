@@ -57,7 +57,7 @@ function writeCodexShimContent(sentinelPath) {
   );
 }
 
-function writeCodex(dir, { version, sentinelPath }) {
+export function writeCodex(dir, { version, sentinelPath }) {
   const pkgDir = path.join(dir, "node_modules", "@openai", "codex");
   mkdirSync(pkgDir, { recursive: true });
   writeFileSync(

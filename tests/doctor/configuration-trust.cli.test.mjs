@@ -12,7 +12,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { makeScratch } from "./helpers/fixture-agents.mjs";
-import { writeAgentConfig } from "./helpers/fixture-agent-config.mjs";
+import { AGENT_CONFIG_PATH, writeAgentConfig } from "./helpers/fixture-agent-config.mjs";
 import { runDoctorJson } from "./helpers/spawn-doctor.mjs";
 
 function homeEnv(home) {
@@ -137,6 +137,38 @@ test("configuration-trust-C8 hooks_auto_accept:true do Hermes é a única origem
     assert.equal(hermes.configuration, "configured");
     assert.equal(hermes.trust, "trusted");
     assert.equal(hermes.trustReasonCode, "hooks_auto_accept_enabled");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// C16/G4 — fronteira real da CLI: config inacessível, provada de forma
+// portátil entre Windows/Linux/macOS. chmod não bloqueia o dono no Windows e
+// CI costuma rodar como root, então uma permissão negada real não é
+// reproduzível aqui (essa condição já está provada na camada pura em
+// scope-merge.unit.test.mjs, critério 3). Um diretório no lugar do arquivo
+// de config é uma falha de leitura real e determinística nas três
+// convenções de SO: fs.readFile/open+read sempre rejeita (EISDIR/EPERM
+// conforme o SO), nunca ENOENT — não é um input inventado, é a mesma
+// consequência real de uma config inacessível chegando à CLI de verdade.
+test("configuration-trust-C16 config inacessível (diretório no lugar do arquivo) fica unknown/policy_precedence_undetermined, preservando os demais agentes", () => {
+  const scratch = makeScratch("doctor-c16-config-inacessivel-");
+  try {
+    const home = path.join(scratch, "home");
+    const env = homeEnv(home);
+    const hermesConfigPath = AGENT_CONFIG_PATH.hermes(home, { env, platform: process.platform });
+    mkdirSync(hermesConfigPath, { recursive: true });
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    assert.equal(report.agents.length, 3);
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.configuration, "unknown");
+    assert.equal(hermes.configReasonCode, "policy_precedence_undetermined");
+    const claude = report.agents.find((a) => a.id === "claude");
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(claude.configuration, "not_configured", "config inacessível de um agente não deve contaminar os demais");
+    assert.equal(codex.configuration, "not_configured", "config inacessível de um agente não deve contaminar os demais");
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

@@ -40,6 +40,13 @@ async function readCodexPackageVersion(pkgRootPath, sep, fs) {
   const pkgJsonPath = joinGeneric(sep, pkgRootPath, "package.json");
   const result = await readLinkedText(pkgJsonPath, fs);
   if (result.state === "too_large") return { version: null, reasonCode: "input_too_large" };
+  // package.json mudou de tamanho entre o stat() e a leitura efetiva: o
+  // conteúdo lido pode ser um estado que nunca existiu de verdade (metade de
+  // antes, metade de depois). Fica inconclusivo, nunca publicado como versão
+  // estável nem confundido com "launcher não reconhecido" (critério 15).
+  if (result.state === "changed_during_read") {
+    return { version: null, reasonCode: "version_changed_during_read" };
+  }
   if (result.state === "missing") return { version: null, reasonCode: "launcher_not_recognized" };
   let parsed;
   try {
@@ -82,6 +89,11 @@ export async function resolveCodexVersion(launcherPath, { fs }) {
 
   const linked = await readLinkedText(launcherPath, fs);
   if (linked.state === "too_large") return { version: null, reasonCode: "input_too_large" };
+  // O próprio shim mudou de tamanho durante a leitura: a referência extraída
+  // dele não é confiável (critério 15), então nunca chega a ser avaliada.
+  if (linked.state === "changed_during_read") {
+    return { version: null, reasonCode: "version_changed_during_read" };
+  }
   if (linked.state === "missing") return { version: null, reasonCode: "launcher_not_recognized" };
 
   // Uma referência dentro de um comentário (sem nenhuma execução/require

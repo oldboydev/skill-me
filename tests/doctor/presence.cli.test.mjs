@@ -12,6 +12,7 @@ import {
   installAllAgents,
   makeScratch,
   pathEnv,
+  writeCodex,
 } from "./helpers/fixture-agents.mjs";
 import { inventory } from "./helpers/fs-inventory.mjs";
 import { buildMinimalPe, corruptFixedFileInfoSignature } from "./helpers/synthetic-pe.mjs";
@@ -219,6 +220,37 @@ test("presence-C3 launcher alheio do Codex com package.json vizinho (não refere
     assert.equal(codex.presence, "present");
     assert.equal(codex.version, null);
     assert.equal(codex.reasonCode, "launcher_not_recognized");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// C16/G4 — fronteira real da CLI: uma instalação RECONHECIDA (shim ligado de
+// verdade ao pacote, não um "launcher alheio" como presence-C3 acima) cuja
+// versão não está em known-version-profiles.mjs. Diferente de
+// launcher_not_recognized (vínculo nunca estabelecido), aqui a versão é lida
+// com sucesso; é a matriz de capacidades que deve reportar
+// version_profile_incompatible, nunca "verified" por ela ser mais nova.
+test("presence-C16 instalação reconhecida com versão sem perfil compatível fica version_profile_incompatible na matriz (não launcher_not_recognized)", () => {
+  const scratch = makeScratch("doctor-c16-versao-incompativel-");
+  try {
+    const dir = path.join(scratch, "bin");
+    writeCodex(dir, { version: "9.9.0", sentinelPath: path.join(scratch, "sentinel.txt") });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv([dir]), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.presence, "present");
+    assert.equal(codex.version, "9.9.0");
+    assert.equal(codex.versionSource, "package_metadata");
+    assert.notEqual(codex.reasonCode, "launcher_not_recognized");
+    const cliLocalRows = codex.capabilities.filter((row) => row.surface === "cli_local");
+    assert.equal(cliLocalRows.length, 5);
+    for (const row of cliLocalRows) {
+      assert.notEqual(row.support, "verified", row.mechanism);
+      assert.equal(row.reasonCode, "version_profile_incompatible", row.mechanism);
+    }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

@@ -106,9 +106,19 @@ Proof: `node --test --test-name-pattern="capability-matrix-C6" tests/doctor/capa
 
 **C7** - A matriz cobre os cinco mecanismos (sinais de skill, ferramentas, resultados/erros, sessão/turno,
 subagentes) nas quatro superfícies (CLI local, IDE, desktop, cloud); encontrar a CLI local não verifica outra
-superfície; hosted tools do Codex ficam `unavailable`, não `unverified`; Codex nunca anuncia `SkillStart`
-nativo como `verified`.
+superfície (`unverified/surface_not_inspected`, nunca `unavailable`); Codex nunca anuncia `SkillStart` nativo
+como `verified`. **Corrigido na correção do Verifier (G2)**: esta fase havia equiparado erroneamente hosted
+tools do Codex a `unavailable` — equivalência que não vem da task e que o código nunca produziu (a frase
+desta linha estava desatualizada frente ao comportamento real, sempre `unverified`). A entrega real comunica
+a exclusão de hosted tools dos hooks locais (fonte: "Hooks" em https://learn.chatgpt.com/docs/hooks, seção
+"Tool coverage" - hosted tools como busca web/WebSearch não têm cobertura de hook local documentada) como um
+fato separado (`exclusion: { reasonCode: "hosted_tools_outside_local_hooks", origin: "documented_contract" }`)
+na própria linha `tool_calls`/`cli_local`, sem sobrescrever o `support`/`reasonCode` genérico dessa linha nem
+equipará-la à superfície `cloud` inteira não inspecionada (`surface_not_inspected`) - os dois motivos nunca se
+confundem e nenhum dos dois é `unavailable`.
 Proof: `node --test --test-name-pattern="capability-matrix-C7" tests/doctor/capability-matrix.unit.test.mjs`
+Proof (fronteira real da CLI, motivo distinto da superfície cloud, nos dois formatos):
+`node --test --test-name-pattern="capability-evidence-C7" tests/doctor/capability-evidence.cli.test.mjs`
 
 **C8** - Configurações reais por agente (JSON do Claude, TOML do Codex, YAML do Hermes)
 válidas/inválidas/desabilitadas/bloqueadas por política produzem `configuration` e `trust` corretos com
@@ -142,8 +152,17 @@ chamado. O status `reachable`/`unreachable` por recusa real de socket cruza a fr
 
 **C11** - `doctor` e `doctor --json` apresentam os mesmos fatos; o JSON é um objeto único sem
 banner/ANSI/log antes ou depois; o texto em português distingue ausente/desconhecido/indisponível/não
-verificado; identificadores do JSON são em inglês.
-Proof: `node --test --test-name-pattern="envelope-C11" tests/doctor/envelope.cli.test.mjs`
+verificado; identificadores do JSON são em inglês. **Corrigido na correção do Verifier (G1)**: o renderer de
+texto reduzia cada capacidade a uma contagem por estado e nunca imprimia `agent.path` nem o ambiente
+(`environment.platform/cwd/generatedAt`), então os dois formatos não apresentavam os mesmos fatos/códigos do
+mesmo modelo. `src/doctor/render-text.mjs` agora expõe, por agente, o caminho e, por capacidade, mecanismo ×
+superfície, `support`, `reasonCode`, `evidence.origin`, `configuration` e a exclusão documentada quando
+presente (ver C7).
+Proof: `node --test --test-name-pattern="envelope-C11" tests/doctor/envelope.cli.test.mjs` (inclui a nova
+paridade texto/JSON na fronteira real da CLI, duas invocações de processo distintas sobre a mesma fixture,
+com motivos/origens reais e distintos por superfície)
+Proof (renderer puro com modelo sintético compartilhado, sem depender de timestamps de processo):
+`node --test tests/doctor/render-text.unit.test.mjs`
 
 **C12** - `schemaVersion: 1`, `status: complete|partial|failed`, seções `environment/agents/collector/
 limitations/errors`; config inválida de um agente gera `partial` preservando as demais entradas; exit `0`
@@ -167,13 +186,37 @@ Proof: `node --test tests/doctor/version-metadata.unit.test.mjs`
 
 **C15** - Duas execuções simultâneas sobre as mesmas fixtures não criam cache/lock/backup e retornam os
 mesmos fatos (descontando timestamp); mutação detectada durante a leitura vira limitação, não reparo.
+**Corrigido na correção do Verifier (G3)**: `readBoundedText` (`src/doctor/snapshot-read.mjs`) descartava
+`snapshot.changedDuringRead` e devolvia `state: "ok"` com o texto lido durante a mutação, então os
+consumidores de `shim`/`package_metadata` (Codex) e `source_literal` (Hermes) nunca recebiam essa
+inconclusividade - só `config-reader.mjs` já propagava. Agora `readBoundedText` devolve
+`state: "changed_during_read"` e os três consumidores reais (`launcher-link/codex.mjs`,
+`launcher-link/hermes.mjs`) retornam `version: null`/`reasonCode: "version_changed_during_read"`,
+preservando `presence: present` a montante (a montagem fica em `agent-resolution.mjs`, que só depende de
+`launcherPath` ter sido encontrado).
 Proof: `node --test tests/doctor/snapshot-concurrency.cli.test.mjs`
-Proof (mutação durante a leitura, limitação declarada abaixo): `node --test tests/doctor/mid-read-mutation.unit.test.mjs`
+Proof (mutação durante a leitura, limitação declarada abaixo, inclui o wrapper `readBoundedText` e os três
+consumidores reais de shim/package_metadata/source_literal):
+`node --test tests/doctor/mid-read-mutation.unit.test.mjs`
 
 **C16** - Os cenários da suíte comprovam ausente, versão sem perfil, recurso desabilitado, config
 malformada/inacessível e coletor inacessível, registrando se a origem é fixture ou ambiente real; há casos
-Windows/Linux/macOS nas fixtures; a suíte não alega payload privado nem E2E de captura.
+Windows/Linux/macOS nas fixtures; a suíte não alega payload privado nem E2E de captura. **Corrigido na
+correção do Verifier (G4)**: faltavam cenários na fronteira real da CLI (processo filho) para uma instalação
+RECONHECIDA (vínculo real ao pacote/fonte, não um "launcher alheio") com versão sem perfil compatível, e para
+configuração inacessível. Versão sem perfil: `writeCodex` com versão `9.9.0` fora de
+`known-version-profiles.mjs`, resolução bem-sucedida (`presence: present`, `version: "9.9.0"`,
+`versionSource: "package_metadata"`), e as cinco linhas `cli_local` da matriz ficam
+`unverified/version_profile_incompatible`, nunca `verified` nem `launcher_not_recognized`. Config inacessível:
+prova portátil entre Windows/Linux/macOS sem depender de permissão de SO (`chmod` não bloqueia o dono no
+Windows; CI roda como root) - um diretório real no lugar de `config.yaml` do Hermes produz uma falha de
+leitura real (`EISDIR` no Windows/Linux/macOS) capturada por `readScope`, resultando em
+`configuration: unknown/policy_precedence_undetermined` e preservando Claude/Codex como `not_configured`.
 Proof: `node --test tests/doctor/fixture-suite-inventory.test.mjs`
+Proof (versão sem perfil compatível, fronteira real da CLI):
+`node --test --test-name-pattern="presence-C16" tests/doctor/presence.cli.test.mjs`
+Proof (configuração inacessível, fronteira real da CLI, prova portátil via diretório no lugar do arquivo):
+`node --test --test-name-pattern="configuration-trust-C16" tests/doctor/configuration-trust.cli.test.mjs`
 
 **C17** - A documentação de compatibilidade registra fonte, data de consulta, versão/superfície aplicável,
 evidência obtida e lacunas, separando contrato documentado, inspeção estática e execução real; o README

@@ -5,9 +5,11 @@
 // discordam, como aconteceria se o arquivo mudasse entre as duas chamadas.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readSnapshot } from "../../src/doctor/snapshot-read.mjs";
+import { readBoundedText, readSnapshot } from "../../src/doctor/snapshot-read.mjs";
 import { readAgentConfiguration } from "../../src/doctor/config-reader.mjs";
 import { claudeConfigScopes, claudeHome } from "../../src/doctor/config-sources.mjs";
+import { resolveCodexVersion } from "../../src/doctor/launcher-link/codex.mjs";
+import { resolveHermesVersion } from "../../src/doctor/launcher-link/hermes.mjs";
 
 test("mid-read-mutation-C15 tamanho mudou entre stat e readFile vira limitação, não repete a leitura", async () => {
   let statCalls = 0;
@@ -130,4 +132,137 @@ test("mid-read-mutation-C15 readAgentConfiguration propaga mutação detectada d
   });
   assert.equal(result.configuration, "unknown");
   assert.equal(result.configReasonCode, "config_changed_during_read");
+});
+
+// C15/G3 — readBoundedText (usado por launcher-link/codex.mjs e
+// launcher-link/hermes.mjs, não só por config-reader.mjs) descartava
+// snapshot.changedDuringRead e devolvia state "ok" com o texto lido durante
+// a mutação, como se a leitura fosse estável. Prova direta do wrapper, antes
+// de qualquer consumidor: a detecção precisa chegar como um state distinto
+// de "ok", "missing" e "too_large".
+test("mid-read-mutation-C15/G3 readBoundedText propaga mutação detectada como state changed_during_read, nunca ok", async () => {
+  const stableContent = Buffer.from("conteudo-que-mudou-de-tamanho-durante-a-leitura");
+  const fs = {
+    async open() {
+      let served = false;
+      return {
+        async read(buffer, offset, length, position) {
+          if (served) return { bytesRead: 0 };
+          served = true;
+          stableContent.copy(buffer, offset, 0, stableContent.length);
+          return { bytesRead: stableContent.length };
+        },
+        async stat() {
+          // Mente deliberadamente: diz um tamanho diferente do que a leitura
+          // real devolveu, como numa mutação real durante a leitura.
+          return { size: stableContent.length + 5 };
+        },
+        async close() {},
+      };
+    },
+  };
+  const result = await readBoundedText("/fixture/metadata.json", { fs, maxBytes: 1024 * 1024 });
+  assert.equal(result.state, "changed_during_read");
+  assert.notEqual(result.state, "ok");
+  assert.equal(result.text, undefined, "conteúdo mutado não deve ser exposto como texto estável");
+});
+
+// C15/G3 — consumidor real de package_metadata (Codex): o package.json muda
+// de tamanho entre o stat() e a leitura efetiva. version deve ficar null com
+// motivo específico, nunca a versão lida durante a mutação nem confundido
+// com launcher_not_recognized; o shim em si (primeira leitura) permanece
+// estável neste teste para isolar o consumidor de package_metadata.
+test("mid-read-mutation-C15/G3 resolveCodexVersion: package.json mutado durante a leitura fica version null/version_changed_during_read", async () => {
+  const launcherPath = "/fixture/bin/codex";
+  const pkgJsonPath = "/fixture/bin/node_modules/@openai/codex/package.json";
+  const shimContent = Buffer.from(
+    '#!/usr/bin/env node\nrequire("./node_modules/@openai/codex/bin/codex.js");\n',
+  );
+  const pkgContent = Buffer.from(JSON.stringify({ name: "@openai/codex", version: "0.162.1" }));
+  const fs = {
+    async stat(filePath) {
+      if (filePath === launcherPath) return { size: shimContent.length };
+      if (filePath === pkgJsonPath) return { size: pkgContent.length + 1 };
+      const error = new Error("ENOENT");
+      error.code = "ENOENT";
+      throw error;
+    },
+    async readFile(filePath) {
+      if (filePath === launcherPath) return shimContent;
+      if (filePath === pkgJsonPath) return pkgContent;
+      const error = new Error("ENOENT");
+      error.code = "ENOENT";
+      throw error;
+    },
+  };
+  const result = await resolveCodexVersion(launcherPath, { fs });
+  assert.equal(result.version, null);
+  assert.equal(result.reasonCode, "version_changed_during_read");
+  assert.notEqual(result.reasonCode, "launcher_not_recognized");
+});
+
+// C15/G3 — consumidor real de shim (Codex): o próprio launcher muda de
+// tamanho durante a leitura, antes de qualquer tentativa de vincular ao
+// pacote.
+test("mid-read-mutation-C15/G3 resolveCodexVersion: shim do launcher mutado durante a leitura fica version null/version_changed_during_read", async () => {
+  const launcherPath = "/fixture/bin/codex";
+  const shimContent = Buffer.from(
+    '#!/usr/bin/env node\nrequire("./node_modules/@openai/codex/bin/codex.js");\n',
+  );
+  const fs = {
+    async stat(filePath) {
+      if (filePath === launcherPath) return { size: shimContent.length + 3 };
+      const error = new Error("ENOENT");
+      error.code = "ENOENT";
+      throw error;
+    },
+    async readFile(filePath) {
+      if (filePath === launcherPath) return shimContent;
+      const error = new Error("ENOENT");
+      error.code = "ENOENT";
+      throw error;
+    },
+  };
+  const result = await resolveCodexVersion(launcherPath, { fs });
+  assert.equal(result.version, null);
+  assert.equal(result.reasonCode, "version_changed_during_read");
+});
+
+// C15/G3 — consumidor real de source_literal (Hermes): __init__.py muda de
+// tamanho entre o stat() e a leitura efetiva. O shim/launcher permanece
+// estável neste teste para isolar o consumidor de source_literal.
+test("mid-read-mutation-C15/G3 resolveHermesVersion: __init__.py mutado durante a leitura fica version null/version_changed_during_read (source_literal)", async () => {
+  const launcherPath = "/fixture/hermes-venv/bin/hermes";
+  const libDir = "/fixture/hermes-venv/lib";
+  const initPath = "/fixture/hermes-venv/lib/python3.12/site-packages/hermes_cli/__init__.py";
+  const shimContent = Buffer.from(
+    "#!/usr/bin/env python3\nfrom hermes_cli import main\nimport sys\nsys.exit(main())\n",
+  );
+  const initContent = Buffer.from('__version__ = "0.21.4"\n');
+  const fs = {
+    async stat(filePath) {
+      if (filePath === launcherPath) return { size: shimContent.length };
+      if (filePath === initPath) return { size: initContent.length + 7 };
+      const error = new Error("ENOENT");
+      error.code = "ENOENT";
+      throw error;
+    },
+    async readFile(filePath) {
+      if (filePath === launcherPath) return shimContent;
+      if (filePath === initPath) return initContent;
+      const error = new Error("ENOENT");
+      error.code = "ENOENT";
+      throw error;
+    },
+    async listDir(dirPath) {
+      if (dirPath === libDir) return ["python3.12"];
+      const error = new Error("ENOENT");
+      error.code = "ENOENT";
+      throw error;
+    },
+  };
+  const result = await resolveHermesVersion(launcherPath, { fs });
+  assert.equal(result.version, null);
+  assert.equal(result.reasonCode, "version_changed_during_read");
+  assert.notEqual(result.reasonCode, "version_unreadable");
 });

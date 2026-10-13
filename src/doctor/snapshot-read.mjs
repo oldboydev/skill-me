@@ -54,7 +54,11 @@ export async function readSnapshot(filePath, { fs, maxBytes } = {}) {
 // stat() prévio. ENOENT vira "missing" (resultado normal: artefato ausente);
 // exceder `maxBytes` vira "too_large", distinto de "não reconhecido", para
 // que o chamador possa reportar `input_too_large` em vez de confundir isso
-// com ausência de vínculo.
+// com ausência de vínculo. Uma mutação detectada durante a leitura
+// (`changedDuringRead`) vira "changed_during_read": o texto lido pode
+// corresponder a um estado que já não existe mais (metade antes, metade
+// depois de uma escrita real), então nunca é devolvido como "ok" — mesmo
+// tratamento que `config-reader.mjs` já dá à mesma condição (critério 15).
 export async function readBoundedText(filePath, { fs, maxBytes }) {
   let snapshot;
   try {
@@ -64,5 +68,6 @@ export async function readBoundedText(filePath, { fs, maxBytes }) {
     throw error;
   }
   if (snapshot.tooLarge) return { state: "too_large" };
+  if (snapshot.changedDuringRead) return { state: "changed_during_read" };
   return { state: "ok", text: snapshot.content.toString("utf8") };
 }

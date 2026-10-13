@@ -153,6 +153,7 @@ test("capability-matrix-C7 superfície cloud do Codex não verificada pela CLI l
   assert.equal(row.support, "unverified");
   assert.equal(row.reasonCode, "surface_not_inspected");
   assert.notEqual(row.support, "unavailable");
+  assert.equal(row.exclusion, null, "exclusão de hosted tools só vale para cli_local");
 });
 
 // Critério: nunca anunciar o evento nativo "SkillStart" do Codex sem
@@ -177,6 +178,70 @@ test("capability-matrix-C7 Codex não anuncia SkillStart nativo sem evidência (
       assert.notEqual(row.support, "unavailable", surface);
     }
   }
+});
+
+// C7 — hosted tools do Codex (executadas no servidor, ex.: busca web/
+// WebSearch) ficam fora da cobertura dos hooks locais mesmo na própria CLI
+// local. Essa exclusão vem do CONTRATO DOCUMENTADO (fonte própria, origem
+// "documented_contract"), não de uma inspeção desta instalação — por isso
+// fica num campo `exclusion` separado, sem sobrescrever a avaliação genérica
+// de support/reasonCode/evidence.origin da linha (que continua
+// no_local_evidence com evidência favorável, igual a qualquer outro
+// mecanismo). Só se aplica à própria CLI local: as demais superfícies já não
+// afirmam cobertura nenhuma (surface_not_inspected), então a exclusão
+// específica de hosted tools não acrescenta fato novo ali.
+test("capability-matrix-C7 Codex tool_calls: exclusão de hosted tools é um fato documentado separado, não sobrescreve support/reasonCode/origin da linha", () => {
+  const localRow = buildCapabilityRow({
+    agentId: "codex",
+    mechanism: "tool_calls",
+    surface: "cli_local",
+    evidence: FAVORABLE_EVIDENCE,
+  });
+  assert.equal(localRow.support, "verified");
+  assert.equal(localRow.reasonCode, "local_evidence_matches_contract");
+  assert.deepEqual(localRow.exclusion, {
+    reasonCode: "hosted_tools_outside_local_hooks",
+    origin: "documented_contract",
+    source: "https://learn.chatgpt.com/docs/hooks",
+  });
+  assert.notEqual(localRow.exclusion.origin, localRow.evidence.origin);
+
+  for (const surface of ["ide", "desktop", "cloud"]) {
+    const otherRow = buildCapabilityRow({
+      agentId: "codex",
+      mechanism: "tool_calls",
+      surface,
+      evidence: FAVORABLE_EVIDENCE,
+    });
+    assert.equal(otherRow.reasonCode, "surface_not_inspected", surface);
+    assert.equal(otherRow.exclusion, null, surface);
+  }
+});
+
+// Regressão: sem evidência local favorável, tool_calls/cli_local do Codex
+// segue a avaliação genérica (no_local_evidence ou version_profile_
+// incompatible) normalmente — a exclusão documentada continua presente ao
+// lado, nunca substituindo o motivo real pelo qual a linha não foi avaliada.
+test("capability-matrix-C5/C7 Codex tool_calls: motivo genérico da linha nunca é substituído pela exclusão documentada", () => {
+  const compatibleRow = buildCapabilityRow({
+    agentId: "codex",
+    mechanism: "tool_calls",
+    surface: "cli_local",
+    evidence: { ...FAVORABLE_EVIDENCE, versionProfileCompatible: true, hasLocalVerifiedContract: false },
+  });
+  assert.equal(compatibleRow.support, "unverified");
+  assert.equal(compatibleRow.reasonCode, "no_local_evidence");
+  assert.equal(compatibleRow.exclusion.reasonCode, "hosted_tools_outside_local_hooks");
+
+  const incompatibleRow = buildCapabilityRow({
+    agentId: "codex",
+    mechanism: "tool_calls",
+    surface: "cli_local",
+    evidence: { ...FAVORABLE_EVIDENCE, versionProfileCompatible: false },
+  });
+  assert.equal(incompatibleRow.support, "unverified");
+  assert.equal(incompatibleRow.reasonCode, "version_profile_incompatible");
+  assert.equal(incompatibleRow.exclusion.reasonCode, "hosted_tools_outside_local_hooks");
 });
 
 // Regressão: antes desta correção, o caso codex/skill_usage_signal era

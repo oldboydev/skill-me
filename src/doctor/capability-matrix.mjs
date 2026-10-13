@@ -41,6 +41,31 @@ function evaluateSupport({ agentId, mechanism, surface, evidence }) {
   return { support: "unverified", reasonCode: "no_local_evidence" };
 }
 
+// Hosted tools do Codex (ex.: busca web/WebSearch) rodam no servidor, fora do
+// processo local onde os hooks locais do Codex inspecionam tool_calls (fonte:
+// "Hooks" em https://learn.chatgpt.com/docs/hooks, seção "Tool coverage" —
+// não usar nomes de evento do Hermes aqui, Codex não os documenta). Essa
+// exclusão vem do CONTRATO DOCUMENTADO, não de uma inspeção desta instalação:
+// por isso fica separada da conclusão de support/reasonCode da linha (que
+// permanece a avaliação genérica — no_local_evidence ou
+// version_profile_incompatible, nunca sobrescrita por este fato) e tem sua
+// própria origem "documented_contract", distinta de "real_environment"/
+// "fixture" usada pela evidência da linha. Vale só para tool_calls na própria
+// CLI local: é justamente aí que a exclusão é notável, pois é a superfície
+// que esta entrega inspeciona.
+const CODEX_HOSTED_TOOLS_EXCLUSION = Object.freeze({
+  reasonCode: "hosted_tools_outside_local_hooks",
+  origin: "documented_contract",
+  source: "https://learn.chatgpt.com/docs/hooks",
+});
+
+function knownExclusionFor({ agentId, mechanism, surface }) {
+  if (agentId === "codex" && mechanism === "tool_calls" && surface === "cli_local") {
+    return CODEX_HOSTED_TOOLS_EXCLUSION;
+  }
+  return null;
+}
+
 export function buildCapabilityRow({ agentId, mechanism, surface, evidence = {} }) {
   const { support, reasonCode } = evaluateSupport({
     agentId,
@@ -61,6 +86,8 @@ export function buildCapabilityRow({ agentId, mechanism, surface, evidence = {} 
     evidence: {
       origin: evidence.origin ?? "fixture",
     },
+    // null quando não há exclusão documentada conhecida para esta linha.
+    exclusion: knownExclusionFor({ agentId, mechanism, surface }),
   };
 }
 

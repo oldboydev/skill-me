@@ -70,6 +70,11 @@ async function findSitePackagesInitFile(prefix, sep, fs) {
 export async function resolveHermesVersion(launcherPath, { fs }) {
   const linked = await readLinkedText(launcherPath, fs);
   if (linked.state === "too_large") return { version: null, reasonCode: "input_too_large" };
+  // O próprio shim mudou de tamanho durante a leitura: a referência extraída
+  // dele não é confiável (critério 15), então nunca chega a ser avaliada.
+  if (linked.state === "changed_during_read") {
+    return { version: null, reasonCode: "version_changed_during_read" };
+  }
   // O launcher real (console-script do pip) importa hermes_cli; um shim sem
   // essa referência real (uma linha de comentário mencionando o mesmo texto
   // não conta) não é reconhecido, mesmo que um hermes_cli exista perto.
@@ -91,6 +96,13 @@ export async function resolveHermesVersion(launcherPath, { fs }) {
 
   const initResult = await readLinkedText(initPath, fs);
   if (initResult.state === "too_large") return { version: null, reasonCode: "input_too_large" };
+  // __init__.py mudou de tamanho entre o stat() e a leitura efetiva: o
+  // literal de versão lido pode não corresponder a nenhum estado real do
+  // arquivo. Fica inconclusivo, nunca publicado como source_literal estável
+  // (critério 15).
+  if (initResult.state === "changed_during_read") {
+    return { version: null, reasonCode: "version_changed_during_read" };
+  }
   if (initResult.state === "missing") return { version: null, reasonCode: "version_unreadable" };
   return extractSourceLiteralVersion(initResult.text);
 }

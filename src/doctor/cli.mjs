@@ -5,16 +5,18 @@ import { runDiagnostics } from "./run-diagnostics.mjs";
 import { exitCodeForStatus, toFailureEnvelope } from "./report-envelope.mjs";
 import { renderText } from "./render-text.mjs";
 
-// A mensagem impressa em stderr vem sempre do envelope seguro (vocabulário
-// fechado de report-envelope.mjs), nunca de `error.message` diretamente: um
-// valor arbitrário recebido pela CLI (flag, cwd, endpoint) nunca alcança a
-// saída de texto, da mesma forma que já não alcança o JSON.
+// O código e a mensagem impressos em stderr vêm sempre do envelope seguro
+// (vocabulário fechado de report-envelope.mjs), nunca de `error.code`/
+// `error.message` diretamente: um valor arbitrário recebido pela CLI (flag,
+// cwd, endpoint) nunca alcança a saída de texto, da mesma forma que já não
+// alcança o JSON — e o texto expõe os mesmos dois fatos que o JSON (C11).
 function emitFailure(error, { json, exitCode }) {
   const envelope = toFailureEnvelope(error);
   if (json) {
     process.stdout.write(JSON.stringify(envelope) + "\n");
   } else {
-    process.stderr.write(`Erro: ${envelope.errors[0].message}\n`);
+    const [failure] = envelope.errors;
+    process.stderr.write(`Erro [${failure.code}]: ${failure.message}\n`);
   }
   process.exitCode = exitCode;
 }

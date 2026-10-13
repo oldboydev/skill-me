@@ -322,3 +322,143 @@ executor). Paridade do motor comum reconfirmada nesta data:
 tocado. Nenhum arquivo de teste novo nesta rodada: os três testes de regressão foram adicionados a
 `capability-matrix.unit.test.mjs`, `config-reader.unit.test.mjs` e `configuration-trust.cli.test.mjs`,
 arquivos já existentes. Verifier independente e `review:run` continuam fora desta rodada.
+
+## 8. Rodada de fixes pós-Verifier independente (G1-G4)
+
+O Verifier independente rodou `.checks/issue-3-agent-diagnostics.verified.md` e reprovou (gate FAIL) quatro
+checks com defeito de produto e/ou prova: C7 (G2), C11 (G1), C15 (G3) e C16 (G4). Esta seção documenta as
+quatro correções, dentro do mesmo escopo da task (nenhum critério alterado, nenhuma capacidade nova, nenhuma
+captura real introduzida):
+
+1. **C7/G2 — exclusão de hosted tools do Codex não era consultável**: o relatório nunca comunicava que hosted
+   tools (ferramentas executadas no servidor, ex.: busca web/WebSearch) ficam fora da cobertura dos hooks
+   locais do Codex (fonte: "Hooks" em https://learn.chatgpt.com/docs/hooks, seção "Tool coverage" — a tabela
+   documenta cobertura de hook local para ferramentas de função locais e nenhuma cobertura para hosted tools).
+   O Verifier também apontou que o checklist de preparação (`.checks/issue-3-agent-diagnostics.md`, C7) havia
+   herdado uma equivalência errada ("hosted tools ficam `unavailable`"), nunca produzida pelo código real
+   (sempre `unverified`) nem exigida pela task. Corrigido em duas etapas:
+   - Primeira tentativa: um caso especial em `evaluateSupport` (`capability-matrix.mjs`) que sobrescrevia
+     `reasonCode` de `tool_calls`/`cli_local` do Codex para `hosted_tools_outside_local_hooks`. Revisão
+     adicional do orquestrador (nota preservada em `.checks/code-review/hosted-tools-followup.md`) apontou
+     dois problemas nessa primeira versão: (a) o comentário/documentação citava `pre_tool_call`/
+     `post_tool_call` como nomes de hook do Codex — esses nomes pertencem ao Hermes, não aparecem na fonte
+     primária do Codex; (b) a exclusão é um fato do **contrato documentado**, não desta instalação, então
+     sobrescrever `reasonCode`/`support`/`evidence.origin` da linha escondia o motivo genérico real (ex.:
+     `no_local_evidence`) atrás de um motivo que não resultou de inspeção local, violando a distinção de
+     origem exigida pelos critérios 5/7.
+   - Versão final: `evaluateSupport` nunca trata `tool_calls` como caso especial — a linha `tool_calls`/
+     `cli_local` do Codex segue a avaliação genérica normalmente (`no_local_evidence` ou
+     `version_profile_incompatible`, igual a qualquer outro mecanismo). A exclusão documentada vira um campo
+     próprio e independente na linha, `exclusion: { reasonCode: "hosted_tools_outside_local_hooks", origin:
+     "documented_contract", source: "https://learn.chatgpt.com/docs/hooks" } | null`, presente só para
+     `codex`/`tool_calls`/`cli_local` (nunca para as demais superfícies, que já usam
+     `surface_not_inspected` sem relação com hosted tools). `render-text.mjs` imprime essa exclusão como uma
+     linha adicional, com sua própria origem, quando presente. `docs/agent-compatibility.md` ganhou uma linha
+     nova citando a fonte/seção corretas, sem nomes de hook do Hermes e sem exemplo não sustentado por fonte
+     (removido "interpretador de código"; mantido só "busca web/WebSearch"). Regressão RED→GREEN em
+     `capability-matrix.unit.test.mjs` (linha genérica nunca sobrescrita, exclusão presente só em
+     `cli_local`) e prova de fronteira real da CLI nos dois formatos, com motivo distinto da superfície
+     `cloud`, em `capability-evidence.cli.test.mjs`.
+2. **C11/G1 — texto perdia path, mecanismo/superfície, reasonCode/evidence e decisões de cada capacidade**:
+   `render-text.mjs` reduzia as 20 linhas de capacidade por agente a uma contagem por estado (`verificado: N,
+   não verificado: M`) e nunca imprimia `agent.path` nem `environment.platform/cwd/generatedAt` — os dois
+   formatos deixavam de apresentar os mesmos fatos do mesmo modelo de relatório. Corrigido: o renderer agora
+   imprime, por agente, o caminho do artefato e o ambiente do relatório, e por capacidade, mecanismo ×
+   superfície, `support`, `reasonCode`, `evidence.origin`, `configuration` e a exclusão documentada quando
+   presente — consumindo as decisões já tomadas pelo modelo, sem reimplementar nenhuma regra de diagnóstico
+   no renderer. Provas: `tests/doctor/render-text.unit.test.mjs` (novo; função pura, relatório sintético
+   COMPARTILHADO entre montagem e asserções, sem depender de timestamps de processo) e uma regressão
+   `envelope-C11` em `envelope.cli.test.mjs` que invoca a CLI real duas vezes sobre a mesma instalação
+   sintética (texto numa chamada, JSON na outra) e confirma que todo `reasonCode`/`evidence.origin`/
+   `exclusion` distintos por superfície aparecem no texto — `generatedAt` é o único fato excluído da
+   comparação, por variar entre as duas invocações reais; nenhum outro campo foi ignorado para obter verde.
+3. **C15/G3 — mutação durante a leitura não chegava aos consumidores de versão**: `readBoundedText`
+   (`snapshot-read.mjs`), usado por `launcher-link/codex.mjs` (shim e `package_metadata`) e
+   `launcher-link/hermes.mjs` (shim e `source_literal`), descartava `snapshot.changedDuringRead` e devolvia
+   `state: "ok"` com o texto lido durante a mutação, como se a leitura fosse estável — diferente de
+   `config-reader.mjs`, que já propagava a mesma condição para `configuration: unknown`. Corrigido:
+   `readBoundedText` agora devolve `state: "changed_during_read"`, e os quatro pontos de leitura reais
+   (`resolveCodexVersion` para o shim e para `package.json`; `resolveHermesVersion` para o shim e para
+   `__init__.py`) retornam `version: null`/`reasonCode: "version_changed_during_read"` quando essa mutação é
+   detectada — nunca publicando a versão lida durante a mutação, nunca confundindo com
+   `launcher_not_recognized`/`version_unreadable`, e preservando `presence: present` a montante (decidida em
+   `agent-resolution.mjs` apenas pela existência do launcher, não pela versão). Provas RED→GREEN em
+   `mid-read-mutation.unit.test.mjs`: o wrapper isolado (`readBoundedText`) e os três consumidores reais
+   (package.json mutado, shim mutado, `__init__.py` mutado), cada um com `stat()`/leitura efetiva que
+   discordam deliberadamente, como numa mutação real.
+4. **C16/G4 — faltavam dois cenários na fronteira real da CLI**: o inventário (`fixture-suite-inventory.
+   test.mjs`) provava declaração de origem e existência de arquivo, mas não a montagem real do relatório via
+   processo para (a) uma instalação RECONHECIDA (vínculo real ao pacote, não um "launcher alheio" como
+   `presence-C3`) com versão fora de `known-version-profiles.mjs`, e (b) configuração inacessível. Corrigido
+   com dois testes novos que executam a CLI real:
+   - `presence-C16` (`presence.cli.test.mjs`): `writeCodex` (agora exportado de `fixture-agents.mjs`) com
+     versão `9.9.0`, shim ligado de verdade ao `package.json` — `presence: present`, `version: "9.9.0"`,
+     `versionSource: "package_metadata"`, nunca `launcher_not_recognized`; as cinco linhas `cli_local` da
+     matriz de capacidades ficam `unverified/version_profile_incompatible`.
+   - `configuration-trust-C16` (`configuration-trust.cli.test.mjs`): em vez de permissão negada real (não
+     portátil entre Windows/Linux/macOS — `chmod` não bloqueia o dono no Windows, CI roda como root, mesma
+     limitação já declarada para C3), um diretório real no lugar de `config.yaml` do Hermes produz uma falha
+     de leitura real e determinística nas três convenções de SO (`EISDIR` ao tentar ler um diretório como
+     arquivo, confirmado nesta máquina via `fs.readFile`/`open`+`read`) — `configuration:
+     unknown/policy_precedence_undetermined`, com Claude/Codex preservados como `not_configured` no mesmo
+     relatório (`status: partial`, `agents.length === 3`). Nenhum teste foi pulado em toda plataforma nem
+     afirma permissão nativa não exercitada; os dois cenários novos também foram registrados em
+     `fixture-manifest.mjs` (`C16-versao-sem-perfil-cli`, `C16-config-inacessivel-cli`).
+
+Resultado real após estes fixes (rodado nesta máquina, Windows, nesta data; saída completa salva em
+`.checks/code-review/verifier-fixes-issue-3.npm-test.txt`, sem pipe mascarando o código de saída):
+
+```
+npm test
+  test:governance  -> 6 passed, 0 failed, 0 skipped   (exit 0)
+  test:code-review -> 10 passed, 0 failed, 0 skipped  (exit 0)
+  test:doctor      -> 149 passed, 0 failed, 1 skipped (exit 0)
+EXIT_CODE=0
+```
+
+O único skip continua sendo o mesmo da seção 3 (symlink real, mecanismo POSIX, condicional à plataforma do
+executor) — não um skip novo desta rodada. Nenhum arquivo fora de `src/doctor/**`, `tests/doctor/**`,
+`docs/agent-compatibility.md` e os dois checklists desta issue foi tocado:
+
+- Produto: `src/doctor/capability-matrix.mjs`, `src/doctor/render-text.mjs`, `src/doctor/snapshot-read.mjs`,
+  `src/doctor/launcher-link/codex.mjs`, `src/doctor/launcher-link/hermes.mjs`.
+- Testes/fixtures: `tests/doctor/capability-matrix.unit.test.mjs`,
+  `tests/doctor/capability-evidence.cli.test.mjs`, `tests/doctor/mid-read-mutation.unit.test.mjs`,
+  `tests/doctor/presence.cli.test.mjs`, `tests/doctor/configuration-trust.cli.test.mjs`,
+  `tests/doctor/envelope.cli.test.mjs`, `tests/doctor/helpers/fixture-agents.mjs` (exporta `writeCodex`),
+  `tests/doctor/helpers/fixture-manifest.mjs`. Arquivo de teste novo: `tests/doctor/render-text.unit.test.mjs`.
+- Documentação/checklist: `docs/agent-compatibility.md`, `.checks/issue-3-agent-diagnostics.md` (C7/C11/C15/C16).
+
+Limitações reais preservadas, nenhuma contornada: permissão negada real continua provada só na camada pura
+(`agent-resolution.unit.test.mjs`/`scope-merge.unit.test.mjs`), pela mesma razão de portabilidade entre SOs já
+declarada para C3 — o cenário novo de C16 usa uma falha de leitura real e determinística (diretório no lugar
+do arquivo), não uma simulação de permissão, por isso cruza a fronteira real da CLI sem depender de `chmod`.
+`readBoundedText`/`version_changed_during_read` não promete snapshot transacional nem detecção de toda
+mutação possível — apenas a mesma condição de tamanho divergente entre `stat()` e a leitura efetiva já usada
+por `config-reader.mjs`. Verifier independente e `review:run` continuam fora desta rodada: o orquestrador
+pede nova verificação após o commit.
+
+### Complemento C11 — paridade também nas falhas
+
+A conferência do orquestrador (último parágrafo de `.checks/code-review/hosted-tools-followup.md`) apontou que
+`emitFailure` (`src/doctor/cli.mjs`), no modo texto, imprimia só `envelope.errors[0].message`, perdendo o
+`code` seguro que o JSON informa. Corrigido sem tocar no renderer: o stderr continua direto e agora imprime
+`Erro [<code>]: <message>`, ambos lidos do próprio envelope de `toFailureEnvelope` (vocabulário fechado),
+nunca de `error.code`/`error.message` brutos. Nenhuma flag ou regra nova; C7/C15/C16 não foram alterados.
+
+Prova escrita antes da correção: `envelope-C11 falha em texto expõe o mesmo code e message seguros do envelope
+JSON (flag, cwd e collector inválidos), sem canário nem stack` (`envelope.cli.test.mjs`). Para cada entrada
+inválida (`--<canário>` → `unknown_flag`, `--cwd <scratch>/<canário>` → `cwd_not_found`,
+`--collector=tcp://<canário>:x@127.0.0.1:9` → `invalid_collector_endpoint`), invoca a CLI real duas vezes
+(texto e `--json`), afirma o `code` exato do envelope, exit 2 idêntico nos dois formatos, `code` e `message`
+do envelope presentes no stderr do texto, e ausência do canário e de frame de stack nas quatro saídas.
+
+- RED (comportamento anterior, só esse teste): `tests 1, pass 0, fail 1`, falha em
+  `unknown_flag: código do envelope ausente no texto`.
+- GREEN após a correção: `tests 1, pass 1, fail 0, skipped 0`.
+- Provas afetadas (`envelope.cli.test.mjs` + `collector.cli.test.mjs`): `tests 19, pass 19, fail 0, skipped 0`.
+- `npm test` completo (saída em `.checks/code-review/c11-failure-parity.npm-test.txt`, sem pipe mascarando o
+  código de saída): governance 6/6, code-review 10/10, doctor `tests 151, pass 150, fail 0, skipped 1` (o
+  mesmo skip POSIX de symlink da seção 3), `EXIT_CODE=0`.
+
+Arquivos desta complementação: `src/doctor/cli.mjs` (`emitFailure`) e `tests/doctor/envelope.cli.test.mjs`.
