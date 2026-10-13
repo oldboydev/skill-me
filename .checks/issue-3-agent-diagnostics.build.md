@@ -1090,3 +1090,163 @@ review.mjs,review.test.mjs,schema.json,README.md}` sem diff.
   "grupo vazio, nomes de evento e campos opcionais tipados dos hooks" em
   `.checks/issue-3-agent-diagnostics.md` e esta seção.
 - Evidência: `.checks/code-review/formal-round3-hooks-red.txt`, `…-hooks-green.txt`.
+
+## 13. Rodada de fixes pós-Verifier independente rodada 3 (G1-G4) (13/10/2026)
+
+O Verifier independente rodou `.checks/issue-3-agent-diagnostics.verified.md` sobre o produto
+`46e7c932e236b979754b10b82330be91d8c7597f` e reprovou (gate FAIL, 13/18 checks) quatro classes de defeito:
+C2/C3/C5 (G4 — vínculo Hermes por shebang de outro prefixo) e C8/C12 (G1 — `async`/`input` do Codex tratados
+como `Option<T>`; G2 — `matcher:null` do Codex rejeitado; G3 — evento Hermes fora do `VALID_HOOKS` instalado
+conta como configurado). Encaminhamento do orquestrador: `.checks/code-review/verifier-round3-fixes.md`. O
+FAIL da rodada 3 permanece preservado no commit `c4a4d45` e em `.verified.md`, não editados por este autor.
+Autor: Claude. Nenhuma mudança na task, nos critérios, no motor comum de `scripts/code-review/` (paridade
+SHA-256 confirmada abaixo) ou em `.verified.md`. Sem commit, push, stash deixado, `review:run` ou `pr:create`
+nesta rodada — o orquestrador faz o commit limpo depois desta entrega.
+
+### Ordem seguida (TDD)
+
+Para cada achado: leitura da fonte primária já citada no encaminhamento (sem nova consulta externa, pois as
+mesmas tags/arquivos de `hook_config.rs`, `discovery.rs` e `hermes_cli/plugins.py`/`shell_hooks.py` já
+examinados nas rodadas anteriores bastam) → regressão nova ou corrigida na própria camada e, quando o achado
+cruza a fronteira real da CLI (G3, e os casos formais de G1/G2), também em `configuration-trust.cli.test.mjs`
+→ RED confirmado por execução real (stash dos arquivos de produto desta rodada, suíte afetada rodada sobre o
+produto antigo, depois `stash pop`) → implementação → GREEN com `npm test` completo.
+
+RED real, produto antigo (código de `src/doctor/**` revertido via `git stash` para o estado do commit
+`c4a4d45`/`46e7c93`; testes desta rodada já presentes), saída completa em
+`.checks/code-review/verifier-round3-fixes-red.txt`:
+
+```
+config-projection.unit.test.mjs   -> tests 37, pass 35, fail 2, skipped 0
+agent-resolution.unit.test.mjs    -> tests 35, pass 32, fail 2, skipped 1
+configuration-trust.cli.test.mjs  -> tests 19, pass 18, fail 1, skipped 0
+```
+
+As 5 falhas são exatamente os casos novos/corrigidos desta rodada, cada um pelo motivo esperado:
+`async:null`/`input:null` do Codex davam `configured` (esperado `invalid`); `matcher:null` do Codex dava
+`invalid` (esperado `configured`); o shebang de outro prefixo publicava a versão/pacote do launcher em vez do
+intérprete real, nos dois cenários (pacote correspondente em B, e ausência em B); o evento Hermes fora do
+catálogo instalado dava `configured` na fronteira real da CLI (esperado `not_configured`). O skip é o mesmo
+de sempre (`agent-resolution-C2 realpath/symlink real … POSIX`, condicional ao executor), não um skip novo.
+
+### Decisões e correções por achado
+
+1. **G1 — `async`/`input` do Codex não são `Option<T>` (C8/C12)**: `hook_config.rs` (rust-v0.162.1) tipa
+   `timeout`/`statusMessage`/`additionalContextLimit` como `Option<T>` (ausência e `null` presente contam
+   igualmente como "sem valor"), mas `async` (`r#async: bool`) e `input` do McpTool (`serde_json::Map`) têm
+   `#[serde(default)]` SEM serem `Option`: só a ausência da chave usa o default; um `null` presente é tipo
+   errado para um bool/Map, falhando a deserialização da struct do handler (e por isso do documento inteiro)
+   como qualquer outro tipo errado — a seção 12 (achado 3) tratava os quatro campos com a mesma regra, o que
+   invertia a fonte para estes dois. `isValidDefaultedField` (`hooks-shape.mjs`) decide `async`/`input`;
+   `isValidOptionalField` continua para os três campos `Option<T>` de verdade. A tabela de valores aceitos de
+   `config-projection.unit.test.mjs` (que incluía `async:null` como `configured`) foi corrigida com
+   justificativa da fonte, não preservada como verde incorreto.
+2. **G2 — `matcher:null` do Codex é `Option<String>` válido (C8/C12)**: `MatcherGroup.matcher`
+   (`hook_config.rs:154-159`) é `Option<String>` com default — `null` é o `None` válido, distinto de um
+   matcher de outro tipo (continua `invalid`). `matcherGroupHandlers` ganhou `matcherAllowsNull`, habilitado
+   só para o Codex (`HOOKS_INSPECTORS.codex`); o Claude preserva a exigência atual (`matcher:null` continua
+   `invalid`), por não haver doc nem código acessível que confirme um default equivalente lá — a regra não foi
+   propagada sem fonte, como o encaminhamento exigiu.
+3. **G3 — evento Hermes fora do `VALID_HOOKS` instalado conta como configurado (C8)**: `hooks-shape.mjs`
+   decide só a FORMA do bloco `hooks:` (mapeamento → lista de `{command}`), nunca se o nome do evento existe
+   de verdade na instalação — misturar as duas inverteria a separação já registrada na seção 12/achado 2 e
+   quebraria `inspectHermesHooks`/`projectConfig` como funções síncronas, sem `fs`, usadas por dezenas de
+   testes de forma pura. A validação de catálogo foi adicionada numa camada acima, onde a evidência de
+   contrato (assíncrona, com `fs`/`packageDir`) já é lida para C5:
+   - `contract-evidence.mjs`: `readHermesContract` agora também devolve `validHooks` (a lista crua de nomes de
+     `VALID_HOOKS`, já extraída por `extractHermesValidHooks` para montar `mechanisms`) — nenhuma leitura
+     nova, só exposição do que já era computado.
+   - `hooks-shape.mjs`: `inspectHermesHooks` passa a devolver também `eventsWithTarget` (as CHAVES de evento
+     com ≥1 handler bem formado — nunca o comando/credencial dentro deles), estrutural como `handlersWithTarget`
+     já era.
+   - `config-projection.mjs`: projeta `fields.hermesTargetedEvents` (só para Hermes) a partir de
+     `eventsWithTarget` — acrescentado ao vocabulário seguro já testado (`SAFE_FIELD_KEYS` em
+     `config-projection.unit.test.mjs`), pois são nomes de chave, nunca conteúdo.
+   - `config-reader.mjs`: `readAgentConfiguration` ganhou o parâmetro opcional `hermesValidHooks` (`Set` ou
+     `null`). Quando a configuração resolvida é `configured` para o Hermes E o catálogo foi lido (`!== null`)
+     E nenhum evento com handler bate com a tabela real, a configuração é rebaixada para
+     `not_configured/hooks_event_not_in_installed_catalog` ANTES de `resolveTrust` — `trust` continua
+     decidido por essa única função, nunca duplicando a regra `not_configured → not_applicable` em outro
+     lugar. Sem catálogo lido (`null`), nada muda: o resultado estrutural de sempre é preservado.
+   - `run-diagnostics.mjs`: `readContractEvidence` passou a ser lido ANTES de `readAgentConfiguration` (antes
+     era depois, só para a matriz de capacidades) e seu `validHooks` (quando `state === "found"`) é repassado
+     como `hermesValidHooks`.
+   - Caso misto provado: um evento real ao lado do inventado preserva `configured` (pelo menos um hook de
+     verdade seria registrado) — não é tudo-ou-nada por contagem, só por existência de ao menos um evento
+     válido, conforme o cenário formal demonstrado (não se estendeu a uma contagem por evento sem necessidade
+     demonstrada).
+   - Preservação deliberada do caso sem catálogo: o teste já aprovado `hooks_auto_accept:true do Hermes…`
+     (`configuration-trust.cli.test.mjs`) roda com PATH vazio (presence `absent`, nenhuma instalação real) e
+     já esperava `configured` para `pre_tool_call` sem nenhum `plugins.py` montado — esse teste continua
+     passando sem alteração, porque `hermesValidHooks` fica `null` quando a presença não é `present` (a
+     função só lê contrato quando `presence.presence === "present" && versionProfileCompatible`,
+     inalterado).
+4. **G4 — shebang de outro prefixo atribui versão/contrato do launcher (C2/C3/C5)**: `resolveHermesVersion`
+   (`launcher-link/hermes.mjs`) extraía só a versão X.Y do shebang e presumia que o pacote morava no MESMO
+   prefixo do launcher (`dirnameGeneric(dirnameGeneric(launcherPath))`), mesmo quando o shebang trazia um
+   caminho absoluto de intérprete em OUTRO prefixo. `shebangPythonInterpreterPath` (nova função) reconhece um
+   caminho absoluto `.../pythonX.Y` (com separador — distinto do nome bare que sobra de `#!/usr/bin/env
+   python3.12`, que não carrega prefixo próprio) e, quando presente, o prefixo de busca do site-packages passa
+   a vir DESSE caminho, não do launcher; sem esse caminho absoluto reconhecido, o prefixo do launcher é
+   preservado como sempre — nenhum teste existente (todos no mesmo prefixo, ou via `env`) muda de resultado.
+   Sem pacote correspondente no prefixo do intérprete, o resultado é `launcher_not_recognized` (inconclusivo),
+   nunca uma queda de volta ao pacote do launcher.
+
+### Resultados
+
+```
+npm test   (saída completa em .checks/code-review/verifier-round3-fixes-green.txt, sem pipe mascarando o exit)
+  test:governance  -> tests 6,   pass 6,   fail 0, skipped 0
+  test:code-review -> tests 10,  pass 10,  fail 0, skipped 0
+  test:doctor      -> tests 236, pass 235, fail 0, skipped 1
+EXIT_CODE=0
+```
+
+Delta de `test:doctor` contra a seção 12 (229 → 236): 7 testes novos — 5 na própria camada
+(`config-projection.unit.test.mjs`: 3 novos — Option<T> com null/async e input com null/matcher:null Codex
+vs. Claude; `agent-resolution.unit.test.mjs`: 2 novos — shebang de outro prefixo com e sem pacote
+correspondente) e 2 na fronteira real da CLI (`configuration-trust.cli.test.mjs`: evento Hermes fora do
+catálogo instalado isolado e ao lado de um evento real, usando `installAllAgents`/`hermesPluginsSource` para
+uma instalação reconhecida de verdade, não a forma estrutural isolada). O único skip continua
+`agent-resolution-C2 realpath/symlink real … (POSIX)`, condicional ao executor. Paridade do motor comum
+reconfirmada nesta data: `git diff --exit-code 4242520 -- scripts/code-review/{cli.mjs,review.mjs,
+review.test.mjs,schema.json,README.md}` sem diff.
+
+### Limitações declaradas
+
+- Executado só em Windows 11 Pro, Node 24.21.0 (mesma limitação das seções 9-12); o Verifier já reproduziu
+  G4 e G3 numa CLI real Linux/POSIX isolada (ver `.verified.md`) — esta rodada não repete essa reprodução
+  POSIX-real, só a prova na própria camada (fake-fs, determinística e independente de SO) e, para G3, a prova
+  real de CLI nesta máquina (Windows, instalação sintética via `installAllAgents`). Nenhum launcher/Python/
+  hook de fixture foi executado; nenhuma configuração ativa da máquina foi lida ou alterada.
+- G3 só decide quando o catálogo foi de fato lido e reconhecido (`contract.state === "found"`); nos demais
+  estados (`not_found`, `unreadable`, `too_large`, `changed_during_read`, `unrecognized`, ou presença/versão
+  que nunca chega a tentar a leitura) o comportamento estrutural de sempre é preservado — não foi
+  implementado um estado "unknown sem catálogo" novo, por não haver caso formal que o exija e por já existir
+  um teste aprovado (`hooks_auto_accept`) que depende do comportamento atual nesse cenário. Esse é um gap
+  residual explícito: um evento inventado SEM nenhum catálogo linkável (ex.: Hermes ausente do PATH mas
+  config.yaml presente) continua contando como `configured`, igual a antes desta rodada.
+- `hermesTargetedEvents`/`hermesValidHooks` só carregam nomes de chave (nunca comando/credencial); a projeção
+  segura (`SAFE_FIELD_KEYS`) foi atualizada para reconhecer o novo campo como parte do vocabulário testado,
+  não relaxada de outra forma.
+- O cruzamento de G3 usa só o primeiro escopo analisado (`firstParsedFields`, padrão já existente para
+  evidência de confiança) — sem impacto real, pois o Hermes tem um único escopo (`user`,
+  `hermesConfigScopes`), confirmado em `config-sources.mjs`.
+
+### Arquivos desta rodada
+
+- Produto: `src/doctor/hooks-shape.mjs` (`isValidDefaultedField`, `matcherAllowsNull`, `eventsWithTarget`),
+  `src/doctor/config-projection.mjs` (`fields.hermesTargetedEvents`), `src/doctor/config-reader.mjs`
+  (`hermesValidHooks`, cruzamento antes de `resolveTrust`), `src/doctor/contract-evidence.mjs` (expõe
+  `validHooks`), `src/doctor/run-diagnostics.mjs` (contrato lido antes da configuração, repassa
+  `hermesValidHooks`), `src/doctor/launcher-link/hermes.mjs` (`shebangPythonInterpreterPath`, prefixo do
+  intérprete quando absoluto).
+- Testes: `tests/doctor/config-projection.unit.test.mjs` (1 teste incorreto corrigido + 3 novos),
+  `tests/doctor/agent-resolution.unit.test.mjs` (2 novos), `tests/doctor/configuration-trust.cli.test.mjs`
+  (2 novos).
+- Documentação/checklist: `docs/agent-compatibility.md` (linhas do Codex — `async`/`input`/`matcher` não são
+  todos `Option<T>`; linha do Hermes — catálogo instalado agora decide; linha do launcher Hermes — prefixo do
+  intérprete), Landing "rodada de fixes pós-Verifier independente rodada 3 (G1-G4)" em
+  `.checks/issue-3-agent-diagnostics.md` e esta seção. `.checks/issue-3-agent-diagnostics.verified.md` não foi
+  editado (relatório independente, preservado).
+- Evidência: `.checks/code-review/verifier-round3-fixes-red.txt`, `…-fixes-green.txt`.

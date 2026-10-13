@@ -110,7 +110,10 @@ async function readHermesContract(packageDir, fs) {
   if (read.state === "changed_during_read") return { state: "changed_during_read", source };
   const listed = extractHermesValidHooks(read.text);
   if (listed === null) return { state: "unrecognized", source };
-  return { state: "found", source, mechanisms: mechanismsFromListedEvents(listed) };
+  // `validHooks`: os nomes crus da tabela (não só os mapeados por mecanismo),
+  // consumidos por config-reader.mjs para decidir se um evento configurado
+  // pelo usuário é registrado pelo Hermes instalado (achado G3 da rodada 3).
+  return { state: "found", source, mechanisms: mechanismsFromListedEvents(listed), validHooks: listed };
 }
 
 // Claude (claude.exe nativo) e Codex (codex.exe nativo dentro do pacote npm,

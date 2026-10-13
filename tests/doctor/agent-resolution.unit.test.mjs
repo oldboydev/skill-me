@@ -695,6 +695,49 @@ test("agent-resolution-C3 Hermes: shebang aponta python3.13 sem pacote correspon
   assert.equal(result.reasonCode, "launcher_not_recognized");
 });
 
+// Achado G4 da rodada 3: launcher em /a/bin/hermes com shebang absoluto para
+// um intérprete de OUTRO prefixo (/b/bin/python3.12) não pode publicar a
+// versão/fonte do pacote de A só por proximidade de diretório — o intérprete
+// de verdade está em B. O vínculo precisa seguir o prefixo do próprio
+// shebang (B), nunca o do launcher (A).
+test("agent-resolution-C2/C3/C5 Hermes: shebang com caminho absoluto de outro prefixo liga ao pacote desse prefixo, nunca ao do launcher", async () => {
+  const tree = buildFsTree();
+  addFile(
+    tree,
+    "/a/bin",
+    "hermes",
+    "#!/b/bin/python3.12\nimport sys\nfrom hermes_cli.main import main\nsys.exit(main())\n",
+  );
+  addDir(tree, "/a/lib", "python3.12");
+  addFile(tree, "/a/lib/python3.12/site-packages/hermes_cli", "__init__.py", '__version__ = "0.21.4"\n');
+  addDir(tree, "/b/lib", "python3.12");
+  addFile(tree, "/b/lib/python3.12/site-packages/hermes_cli", "__init__.py", '__version__ = "0.20.0"\n');
+
+  const result = await resolveHermesVersion("/a/bin/hermes", { fs: createFakeFsAdapter(tree) });
+  assert.equal(result.version, "0.20.0", "a fonte precisa ser a do intérprete real (B), não a do launcher (A)");
+  assert.notEqual(result.version, "0.21.4");
+  assert.equal(result.versionSource, "source_literal");
+  assert.equal(result.packageDir, "/b/lib/python3.12/site-packages/hermes_cli");
+});
+
+test("agent-resolution-C3 Hermes: shebang de outro prefixo sem pacote correspondente lá fica inconclusivo, nunca cai para o prefixo do launcher", async () => {
+  const tree = buildFsTree();
+  addFile(
+    tree,
+    "/a/bin",
+    "hermes",
+    "#!/b/bin/python3.12\nimport sys\nfrom hermes_cli.main import main\nsys.exit(main())\n",
+  );
+  addDir(tree, "/a/lib", "python3.12");
+  addFile(tree, "/a/lib/python3.12/site-packages/hermes_cli", "__init__.py", '__version__ = "0.21.4"\n');
+  // /b existe, mas sem hermes_cli nenhum em python3.12.
+  addDir(tree, "/b/lib", "python3.12");
+
+  const result = await resolveHermesVersion("/a/bin/hermes", { fs: createFakeFsAdapter(tree) });
+  assert.equal(result.version, null);
+  assert.equal(result.reasonCode, "launcher_not_recognized");
+});
+
 // --- Vínculo só pela invocação do template npm (pré-revisão formal) ---
 // Todo caso traz o pacote real ao lado do shim e a referência certa no texto;
 // só a POSIÇÃO da referência muda. Uma menção (echo, here-document, string

@@ -19,24 +19,27 @@ function platformPathDelimiter(platform) {
 }
 
 async function diagnoseAgent({ presence, env, platform, cwd, fs }) {
-  const configResult = await readAgentConfiguration({
-    agentId: presence.id,
-    env,
-    platform,
-    cwd,
-    fs,
-  });
   const versionProfileCompatible = isVersionProfileCompatible(presence.id, presence.version);
   // Uma versão compatível com o perfil examinado não é, por si só, evidência
   // do contrato de nenhum mecanismo: só prova que aquele número foi lido de
   // um artefato real. O contrato vem da tabela que a própria instalação traz,
   // procurada no pacote ligado ao launcher, e só quando a versão desse
   // pacote está num perfil examinado — antes disso a matriz já decide por
-  // presença/versão e a leitura seria inútil.
+  // presença/versão e a leitura seria inútil. Lido antes da configuração
+  // porque o Hermes cruza o catálogo (`validHooks`) com os eventos
+  // configurados para decidir "configuration" (achado G3 da rodada 3).
   const contract =
     presence.presence === "present" && versionProfileCompatible
       ? await readContractEvidence({ agentId: presence.id, packageDir: presence.packageDir, fs })
       : null;
+  const configResult = await readAgentConfiguration({
+    agentId: presence.id,
+    env,
+    platform,
+    cwd,
+    fs,
+    hermesValidHooks: contract?.state === "found" ? new Set(contract.validHooks) : null,
+  });
   const evidence = {
     presence: presence.presence,
     version: presence.version,

@@ -11,9 +11,10 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { makeScratch } from "./helpers/fixture-agents.mjs";
+import { installAllAgents, makeScratch, pathEnv } from "./helpers/fixture-agents.mjs";
 import { AGENT_CONFIG_PATH, writeAgentConfig } from "./helpers/fixture-agent-config.mjs";
 import { CANARY } from "./helpers/fixture-configs.mjs";
+import { hermesPluginsSource } from "./helpers/hermes-contract-source.mjs";
 import { runDoctor, runDoctorJson } from "./helpers/spawn-doctor.mjs";
 
 function homeEnv(home) {
@@ -436,6 +437,81 @@ test("configuration-trust-C8 chave de evento não reconhecida do Codex com handl
     rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+// Achado G3 da rodada 3: um evento Hermes fora do catálogo VALID_HOOKS da
+// instalação ligada ao launcher (plugins.py do mesmo pacote da versão) nunca
+// é registrado pelo agente real (_parse_hooks_block ignora nomes fora da
+// tabela) — a configuração não pode afirmar "configured" só porque a chave
+// tem um handler bem formado. Usa installAllAgents para que a versão e o
+// contrato sejam lidos de uma instalação real (presence present, perfil
+// compatível), não apenas a forma estrutural de hooks-shape.mjs.
+test("configuration-trust-C8/G3 Hermes: hooks.made_up_event (fora do VALID_HOOKS instalado) fica not_configured, nunca configured, com o catálogo real ligado", () => {
+  const scratch = makeScratch("doctor-c8-hermes-evento-fora-catalogo-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs } = installAllAgents(dir, {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      hermesContractSource: hermesPluginsSource(),
+    });
+    const home = path.join(scratch, "home");
+    const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
+    writeAgentConfig(home, "hermes", 'hooks:\n  made_up_event:\n    - command: "echo ok"\n', {
+      env,
+      platform: process.platform,
+    });
+
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.status, "complete");
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.version, "0.21.4");
+    assert.equal(hermes.configuration, "not_configured");
+    assert.equal(hermes.configReasonCode, "hooks_event_not_in_installed_catalog");
+    assert.equal(hermes.trust, "not_applicable");
+    assert.equal(hermes.trustReasonCode, "configuration_not_configured");
+
+    const text = runDoctor([], { env });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /hooks_event_not_in_installed_catalog/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Ao lado de um evento REAL da tabela instalada, o evento inventado não
+// impede "configured" — pelo menos um hook de verdade será registrado.
+test("configuration-trust-C8/G3 Hermes: evento real do catálogo instalado ao lado de um inventado continua configured", () => {
+  const scratch = makeScratch("doctor-c8-hermes-evento-misto-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs } = installAllAgents(dir, {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      hermesContractSource: hermesPluginsSource(),
+    });
+    const home = path.join(scratch, "home");
+    const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
+    writeAgentConfig(
+      home,
+      "hermes",
+      'hooks:\n  made_up_event:\n    - command: "echo ok"\n  pre_tool_call:\n    - command: "echo real"\n',
+      { env, platform: process.platform },
+    );
+
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.configuration, "configured");
+    assert.equal(hermes.configReasonCode, "hooks_configured");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Sem o catálogo ligado (presence absent, perfil incompatível, ou plugins.py
+// ausente/ilegível), o comportamento estrutural de sempre é preservado — a
+// ausência de fonte vinculada não vira uma afirmação nova, só não decide
+// nada além do que hooks-shape.mjs já decidia (ver hooks_auto_accept acima,
+// linha ~126, que já prova esse caso sem instalação real nenhuma).
 
 // Achado 3 da pré-revisão formal da rodada 3 (Landing "Campos opcionais
 // tipados do Codex"): um campo opcional conhecido (`timeout`) com tipo errado

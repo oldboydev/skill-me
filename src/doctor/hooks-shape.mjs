@@ -32,6 +32,18 @@ function isValidOptionalField(handler, field, isValidValue) {
   return value === null || isValidValue(value);
 }
 
+// Campo com `#[serde(default)]` mas tipo NÃO `Option<T>` (`async: bool` do
+// Command, `input: Map` do McpTool — hook_config.rs, rust-v0.162.1): a
+// ausência da chave usa o default da fonte, mas um valor presente precisa
+// deserializar como esse tipo exato. Ao contrário de `isValidOptionalField`,
+// `null` aqui não é o `None` de um Option — é um valor de tipo errado para um
+// bool/Map, e falha a deserialização da struct inteira como qualquer outro
+// tipo errado (achado G1 da rodada 3 do Verifier).
+function isValidDefaultedField(handler, field, isValidValue) {
+  if (!Object.hasOwn(handler, field)) return true;
+  return isValidValue(handler[field]);
+}
+
 // Classificação de um handler:
 //   - "targeted": o agente o registra com um alvo;
 //   - "untargeted": forma válida que não registra hook (alvo vazio, tipo que
@@ -92,10 +104,13 @@ function classifyClaudeHandler(handler, event) {
 const CODEX_WINDOWS_COMMAND_KEYS = ["command_windows", "commandWindows"];
 
 // Campos opcionais de `HookHandlerConfig::Command` que a fonte tipa:
-// `timeout` (renomeado de `timeout_sec: Option<u64>`), `async`
-// (`r#async: bool`), `statusMessage` (`status_message: Option<String>`),
-// `additionalContextLimit` (`Option<usize>`). `Prompt {}`/`Agent {}` não têm
-// campo nenhum na fonte, então nunca são afetados por esta checagem.
+// `timeout` (renomeado de `timeout_sec: Option<u64>`) e `statusMessage`
+// (`status_message: Option<String>`) são `Option<T>` — ausência e `null`
+// válidos. `additionalContextLimit` (`Option<usize>`) idem. `async`
+// (`r#async: bool`, com `#[serde(default)]`) NÃO é Option: só a ausência usa
+// o default; um `null` presente é tipo errado (ver isValidDefaultedField).
+// `Prompt {}`/`Agent {}` não têm campo nenhum na fonte, então nunca são
+// afetados por esta checagem.
 function classifyCodexCommand(handler, platform) {
   if (!isString(handler.command)) return "invalid";
   const overrideKeys = CODEX_WINDOWS_COMMAND_KEYS.filter((key) => Object.hasOwn(handler, key));
@@ -104,7 +119,7 @@ function classifyCodexCommand(handler, platform) {
   const override = overrideKeys.length === 1 ? handler[overrideKeys[0]] : null;
   if (override !== null && !isString(override)) return "invalid";
   if (!isValidOptionalField(handler, "timeout", isNonNegativeInteger)) return "invalid";
-  if (!isValidOptionalField(handler, "async", (value) => typeof value === "boolean")) return "invalid";
+  if (!isValidDefaultedField(handler, "async", (value) => typeof value === "boolean")) return "invalid";
   if (!isValidOptionalField(handler, "statusMessage", isString)) return "invalid";
   if (!isValidOptionalField(handler, "additionalContextLimit", isNonNegativeInteger)) return "invalid";
   const effective = platform === "win32" && override !== null ? override : handler.command;
@@ -112,19 +127,21 @@ function classifyCodexCommand(handler, platform) {
 }
 
 // Campos opcionais de `HookHandlerConfig::McpTool` que a fonte tipa:
-// `timeout`/`statusMessage` (mesmos tipos do Command) e `input`
-// (`serde_json::Map` → objeto simples; a checagem extra de representabilidade
-// TOML do deserializer customizado não é reproduzida). discovery.rs: um
-// `mcp_tool` sob o evento SessionEnd é lido e pulado com aviso ("SessionEnd
-// MCP hooks are not supported"), antes mesmo de checar server/tool vazios —
-// mas só depois de a struct deserializar com tipos corretos, então a checagem
-// de tipo decide primeiro.
+// `timeout`/`statusMessage` são `Option<T>` (mesmos tipos do Command, null
+// válido). `input` (`serde_json::Map` com desserializador customizado, NÃO
+// Option — a checagem extra de representabilidade TOML do desserializador não
+// é reproduzida) só aceita ausência ou um objeto; `null` presente é tipo
+// errado, como qualquer outro tipo (ver isValidDefaultedField e achado G1 da
+// rodada 3). discovery.rs: um `mcp_tool` sob o evento SessionEnd é lido e
+// pulado com aviso ("SessionEnd MCP hooks are not supported"), antes mesmo de
+// checar server/tool vazios — mas só depois de a struct deserializar com
+// tipos corretos, então a checagem de tipo decide primeiro.
 function classifyCodexMcpTool(handler, event) {
   const base = classifyRequiredTargets(handler, ["server", "tool"]);
   if (base === "invalid") return "invalid";
   if (!isValidOptionalField(handler, "timeout", isNonNegativeInteger)) return "invalid";
   if (!isValidOptionalField(handler, "statusMessage", isString)) return "invalid";
-  if (!isValidOptionalField(handler, "input", isPlainObject)) return "invalid";
+  if (!isValidDefaultedField(handler, "input", isPlainObject)) return "invalid";
   if (event === "SessionEnd") return "untargeted";
   return base;
 }
@@ -152,13 +169,21 @@ function classifyCodexHandler(handler, platform, event) {
 // (válido, zero handlers) e uma chave estranha ao lado é ignorada — por isso
 // `hooksFieldOptional: true` só para o Codex. O Claude não tem fonte
 // equivalente (a doc não declara um default para esse campo e não há código
-// acessível que o confirme), então preserva a exigência atual. Devolve os
-// handlers (cada um com o evento a que pertence), ou `null` fora da forma.
-function matcherGroupHandlers(groups, { hooksFieldOptional = false } = {}) {
+// acessível que o confirme), então preserva a exigência atual.
+// `matcherAllowsNull` segue a mesma fonte para o próprio campo `matcher`: em
+// `MatcherGroup`, `matcher` é `Option<String>` com default (hook_config.rs:
+// 154–159), então `null` é o `None` válido, diferente de `hooksFieldOptional`
+// (ausência vs. tipo errado de OUTRO campo) — só o Codex tem essa fonte
+// confirmada; o Claude preserva a exigência atual sem ela (achado G2 da
+// rodada 3). Devolve os handlers (cada um com o evento a que pertence), ou
+// `null` fora da forma.
+function matcherGroupHandlers(groups, { hooksFieldOptional = false, matcherAllowsNull = false } = {}) {
   if (!Array.isArray(groups)) return null;
   const handlers = [];
   for (const group of groups) {
-    if (!isPlainObject(group) || !isOptionalString(group.matcher)) return null;
+    if (!isPlainObject(group)) return null;
+    const matcherValid = isOptionalString(group.matcher) || (matcherAllowsNull && group.matcher === null);
+    if (!matcherValid) return null;
     if (group.hooks === undefined && hooksFieldOptional) continue;
     if (!Array.isArray(group.hooks)) return null;
     handlers.push(...group.hooks);
@@ -197,7 +222,13 @@ function summarizeGroupHooks(classifications, hasUnrecognizedEvent) {
 // "configured" só porque o handler dentro tem alvo.
 function inspectMatcherGroupHooks(
   hooks,
-  { classifyHandler, recognizedEvents, reservedKeys = new Map(), hooksFieldOptional = false },
+  {
+    classifyHandler,
+    recognizedEvents,
+    reservedKeys = new Map(),
+    hooksFieldOptional = false,
+    matcherAllowsNull = false,
+  },
 ) {
   if (!isPlainObject(hooks)) return INVALID;
   const classifications = [];
@@ -212,7 +243,7 @@ function inspectMatcherGroupHooks(
       hasUnrecognizedEvent = true;
       continue;
     }
-    const handlers = matcherGroupHandlers(value, { hooksFieldOptional });
+    const handlers = matcherGroupHandlers(value, { hooksFieldOptional, matcherAllowsNull });
     if (handlers === null) return INVALID;
     classifications.push(...handlers.map((handler) => classifyHandler(handler, key)));
   }
@@ -301,9 +332,17 @@ const CLAUDE_RECOGNIZED_EVENTS = new Set([
 // contrato C5 — uma preocupação distinta da forma estrutural aqui).
 const HERMES_RESERVED_KEYS = ["output_spill", "outbound"];
 
+// `eventsWithTarget`: nomes de evento (chaves do mapeamento, nunca conteúdo
+// de comando) com ao menos um handler bem formado — só isso, nada do próprio
+// comando/credencial. Esta checagem é puramente estrutural e não sabe se o
+// nome é um evento real do Hermes instalado; essa validação contra o
+// catálogo (`VALID_HOOKS` do pacote ligado ao launcher) é feita por quem
+// chama com a evidência de contrato, fora desta função (achado G3 da
+// rodada 3 — ver contract-evidence.mjs e config-reader.mjs).
 function inspectHermesHooks(hooks) {
   if (!isPlainObject(hooks)) return INVALID;
   let handlersWithTarget = 0;
+  const eventsWithTarget = new Set();
   for (const [key, entries] of Object.entries(hooks)) {
     if (HERMES_RESERVED_KEYS.includes(key) || entries === null) continue;
     if (!Array.isArray(entries)) return INVALID;
@@ -311,9 +350,10 @@ function inspectHermesHooks(hooks) {
       (entry) => isPlainObject(entry) && isString(entry.command) && entry.command.trim() !== "",
     );
     if (!valid) return INVALID;
+    if (entries.length > 0) eventsWithTarget.add(key);
     handlersWithTarget += entries.length;
   }
-  return { shape: "valid", handlersWithTarget };
+  return { shape: "valid", handlersWithTarget, eventsWithTarget: [...eventsWithTarget] };
 }
 
 const HOOKS_INSPECTORS = {
@@ -328,13 +368,16 @@ const HOOKS_INSPECTORS = {
       recognizedEvents: CODEX_RECOGNIZED_EVENTS,
       reservedKeys: CODEX_RESERVED_KEYS,
       hooksFieldOptional: true,
+      matcherAllowsNull: true,
     }),
   hermes: inspectHermesHooks,
 };
 
 // `{ shape: "invalid", reasonCode }`, `{ shape: "unrecognized", reasonCode }`
-// ou `{ shape: "valid", handlersWithTarget }`. `platform` é a mesma recebida
-// por config-sources e escolhe o comando efetivo do Codex.
+// ou `{ shape: "valid", handlersWithTarget }` (Hermes também devolve
+// `eventsWithTarget`, consumido por quem cruza com o catálogo instalado —
+// ver config-projection.mjs). `platform` é a mesma recebida por
+// config-sources e escolhe o comando efetivo do Codex.
 export function inspectNativeHooks(agentId, hooks, { platform }) {
   const inspect = HOOKS_INSPECTORS[agentId];
   if (!inspect) throw new Error(`agente sem forma de hooks conhecida: ${agentId}`);

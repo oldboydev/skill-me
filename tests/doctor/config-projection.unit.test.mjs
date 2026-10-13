@@ -25,6 +25,7 @@ const SAFE_FIELD_KEYS = [
   "allowManagedHooksOnly",
   "featuresHooksEnabled",
   "hooksAutoAccept",
+  "hermesTargetedEvents",
 ];
 
 function assertShape(result) {
@@ -623,20 +624,70 @@ test("config-projection-C8 Codex: campo opcional de tipo conhecido com tipo erra
   }
 });
 
-test("config-projection-C8 Codex: campo opcional ausente, nulo ou corretamente tipado continua configured", () => {
+test("config-projection-C8 Codex: campo opcional ausente ou corretamente tipado continua configured", () => {
   for (const handler of [
     { type: "command", command: "echo ok" },
-    {
-      type: "command",
-      command: "echo ok",
-      timeout: null,
-      async: null,
-      statusMessage: null,
-      additionalContextLimit: null,
-    },
     { type: "command", command: "echo ok", timeout: 30, async: true, statusMessage: "s", additionalContextLimit: 0 },
     { type: "mcp_tool", server: "s", tool: "t", timeout: 30, statusMessage: "s", input: { a: "b" } },
   ]) {
     assert.equal(projectHandlers("codex", [handler]).configuration, "configured", JSON.stringify(handler));
+  }
+});
+
+// Achado G1 da rodada 3 (hook_config.rs, rust-v0.162.1): `timeout`,
+// `statusMessage` e `additionalContextLimit` são `Option<T>` — `null`
+// presente é o `None` válido, como a ausência. `async` (`r#async: bool`) e
+// `input` (`serde_json::Map`) têm `#[serde(default)]` mas NÃO são Option:
+// só a AUSÊNCIA da chave usa o default; um `null` presente falha a
+// deserialização do campo (tipo errado), como qualquer outro valor que não
+// seja bool/objeto — e isso invalida o documento inteiro, igual aos demais
+// casos de tipo errado acima.
+test("config-projection-C8 Codex: null em timeout/statusMessage/additionalContextLimit (Option<T>) continua configured", () => {
+  const handler = {
+    type: "command",
+    command: "echo ok",
+    timeout: null,
+    statusMessage: null,
+    additionalContextLimit: null,
+  };
+  assert.equal(projectHandlers("codex", [handler]).configuration, "configured", JSON.stringify(handler));
+});
+
+test("config-projection-C8 Codex: null em async (bool) ou input (Map) não é Option — invalida o documento, nunca configured", () => {
+  invalidStructure(withHandlers([{ type: "command", command: "echo ok", async: null }]), "json", "codex");
+  invalidStructure(
+    withHandlers([{ type: "mcp_tool", server: "s", tool: "t", input: null }]),
+    "json",
+    "codex",
+  );
+});
+
+// Achado G2 da rodada 3: `matcher` é `Option<String>` com default em
+// `MatcherGroup` (hook_config.rs:154–159) — `null` é o `None` válido, ao
+// contrário de um matcher de outro tipo (ex.: número), que continua
+// invalid. O Claude não tem fonte equivalente confirmada: preserva a
+// exigência atual (matcher precisa ser string ou ausente; `null` é invalid).
+test("config-projection-C8 Codex: matcher:null é Option<String> válido (configured); Claude sem fonte equivalente continua invalid", () => {
+  const codex = projectConfig({
+    rawText: JSON.stringify({ hooks: { PreToolUse: [{ matcher: null, hooks: [{ type: "command", command: "x" }] }] } }),
+    format: "json",
+    agentId: "codex",
+  });
+  assertShape(codex);
+  assert.equal(codex.configuration, "configured");
+
+  invalidStructure(
+    JSON.stringify({ hooks: { PreToolUse: [{ matcher: null, hooks: [{ type: "command", command: "x" }] }] } }),
+    "json",
+    "claude",
+  );
+
+  // matcher de outro tipo continua invalid para os dois agentes.
+  for (const agentId of ["codex", "claude"]) {
+    invalidStructure(
+      JSON.stringify({ hooks: { PreToolUse: [{ matcher: 42, hooks: [{ type: "command", command: "x" }] }] } }),
+      "json",
+      agentId,
+    );
   }
 });

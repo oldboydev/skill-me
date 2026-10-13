@@ -13,7 +13,8 @@ export const ONE_MIB_BYTES = 1024 * 1024;
 // `hasHooksSection` só é verdadeiro com ≥1 handler que o agente registraria
 // com alvo. Uma seção `hooks` presente (não nula) fora da forma nativa, ou
 // com tipo de handler não reconhecido, devolve só `hooksShape`: nenhum campo
-// do arquivo é aproveitado.
+// do arquivo é aproveitado. `hermesTargetedEvents` (só Hermes) projeta nomes
+// de evento (chaves), nunca o comando/credencial dentro deles.
 function extractSafeFields(parsed, agentId, platform) {
   if (parsed === null || typeof parsed !== "object") return { fields: {} };
   const fields = {};
@@ -21,6 +22,10 @@ function extractSafeFields(parsed, agentId, platform) {
     const hooks = inspectNativeHooks(agentId, parsed.hooks, { platform });
     if (hooks.shape !== "valid") return { hooksShape: hooks.shape, hooksReasonCode: hooks.reasonCode };
     fields.hasHooksSection = hooks.handlersWithTarget > 0;
+    // Só nomes de evento (chaves), nunca conteúdo de comando: consumido por
+    // config-reader.mjs para cruzar com o catálogo VALID_HOOKS da instalação
+    // ligada ao launcher, quando essa evidência existe (achado G3).
+    if (agentId === "hermes") fields.hermesTargetedEvents = hooks.eventsWithTarget ?? [];
   }
   if (typeof parsed.disableAllHooks === "boolean") {
     fields.disableAllHooks = parsed.disableAllHooks;

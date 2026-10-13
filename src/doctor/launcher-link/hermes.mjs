@@ -74,6 +74,19 @@ function shebangPythonVersion(text) {
   return match ? match[1] : null;
 }
 
+// Caminho absoluto do intérprete no shebang, só quando reconhecido como
+// `.../pythonX.Y` (acompanhado de diretório, não um nome bare resolvido via
+// PATH/`env` — ex.: o `python3.12` que sobra de `#!/usr/bin/env python3.12`
+// não tem prefixo próprio). Um caminho absoluto aponta para um prefixo de
+// venv que pode ser diferente do prefixo do launcher: o vínculo precisa
+// seguir ESSE prefixo, nunca presumir que o intérprete mora no mesmo venv do
+// launcher só porque ambos têm `bin`/`Scripts` (achado G4 da rodada 3).
+function shebangPythonInterpreterPath(text) {
+  const interpreter = shebangInterpreter(text);
+  if (interpreter === null || !/[\\/]/.test(interpreter)) return null;
+  return /(?:^|[\\/])python\d+\.\d+$/.test(interpreter) ? interpreter : null;
+}
+
 // `from hermes_cli[.x] import ...` ou `import hermes_cli` como instrução em
 // código — nunca numa docstring ou string.
 function importsHermesCli(tokens) {
@@ -170,10 +183,20 @@ export async function resolveHermesVersion(launcherPath, { fs }) {
   }
 
   const launcherDir = dirnameGeneric(launcherPath); // .../bin ou .../Scripts
-  const prefix = dirnameGeneric(launcherDir); // raiz do venv
-  // O separador para o layout do venv vem do caminho do launcher já
-  // resolvido (dirname), não do caminho original recebido (ver nota
-  // equivalente em launcher-link/codex.mjs).
+  const launcherPrefix = dirnameGeneric(launcherDir); // raiz do venv do launcher
+  // Um shebang com caminho absoluto de intérprete (`#!/outro/prefixo/bin/
+  // pythonX.Y`) liga a esse prefixo, possivelmente diferente do launcher: o
+  // pacote procurado precisa ser o do intérprete real, nunca o do launcher
+  // só por proximidade de diretório (achado G4 da rodada 3). Sem um caminho
+  // absoluto reconhecido (bare/`env`/não-Python), preserva o prefixo do
+  // launcher como sempre.
+  const interpreterPath = shebangPythonInterpreterPath(linked.text);
+  const interpreterPrefix =
+    interpreterPath !== null ? dirnameGeneric(dirnameGeneric(interpreterPath)) : "";
+  const prefix = interpreterPrefix || launcherPrefix;
+  // O separador para o layout do venv vem do caminho já resolvido (dirname),
+  // não do caminho original recebido (ver nota equivalente em
+  // launcher-link/codex.mjs).
   const sep = detectSeparator(prefix || launcherDir);
   const located = await findSitePackagesInitFile(prefix, sep, shebangPythonVersion(linked.text), fs);
   if (located.state === "ambiguous") return { version: null, reasonCode: "version_source_ambiguous" };
