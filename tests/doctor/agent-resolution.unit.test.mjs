@@ -1786,3 +1786,80 @@ test("agent-resolution-hermes-shadow controles do casefold Windows: plataforma n
   assert.equal(checked, 4 + 1 + 1);
   assert.deepEqual(lost, []);
 });
+
+// --- P2 nº1 da revisão formal8 (.checks/code-review/issue-3-formal8-
+// response.json): hasCompiledSibling (seções 30-32) só era aplicada ao
+// primeiro diretório de import, nunca ao pacote JÁ ENCONTRADO em
+// site-packages. O FileFinder do CPython seleciona extensão antes de fonte
+// também dentro desse mesmo diretório (`_bootstrap_external.py`,
+// `FileFinder.find_spec`): um `__init__[.ABI].so/.pyd` ao lado do
+// `__init__.py` do site-packages é o que o Python importaria, nunca o
+// literal textual — a versão e o packageDir precisam ficar inconclusivos,
+// com a presença preservada, sem ler o vizinho.
+const SITE_PACKAGE_INIT_SHADOW_NEIGHBORS = {
+  "extensão __init__ sem marcador de ABI": (tree, packageDir, sep) =>
+    addFile(tree, packageDir, sep === "\\" ? "__init__.pyd" : "__init__.so", "\0"),
+  "extensão __init__ com marcador de ABI": (tree, packageDir, sep) =>
+    addFile(
+      tree,
+      packageDir,
+      sep === "\\" ? "__init__.cp313-win_amd64.pyd" : "__init__.cpython-313-x86_64-linux-gnu.so",
+      "\0",
+    ),
+};
+
+test("agent-resolution-formal8-1 __init__[.ABI].so/.pyd no MESMO diretório do site-packages (não só no primeiro diretório de import) deixa versão/packageDir inconclusivos", async () => {
+  const published = [];
+  let checked = 0;
+  for (const form of Object.keys(SHADOW_BOUND_LAUNCHERS)) {
+    for (const [kind, addNeighbor] of Object.entries(SITE_PACKAGE_INIT_SHADOW_NEIGHBORS)) {
+      checked += 1;
+      const { tree, sep, launcher, cwd, bound } = installShadowableHermes(form);
+      addNeighbor(tree, bound.packageDir, sep);
+      const { fs, reads } = readRecordingFs(tree);
+      const result = await resolveHermesVersion(launcher, { fs, cwd, env: {} });
+      const initRead = reads.filter((filePath) => filePath === bound.packageDir + sep + "__init__.py");
+      if (!isDeepStrictEqual(result, SHADOW_UNBOUND) || initRead.length > 0) {
+        published.push(`${form}/${kind} -> ${JSON.stringify(result)}; __init__.py lido: ${JSON.stringify(initRead)}`);
+      }
+    }
+  }
+  assert.equal(checked, 4 * 2);
+  assert.deepEqual(published, []);
+});
+
+test("agent-resolution-formal8-1 controle de nome: extensão com nome diferente no site-packages não sombreia o __init__.py", async () => {
+  const { tree, launcher, cwd, bound } = installShadowableHermes("shebang absoluto");
+  addFile(tree, bound.packageDir, "outro_modulo.so", "\0");
+  addFile(tree, bound.packageDir, "__init__helper.so", "\0");
+  const result = await resolveHermesVersion(launcher, { fs: createFakeFsAdapter(tree), cwd, env: {} });
+  assert.deepEqual(result, bound);
+});
+
+test("agent-resolution-formal8-1 sufixo maiúsculo do __init__ no site-packages também sombreia no Windows com platform:'win32' declarado; sem platform ou em POSIX, mantém o vínculo (lado conservador)", async () => {
+  const { tree, launcher, cwd, bound } = installShadowableHermes(SHADOW_CMD_FORM);
+  addFile(tree, bound.packageDir, "__init__.PYD", "\0");
+
+  const shadowedWin32 = await resolveHermesVersion(launcher, {
+    fs: createFakeFsAdapter(tree),
+    cwd,
+    env: {},
+    platform: "win32",
+  });
+  assert.deepEqual(shadowedWin32, SHADOW_UNBOUND);
+
+  const conservativePosix = await resolveHermesVersion(launcher, {
+    fs: createFakeFsAdapter(tree),
+    cwd,
+    env: {},
+    platform: "linux",
+  });
+  assert.deepEqual(conservativePosix, bound);
+
+  const conservativeNoPlatform = await resolveHermesVersion(launcher, {
+    fs: createFakeFsAdapter(tree),
+    cwd,
+    env: {},
+  });
+  assert.deepEqual(conservativeNoPlatform, bound);
+});

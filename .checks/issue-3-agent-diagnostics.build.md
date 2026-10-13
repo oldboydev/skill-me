@@ -3745,3 +3745,229 @@ segue fora de alcance (não modelado, nenhum parser novo); o casefold cobre só 
 resolução de caixa no Windows real é do sistema de arquivos (NTFS case-preserving/case-insensitive para abrir
 caminho), não do nosso código, e nenhum probe mostrou esse caminho divergindo; execução só em Windows 11 Pro com
 Node 24.21.0, POSIX/macOS não reexecutados nesta seção.
+
+## 33. Correção dos quatro achados P2 da revisão formal8 (13/10/2026)
+
+Autor: Claude (implementador), conforme `AGENTS.md`. Codex local só revisa; nenhuma implementação pelo Verifier
+nem por outro agente. Encaminhamento: `.checks/code-review/formal8-fixes.md`, que remete aos quatro achados
+estruturados em `.checks/code-review/issue-3-formal8-response.json` (rodada de revisão formal8, HEAD `c7832f5`).
+Nenhuma mutação Git, stash, commit, push, agente novo, execução de Python/hooks/agentes ou acesso a configuração
+real foi feita nesta sessão; `task`, critérios, `.verified.md`, evidência Linux pré-existente, config de revisão,
+motor comum e `AGENTS.md`/`CLAUDE.md` permanecem intactos — só `src/doctor/**`, os testes de `tests/doctor/**` e
+este arquivo de build mudaram.
+
+### 33.1 Achado 1 — `hermes_cli.__init__` preterido por extensão nativa dentro do PRÓPRIO site-packages
+
+`findSitePackagesInitFile` (`hermes.mjs`) aceitava `__init__.py` do site-packages como fonte suficiente sem
+conferir se um `__init__[.ABI].so/.pyd` no MESMO diretório tem precedência — a guarda `hasCompiledSibling` das
+seções 30-32 só era aplicada ao primeiro diretório de import (`mayImportBeforeSitePackages`), nunca ao pacote já
+localizado em site-packages. Pela mesma fonte primária das seções 30-32 ([CPython v3.13.0,
+`_bootstrap_external.py`, `FileFinder.find_spec`](https://github.com/python/cpython/blob/v3.13.0/Lib/importlib/_bootstrap_external.py#L1525)),
+o `_loaders` do FileFinder tenta extensão antes de fonte em CADA diretório examinado, inclusive o do pacote já
+resolvido — não só no primeiro diretório de `sys.path`.
+
+**Decisão.** `resolveHermesVersion` ganha uma chamada a `hasCompiledSibling(dirnameGeneric(initPath),
+COMPILED_INIT_NAME, fs, platform)` logo após `findSitePackagesInitFile` confirmar `state: "found"` e antes de ler
+o texto do `__init__.py`: um vizinho compilado devolve `{version: null, reasonCode: "launcher_not_recognized"}`
+sem nunca abrir o literal preterido, preservando `presence: "present"` (decidida antes, por `isNativeExecutable`/
+`readLinkedText` do próprio launcher) e sem atribuir `packageDir`. `COMPILED_HERMES_CLI_NAME`/`COMPILED_INIT_NAME`
+e o scanner `hasCompiledSibling`/`windowsFoldedSuffix`/`fileExists` saem de `hermes.mjs` para um módulo
+compartilhado novo, `src/doctor/launcher-link/compiled-sibling.mjs` (`compiledModuleSuffixPattern(nome)` gera o
+regex por nome) — reutilizado também pelo achado 2, o segundo consumidor real que justifica o helper (nenhuma
+duplicação de guarda).
+
+### 33.2 Achado 2 — `hermes_cli.plugins` preterido por pacote/extensão/bytecode de maior precedência
+
+`readHermesContract` (`contract-evidence.mjs`) abria `plugins.py` direto, sem conferir se `hermes_cli.plugins`
+resolve para outra coisa: um pacote regular `plugins/__init__.py`, uma extensão de pacote
+`plugins/__init__[.ABI].so/.pyd`, bytecode solto de pacote `plugins/__init__.pyc`, ou uma extensão de MÓDULO
+`plugins[.ABI].so/.pyd` têm precedência real sobre o módulo-fonte `plugins.py` (mesma fonte primária do achado 1 —
+pacote antes de módulo, extensão antes de fonte antes de bytecode em cada nível; texto já lido em
+`verifier12/bootstrap_external.py`, SHA256 registrado na seção 32). Um diretório `plugins/` sem nenhum desses três
+é só porção de namespace (PEP 420) e não impede o módulo regular.
+
+**Decisão.** Nova função `isHermesPluginsModuleSelected(packageDir, fs, platform)` em `contract-evidence.mjs`
+reproduz essa precedência com o MESMO scanner do achado 1 (`hasCompiledSibling`/`fileExists` de
+`compiled-sibling.mjs`, zero duplicação de guarda): confere primeiro se `plugins/` é diretório; sendo, testa
+extensão-init, depois fonte-init (`fileExists`), depois bytecode-init, nessa ordem — qualquer um presente bloqueia
+`plugins.py`; sem nenhum (namespace ou ausência do diretório), testa a extensão de módulo `plugins[.ABI].so/.pyd`
+no próprio `packageDir`. `readHermesContract` chama essa função ANTES de qualquer leitura de conteúdo; preterido,
+devolve um estado novo `"shadowed"` com o mesmo `source` (caminho de `plugins.py`, nunca lido) que os demais
+estados inconclusivos já carregam. `capability-matrix.mjs` ganha `shadowed: "contract_source_shadowed"` em
+`CONTRACT_STATE_REASON` — toda linha da matriz cai em `unverified`, nunca `verified`, como os demais estados
+inconclusivos. `config-reader.mjs` já tratava `hermesValidHooks === null` (qualquer estado que não `"found"`) como
+`hooks_catalog_unavailable`/`unknown`, sem mudança: o estado novo só precisava existir e nunca ser `"found"`.
+`readContractEvidence`/`run-diagnostics.mjs` passam a encaminhar `platform` (mesma convenção explícita do achado
+1, nunca `process.platform` implícito) até o leitor de contrato, necessário para o casefold Windows do scanner.
+
+### 33.3 Achado 3 — HOME/USERPROFILE ausente ou vazio lançava e derrubava o diagnóstico inteiro
+
+`config-sources.mjs`: `homeDir` devolvia `undefined`/`""` sem tratamento, e `claudeHome`/`codexHome`/`hermesHome`
+(fallback sem override) chamavam `path.join(home, ...)` direto — `path.join(undefined, ...)` lança `TypeError`.
+Essa exceção saía de `readAgentConfiguration` (chamada sem try/catch em `diagnoseAgent`), subia por
+`runDiagnostics` e só era presa pela barreira final de `cli.mjs` (`main(...).catch(...)`), produzindo
+`status: "failed"`, `agents: []`, exit `1` — quando o correto é preservar os três agentes e marcar só a
+localização de configuração como indeterminável.
+
+**Decisão.** `homeDir` devolve `null` (não lança) quando a variável relevante (`USERPROFILE` no Windows, `HOME`
+nos demais) está ausente ou vazia. `claudeHome`/`codexHome`/`hermesHome` propagam esse `null` sem chamar
+`path.join` nesse caso (overrides — `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`HERMES_HOME` e o `LOCALAPPDATA` do Hermes no
+Windows — continuam resolvidos ANTES de qualquer `homeDir`, como já era). `claudeConfigScopes`/
+`codexConfigScopes`/`hermesConfigScopes` ganham um helper `userScope(home, buildPath, format)`: com `home: null`,
+o(s) escopo(s) de usuário (só eles dependem de home; managed e de projeto continuam intactos) viram
+`{ path: null, locationUnknown: true }` em vez de construir um caminho. `readScope` (`config-reader.mjs`) confere
+`locationUnknown` primeiro e devolve `{ state: "inconclusive", reasonCode: "config_location_unknown" }` sem
+nenhuma chamada a filesystem — o mesmo estado "inconclusivo" que uma config ilegível já usa em
+`mergeConfigScopes`/`scope-merge.mjs` (nenhuma mudança ali: o contrato de precedência já tratava qualquer estado
+quebrado da mesma forma, inclusive um escopo de maior precedência com hooks reais decidindo antes de alcançar o
+escopo de home desconhecido, e um escopo conhecido vazio nunca provando ausência do desconhecido). Nenhum erro
+interno arbitrário vira `unknown`: só esta condição específica (`locationUnknown`) é tratada assim; qualquer outra
+exceção de leitura continua subindo como `unreadable`/`errorCode` real, inalterado.
+
+### 33.4 Achado 4 — configuração FIFO sem escritor bloqueava `open()` indefinidamente
+
+`createProductionFsAdapter().open()` (`fs-adapter.mjs`) chamava `open(filePath, "r")` sem O_NONBLOCK nem
+verificação de tipo: um FIFO (ou link para FIFO) sem escritor conectado bloqueia essa chamada indefinidamente
+([fifo(7)](https://man7.org/linux/man-pages/man7/fifo.7.html): "opening for read-only access will succeed only
+after a process opens the same FIFO for writing" sem O_NONBLOCK). Como os agentes são diagnosticados
+sequencialmente, um único caminho de configuração FIFO prendia o processo inteiro, incluindo os demais agentes e a
+sondagem do coletor.
+
+**Decisão.** `open()` passa a usar `constants.O_RDONLY | (constants.O_NONBLOCK ?? 0)` (os mesmos `fs.constants` do
+próprio Node, nunca um bitmask hardcoded — no Windows `O_NONBLOCK` é `undefined`, e `?? 0` preserva exatamente o
+`"r"` de antes; no POSIX, abrir um FIFO sem escritor com O_NONBLOCK retorna o fd imediatamente, em vez de
+bloquear). Depois de aberto, `handle.stat()` confirma `isFile()` ANTES de qualquer leitura: um tipo não-regular
+(FIFO, socket, diretório, dispositivo) fecha o handle ali mesmo e lança `ERR_NOT_REGULAR_FILE`, nunca tenta
+`read()`. Não há checagem de tipo por `stat()` prévio ao `open()` (corrida real entre as duas chamadas): a decisão
+usa o próprio descritor já aberto. Único ponto de correção: o adaptador real de produção — nenhum adaptador plano
+de teste (fake fs em memória) precisa de uma nova forma de `stat`, pois não abre arquivo nenhum de verdade; a
+mudança protege todo leitor limitado (`readBoundedText`/`readSnapshot`/`readHead`) que passa por este `open()`,
+sem exigir uma guarda própria em cada chamador.
+
+### Arquivos alterados
+
+- Novo: `src/doctor/launcher-link/compiled-sibling.mjs` (scanner compartilhado, achados 1 e 2).
+- `src/doctor/launcher-link/hermes.mjs` (achado 1 + reuso do scanner), `src/doctor/contract-evidence.mjs`
+  (achado 2), `src/doctor/capability-matrix.mjs` (`shadowed` em `CONTRACT_STATE_REASON`),
+  `src/doctor/run-diagnostics.mjs` (encaminha `platform` ao leitor de contrato), `src/doctor/config-sources.mjs` +
+  `src/doctor/config-reader.mjs` (achado 3), `src/doctor/fs-adapter.mjs` (achado 4).
+- Testes: `tests/doctor/agent-resolution.unit.test.mjs`, `tests/doctor/contract-evidence.unit.test.mjs`,
+  `tests/doctor/capability-matrix.unit.test.mjs` (achados 1-2); `tests/doctor/config-sources.unit.test.mjs`,
+  `tests/doctor/config-reader.unit.test.mjs` (achado 3); `tests/doctor/configuration-trust.cli.test.mjs`
+  (achados 2 e 3, fronteira CLI); novos `tests/doctor/fs-adapter.posix.test.mjs`,
+  `tests/doctor/fifo-config.cli.test.mjs` e `tests/doctor/helpers/fifo-open-probe.mjs` (achado 4, só POSIX).
+- Este arquivo (seção 33). Nenhum arquivo de `task`, critério, `.verified.md`, `scripts/code-review/` (os cinco
+  comuns do motor) ou `AGENTS.md`/`CLAUDE.md` foi tocado.
+
+### RED (`src` idêntico ao HEAD `c7832f5`, confirmado por `git diff --exit-code HEAD -- src`, exit `0`)
+
+Os sete arquivos de `src/doctor/**` tocados nesta seção foram restaurados ao conteúdo de `HEAD` (via
+`git show HEAD:<arquivo>`, leitura, nunca `checkout`/`restore`/`reset`/stash) antes de qualquer execução; o novo
+`compiled-sibling.mjs` foi removido. `git diff --exit-code HEAD -- src` confirmou exit `0` (nenhuma diferença)
+antes do RED.
+
+- **Windows, alvo os seis arquivos de teste não-POSIX** (`agent-resolution`, `contract-evidence`,
+  `capability-matrix`, `config-sources`, `config-reader`, `configuration-trust.cli`):
+  `.checks/code-review/formal8-red.txt` — tests `214`, pass `198`, fail `14`, skipped `2`, exit `1`. As 14 falhas
+  são exatamente os casos novos de cada achado (2 do achado 1, 1 do `capability-matrix` do achado 2, 3 do achado 2
+  em `contract-evidence`, 1 do achado 2 na CLI, 4 do achado 3 em `config-reader`, 2 do achado 3 em
+  `config-sources`, 1 do achado 3 na CLI); os controles (nome diferente, namespace sem init, overrides, managed já
+  resolvendo) já passavam no RED, como esperado de um controle negativo.
+- **POSIX (WSL Ubuntu 22.04, Node 24.13.0 em `/tmp/node-v24.13.0-linux-x64/bin`, Git 2.49 em
+  `/tmp/skill-me-git-runtime/bin`, repositório acessado pelo mesmo caminho via `/mnt/c/...`), achado 4**:
+  `.checks/code-review/formal8-posix-red.txt` — tests `5`, pass `1`, fail `4`, exit `1`, `duration_ms ≈ 30086`. As
+  duas provas de FIFO em `fs-adapter.posix.test.mjs` chamam o adaptador num PROCESSO FILHO isolado
+  (`fifo-open-probe.mjs`) via `spawnSync(..., { timeout: 5000 })`: no RED, o filho foi morto por `SIGTERM` depois
+  de 5s (bloqueio real confirmado, não simulado) — a asserção `signal === null` falhou, provando o travamento sem
+  travar o runner. As duas provas de CLI (`fifo-config.cli.test.mjs`) usam o mesmo protetor já embutido em
+  `runDoctor`/`runDoctorJson` (`spawnSync(..., { timeout: 15_000 })`); ambas falharam por timeout
+  (`~15000ms` cada). O controle (arquivo regular) passou mesmo no RED, como esperado.
+
+### GREEN (fix aplicado — arquivos restaurados do conteúdo corrigido, mesmos testes)
+
+- Windows: `.checks/code-review/formal8-green.txt` — tests `214`, pass `212`, fail `0`, skipped `2`, exit `0`.
+  Duas correções de PREMISSA de teste foram necessárias durante o GREEN (nunca enfraquecimento de asserção):
+  (a) o mock mínimo de `fs` em `contract-evidence-C5 plugins.py ausente, ilegível, acima de 1 MiB ou mutado nunca
+  vira found` só expunha `open` (suficiente antes desta seção); a nova checagem de precedência do achado 2 também
+  precisa de `stat`/`listDir`, então o mock ganhou as duas funções devolvendo "nada aqui" (ENOENT/lista vazia),
+  preservando o cenário de mutação original sem alterar a asserção provada; (b) o teste
+  `config-reader-formal8-3 Claude: HOME ausente não impede decisão quando o escopo managed...` presumia
+  incorretamente que hooks sozinhos no managed já fechavam a pergunta de desativação — `mergeConfigScopes`
+  (contrato preexistente, não desta correção) só interrompe a leitura quando `disabledSettled` também fica
+  verdadeiro; o fixture ganhou `disableAllHooks: false` explícito para fechar as duas perguntas, documentado no
+  próprio teste.
+- POSIX (mesmo WSL/Node/Git, achado 4): `.checks/code-review/formal8-posix-green.txt` — tests `5`, pass `5`,
+  fail `0`, exit `0`, `duration_ms ≈ 5552` (as duas provas de FIFO caem de ~5-15s para dezenas de milissegundos:
+  `open()` não bloqueia mais).
+
+### `npm.cmd test` único, após a última alteração comportamental
+
+`.checks/code-review/formal8-npm-test.txt`, Windows, exit `0`: `test:governance` 6/6 PASS, `test:code-review`
+10/10 PASS, `test:doctor` tests `408`, pass `401`, fail `0`, skipped `7`. Os 7 skips: os 2 já registrados nas
+seções 30-32 (ENOTDIR de arquivo real e symlink real do Codex, exclusivos POSIX) mais os 5 novos desta seção —
+`fs-adapter.posix.test.mjs` (3) e `fifo-config.cli.test.mjs` (2) — todos `{ skip: process.platform === "win32" }`,
+já comprovados via WSL acima (não há FIFO real no Windows). Não existe suíte própria de governança/code-review
+afetada por esta correção; os cinco arquivos comuns de `scripts/code-review/` permanecem byte a byte iguais à
+base (não tocados).
+
+### Provas por achado
+
+1. Matriz de 4 launchers × 2 variantes de extensão (`__init__.so`/`.pyd`, com e sem marcador de ABI) no MESMO
+   diretório do site-packages: cada caso exige `{version: null, reasonCode: "launcher_not_recognized"}` sem
+   `packageDir` e confirma que `__init__.py` nunca foi lido (`readRecordingFs`). Controle de nome
+   (`__init__helper.so`, `outro_modulo.so`) preserva o vínculo. Sufixo maiúsculo (`.PYD`) sombreia só com
+   `platform: "win32"` explícito; sem `platform` ou em POSIX, mantém o vínculo (lado conservador, mesmo contrato
+   das seções 31-32).
+2. Quatro formas de precedência (`plugins/__init__.py`, `plugins/__init__.so`, `plugins/__init__.pyc`,
+   `plugins[.ABI].so` sem diretório) viram `state: "shadowed"`, sem `mechanisms`/`validHooks`. Diretório `plugins/`
+   sem nenhum `__init__` (namespace) e nome diferente no mesmo diretório preservam `state: "found"`. Sufixo
+   maiúsculo sombreia só em `platform: "win32"` explícito. Na fronteira real da CLI: versão/vínculo do pacote
+   continuam corretos (`0.21.4`), mas as cinco linhas locais da matriz ficam `unverified/contract_source_shadowed`
+   e `configuration`/`trust` do Hermes ficam `unknown`, mesmo com `hooks_auto_accept: true` — nunca
+   `verified`/`configured`/`trusted` pelo catálogo preterido; o controle (namespace sem init) preserva os três
+   `verified`/`configured`/`trusted`.
+3. `claudeHome`/`codexHome`/`hermesHome` devolvem `null` (nunca lançam) com HOME/USERPROFILE ausente OU vazio, nos
+   três agentes, Windows e POSIX; overrides (`CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`HERMES_HOME`, `LOCALAPPDATA` do
+   Hermes no Windows) continuam resolvendo sem home. `claudeConfigScopes`/`codexConfigScopes`/
+   `hermesConfigScopes` marcam só o(s) escopo(s) de usuário como `locationUnknown`, preservando managed/projeto.
+   Em `readAgentConfiguration`: HOME ausente sem nenhum outro escopo decidido vira
+   `unknown/config_location_unknown` nos três agentes; um escopo de maior precedência (managed) que já resolve
+   hooks E desativação decide primeiro, sem nunca alcançar o escopo desconhecido. Na fronteira real da CLI:
+   HOME/USERPROFILE vazios (dados explicitamente — ver nota abaixo) preservam os três agentes, `exit 0`,
+   `status: "partial"`, `configReasonCode: "config_location_unknown"`; overrides sem HOME continuam resolvendo
+   `configured` normalmente.
+4. Abrir um FIFO real (scratch POSIX, `mkfifo`) ou um link simbólico para ele, sem escritor, nunca bloqueia: o
+   adaptador real rejeita com `ERR_NOT_REGULAR_FILE` em dezenas de milissegundos (prova isolada em processo filho
+   com `timeout: 5000`) e, na fronteira real da CLI, o mesmo FIFO como `.claude/settings.local.json` produz
+   `status: "partial"`, `claude.configuration: "unknown"/"policy_precedence_undetermined"` preservando
+   `codex`/`hermes` com seu próprio estado, em menos de 10s (protegido por `timeout: 15_000` do próprio
+   `runDoctor`). Controle: arquivo regular comum continua sendo aberto e lido normalmente.
+
+### Nota sobre o achado 3 na fronteira da CLI (Windows)
+
+`spawnSync` no Windows injeta automaticamente `HOMEDRIVE`/`HOMEPATH`/`USERPROFILE`/`USERDOMAIN`/`USERNAME`/
+`LOGONSERVER`/`SYSTEMROOT`/`SYSTEMDRIVE`/`WINDIR`/`TEMP` reais do SO (`CreateProcessW`) para qualquer variável que
+o `env` do chamador não endereçar — confirmado empiricamente nesta máquina (`USERPROFILE` do usuário real
+aparecia mesmo com `env: {}`). Por isso a prova de CLI do achado 3 usa `HOME`/`USERPROFILE` vazios
+EXPLICITAMENTE (nunca omitidos) para reproduzir o estado determinável nos dois SOs; a condição "ausente" em si
+(a chave nem existe em `env`) já é provada sem spawn, direto nos resolvedores e em `readAgentConfiguration`
+(`config-sources.unit.test.mjs`/`config-reader.unit.test.mjs`), onde não há injeção alguma do SO.
+
+### Limites honestos
+
+Vínculo de versão (achado 1) e vínculo de catálogo (achado 2) são checagens INDEPENDENTES, nunca uma inferida da
+outra: um pacote pode ter `__init__.py` corretamente selecionado (versão vinculada) e ainda assim ter
+`hermes_cli.plugins` preterido (catálogo sombreado), como o próprio cenário da revisão formal8 descreve — por
+isso a seção 33.2 confere a precedência de `plugins` mesmo quando a versão já foi vinculada com sucesso pela
+seção 33.1, e os dois achados têm scanners de precedência chamados separadamente (um por `hermes.mjs`, outro por
+`contract-evidence.mjs`), nunca uma função única que decida "o pacote inteiro está ok". Nenhum bytecode de
+MÓDULO (`hermes_cli.pyc`/`plugins.pyc`) é conferido nos pontos novos desta seção: fonte sempre precede bytecode
+no mesmo nível (mesma ordem do FileFinder), então a situação só importaria se a fonte já estivesse ausente —
+caso já coberto pelos estados `missing`/`not_found` preexistentes, sem necessidade de uma checagem nova. `.pth`,
+site do usuário, `sys.meta_path` customizado, cache de bytecode (`__pycache__`) e reflexão/runtime continuam fora
+de alcance, como nas seções 30-32. A correção do achado 4 cobre FIFO e link para FIFO no scratch POSIX local
+(`mkfifo`); nenhum dispositivo real, socket de rede ou named pipe do Windows foi testado — o mecanismo
+(O_NONBLOCK + checagem de tipo pelo handle já aberto) é o mesmo descrito em fifo(7) para qualquer leitor POSIX,
+mas só os dois casos exigidos pela revisão foram exercitados. Execução desta seção: Windows 11 Pro (Node local) e
+WSL Ubuntu 22.04/Node 24.13.0 (achado 4); macOS e CI remota não observados. Nenhum push, PR, merge ou publicação
+até este registro.

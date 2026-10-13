@@ -30,7 +30,7 @@ async function diagnoseAgent({ presence, env, platform, cwd, fs }) {
   // configurados para decidir "configuration" (achado G3 da rodada 3).
   const contract =
     presence.presence === "present" && versionProfileCompatible
-      ? await readContractEvidence({ agentId: presence.id, packageDir: presence.packageDir, fs })
+      ? await readContractEvidence({ agentId: presence.id, packageDir: presence.packageDir, fs, platform })
       : null;
   const configResult = await readAgentConfiguration({
     agentId: presence.id,

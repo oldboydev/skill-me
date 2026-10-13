@@ -1,6 +1,7 @@
 import { detectSeparator, dirnameGeneric, isAbsolutePathGeneric, joinGeneric, joinPath } from "./path-helpers.mjs";
 import { isNativeExecutable } from "./native-executable.mjs";
 import { commandStartLines } from "./shim-lines.mjs";
+import { compiledModuleSuffixPattern, fileExists, hasCompiledSibling } from "./compiled-sibling.mjs";
 import {
   endsStatement,
   findAssignments,
@@ -135,16 +136,6 @@ function hermesInterpreterPath(text, launcherPath) {
   return tokens !== null && importsHermesCli(tokens) ? interpreter : null;
 }
 
-async function fileExists(filePath, fs) {
-  try {
-    await fs.stat(filePath);
-    return true;
-  } catch (error) {
-    if (error.code === "ENOENT") return false;
-    throw error;
-  }
-}
-
 // Caminho do script que o Python executa: o próprio launcher ou, se ele for
 // um link simbólico, o alvo resolvido ("If it's a symbolic link, resolve
 // symbolic links", `sys.path` na documentação do Python 3.13). Sem
@@ -179,34 +170,12 @@ async function firstImportDirectory(launcherPath, { fs, cwd }) {
 // o diretório é a única forma de alcançar esse nome, que o fileExists exato
 // não cobre. __pycache__ nunca é olhado: um .pyc lá dentro depende do .py ao
 // lado para ser alcançado pelo import, não de si só, e esse caso já é coberto
-// pelo candidato hermes_cli.py/hermes_cli.pyc direto.
-const COMPILED_HERMES_CLI_NAME = /^hermes_cli(?:\.[^/\\]+)?\.(?:so|pyd)$/;
-const COMPILED_INIT_NAME = /^__init__(?:\.[^/\\]+)?\.(?:so|pyd)$/;
-
-// No Windows, o FileFinder do import cacheia os nomes do diretório com tudo
-// a partir do primeiro ponto em minúsculas antes de casar contra os sufixos
-// (CPython v3.13.0, `_bootstrap_external.py` `_fill_cache`: "Windows users
-// can import modules with case-insensitive file suffixes"). O nome antes do
-// primeiro ponto nunca é tocado por essa normalização: hermes_cli/__init__
-// continuam contrato exato, só a extensão e o marcador de ABI perdem caixa.
-function windowsFoldedSuffix(name) {
-  const dotIndex = name.indexOf(".");
-  return dotIndex === -1 ? name : name.slice(0, dotIndex) + name.slice(dotIndex).toLowerCase();
-}
-
-// `platform` vem do chamador (resolveAgents/resolveHermesVersion), nunca de
-// process.platform: só "win32" aciona o casefold acima; qualquer outro valor,
-// incluindo ausente, mantém o POSIX exato — o lado conservador quando o
-// chamador direto não declara a plataforma.
-async function hasCompiledSibling(dirPath, namePattern, fs, platform) {
-  let entries = [];
-  try {
-    entries = await fs.listDir(dirPath);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-  return entries.some((name) => namePattern.test(platform === "win32" ? windowsFoldedSuffix(name) : name));
-}
+// pelo candidato hermes_cli.py/hermes_cli.pyc direto. `hasCompiledSibling` e
+// o casefold de sufixo do Windows são compartilhados com contract-evidence.mjs
+// (mesmo scanner, ver compiled-sibling.mjs) — este módulo só declara os
+// nomes que lhe interessam.
+const COMPILED_HERMES_CLI_NAME = compiledModuleSuffixPattern("hermes_cli");
+const COMPILED_INIT_NAME = compiledModuleSuffixPattern("__init__");
 
 // Verdadeiro quando outro hermes_cli pode ser importado antes do
 // site-packages do intérprete fixado: um módulo hermes_cli.py/.pyc/.so/.pyd
@@ -314,6 +283,17 @@ export async function resolveHermesVersion(launcherPath, { fs, cwd = null, env =
   if (located.state === "ambiguous") return { version: null, reasonCode: "version_source_ambiguous" };
   if (located.state === "missing") return { version: null, reasonCode: "launcher_not_recognized" };
   const { initPath } = located;
+
+  // O FileFinder seleciona extensão antes de fonte também DENTRO do pacote
+  // já encontrado em site-packages (mesma precedência de
+  // mayImportBeforeSitePackages acima, não só no primeiro diretório de
+  // import): um `__init__[.ABI].so/.pyd` ao lado do `__init__.py` é o que o
+  // Python importaria de verdade. A fonte textual é preterida: a versão e o
+  // packageDir ficam inconclusivos, sem ler o literal desse arquivo (revisão
+  // formal8, achado 1; .checks/code-review/issue-3-formal8-response.json).
+  if (await hasCompiledSibling(dirnameGeneric(initPath), COMPILED_INIT_NAME, fs, platform)) {
+    return { version: null, reasonCode: "launcher_not_recognized" };
+  }
 
   const initResult = await readLinkedText(initPath, fs);
   if (initResult.state === "too_large") return { version: null, reasonCode: "input_too_large" };

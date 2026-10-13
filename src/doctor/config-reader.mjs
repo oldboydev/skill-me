@@ -94,7 +94,14 @@ const AGENT_CONFIG_DEFINITIONS = {
   },
 };
 
-async function readScope({ path: filePath, format, scope }, { agentId, fs, platform }) {
+async function readScope({ path: filePath, format, scope, locationUnknown }, { agentId, fs, platform }) {
+  // HOME/USERPROFILE ausente ou vazio, sem override válido, deixa a
+  // localização deste escopo indeterminável (ver config-sources.mjs,
+  // userScope): nenhum acesso a filesystem é tentado para um caminho que não
+  // existe, e o estado vira o mesmo "inconclusivo" que uma config ilegível
+  // já usa — nunca um erro interno que derrube o diagnóstico (revisão
+  // formal8, achado 3).
+  if (locationUnknown) return { scope, state: "inconclusive", reasonCode: "config_location_unknown" };
   let snapshot;
   try {
     snapshot = await readSnapshot(filePath, { fs, maxBytes: ONE_MIB_BYTES });

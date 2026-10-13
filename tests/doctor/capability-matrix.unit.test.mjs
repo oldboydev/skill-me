@@ -374,6 +374,9 @@ test("capability-matrix-C5 cada estado inconclusivo da fonte de contrato tem mot
     too_large: "input_too_large",
     changed_during_read: "contract_changed_during_read",
     unrecognized: "contract_source_unrecognized",
+    // Revisão formal8, achado 2: um pacote/extensão/bytecode de maior
+    // precedência resolve o mesmo nome antes da fonte textual lida.
+    shadowed: "contract_source_shadowed",
   };
   for (const [state, reasonCode] of Object.entries(cases)) {
     const row = buildCapabilityRow({

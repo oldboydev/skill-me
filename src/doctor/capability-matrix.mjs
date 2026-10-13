@@ -18,6 +18,10 @@ const CONTRACT_STATE_REASON = Object.freeze({
   too_large: "input_too_large",
   changed_during_read: "contract_changed_during_read",
   unrecognized: "contract_source_unrecognized",
+  // Um pacote/extensão/bytecode de maior precedência resolve o mesmo nome de
+  // módulo antes da fonte textual que o doctor lê (revisão formal8, achado
+  // 2): o catálogo físico existe, mas não é o que o Hermes importaria.
+  shadowed: "contract_source_shadowed",
 });
 
 // Só a tabela de contrato da própria instalação decide verified; um evento

@@ -551,3 +551,72 @@ test("config-reader-G3 Hermes: evento fora de VALID_HOOKS preserva hooks_event_n
   assert.equal(result.configuration, "not_configured");
   assert.equal(result.configReasonCode, "hooks_event_not_in_installed_catalog");
 });
+
+// --- P2 nº3 da revisão formal8 (.checks/code-review/issue-3-formal8-
+// response.json): HOME/USERPROFILE ausente não pode lançar e interromper o
+// diagnóstico — o escopo de usuário fica inconclusivo (config_location_
+// unknown); um escopo de maior precedência com hooks de verdade ainda decide
+// normalmente, e um escopo conhecido vazio não prova ausência do desconhecido.
+test("config-reader-formal8-3 Claude: HOME ausente, sem config de projeto/managed, vira unknown/config_location_unknown (nunca lança)", async () => {
+  const result = await readAgentConfiguration({
+    agentId: "claude",
+    env: {},
+    platform: "linux",
+    cwd: "/fixture/cwd-claude-no-home",
+    fs: fsWithFiles({}),
+  });
+  assert.equal(result.configuration, "unknown");
+  assert.equal(result.configReasonCode, "config_location_unknown");
+  assert.equal(result.trust, "unknown");
+});
+
+// `disableAllHooks: false` explícito fecha a pergunta de desativação já no
+// managed (isDisabled devolve false, não undefined): só assim
+// mergeConfigScopes interrompe a leitura antes do escopo de usuário
+// inconclusivo — hooks sozinhos, sem endereçar a chave, deixam a pergunta em
+// aberto e um escopo de menor precedência ilegível ainda decidiria por ela
+// (mesmo contrato documentado em scope-merge.mjs, não um efeito desta
+// correção).
+test("config-reader-formal8-3 Claude: HOME ausente não impede decisão quando o escopo managed (maior precedência) já resolve hooks e desativação", async () => {
+  const platform = "linux";
+  const managedPath = CLAUDE_MANAGED_SETTINGS_PATH[platform];
+  const fs = fsWithFiles({
+    [managedPath]: JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "x" }] }] },
+      disableAllHooks: false,
+    }),
+  });
+  const result = await readAgentConfiguration({
+    agentId: "claude",
+    env: {},
+    platform,
+    cwd: "/fixture/cwd-claude-no-home-managed",
+    fs,
+  });
+  assert.equal(result.configuration, "configured");
+  assert.notEqual(result.configuration, "unknown");
+});
+
+test("config-reader-formal8-3 Codex: USERPROFILE vazio no Windows vira unknown/config_location_unknown, preservando o escopo de projeto", async () => {
+  const result = await readAgentConfiguration({
+    agentId: "codex",
+    env: { USERPROFILE: "" },
+    platform: "win32",
+    cwd: "C:\\fixture\\cwd-codex-no-home",
+    fs: fsWithFiles({}),
+  });
+  assert.equal(result.configuration, "unknown");
+  assert.equal(result.configReasonCode, "config_location_unknown");
+});
+
+test("config-reader-formal8-3 Hermes: HOME ausente vira unknown/config_location_unknown (único escopo depende do home)", async () => {
+  const result = await readAgentConfiguration({
+    agentId: "hermes",
+    env: {},
+    platform: "linux",
+    cwd: "/fixture/cwd-hermes-no-home",
+    fs: fsWithFiles({}),
+  });
+  assert.equal(result.configuration, "unknown");
+  assert.equal(result.configReasonCode, "config_location_unknown");
+});

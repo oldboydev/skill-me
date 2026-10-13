@@ -17,13 +17,31 @@ function pathFor(platform) {
   return platform === "win32" ? path.win32 : path.posix;
 }
 
+// null quando HOME/USERPROFILE está ausente ou vazio: a localização do home
+// do SO não é determinável por leitura, nunca presumida como o cwd da
+// execução diagnosticada (revisão formal8, achado 3).
 function homeDir({ env, platform }) {
-  return platform === "win32" ? env.USERPROFILE : env.HOME;
+  const raw = platform === "win32" ? env.USERPROFILE : env.HOME;
+  return raw ? raw : null;
 }
 
 export function claudeHome({ env, platform }) {
   if (env.CLAUDE_CONFIG_DIR) return env.CLAUDE_CONFIG_DIR;
-  return pathFor(platform).join(homeDir({ env, platform }), ".claude");
+  const home = homeDir({ env, platform });
+  return home === null ? null : pathFor(platform).join(home, ".claude");
+}
+
+// Um escopo cujo caminho depende do home do SO vira `locationUnknown` quando
+// esse home não é determinável: `path: null` sinaliza para readScope
+// (config-reader.mjs) não tentar nenhum acesso a filesystem, nunca presumir
+// ausência nem lançar. Escopos que não dependem de home (managed, de
+// projeto) continuam intactos (revisão formal8, achado 3) — sua presença não
+// prova a ausência do escopo de home desconhecido, só mergeConfigScopes
+// decide isso pela ordem de precedência real.
+function userScope(home, buildPath, format) {
+  return home === null
+    ? { scope: "user", path: null, format, locationUnknown: true }
+    : { scope: "user", path: buildPath(home), format };
 }
 
 // Ordem de maior para menor precedência (gerenciado > local do projeto >
@@ -35,13 +53,14 @@ export function claudeConfigScopes({ home, cwd, platform }) {
     { scope: "managed", path: CLAUDE_MANAGED_SETTINGS_PATH[platform], format: "json" },
     { scope: "project_local", path: join(cwd, ".claude", "settings.local.json"), format: "json" },
     { scope: "project_shared", path: join(cwd, ".claude", "settings.json"), format: "json" },
-    { scope: "user", path: join(home, "settings.json"), format: "json" },
+    userScope(home, (h) => join(h, "settings.json"), "json"),
   ];
 }
 
 export function codexHome({ env, platform }) {
   if (env.CODEX_HOME) return env.CODEX_HOME;
-  return pathFor(platform).join(homeDir({ env, platform }), ".codex");
+  const home = homeDir({ env, platform });
+  return home === null ? null : pathFor(platform).join(home, ".codex");
 }
 
 // Codex carrega hooks.json e as tabelas [hooks] de config.toml lado a lado
@@ -53,8 +72,8 @@ export function codexConfigScopes({ home, cwd, platform }) {
   return [
     { scope: "project", path: join(cwd, ".codex", "hooks.json"), format: "json" },
     { scope: "project", path: join(cwd, ".codex", "config.toml"), format: "toml" },
-    { scope: "user", path: join(home, "hooks.json"), format: "json" },
-    { scope: "user", path: join(home, "config.toml"), format: "toml" },
+    userScope(home, (h) => join(h, "hooks.json"), "json"),
+    userScope(home, (h) => join(h, "config.toml"), "toml"),
   ];
 }
 
@@ -72,12 +91,14 @@ export function hermesHome({ env, platform }) {
   const { join } = pathFor(platform);
   if (platform === "win32") {
     const localAppData = env.LOCALAPPDATA?.trim();
-    const base = localAppData ? localAppData : join(homeDir({ env, platform }), "AppData", "Local");
-    return join(base, "hermes");
+    if (localAppData) return join(localAppData, "hermes");
+    const home = homeDir({ env, platform });
+    return home === null ? null : join(home, "AppData", "Local", "hermes");
   }
-  return join(homeDir({ env, platform }), ".hermes");
+  const home = homeDir({ env, platform });
+  return home === null ? null : join(home, ".hermes");
 }
 
 export function hermesConfigScopes({ home, platform }) {
-  return [{ scope: "user", path: pathFor(platform).join(home, "config.yaml"), format: "yaml" }];
+  return [userScope(home, (h) => pathFor(platform).join(h, "config.yaml"), "yaml")];
 }

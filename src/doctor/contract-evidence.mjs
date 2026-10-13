@@ -1,4 +1,5 @@
 import { detectSeparator, joinGeneric } from "./launcher-link/path-helpers.mjs";
+import { compiledModuleSuffixPattern, fileExists, hasCompiledSibling } from "./launcher-link/compiled-sibling.mjs";
 import {
   endsStatement,
   findAssignments,
@@ -164,18 +165,64 @@ function mechanismsFromListedEvents(listed) {
   return mechanisms;
 }
 
+const COMPILED_PLUGINS_INIT_NAME = compiledModuleSuffixPattern("__init__");
+const COMPILED_PLUGINS_MODULE_NAME = compiledModuleSuffixPattern("plugins");
+
+// `hermes_cli.plugins` pode resolver para outra coisa além do módulo
+// `plugins.py` que esta leitura abre: o FileFinder do CPython procura
+// primeiro um PACOTE `plugins/` (extensão `__init__[.ABI].so/.pyd`, depois
+// fonte `__init__.py`, depois bytecode solto `__init__.pyc`, nessa ordem) e
+// só cai para um MÓDULO de mesmo nome (extensão `plugins[.ABI].so/.pyd`,
+// depois `plugins.py`) quando `plugins/` não existe ou é só porção de
+// namespace sem nenhum desses três (PEP 420; CPython v3.13.0,
+// `_bootstrap_external.py`, `FileFinder.find_spec` — pacote antes de módulo,
+// extensão antes de fonte antes de bytecode em cada nível; texto primário já
+// lido em verifier12/bootstrap_external.py). Reutiliza o mesmo scanner de
+// hermes.mjs (hasCompiledSibling/fileExists, ver compiled-sibling.mjs) em vez
+// de duplicar a guarda; nenhum bytecode de MÓDULO (`plugins.pyc`) é
+// verificado aqui porque fonte sempre precede bytecode nesse mesmo nível —
+// só importa quando `plugins.py` já está ausente, caso em que o estado
+// "not_found" de baixo já é o resultado correto sem distinção adicional.
+async function isHermesPluginsModuleSelected(packageDir, fs, platform) {
+  const sep = detectSeparator(packageDir);
+  const pluginsDir = joinGeneric(sep, packageDir, "plugins");
+  let pluginsDirStats = null;
+  try {
+    pluginsDirStats = await fs.stat(pluginsDir);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  if (pluginsDirStats?.isDirectory?.()) {
+    if (await hasCompiledSibling(pluginsDir, COMPILED_PLUGINS_INIT_NAME, fs, platform)) return false;
+    if (await fileExists(joinGeneric(sep, pluginsDir, "__init__.py"), fs)) return false;
+    if (await fileExists(joinGeneric(sep, pluginsDir, "__init__.pyc"), fs)) return false;
+    // Sem nenhum dos três, `plugins/` é só porção de namespace: a busca
+    // continua para o módulo de mesmo nome, como um diretório hermes_cli
+    // sem __init__ não impede o pacote regular em mayImportBeforeSitePackages.
+  }
+  return !(await hasCompiledSibling(packageDir, COMPILED_PLUGINS_MODULE_NAME, fs, platform));
+}
+
 // A tabela fica em hermes_cli/plugins.py do MESMO pacote de onde a versão foi
 // lida (packageDir, resolvido a partir do launcher): a doc local do Hermes
 // declara que a validade dos nomes de evento vem de
 // hermes_cli.plugins.VALID_HOOKS, e o parser de shell hooks
 // (agent/shell_hooks.py) usa a mesma tabela como allow-list. O arquivo é lido
 // limitado a 1 MiB, nunca importado.
-async function readHermesContract(packageDir, fs) {
+async function readHermesContract(packageDir, fs, platform) {
   if (!packageDir) return { state: "not_found" };
   const source = {
     kind: HERMES_CONTRACT_SOURCE_KIND,
     path: joinGeneric(detectSeparator(packageDir), packageDir, "plugins.py"),
   };
+  // `plugins.py` só é a fonte de hermes_cli.plugins quando nada de maior
+  // precedência existe: sem essa checagem, um catálogo preterido podia
+  // conceder confiança que o módulo efetivo não sustenta (revisão formal8,
+  // achado 2). Nenhuma leitura de conteúdo acontece quando preterido — só a
+  // listagem/stat já usados por isHermesPluginsModuleSelected.
+  if (!(await isHermesPluginsModuleSelected(packageDir, fs, platform))) {
+    return { state: "shadowed", source };
+  }
   let read;
   try {
     read = await readBoundedText(source.path, { fs, maxBytes: ONE_MIB_BYTES });
@@ -208,7 +255,7 @@ async function readHermesContract(packageDir, fs) {
 // inspecionados, um artefato textual de contrato legível dentro de 1 MiB;
 // varrer strings de binários de centenas de MB não seria uma fonte
 // reconhecida. A lacuna fica explícita como no_static_source.
-export async function readContractEvidence({ agentId, packageDir, fs }) {
-  if (agentId === "hermes") return readHermesContract(packageDir, fs);
+export async function readContractEvidence({ agentId, packageDir, fs, platform = null }) {
+  if (agentId === "hermes") return readHermesContract(packageDir, fs, platform);
   return { state: "no_static_source" };
 }

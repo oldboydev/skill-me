@@ -14,6 +14,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  CLAUDE_MANAGED_SETTINGS_PATH,
   claudeConfigScopes,
   claudeHome,
   codexConfigScopes,
@@ -113,6 +114,67 @@ test("config-sources-C8 caminhos de config do Hermes, Claude e Codex seguem a pl
       platform,
     );
   }
+});
+
+// --- P2 nº3 da revisão formal8 (.checks/code-review/issue-3-formal8-
+// response.json): HOME/USERPROFILE ausente ou vazio, sem override, não pode
+// lançar — o home do SO fica indeterminável (null), nunca presumido como o
+// cwd da execução diagnosticada.
+test("config-sources-formal8-3 HOME/USERPROFILE ausente ou vazio, sem override, deixa o home indeterminável (null) para os três agentes, sem lançar", () => {
+  for (const env of [{}, { USERPROFILE: "" }]) {
+    assert.equal(claudeHome({ env, platform: "win32" }), null, JSON.stringify(env));
+    assert.equal(codexHome({ env, platform: "win32" }), null, JSON.stringify(env));
+  }
+  for (const platform of ["linux", "darwin"]) {
+    for (const env of [{}, { HOME: "" }]) {
+      assert.equal(claudeHome({ env, platform }), null, `${platform}/${JSON.stringify(env)}`);
+      assert.equal(codexHome({ env, platform }), null, `${platform}/${JSON.stringify(env)}`);
+    }
+  }
+  assert.equal(hermesHome({ env: {}, platform: "linux" }), null);
+  assert.equal(hermesHome({ env: { HOME: "" }, platform: "darwin" }), null);
+  // Windows: sem LOCALAPPDATA (ausente ou só espaço, já tratado) e sem
+  // USERPROFILE para o fallback, o default do Hermes também fica
+  // indeterminável — nunca lança.
+  assert.equal(hermesHome({ env: {}, platform: "win32" }), null);
+  assert.equal(hermesHome({ env: { LOCALAPPDATA: "   " }, platform: "win32" }), null);
+});
+
+test("config-sources-formal8-3 overrides (CLAUDE_CONFIG_DIR/CODEX_HOME/HERMES_HOME, LOCALAPPDATA do Hermes no Windows) continuam funcionando sem HOME/USERPROFILE", () => {
+  assert.equal(claudeHome({ env: { CLAUDE_CONFIG_DIR: "/opt/claude-cfg" }, platform: "linux" }), "/opt/claude-cfg");
+  assert.equal(codexHome({ env: { CODEX_HOME: "/opt/codex-home" }, platform: "linux" }), "/opt/codex-home");
+  assert.equal(hermesHome({ env: { HERMES_HOME: "/opt/hermes-home" }, platform: "linux" }), "/opt/hermes-home");
+  assert.equal(
+    hermesHome({ env: { LOCALAPPDATA: "C:\\Users\\alguem\\AppData\\Local" }, platform: "win32" }),
+    "C:\\Users\\alguem\\AppData\\Local\\hermes",
+  );
+});
+
+test("config-sources-formal8-3 home indeterminável (null) marca só os escopos de usuário como locationUnknown, preservando managed/projeto", () => {
+  const claudeScopes = claudeConfigScopes({ home: null, cwd: "/projeto", platform: "linux" });
+  const claudeUser = claudeScopes.find((s) => s.scope === "user");
+  assert.equal(claudeUser.path, null);
+  assert.equal(claudeUser.locationUnknown, true);
+  assert.equal(claudeScopes.find((s) => s.scope === "managed").path, CLAUDE_MANAGED_SETTINGS_PATH.linux);
+  assert.equal(
+    claudeScopes.find((s) => s.scope === "project_local").path,
+    "/projeto/.claude/settings.local.json",
+  );
+
+  const codexScopes = codexConfigScopes({ home: null, cwd: "/projeto", platform: "linux" });
+  for (const scope of codexScopes.filter((s) => s.scope === "user")) {
+    assert.equal(scope.path, null, scope.format);
+    assert.equal(scope.locationUnknown, true, scope.format);
+  }
+  assert.equal(
+    codexScopes.find((s) => s.scope === "project" && s.format === "json").path,
+    "/projeto/.codex/hooks.json",
+  );
+
+  const hermesScopes = hermesConfigScopes({ home: null, platform: "linux" });
+  assert.equal(hermesScopes.length, 1);
+  assert.equal(hermesScopes[0].path, null);
+  assert.equal(hermesScopes[0].locationUnknown, true);
 });
 
 test("config-sources-C8 CLAUDE_CONFIG_DIR e CODEX_HOME apontam para o home exato, sem sufixo adicional", () => {

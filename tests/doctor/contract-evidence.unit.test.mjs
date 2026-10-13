@@ -639,6 +639,18 @@ test("contract-evidence-C5 plugins.py ausente, ilegível, acima de 1 MiB ou muta
 
   const content = Buffer.from(hermesPluginsSource());
   const mutating = {
+    // isHermesPluginsModuleSelected (achado 2 da revisão formal8) confere a
+    // precedência antes de abrir plugins.py: sem diretório plugins/ nem
+    // extensão nativa — a verdade desta fixture —, stat/listDir só precisam
+    // devolver "nada aqui", preservando o cenário de mutação original.
+    async stat() {
+      const error = new Error("ENOENT");
+      error.code = "ENOENT";
+      throw error;
+    },
+    async listDir() {
+      return [];
+    },
     async open() {
       return {
         async read(buffer, offset, length, position) {
@@ -676,4 +688,95 @@ test("contract-evidence-C5 Hermes sem pacote ligado ao launcher não procura tab
   });
   assert.equal(result.state, "not_found");
   assert.equal(result.source, undefined);
+});
+
+// --- P2 nº2 da revisão formal8 (.checks/code-review/issue-3-formal8-
+// response.json): hermes_cli.plugins pode resolver para um pacote/extensão/
+// bytecode de MAIOR precedência do que o módulo plugins.py que esta leitura
+// abre direto (CPython v3.13.0, `_bootstrap_external.py`,
+// `FileFinder.find_spec` — pacote antes de módulo, extensão antes de fonte
+// antes de bytecode em cada nível; texto primário em
+// verifier12/bootstrap_external.py). O catálogo físico de plugins.py existe,
+// mas não é o que o Hermes importaria: o estado vira "shadowed", sem ler o
+// conteúdo nem conceder mechanisms/validHooks.
+const PLUGINS_DIR = PKG_DIR + "/plugins";
+
+function treeWithPluginsModule() {
+  const tree = buildFsTree();
+  addFile(tree, PKG_DIR, "plugins.py", hermesPluginsSource());
+  return tree;
+}
+
+test("contract-evidence-formal8-2 pacote regular, extensão ou bytecode solto em plugins/__init__* tem precedência sobre plugins.py: state shadowed", async () => {
+  const cases = {
+    "pacote regular plugins/__init__.py": (tree) =>
+      addFile(tree, PLUGINS_DIR, "__init__.py", 'VALID_HOOKS = {"post_tool_call"}\n'),
+    "extensão plugins/__init__.so": (tree) => addFile(tree, PLUGINS_DIR, "__init__.so", "\0"),
+    "bytecode solto plugins/__init__.pyc": (tree) => addFile(tree, PLUGINS_DIR, "__init__.pyc", "\0"),
+  };
+  for (const [label, install] of Object.entries(cases)) {
+    const tree = treeWithPluginsModule();
+    install(tree);
+    const result = await readContractEvidence({
+      agentId: "hermes",
+      packageDir: PKG_DIR,
+      fs: createFakeFsAdapter(tree),
+    });
+    assert.equal(result.state, "shadowed", label);
+    assert.equal(result.mechanisms, undefined, label);
+    assert.equal(result.validHooks, undefined, label);
+    assert.deepEqual(result.source, { kind: "hermes_valid_hooks", path: PLUGINS_PATH }, label);
+  }
+});
+
+test("contract-evidence-formal8-2 extensão plugins[.ABI].so/.pyd (módulo, sem diretório plugins) também precede plugins.py: state shadowed", async () => {
+  const tree = treeWithPluginsModule();
+  addFile(tree, PKG_DIR, "plugins.cpython-313-x86_64-linux-gnu.so", "\0");
+  const result = await readContractEvidence({ agentId: "hermes", packageDir: PKG_DIR, fs: createFakeFsAdapter(tree) });
+  assert.equal(result.state, "shadowed");
+  assert.equal(result.mechanisms, undefined);
+});
+
+// Um diretório plugins/ sem nenhum __init__ é só porção de namespace (PEP
+// 420): não impede o módulo regular plugins.py de ser a fonte.
+test("contract-evidence-formal8-2 diretório plugins sem nenhum __init__ é só namespace: plugins.py continua a fonte (state found)", async () => {
+  const tree = treeWithPluginsModule();
+  addFile(tree, PLUGINS_DIR, "helper.py", "# não é __init__\n");
+  const result = await readContractEvidence({ agentId: "hermes", packageDir: PKG_DIR, fs: createFakeFsAdapter(tree) });
+  assert.equal(result.state, "found");
+  assert.ok(result.validHooks.includes("pre_tool_call"));
+});
+
+test("contract-evidence-formal8-2 controle de nome: extensão com nome diferente no mesmo diretório não sombreia plugins.py", async () => {
+  const tree = treeWithPluginsModule();
+  addFile(tree, PKG_DIR, "plugins_extra.so", "\0");
+  addFile(tree, PKG_DIR, "outro.so", "\0");
+  const result = await readContractEvidence({ agentId: "hermes", packageDir: PKG_DIR, fs: createFakeFsAdapter(tree) });
+  assert.equal(result.state, "found");
+});
+
+test("contract-evidence-formal8-2 sufixo maiúsculo (.PYD) em plugins/__init__ ou plugins (módulo) sombreia no Windows com platform:'win32'; sem platform ou em POSIX, mantém plugins.py", async () => {
+  const cases = {
+    "plugins/__init__.PYD": (tree) => addFile(tree, PLUGINS_DIR, "__init__.PYD", "\0"),
+    "plugins.PYD (módulo)": (tree) => addFile(tree, PKG_DIR, "plugins.PYD", "\0"),
+  };
+  for (const [label, install] of Object.entries(cases)) {
+    const tree = treeWithPluginsModule();
+    install(tree);
+    const fs = createFakeFsAdapter(tree);
+
+    const shadowedOnWindows = await readContractEvidence({
+      agentId: "hermes",
+      packageDir: PKG_DIR,
+      fs,
+      platform: "win32",
+    });
+    assert.equal(shadowedOnWindows.state, "shadowed", `${label}/win32`);
+
+    const posixControl = await readContractEvidence({ agentId: "hermes", packageDir: PKG_DIR, fs, platform: "linux" });
+    assert.equal(posixControl.state, "found", `${label}/linux`);
+
+    const noPlatformControl = await readContractEvidence({ agentId: "hermes", packageDir: PKG_DIR, fs });
+    assert.equal(noPlatformControl.state, "found", `${label}/sem platform`);
+  }
 });

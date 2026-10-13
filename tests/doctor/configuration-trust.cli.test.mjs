@@ -294,6 +294,95 @@ test("configuration-trust-C8 hooks_auto_accept:true do Hermes é a única origem
   }
 });
 
+// P2 nº2 da revisão formal8 (.checks/code-review/issue-3-formal8-
+// response.json): hermes_cli/plugins.py traz o catálogo completo, mas um
+// pacote regular plugins/__init__.py no MESMO hermes_cli (sem pre_tool_call
+// em VALID_HOOKS) tem precedência real pelo FileFinder do CPython — o doctor
+// não pode conceder confiança/suporte baseada no catálogo preterido, mesmo
+// com a versão corretamente vinculada e hooks_auto_accept:true.
+test("configuration-trust-C5/C8/formal8-2 pacote plugins/__init__.py sem pre_tool_call tem precedência sobre plugins.py: Hermes não concede verified/configured/trusted", () => {
+  const scratch = makeScratch("doctor-formal8-2-plugins-shadow-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs, hermesPkgDir } = installAllAgents(dir, {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      hermesContractSource: hermesPluginsSource(),
+    });
+    mkdirSync(path.join(hermesPkgDir, "plugins"), { recursive: true });
+    writeFileSync(
+      path.join(hermesPkgDir, "plugins", "__init__.py"),
+      'VALID_HOOKS = {"post_tool_call", "on_session_start"}\n',
+    );
+    const home = path.join(scratch, "home");
+    const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
+    writeAgentConfig(
+      home,
+      "hermes",
+      'hooks:\n  pre_tool_call:\n    - command: "internal-safe-handler"\nhooks_auto_accept: true\n',
+      { env, platform: process.platform },
+    );
+
+    const { status, stdout, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    assert.equal(report.agents.length, 3);
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.version, "0.21.4", "a versão/vínculo do pacote continua correta");
+    assert.equal(hermes.configuration, "unknown");
+    assert.equal(hermes.configReasonCode, "hooks_catalog_unavailable");
+    assert.equal(hermes.trust, "unknown");
+    assert.notEqual(hermes.trust, "trusted");
+
+    const localRows = hermes.capabilities.filter((row) => row.surface === "cli_local");
+    assert.equal(localRows.length, 5);
+    for (const row of localRows) {
+      assert.equal(row.support, "unverified", row.mechanism);
+      assert.equal(row.reasonCode, "contract_source_shadowed", row.mechanism);
+      assert.notEqual(row.support, "verified", row.mechanism);
+    }
+    assert.doesNotMatch(stdout, /"support":"verified"/);
+
+    const text = runDoctor([], { env });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /contract_source_shadowed/);
+    assert.doesNotMatch(text.stdout, /local_contract_lists_events/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Controle: o mesmo diretório plugins/ sem NENHUM __init__ é só porção de
+// namespace (PEP 420) — não impede plugins.py de continuar a fonte real.
+test("configuration-trust-C5/C8/formal8-2 controle: diretório plugins/ sem __init__ não sombreia plugins.py (verified/configured/trusted preservados)", () => {
+  const scratch = makeScratch("doctor-formal8-2-plugins-namespace-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs, hermesPkgDir } = installAllAgents(dir, {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      hermesContractSource: hermesPluginsSource(),
+    });
+    mkdirSync(path.join(hermesPkgDir, "plugins"), { recursive: true });
+    writeFileSync(path.join(hermesPkgDir, "plugins", "helper.py"), "# não é __init__\n");
+    const home = path.join(scratch, "home");
+    const env = { PATH: pathEnv(pathDirs), ...homeEnv(home) };
+    writeAgentConfig(
+      home,
+      "hermes",
+      'hooks:\n  pre_tool_call:\n    - command: "internal-safe-handler"\nhooks_auto_accept: true\n',
+      { env, platform: process.platform },
+    );
+
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.configuration, "configured");
+    assert.equal(hermes.trust, "trusted");
+    const localRows = hermes.capabilities.filter((row) => row.surface === "cli_local");
+    for (const row of localRows) assert.equal(row.support, "verified", row.mechanism);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 // Achado formal5 P2 (nº1, .checks/code-review/formal5-fixes.md): uma
 // instalação Hermes com VALID_HOOKS completo, seguido de `VALID_HOOKS
 // .clear()` (espaço antes do ponto — Python válido, escapava do regex de
@@ -940,6 +1029,75 @@ test("configuration-trust-C16 config inacessível (diretório no lugar do arquiv
     const codex = report.agents.find((a) => a.id === "codex");
     assert.equal(claude.configuration, "not_configured", "config inacessível de um agente não deve contaminar os demais");
     assert.equal(codex.configuration, "not_configured", "config inacessível de um agente não deve contaminar os demais");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// P2 nº3 da revisão formal8 (.checks/code-review/issue-3-formal8-
+// response.json): HOME/USERPROFILE vazio (ambiente sanitizado, sem
+// CLAUDE_CONFIG_DIR/CODEX_HOME/HERMES_HOME) não pode derrubar o diagnóstico
+// inteiro — os três agentes continuam no relatório, com configuration/trust
+// unknown onde o home era necessário, e o relatório vira partial (exit 0),
+// nunca failed/agents:[] (exit 1). O valor vazio é dado EXPLICITAMENTE (nunca
+// só omitido): no Windows, spawnSync ainda injeta USERPROFILE/HOME reais do
+// SO para variáveis que o `env` do chamador não endereça (CreateProcessW),
+// então só sobrescrever com "" de verdade reproduz o estado ausente/vazio de
+// forma determinística nos dois SOs — a mesma condição "ausente" em si já é
+// provada sem spawn em config-sources.unit.test.mjs/config-reader.unit.
+// test.mjs, chamando os resolvedores direto com env sem a chave.
+test("configuration-trust-formal8-3 HOME/USERPROFILE vazios preservam os três agentes e viram partial, nunca failed/agents vazio", () => {
+  const scratch = makeScratch("doctor-formal8-3-no-home-");
+  try {
+    const { status, report } = runDoctorJson(["--cwd", scratch], { env: { HOME: "", USERPROFILE: "" } });
+    assert.equal(status, 0);
+    assert.equal(report.status, "partial");
+    assert.equal(report.agents.length, 3);
+    assert.deepEqual(report.agents.map((a) => a.id), ["claude", "codex", "hermes"]);
+    for (const agent of report.agents) {
+      assert.equal(agent.presence, "absent", agent.id);
+      assert.equal(agent.configuration, "unknown", agent.id);
+      assert.equal(agent.configReasonCode, "config_location_unknown", agent.id);
+    }
+
+    const text = runDoctor(["--cwd", scratch], { env: { HOME: "", USERPROFILE: "" } });
+    assert.equal(text.status, 0);
+    assert.match(text.stdout, /config_location_unknown/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("configuration-trust-formal8-3 overrides (CLAUDE_CONFIG_DIR/CODEX_HOME/HERMES_HOME) resolvem configuração normalmente mesmo sem HOME/USERPROFILE", () => {
+  const scratch = makeScratch("doctor-formal8-3-overrides-");
+  try {
+    const claudeDir = path.join(scratch, "claude-cfg");
+    const codexDir = path.join(scratch, "codex-home");
+    const hermesDir = path.join(scratch, "hermes-home");
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      path.join(claudeDir, "settings.json"),
+      JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "x" }] }] } }),
+    );
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(
+      path.join(codexDir, "config.toml"),
+      '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype="command"\ncommand="x"\n',
+    );
+    mkdirSync(hermesDir, { recursive: true });
+    writeFileSync(path.join(hermesDir, "config.yaml"), 'hooks:\n  pre_tool_call:\n    - command: "x"\n');
+
+    const env = { CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexDir, HERMES_HOME: hermesDir };
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    const claude = report.agents.find((a) => a.id === "claude");
+    const codex = report.agents.find((a) => a.id === "codex");
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(claude.configuration, "configured");
+    assert.notEqual(claude.configReasonCode, "config_location_unknown");
+    assert.equal(codex.configuration, "configured");
+    assert.notEqual(codex.configReasonCode, "config_location_unknown");
+    assert.notEqual(hermes.configReasonCode, "config_location_unknown");
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
