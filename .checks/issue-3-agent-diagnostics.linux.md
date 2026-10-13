@@ -185,3 +185,9 @@ Claude corrigiu o únicoP2 em9826952a9769da673d0ba44e355f45e258998db4. O scanner
 - Root leu o diff da guarda/encaminhamento e as provas. O autor iniciou fonte antes da regressão, depois a restaurou por edição semGit. Root conferiu gitdiff--exitcodeHEAD para ambosarquivosSrc, exit0, antes deRED. Não se afirma cronologiaTDD mais estrita; REDexecutoufonteigualHEADreprovada e GREENcorrigida. O aditivoLanding foi registrado após código, ampliando a mesma guarda jádecidida, sem nova decisãoirreversível. Não houveGit/stash/execuçãoPython/agentes/hooks/configreal peloautor; task/critério/core/histórico permanecem intactos.
 
 A rodada13 independente será scoped sobre00cb167a5b38f182cf2ed214c1664b069708457e..HEAD, incluindo todoscritériosnãoPASS e o blast desta guarda/encaminhamento. Todasprovas reexecutadas. ApósPASS ainda é obrigatória formal8, não iniciada. macOS/CIremota nãoobservados; nenhum push/PR/merge/publicação atéesteregistro.
+
+## Décima terceira verificação independente aprovada
+
+Rodada13 PASS18/18 na HEADa770aee67b8950d69e6c8a6fb9147cd3b0c341c1, fixdiff00cb167..a770aee. Verificador reexecutou uma suítecompleta:6governança+10motor+382doctor=398PASS/0FAIL/2skipPOSIX,400contabilizados,exit0. QuatrovariantesWindows, seiscontroles e CLIuppercase.PYD executaram e fecharam oP2 anterior nos quatrocritérios. Assertions/citações touched atualizadas; demais análise carriedfrom8b05234 explícita. Relatório salvo sem novosprobes/suítes/findings bloqueantes; HEADpreservada e somente relatório modificado. MacOS/CIremota ainda nãoexecutados.
+
+Root reconferiu após a última correção os quatro arquivos reais de configuração por tamanho/SHA256: todos iguais ao baseline. Core5 byteigual à base4242520. A formal8 segue agora no commitlimpo com o relatório13; sete tentativasanteriores/max8 autorizado permanecem preservados. Push/PR somente se o motor retornarready para esta versão. Sem merge/publicação automática.
