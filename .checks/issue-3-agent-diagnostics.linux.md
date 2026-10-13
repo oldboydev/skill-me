@@ -36,3 +36,7 @@ Smoke do ambiente Windows real: Claude2.1.295 e Codex0.162.1 presentes/configura
 ## Pendência de entrega
 
 O FAIL independente da rodada3 foi preservado em `c4a4d45`; o arquivo `.verified.md` continua identificando exatamente o produto46e7c93 que verificou. As correções posteriores e estas provas não concedem um novo PASS independente. A regra TLC exige escalar ao proprietário após três rodadas; nova rodada depende de sua decisão. A primeira revisão formal consumiu uma das duas tentativas permitidas. A segunda tentativa formal e a criação do PR permanecem pendentes da verificação independente do produto corrigido. Não houve push dessas correções, PR, merge ou publicação.
+
+## Autorização da rodada4 — 13/10/2026
+
+O proprietário autorizou nesta conversa: “pode fazer a quarta rodada de verificação independente da issue #3 e, se passar na revisão, abra o PR”. A autorização permite uma quarta rodada TLC da issue3, preservando o histórico das três anteriores, seguida da revisão formal e da abertura do PR se aprovadas. O teto de duas tentativas do motor formal não foi alterado; há uma tentativa restante. Não autoriza merge, publicação ou exceções para outras issues.
