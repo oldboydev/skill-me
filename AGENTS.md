@@ -122,7 +122,8 @@ Não definem uma arquitetura, um framework ou um produto antes de existir essa n
 --title "tipo: descrição" --body-file caminho.md`, incluindo Closes/Refs e evidências.
   Não contorne o comando de entrega. Alteração posterior exige revisão válida para o novo conteúdo.
 - O motor não impede outros clientes GitHub nem forma transação atômica com o servidor;
-  confira novamente fontes alteradas e mantenha os checks de servidor obrigatórios.
+  confira novamente fontes alteradas. CI é informativa para merge; mantenha PR obrigatório,
+  provas aplicáveis, revisão Codex local e merge humano.
 - Core vendorizado: preservar os cinco arquivos comuns e conferir hashes em atualizações.
   Ajuste regras/configuração locais; não crie fork silencioso do motor.
 
