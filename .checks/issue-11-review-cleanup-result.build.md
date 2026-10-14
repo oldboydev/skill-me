@@ -50,14 +50,88 @@ Hashes (`git hash-object`) conferidos iguais a AC5 para os cinco arquivos:
 3. `npm.cmd run test:code-review` → 16 tests, 16 pass, 0 fail, 0 skip, exit 0
    (quatro C10 + três C11 + C1–C9 existentes).
 4. `node .checks/issue-11-review-cleanup-result.proof.mjs` → exit 0: cinco hashes AC5
-   conferidos, escopo restrito à allowlist (diff contra a base `3b6387615aa9233fe8977
-   1782fd8e0948042cdac` + untracked, excluindo ignorados), caso complementar `blocked`
+   conferidos, escopo restrito à allowlist (diff contra a base `3b6387615aa9233fe89771782fd8e0948042cdac`
+   + untracked, excluindo ignorados), caso complementar `blocked`
    com 1 pass / 0 fail e nome do teste confirmado. Reexecutado duas vezes com o mesmo
    resultado e sem pasta temporária remanescente.
 5. `npm.cmd run test:governance` → 6 tests, 6 pass, 0 fail, 0 skip, exit 0.
 
+`npm.cmd run test:code-review` e `npm.cmd run test:governance` rodaram duas vezes cada
+nesta implementação (`green-*.log` e `final-*.log`), com a mesma contagem nas duas
+execuções: 16 tests/16 pass/0 fail/0 skip para o core e 6 tests/6 pass/0 fail/0 skip
+para a governança. Nenhum dos dois comandos mudou após a Rodada 1; a Rodada 2 (abaixo)
+não os repete.
+
 Logs completos (não versionados, cobertos por `.gitignore`):
 `.checks/code-review/issue-11-builder/{red.log,green-code-review.log,green-governance.log,final-code-review.log,final-governance.log,proof-rerun.log}`.
+
+## Rodada 2 — achado de verificação independente: reprodutibilidade de newline no proof.mjs
+
+Achado (Round1 FAIL, verificação independente): `proof.mjs` lia `review.test.mjs` com
+`readFileSync(..., "utf8")` e procurava a âncora da tabela C11 usando quebras `\n`
+literais. O blob commitado é LF-only, mas um checkout novo com `core.autocrlf=true`
+(comum em Windows) converte o arquivo para CRLF na working tree. Nesse checkout os
+cinco hashes, a cópia dos três arquivos do core e o diff de escopo continuavam
+passando, mas `occurrences` da âncora caía para `0`, a asserção da linha 116
+("A âncora da tabela C11 deve aparecer exatamente uma vez.") lançava
+`AssertionError` não tratada, o processo saía com código 1, e o caso `blocked` nunca
+chegava a ser executado — regressão de reprodutibilidade, não do motor nem da
+suíte oficial de 16 casos (core e governança, que não mudaram nesta rodada).
+
+### REPRO RED — CRLF, antes do patch
+
+Sem alterar nenhum arquivo original: `git clone -c core.autocrlf=true --no-hardlinks . <tmp>`
+a partir do HEAD atual (commit `15e32ab`, que já contém o `proof.mjs` sem o patch desta
+rodada), em `.checks/code-review/issue-11-builder-fix/red-crlf-clone/` (removida após
+validar a prova; log preservado). Confirmado antes de rodar: `review.test.mjs` na cópia
+tem 887 quebras CRLF e 0 LF puro (contado por codepoint), contra 0 CRLF / 887 LF no blob
+do HEAD. Executando o `proof.mjs` não corrigido dessa cópia:
+
+```
+AssertionError [ERR_ASSERTION]: A âncora da tabela C11 deve aparecer exatamente uma vez.
+0 !== 1
+```
+
+Resultado: exit 1, `occurrences=0`, caso `blocked` não executado — mesma falha já
+registrada pelo Verifier em `.checks/code-review/issue-11-verifier/proof-fresh-checkout.log`
+(não editado por esta correção). Log desta reprodução independente:
+`.checks/code-review/issue-11-builder-fix/red-crlf-proof.log` (exit em
+`red-crlf-proof.exit`).
+
+### FIX — normaliza só o texto copiado ao scratch, âncora e asserções preservadas
+
+Patch restrito aos dois arquivos de ownership desta correção:
+
+- `proof.mjs`: o texto lido de `review.test.mjs` passa por
+  `.replace(/\r\n/g, "\n")` antes da busca da âncora — only no texto copiado para o
+  scratch, sem escrever de volta no arquivo original nem no checkout. A âncora, a
+  substituição e as asserções de `occurrences`, `tests 1`/`pass 1`/`fail 0` e `status 0`
+  continuam exatamente as mesmas do C11 aprovado; nenhuma foi relaxada.
+- `proof.mjs`: o subprocesso `node --test` do caso `blocked` passa a declarar
+  `--test-reporter=spec --test-reporter-destination=stdout` explicitamente, fixando o
+  formato (`✔ nome`, `ℹ tests/pass/fail`) que o script já exigia implicitamente das
+  asserções de string, sem mudar nenhum critério de aprovação.
+- Este arquivo (`build.md`): corrige a quebra de linha acidental do hash da base dentro
+  do bloco de código e documenta esta rodada.
+
+### GREEN — original (LF) e cópia Git CRLF (proof corrigido, core intocado)
+
+1. Checkout original (arquivo de teste copiado em LF; configuração Git inalterada): `node .checks/issue-11-review-cleanup-result.proof.mjs`
+   → exit 0, caso `blocked` com `tests 1`/`pass 1`/`fail 0`. Log:
+   `.checks/code-review/issue-11-builder-fix/green-original-lf-proof.log`.
+2. Mesma cópia `red-crlf-clone` (CRLF confirmado), só com o `proof.mjs` corrigido
+   copiado por cima (core — `review.mjs`, `review.test.mjs`, `cli.mjs`, `schema.json`,
+   `README.md` — sem tocar; hashes reconferidos iguais a AC5 antes de rodar):
+   `node <clone>/.checks/issue-11-review-cleanup-result.proof.mjs` → exit 0, mesmo caso
+   `blocked` com `tests 1`/`pass 1`/`fail 0`. Log:
+   `.checks/code-review/issue-11-builder-fix/green-crlf-clone-proof.log`.
+
+Logs completos desta rodada (não versionados, cobertos por `.gitignore`):
+`.checks/code-review/issue-11-builder-fix/{red-crlf-proof.log,red-crlf-proof.exit,green-original-lf-proof.log,green-original-lf-proof.exit,green-crlf-clone-proof.log,green-crlf-clone-proof.exit}`.
+
+Esta rodada não repetiu `npm run test:code-review` nem `npm run test:governance`:
+os dois já estavam aprovados (16/16/0/0 e 6/6/0/0, cada um confirmado duas vezes na
+Rodada 1, ver seção acima) e nenhum dos dois arquivos de ownership desta correção os afeta.
 
 ## Limitações
 
@@ -70,5 +144,9 @@ Logs completos (não versionados, cobertos por `.gitignore`):
   de teste isolada com core byte-idêntico ao checkout; a suíte oficial de 16 casos
   herdada do ERP continua cobrindo só `ready`/`changes_requested` na CLI, sem alteração.
 - Prova e testes rodaram apenas nesta plataforma Windows; não há execução de CI nem de
-  outra plataforma nesta entrega — a CI existente do repositório cobre as plataformas
+  outra plataforma nesta etapa de build — a CI existente do repositório cobre as plataformas
   declaradas.
+- Rodada 2: a reprodução RED/GREEN usa um clone Git local (`file://` implícito via
+  caminho local) com `core.autocrlf=true`, não uma pasta ocupada real nem um ambiente
+  CI distinto; cobre o cenário de newline relatado, não outras causas hipotéticas de
+  falha de checkout.

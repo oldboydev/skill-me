@@ -106,10 +106,13 @@ try {
     console.log(`OK cópia ${destName} = ${actual}`);
   }
 
+  // Normaliza CRLF->LF só no texto copiado ao scratch: um checkout com
+  // core.autocrlf=true converte o blob LF do Git para CRLF na working tree,
+  // e a âncora abaixo usa quebras LF literais para casar com o fonte do ERP.
   const testSource = readFileSync(
     join(repoRoot, "scripts/code-review/review.test.mjs"),
     "utf8",
-  );
+  ).replace(/\r\n/g, "\n");
   const anchor =
     'for (const [status, code] of [\n  ["ready", 0],\n  ["changes_requested", 2],\n])';
   const occurrences = testSource.split(anchor).length - 1;
@@ -126,6 +129,8 @@ try {
     process.execPath,
     [
       "--test",
+      "--test-reporter=spec",
+      "--test-reporter-destination=stdout",
       `--test-name-pattern=${expectedTestName}`,
       "review.test.mjs",
     ],
