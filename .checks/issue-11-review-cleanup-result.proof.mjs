@@ -98,12 +98,16 @@ try {
     "scripts/code-review/cli.mjs",
     "scripts/code-review/schema.json",
   ];
+  // A cópia é conferida byte a byte contra o original, não por `git hash-object`:
+  // o scratch não é repositório Git e perde o core.autocrlf local, então o hash ali
+  // dependeria da configuração global/sistema. O AC5 de cada fonte fica no C8.
   for (const relPath of coreFiles) {
     const destName = relPath.split("/").pop();
-    writeFileSync(join(scratchRoot, destName), readFileSync(join(repoRoot, relPath)));
-    const actual = hashObject(scratchRoot, destName);
-    assert.equal(actual, expectedHashes[relPath], `Cópia de ${destName} divergiu do checkout.`);
-    console.log(`OK cópia ${destName} = ${actual}`);
+    const destPath = join(scratchRoot, destName);
+    const original = readFileSync(join(repoRoot, relPath));
+    writeFileSync(destPath, original);
+    assert.deepEqual(readFileSync(destPath), original, `Cópia de ${destName} divergiu do original.`);
+    console.log(`OK cópia ${destName}: ${original.length} bytes idênticos ao original.`);
   }
 
   // Normaliza CRLF->LF só no texto copiado ao scratch: um checkout com

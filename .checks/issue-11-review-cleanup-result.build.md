@@ -133,6 +133,92 @@ Esta rodada não repetiu `npm run test:code-review` nem `npm run test:governance
 os dois já estavam aprovados (16/16/0/0 e 6/6/0/0, cada um confirmado duas vezes na
 Rodada 1, ver seção acima) e nenhum dos dois arquivos de ownership desta correção os afeta.
 
+## Rodada 3 — revisão formal 1, F2: cópia conferida por configuração Git externa
+
+Origem: revisão formal 1 (`changes_requested`, perfil light, tentativa 1 de 2) sobre o head
+`77c442fe8b583ac5a409b58e5fa63a32c1d483e1`, registrada em
+`.checks/issue-11-review-cleanup-result.review-1.md`. Implementador desta rodada: Claude
+(Opus 5.5). Esta rodada não afirma PASS formal nem do Verifier: a nova verificação
+independente e a segunda revisão formal são coordenadas pelo Codex.
+
+Achado F2: `proof.mjs:105` conferia a cópia de `review.mjs`, `cli.mjs` e `schema.json`
+com `git hash-object` dentro do scratch. O scratch não é repositório Git e perde o
+`core.autocrlf=true` local; com global/sistema ausentes ou false, o hash ali é o dos bytes
+CRLF, a cópia byte-idêntica é rejeitada e o caso `blocked` não executa. A Rodada 2 não
+detectou o caso porque, nesta máquina, `core.autocrlf=true` vem do gitconfig de sistema
+(`C:/Program Files/Git/etc/gitconfig`; o checkout principal não tem valor local nem
+global), e a configuração de sistema também vale fora de um repositório.
+
+### REPRO RED — autocrlf=true só local, global/sistema neutralizados
+
+Nenhum arquivo de configuração Git do proprietário ou do repositório principal foi
+alterado. Só os subprocessos Git/Node receberam no env `GIT_CONFIG_GLOBAL=<arquivo vazio
+temporário>` e `GIT_CONFIG_NOSYSTEM=1`.
+
+1. `git clone --no-checkout --no-hardlinks <repo> .checks/code-review/issue-11-builder-fix2/mixed-config-clone`.
+2. `git -C <clone> config --local core.autocrlf true`. Com o env neutralizado,
+   `git config --show-origin --show-scope --list` no clone mostra só o escopo local
+   (`file:.git/config`, `core.autocrlf=true`); a lista global sai vazia.
+3. `git -C <clone> checkout --detach 77c442fe8b583ac5a409b58e5fa63a32c1d483e1` → status
+   limpo e checkout CRLF (`review.mjs` 825 CRLF/0 LF puro, `review.test.mjs` 887/0,
+   `README.md` 48/0, `cli.mjs` 19/0, `schema.json` 123/0). Os cinco `git hash-object` no
+   contexto do clone ficam iguais a AC5.
+4. `node <clone>/.checks/issue-11-review-cleanup-result.proof.mjs` (proof antigo do HEAD,
+   blob `a2b0755f125cbdaf2673dd224a7a2ccf32fee3b9`):
+
+```
+AssertionError [ERR_ASSERTION]: Cópia de review.mjs divergiu do checkout.
++ 'bdb7fa539c36136630a6274796c833beddde212d'
+- 'c51cff675f6472b9e2ffa02eaa03cd80f3d48dad'
+```
+
+Resultado: C8 (cinco hashes) e C10 (escopo) passam; C3 aborta na linha 105 com exit 1,
+sem chegar à âncora nem ao caso `blocked`. `bdb7fa53…` é o
+`git hash-object --no-filters` dos bytes CRLF de `review.mjs` no clone, o mesmo valor que
+a revisão apontou para autocrlf=false.
+
+### FIX — identidade da cópia por bytes exatos
+
+Patch restrito ao laço de cópia do C3 em `proof.mjs`:
+
+- Cada arquivo é lido do checkout, escrito no scratch e relido; `assert.deepEqual`
+  (strict) compara byte a byte o buffer de destino com o de origem. O log passa a dizer
+  `OK cópia <arquivo>: <n> bytes idênticos ao original.`, sem atribuir ao scratch um hash Git.
+- O hash AC5 de cada fonte continua conferido somente no contexto do repositório (C8,
+  inalterado). Motor, CLI e schema não são normalizados; a normalização CRLF->LF continua
+  apenas no texto do teste copiado (Rodada 2). Âncora única, substituição, reporter `spec`
+  explícito, asserções `tests 1`/`pass 1`/`fail 0`/`status 0` e o teste C11 (stdout, stderr,
+  exits) ficam inalterados.
+- A comparação de bytes não enfraquece a prova: com autocrlf=true, o hash anterior aceitaria
+  uma cópia que diferisse só em CRLF/LF; a comparação de buffers rejeita essa diferença.
+  Uma sonda isolada mostrou que `assert.deepEqual` aceita buffers idênticos (LF e CRLF)
+  e rejeita CRLF vs LF, LF vs CRLF, 1 byte trocado e 1 byte a menos
+  (`byte-compare-probe.log`).
+
+### GREEN — original e clone de configuração mista
+
+1. Checkout original com a configuração Git inalterada (autocrlf=true de sistema;
+   `review.mjs`/`review.test.mjs`/`README.md` em LF, `cli.mjs`/`schema.json` em CRLF):
+   `node .checks/issue-11-review-cleanup-result.proof.mjs` → exit 0. Cinco hashes AC5;
+   escopo OK (inclui `review-1.md` não rastreado, coberto pelo prefixo); cópias com
+   `review.mjs` 27526, `cli.mjs` 747 e `schema.json` 2698 bytes idênticos; `blocked` com
+   `tests 1`/`pass 1`/`fail 0`.
+2. Mesmo clone, com o mesmo env neutralizado e apenas o `proof.mjs` corrigido copiado
+   (bytes idênticos ao original; `git status` do clone mostra só ele modificado; core
+   em CRLF e com hashes AC5) → exit 0. Cinco hashes AC5; escopo OK; cópias com
+   `review.mjs` 28351, `cli.mjs` 747 e `schema.json` 2698 bytes idênticos; `blocked` com
+   `tests 1`/`pass 1`/`fail 0`.
+
+Ao final, o clone e o arquivo global vazio foram removidos depois da validação de caminho,
+toplevel, remote, HEAD e tamanho (`cleanup.log`). Nenhuma pasta
+`skill-me-issue11-proof-*` sobrou depois das execuções, e nenhum estado de revisão foi tocado.
+
+Logs (não versionados, cobertos por `.gitignore`):
+`.checks/code-review/issue-11-builder-fix2/{red-setup.log,red-mixed-config-proof.log,red-mixed-config-proof.exit,byte-compare-probe.log,green-original-proof.log,green-original-proof.exit,green-mixed-config-setup.log,green-mixed-config-proof.log,green-mixed-config-proof.exit,cleanup.log}`.
+
+Esta rodada não repetiu `npm run test:code-review` nem `npm run test:governance`:
+core, governança e configuração não mudaram; a alteração se limita à prova complementar.
+
 ## Limitações
 
 - `deps.cleanup` (falha de limpeza) e `deps.execute` (resultado do revisor) são dublês
@@ -150,3 +236,7 @@ Rodada 1, ver seção acima) e nenhum dos dois arquivos de ownership desta corre
   caminho local) com `core.autocrlf=true`, não uma pasta ocupada real nem um ambiente
   CI distinto; cobre o cenário de newline relatado, não outras causas hipotéticas de
   falha de checkout.
+- Rodada 3: a neutralização de global/sistema valeu só no env dos subprocessos, com
+  Git for Windows 2.50.0 e Node 24.21.0. A prova cobre a combinação apontada pela revisão
+  (autocrlf=true só local, global/sistema ausentes); outras combinações, como
+  `.gitattributes` com `eol` ou `core.autocrlf=input`, não foram executadas.
