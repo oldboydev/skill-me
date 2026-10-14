@@ -1,0 +1,377 @@
+// C1-C4 — fronteira externa real: a CLI é invocada como processo filho,
+// como os critérios descrevem (`doctor --json`). Origem: ambiente
+// sintético (fixtures), nunca instalação real do agente.
+import assert from "node:assert/strict";
+import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import {
+  AGENT_ORDER,
+  KNOWN_GOOD_VERSION_TEXT,
+  installAllAgents,
+  makeScratch,
+  pathEnv,
+  writeCodex,
+  writeCodexLocalInstall,
+  writeHermes,
+} from "./helpers/fixture-agents.mjs";
+import { inventory } from "./helpers/fs-inventory.mjs";
+import { buildMinimalPe, corruptFixedFileInfoSignature } from "./helpers/synthetic-pe.mjs";
+import { runDoctor, runDoctorJson } from "./helpers/spawn-doctor.mjs";
+
+function emptyHomeEnv(scratch) {
+  return {
+    HOME: path.join(scratch, "home-vazio"),
+    USERPROFILE: path.join(scratch, "home-vazio"),
+    LOCALAPPDATA: path.join(scratch, "localappdata-vazio"),
+  };
+}
+
+test("presence-C1 PATH vazio e nenhum local reconhecido retorna três ausentes, nesta ordem, exit 0", () => {
+  const scratch = makeScratch("doctor-c1-");
+  try {
+    const { status, report } = runDoctorJson([], {
+      env: emptyHomeEnv(scratch),
+    });
+    assert.equal(status, 0);
+    assert.equal(report.agents.length, 3);
+    assert.deepEqual(
+      report.agents.map((a) => a.id),
+      AGENT_ORDER,
+    );
+    for (const agent of report.agents) {
+      assert.equal(agent.presence, "absent", agent.id);
+      assert.equal(agent.version, null, agent.id);
+      assert.equal(agent.reasonCode, "executable_not_found", agent.id);
+    }
+    const text = runDoctor([], { env: emptyHomeEnv(scratch) });
+    assert.equal(text.status, 0);
+    for (const id of AGENT_ORDER)
+      assert.match(
+        text.stdout,
+        new RegExp(id + "[^\\n]*não encontrado", "i"),
+        id,
+      );
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("presence-C2 fixtures de instalação resolvem caminho, versão e origem explícita por agente", () => {
+  const scratch = makeScratch("doctor-c2-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const { pathDirs } = installAllAgents(dir, { sentinelPath: path.join(scratch, "sentinel.txt") });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv(pathDirs), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const byId = Object.fromEntries(report.agents.map((a) => [a.id, a]));
+    assert.equal(byId.claude.presence, "present");
+    assert.equal(byId.claude.version, KNOWN_GOOD_VERSION_TEXT.claude);
+    assert.equal(byId.claude.versionSource, "binary_metadata");
+    assert.equal(byId.codex.presence, "present");
+    assert.equal(byId.codex.version, KNOWN_GOOD_VERSION_TEXT.codex);
+    assert.equal(byId.codex.versionSource, "package_metadata");
+    assert.equal(byId.hermes.presence, "present");
+    assert.equal(byId.hermes.version, KNOWN_GOOD_VERSION_TEXT.hermes);
+    assert.equal(byId.hermes.versionSource, "source_literal");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("presence-C2 caminho com espaços e Unicode não altera a resolução", () => {
+  const scratch = makeScratch("doctor-c2-unicode-");
+  try {
+    const dir = path.join(scratch, "pasta com espaço", "ágéntes café");
+    const { pathDirs } = installAllAgents(dir, { sentinelPath: path.join(scratch, "sentinel.txt") });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv(pathDirs), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const claude = report.agents.find((a) => a.id === "claude");
+    assert.equal(claude.version, KNOWN_GOOD_VERSION_TEXT.claude);
+    assert.ok(claude.path.includes("ágéntes café"), claude.path);
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.version, KNOWN_GOOD_VERSION_TEXT.hermes);
+    assert.ok(hermes.path.includes("ágéntes café"), hermes.path);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("presence-C3 artefato presente com versão ilegível mantém presence present, version null e motivo específico", () => {
+  const scratch = makeScratch("doctor-c3-unreadable-");
+  try {
+    const dir = path.join(scratch, "bin");
+    mkdirSync(dir, { recursive: true });
+    const claudeFile = path.join(
+      dir,
+      process.platform === "win32" ? "claude.exe" : "claude",
+    );
+    const pe = buildMinimalPe({
+      version: { major: 2, minor: 1, build: 295, revision: 0 },
+    });
+    writeFileSync(claudeFile, corruptFixedFileInfoSignature(pe), {
+      mode: 0o755,
+    });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv([dir]), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const claude = report.agents.find((a) => a.id === "claude");
+    assert.equal(claude.presence, "present");
+    assert.equal(claude.version, null);
+    assert.equal(claude.reasonCode, "version_unreadable");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("presence-C3 launcher não reconhecido mantém presence present com motivo launcher_not_recognized", () => {
+  const scratch = makeScratch("doctor-c3-launcher-");
+  try {
+    const dir = path.join(scratch, "bin");
+    mkdirSync(dir, { recursive: true });
+    const claudeFile = path.join(
+      dir,
+      process.platform === "win32" ? "claude.exe" : "claude",
+    );
+    writeFileSync(claudeFile, Buffer.from("não é um formato reconhecido\n"), {
+      mode: 0o755,
+    });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv([dir]), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const claude = report.agents.find((a) => a.id === "claude");
+    assert.equal(claude.presence, "present");
+    assert.equal(claude.version, null);
+    assert.equal(claude.reasonCode, "launcher_not_recognized");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// O launcher vem do helper compartilhado, com o intérprete fixado pelo próprio
+// texto (revisão formal7): o shim local anterior (`#!/usr/bin/env python3`,
+// `python -m hermes_cli`) deixava o intérprete para o PATH e hoje pararia em
+// launcher_not_recognized antes de ler o __init__.py ambíguo deste teste.
+test("presence-C3 fonte de versão ambígua mantém version null com motivo version_source_ambiguous", () => {
+  const scratch = makeScratch("doctor-c3-ambiguous-");
+  try {
+    const { binDir } = writeHermes(path.join(scratch, "hermes-venv"), {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+      initSource: '__version__ = "0.21.4"\n__version__ = "0.21.5"\n',
+    });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv([binDir]), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const hermes = report.agents.find((a) => a.id === "hermes");
+    assert.equal(hermes.presence, "present");
+    assert.equal(hermes.version, null);
+    assert.equal(hermes.reasonCode, "version_source_ambiguous");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("presence-C3 launcher alheio do Codex com package.json vizinho (não referenciado) continua launcher_not_recognized", () => {
+  const scratch = makeScratch("doctor-c3-foreign-codex-");
+  try {
+    const dir = path.join(scratch, "bin");
+    mkdirSync(dir, { recursive: true });
+    const codexFile = path.join(dir, process.platform === "win32" ? "codex.cmd" : "codex");
+    const content =
+      process.platform === "win32"
+        ? "@ECHO off\r\necho ferramenta nao relacionada\r\n"
+        : "#!/bin/sh\necho ferramenta nao relacionada\n";
+    writeFileSync(codexFile, content, { mode: 0o755 });
+    const pkgDir = path.join(dir, "node_modules", "@openai", "codex");
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(
+      path.join(pkgDir, "package.json"),
+      JSON.stringify({ name: "@openai/codex", version: "9.9.9" }),
+    );
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv([dir]), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.presence, "present");
+    assert.equal(codex.version, null);
+    assert.equal(codex.reasonCode, "launcher_not_recognized");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Pré-revisão formal: a referência exata ao arquivo de entrada do pacote,
+// mas só impressa (echo), não executa o node com ele — não é vínculo, mesmo
+// com o package.json real logo ao lado.
+test("presence-C3 shim do Codex que só imprime a referência ao pacote (echo) continua launcher_not_recognized", () => {
+  const scratch = makeScratch("doctor-c3-echo-codex-");
+  try {
+    const dir = path.join(scratch, "bin");
+    mkdirSync(dir, { recursive: true });
+    const codexFile = path.join(dir, process.platform === "win32" ? "codex.cmd" : "codex");
+    const content =
+      process.platform === "win32"
+        ? '@ECHO off\r\necho "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n'
+        : '#!/bin/sh\necho "$basedir/node_modules/@openai/codex/bin/codex.js"\nexit 0\n';
+    writeFileSync(codexFile, content, { mode: 0o755 });
+    const pkgDir = path.join(dir, "node_modules", "@openai", "codex");
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(
+      path.join(pkgDir, "package.json"),
+      JSON.stringify({ name: "@openai/codex", version: "0.162.1" }),
+    );
+    const env = { PATH: pathEnv([dir]), ...emptyHomeEnv(scratch) };
+    const { status, report } = runDoctorJson([], { env });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.presence, "present");
+    assert.equal(codex.path, codexFile);
+    assert.equal(codex.version, null);
+    assert.equal(codex.versionSource, null);
+    assert.equal(codex.reasonCode, "launcher_not_recognized");
+    const { status: textStatus, stdout } = runDoctor([], { env });
+    assert.equal(textStatus, 0);
+    assert.doesNotMatch(stdout, /0\.162\.1/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// C16/G4 — fronteira real da CLI: uma instalação RECONHECIDA (shim ligado de
+// verdade ao pacote, não um "launcher alheio" como presence-C3 acima) cuja
+// versão não está em known-version-profiles.mjs. Diferente de
+// launcher_not_recognized (vínculo nunca estabelecido), aqui a versão é lida
+// com sucesso; é a matriz de capacidades que deve reportar
+// version_profile_incompatible, nunca "verified" por ela ser mais nova.
+test("presence-C16 instalação reconhecida com versão sem perfil compatível fica version_profile_incompatible na matriz (não launcher_not_recognized)", () => {
+  const scratch = makeScratch("doctor-c16-versao-incompativel-");
+  try {
+    const { binDir } = writeCodex(path.join(scratch, "npm-prefix"), {
+      version: "9.9.0",
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+    });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv([binDir]), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.presence, "present");
+    assert.equal(codex.version, "9.9.0");
+    assert.equal(codex.versionSource, "package_metadata");
+    assert.notEqual(codex.reasonCode, "launcher_not_recognized");
+    const cliLocalRows = codex.capabilities.filter((row) => row.surface === "cli_local");
+    assert.equal(cliLocalRows.length, 5);
+    for (const row of cliLocalRows) {
+      assert.notEqual(row.support, "verified", row.mechanism);
+      assert.equal(row.reasonCode, "version_profile_incompatible", row.mechanism);
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("presence-C4 execução completa não invoca launchers nem altera arquivos de configuração/skills", () => {
+  const scratch = makeScratch("doctor-c4-");
+  try {
+    const dir = path.join(scratch, "bin");
+    const sentinelPath = path.join(scratch, "sentinel.txt");
+    const { pathDirs } = installAllAgents(dir, { sentinelPath });
+    const snapshotBefore = inventory(scratch);
+
+    const { status } = runDoctorJson([], {
+      env: {
+        PATH: pathEnv(pathDirs),
+        ...emptyHomeEnv(scratch),
+        DOCTOR_TEST_WRITE_SENTINEL: "1",
+      },
+    });
+    assert.equal(status, 0);
+    assert.throws(() => statSync(sentinelPath));
+
+    const snapshotAfter = inventory(scratch);
+    assert.deepEqual(snapshotAfter, snapshotBefore);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Achado formal 3 — fronteira real da CLI. O primeiro diretório do PATH
+// contém launchers de formato não reconhecido; o segundo, instalações
+// reconhecíveis. No Windows os nomes são os que a resolução por PATHEXT
+// precisa examinar (`codex.exe`, `claude.cmd`); no POSIX, os nomes sem
+// extensão com conteúdo não reconhecido (binário ELF opaco e script alheio).
+// Em ambos: presença no primeiro diretório, versão nula, nunca a versão da
+// instalação posterior nem `absent`. Nenhum launcher é executado.
+test("presence-C3 launcher de formato não reconhecido no primeiro diretório do PATH fica present/version null e vence a instalação posterior", () => {
+  const scratch = makeScratch("doctor-c3-formato-desconhecido-");
+  try {
+    const first = path.join(scratch, "primeiro");
+    mkdirSync(first, { recursive: true });
+    const windows = process.platform === "win32";
+    const codexName = windows ? "codex.exe" : "codex";
+    const claudeName = windows ? "claude.cmd" : "claude";
+    const nativeHeader = windows ? Buffer.from("MZ") : Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
+    writeFileSync(path.join(first, codexName), Buffer.concat([nativeHeader, Buffer.alloc(256)]), {
+      mode: 0o755,
+    });
+    writeFileSync(
+      path.join(first, claudeName),
+      windows ? "@ECHO off\r\necho launcher alheio\r\n" : "#!/bin/sh\necho launcher alheio\n",
+      { mode: 0o755 },
+    );
+    const { pathDirs } = installAllAgents(path.join(scratch, "segundo"), {
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+    });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv([first, ...pathDirs]), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.presence, "present");
+    assert.equal(codex.path, path.join(first, codexName));
+    assert.equal(codex.version, null);
+    assert.equal(codex.reasonCode, "launcher_not_recognized");
+    const claude = report.agents.find((a) => a.id === "claude");
+    assert.equal(claude.presence, "present");
+    assert.equal(claude.path, path.join(first, claudeName));
+    assert.equal(claude.version, null);
+    assert.equal(claude.reasonCode, "launcher_not_recognized");
+    assert.throws(() => statSync(path.join(scratch, "sentinel.txt")));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+// Achado formal 4 — fronteira real da CLI com a instalação local que o npm
+// cria: `node_modules/.bin/codex.cmd` (cmd-shim, `%dp0%\..\@openai\codex\...`)
+// no Windows e o link simbólico `node_modules/.bin/codex` no POSIX.
+test("presence-C2 instalação local do npm (node_modules/.bin) resolve a versão do pacote real ligado ao shim", () => {
+  const scratch = makeScratch("doctor-c2-codex-local-");
+  try {
+    const project = path.join(scratch, "projeto com espaço");
+    const { launcherPath, binDir } = writeCodexLocalInstall(project, {
+      version: KNOWN_GOOD_VERSION_TEXT.codex,
+      sentinelPath: path.join(scratch, "sentinel.txt"),
+    });
+    const { status, report } = runDoctorJson([], {
+      env: { PATH: pathEnv([binDir]), ...emptyHomeEnv(scratch) },
+    });
+    assert.equal(status, 0);
+    const codex = report.agents.find((a) => a.id === "codex");
+    assert.equal(codex.presence, "present");
+    assert.equal(codex.path, launcherPath);
+    assert.equal(codex.version, KNOWN_GOOD_VERSION_TEXT.codex);
+    assert.equal(codex.versionSource, "package_metadata");
+    assert.throws(() => statSync(path.join(scratch, "sentinel.txt")));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});

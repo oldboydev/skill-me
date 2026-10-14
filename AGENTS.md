@@ -2,8 +2,10 @@
 
 ## Regras próprias do skill-me
 
-- O repositório ainda não define código de produto; não invente domínio, framework ou deploy.
-- package.json contém ferramentas de governança, não um pacote autorizado para publicação.
+- O primeiro código de produto autorizado é o diagnóstico local `doctor` (issue #3).
+  Não invente domínio, framework ou deploy para entregas que não os definem.
+- package.json contém a CLI de diagnóstico e ferramentas de governança; permanece privado,
+  sem autorização para publicação.
 - Novas regras de domínio e verificações específicas serão definidas com o trabalho aprovado.
 
 ## Boas práticas de desenvolvimento
