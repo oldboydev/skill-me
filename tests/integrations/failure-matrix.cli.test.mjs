@@ -86,7 +86,7 @@ test("I4-C36 hooks Claude e Codex: seis falhas do consumidor/entrada mantêm sa�
   }
 });
 
-test("I4-C38 wrapper: seis falhas da observação preservam o código do filho", async () => {
+test("I4-C38 wrapper: seis falhas da observação preservam o código do filho", async (t) => {
   const dir = makeScratch("failure-wrapper");
   scratches.push(dir);
   const flood = (count) => [{ repeat: { count, line: '{"type":"item.completed","item":{"id":"item_{i}","type":"agent_message","text":"x"}}' } }];
@@ -114,23 +114,53 @@ test("I4-C38 wrapper: seis falhas da observação preservam o código do filho",
   });
   assert.equal(disconnected.status, 17);
   assert.equal(disconnected.report.counters.accepted + disconnected.report.counters.dropped, 2002, "todas as linhas consumidas");
-  // 4. relatório não drenado: o wrapper desiste em ~1000 ms e sai com o código do filho.
-  const started = Date.now();
+  // 4. relatório não drenado: ninguém lê o fd 3 enquanto o wrapper vive. Ele
+  // precisa sair com o código do filho em ≤ 1000 ms além do fim do filho.
+  // Medição: o filho carimba o relógio do sistema no seu último instante
+  // observável (handler de `exit`) e o teste carimba ao receber o `exit` do
+  // wrapper. Os atrasos de observação dos dois lados só aumentam o intervalo
+  // medido: ele é um limite superior do intervalo real.
   const undrained = await new Promise((resolve) => {
     const child = spawn(process.execPath, [INTEGRATIONS_CLI, "run", "--agent", "codex", "--codex-entry", FAKE_CODEX, "--", "p"], {
       cwd: dir,
-      env: { ...env(flood(600)), SKILL_ME_OBSERVER_REPORT_FD: "3" },
+      env: { ...env(flood(600)), SKILL_ME_OBSERVER_REPORT_FD: "3", FAKE_CODEX_EXIT_STAMP: "1" },
       stdio: ["ignore", "ignore", "pipe", "pipe"],
     });
     child.stdio[3].pause();
-    // `close` esperaria o fd 3 pausado terminar (nunca); `exit` é o fim do wrapper.
+    let stderr = "";
+    const leftover = [];
+    let wrapperExit;
+    let stderrEnded = false;
+    let reportEnded = false;
+    const done = () => {
+      if (wrapperExit && stderrEnded && reportEnded) resolve({ ...wrapperExit, stderr, leftover: Buffer.concat(leftover).toString("utf8") });
+    };
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.stderr.on("end", () => ((stderrEnded = true), done()));
+    // `close` esperaria o fd 3 pausado; `exit` é o fim do wrapper. Só depois
+    // dele o teste lê o que ficou no pipe, para confirmar que o relatório não
+    // tinha sido entregue (a escrita estava de fato bloqueada).
     child.on("exit", (status, signal) => {
-      child.stdio[3].destroy();
-      resolve({ status, signal });
+      wrapperExit = { status, signal, exitedAt: Date.now() };
+      const guard = setTimeout(() => child.stdio[3].destroy(), 10_000);
+      child.stdio[3].on("data", (chunk) => leftover.push(chunk));
+      child.stdio[3].once("close", () => {
+        clearTimeout(guard);
+        reportEnded = true;
+        done();
+      });
+      child.stdio[3].resume();
+      done();
     });
   });
   assert.equal(undrained.status, 17);
-  assert.ok(Date.now() - started < 10_000, `encerrou em ${Date.now() - started} ms`);
+  const childExitAt = Number(/FAKE_CODEX_EXIT_AT (\d+)/.exec(undrained.stderr)?.[1]);
+  assert.ok(Number.isSafeInteger(childExitAt), "carimbo do fim do filho presente");
+  const afterChildMs = undrained.exitedAt - childExitAt;
+  assert.ok(afterChildMs >= 0 && afterChildMs <= 1000, `wrapper saiu ${afterChildMs} ms depois do filho`);
+  t.diagnostic(`relatório não drenado: wrapper saiu ${afterChildMs} ms depois do filho; ${undrained.leftover.length} bytes do relatório no pipe`);
+  // A linha do relatório termina em "\n"; sem ela, a escrita ficou bloqueada até a saída.
+  assert.ok(!undrained.leftover.includes("\n"), `relatório não entregue inteiro (${undrained.leftover.length} bytes no pipe)`);
   // 5. JSONL inválido.
   const invalid = await runWrapper({ args: ["p"], env: env([{ stdout: execEventLine("invalid_json_line") }, { stdout: execEventLine("non_object_line") }]), cwd: dir });
   assert.equal(invalid.status, 17);

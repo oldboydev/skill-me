@@ -83,7 +83,10 @@ export function createObservation({ env = process.env, allowStderrReport = true,
       }
     },
     report,
-    async flush() {
+    // `deadlineAt` (relógio monotônico de `performance.now()`) permite a quem
+    // chama contar o prazo de um instante anterior — o wrapper conta do fim do
+    // filho. A serialização entra no prazo.
+    async flush({ deadlineAt = performance.now() + REPORT_DEADLINE_MS } = {}) {
       receiver.close();
       const fd = reportFd(env, allowStderrReport);
       if (fd === null) return;
@@ -93,7 +96,7 @@ export function createObservation({ env = process.env, allowStderrReport = true,
       } catch {
         return;
       }
-      await writeWithDeadline(fd, line, REPORT_DEADLINE_MS);
+      await writeWithDeadline(fd, line, Math.max(0, deadlineAt - performance.now()));
     },
   };
 }

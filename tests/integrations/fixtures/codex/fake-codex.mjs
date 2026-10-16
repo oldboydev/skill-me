@@ -10,6 +10,10 @@ const stdinText = env.FAKE_CODEX_READ_STDIN === "1" ? readFileSync(0, "utf8") : 
 const probe = { argv: process.argv.slice(2), cwd: process.cwd(), env: { ...env }, stdin: stdinText };
 writeSync(2, `FAKE_CODEX_PROBE ${JSON.stringify(probe)}\n`);
 
+// Último instante observável dentro do filho (relógio do sistema), para medir
+// quanto o wrapper demora a sair depois dele.
+if (env.FAKE_CODEX_EXIT_STAMP === "1") process.on("exit", () => writeSync(2, `FAKE_CODEX_EXIT_AT ${Date.now()}\n`));
+
 if (env.FAKE_CODEX_ON_SIGINT) {
   process.on("SIGINT", () => {
     writeSync(1, JSON.stringify({ type: "turn.failed", error: { message: "interrompido" } }) + "\n");

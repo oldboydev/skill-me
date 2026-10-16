@@ -5,7 +5,7 @@ import { resolveAgents } from "../doctor/agent-resolution.mjs";
 import { createProductionFsAdapter } from "../doctor/fs-adapter.mjs";
 import { codexExecDraft, processExitDraft } from "./adapters/codex-exec.mjs";
 import { STREAM_MAX_LINE_BYTES, createLineReader } from "./line-reader.mjs";
-import { createObservation } from "./observation.mjs";
+import { REPORT_DEADLINE_MS, createObservation } from "./observation.mjs";
 
 // Modo supervisionado: `codex exec --json` como processo filho, sem shell.
 // O stdout do wrapper é o JSONL nativo do Codex, byte a byte (inclusive itens
@@ -18,6 +18,13 @@ const JSON_FLAGS = new Set(["--json", "--experimental-json"]);
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 const SHELL_ONLY = /\.(cmd|bat)$/i;
 const SCRIPT = /\.(mjs|cjs|js)$/i;
+// Relatório não drenado: o wrapper sai em ≤ REPORT_DEADLINE_MS depois do fim do
+// filho (C38). O prazo conta do `close` do filho e reserva o que o timer não
+// cobre — o intervalo entre o fim real do filho e o `close`, a granularidade do
+// timer e o encerramento do próprio processo. Sem reserva, isso somou 23–63 ms
+// no Windows (inclusive com CPU saturada) e 4–14 ms no WSL; a calibração está
+// em .checks/issue-4-integracoes.build.md.
+const EXIT_RESERVE_MS = 200;
 
 // `exec`, depois `--json` (se ainda não estiver entre as flags, antes de um
 // `--`), depois os argumentos do usuário intactos. `--json` vem logo após
@@ -124,6 +131,7 @@ export async function runSupervisedCodex({ codexEntry, execArgs }) {
     child.once("error", (error) => resolve({ spawnError: error }));
     child.once("close", (code, signal) => resolve({ code, signal }));
   });
+  const childEndedAt = performance.now();
   for (const signal of FORWARDED_SIGNALS) process.removeListener(signal, forward);
 
   if (outcome.spawnError) {
@@ -133,7 +141,7 @@ export async function runSupervisedCodex({ codexEntry, execArgs }) {
 
   reader.end();
   observation.submit(processExitDraft({ code: outcome.code, signal: outcome.signal }));
-  await observation.flush();
+  await observation.flush({ deadlineAt: childEndedAt + REPORT_DEADLINE_MS - EXIT_RESERVE_MS });
   // No POSIX a escrita do stdout em pipe é assíncrona (Node 24, "A note on
   // process I/O"; no Windows é síncrona): bytes ainda na fila se perderiam com
   // process.exit. Um write vazio com callback só conclui depois dos anteriores;
