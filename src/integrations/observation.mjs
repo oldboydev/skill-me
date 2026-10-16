@@ -1,4 +1,4 @@
-import { write } from "node:fs";
+import net from "node:net";
 import { buildEnvelope } from "./boundary.mjs";
 import { createMemoryReceiver } from "./memory-receiver.mjs";
 
@@ -31,7 +31,12 @@ function reportFd(env, allowStderr) {
 }
 
 // Escreve tudo ou desiste no prazo: um consumidor que não drena o pipe nunca
-// prende o processo observado. Erro (fd fechado, EPIPE) é absorvido.
+// prende o processo observado. Fds 3..9 são abertos como pipe pelo próprio
+// handle do libuv (escrita assíncrona): uma escrita pelo pool de threads
+// (fs.write) travaria o encerramento do processo no Windows enquanto o pipe
+// estiver cheio. Arquivo, TTY ou fd fechado não são pipe: sem relatório. O fd 2
+// usa o process.stderr (relatório pequeno do hook através do shell do Codex).
+// Erro (EPIPE, EBADF) é absorvido.
 function writeWithDeadline(fd, buffer, deadlineMs) {
   return new Promise((resolve) => {
     let settled = false;
@@ -42,19 +47,13 @@ function writeWithDeadline(fd, buffer, deadlineMs) {
       resolve();
     };
     const timer = setTimeout(finish, deadlineMs);
-    timer.unref?.();
-    const writeFrom = (offset) => {
-      if (offset >= buffer.length) return finish();
-      try {
-        write(fd, buffer, offset, buffer.length - offset, null, (error, written) => {
-          if (error || settled) return finish();
-          writeFrom(offset + written);
-        });
-      } catch {
-        finish();
-      }
-    };
-    writeFrom(0);
+    try {
+      const stream = fd === 2 ? process.stderr : new net.Socket({ fd, readable: false, writable: true });
+      stream.on("error", finish);
+      stream.write(buffer, finish);
+    } catch {
+      finish();
+    }
   });
 }
 

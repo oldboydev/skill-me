@@ -86,15 +86,19 @@ export async function runSupervisedCodex({ codexEntry, execArgs }) {
   // Stderr do wrapper pertence ao filho: o relatório de fixture só aceita fd >= 3.
   const observation = createObservation({ env: process.env, allowStderrReport: false });
   const reader = createExecObserver(observation);
-  let stdoutBroken = false;
-  process.stdout.on("error", () => {
-    stdoutBroken = true;
-  });
 
   const child = spawn(launch.command, [...launch.prefix, ...childArgv(execArgs)], {
     stdio: ["inherit", "pipe", "inherit"],
     env: process.env,
     windowsHide: false,
+  });
+
+  // Consumidor do stdout que desconecta (EPIPE): o repasse para, mas o filho
+  // continua sendo drenado — um `drain` que nunca chega não pode travá-lo.
+  let stdoutBroken = false;
+  process.stdout.on("error", () => {
+    stdoutBroken = true;
+    child.stdout.resume();
   });
 
   const forward = (signal) => {
@@ -130,6 +134,15 @@ export async function runSupervisedCodex({ codexEntry, execArgs }) {
   reader.end();
   observation.submit(processExitDraft({ code: outcome.code, signal: outcome.signal }));
   await observation.flush();
+  // O stdout nativo termina de sair antes do fim (escrita em pipe é assíncrona
+  // no Windows); depois o processo sai explicitamente, porque uma escrita de
+  // relatório que estourou o prazo continuaria segurando o event loop.
+  if (!stdoutBroken && process.stdout.writableLength > 0) {
+    await new Promise((resolve) => {
+      process.stdout.once("drain", resolve);
+      process.stdout.once("error", resolve);
+    });
+  }
 
   if (outcome.signal) {
     // Reemite o mesmo sinal sobre si, como o launcher oficial: quem chamou
@@ -137,5 +150,5 @@ export async function runSupervisedCodex({ codexEntry, execArgs }) {
     process.kill(process.pid, outcome.signal);
     return;
   }
-  process.exitCode = outcome.code ?? 1;
+  process.exit(outcome.code ?? 1);
 }

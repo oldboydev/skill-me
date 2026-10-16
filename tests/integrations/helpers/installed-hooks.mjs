@@ -30,17 +30,21 @@ export function readCodexHandlers(target) {
   return handlers;
 }
 
-function collect(child, { stdinText, keepStdinOpenMs, extraFd }) {
+// `destroyChannel` fecha o lado de leitura de um canal logo após o spawn:
+// consumidor que desconecta antes de o hook escrever o relatório.
+function collect(child, { stdinText, keepStdinOpenMs, extraFd, destroyChannel }) {
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let fd3 = "";
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.stderr.on("error", () => {});
     if (extraFd) {
       child.stdio[3].on("data", (chunk) => (fd3 += chunk));
       child.stdio[3].on("error", () => {});
     }
+    if (destroyChannel !== undefined) child.stdio[destroyChannel].destroy();
     child.stdin.on("error", () => {});
     if (stdinText !== undefined) child.stdin.write(stdinText);
     if (keepStdinOpenMs === undefined) child.stdin.end();
@@ -55,7 +59,7 @@ function collect(child, { stdinText, keepStdinOpenMs, extraFd }) {
 // Forma exec do Claude (code.claude.com/docs/en/hooks, "Exec form and shell
 // form"): com `args`, `command` é iniciado diretamente, sem shell. O payload
 // vai no stdin; o relatório de fixture sai pelo fd 3 (Node → Node direto).
-export function runClaudeHandler(handler, payload, { env, cwd, stdinText, keepStdinOpenMs, reportFd = 3 } = {}) {
+export function runClaudeHandler(handler, payload, { env, cwd, stdinText, keepStdinOpenMs, reportFd = 3, destroyChannel } = {}) {
   const child = spawn(handler.command, handler.args, {
     cwd,
     env: reportFd === null ? env : { ...env, SKILL_ME_OBSERVER_REPORT_FD: String(reportFd) },
@@ -66,13 +70,14 @@ export function runClaudeHandler(handler, payload, { env, cwd, stdinText, keepSt
     stdinText: stdinText ?? (payload === undefined ? undefined : JSON.stringify(payload)),
     keepStdinOpenMs,
     extraFd: true,
+    destroyChannel,
   }).then((result) => ({ ...result, report: parseReport(reportFd === 2 ? result.stderr : result.fd3) }));
 }
 
 // Codex 0.162.1 (hooks/src/engine/command_runner.rs:384-437): Windows
 // `cmd.exe /C "<linha>"` com a linha crua entre aspas; POSIX `$SHELL -lc
 // <linha>`. O fd 3 não atravessa o cmd.exe, então o relatório sai pelo fd 2.
-export function runCodexHandler(handler, payload, { env, cwd, stdinText, keepStdinOpenMs, reportFd = 2 } = {}) {
+export function runCodexHandler(handler, payload, { env, cwd, stdinText, keepStdinOpenMs, reportFd = 2, destroyChannel } = {}) {
   const childEnv = reportFd === null ? env : { ...env, SKILL_ME_OBSERVER_REPORT_FD: String(reportFd) };
   const child =
     process.platform === "win32"
@@ -92,5 +97,6 @@ export function runCodexHandler(handler, payload, { env, cwd, stdinText, keepStd
     stdinText: stdinText ?? (payload === undefined ? undefined : JSON.stringify(payload)),
     keepStdinOpenMs,
     extraFd: true,
+    destroyChannel,
   }).then((result) => ({ ...result, report: parseReport(reportFd === 3 ? result.fd3 : result.stderr) }));
 }

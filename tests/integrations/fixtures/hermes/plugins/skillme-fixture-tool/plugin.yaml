@@ -1,0 +1,5 @@
+name: skillme-fixture-tool
+version: 0.0.1
+description: "Fixture sintética da issue 4: ferramenta eco para exercitar o dispatch real sem modelo."
+provides_tools:
+  - skillme_fixture_echo

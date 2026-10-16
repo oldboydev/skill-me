@@ -381,7 +381,12 @@ dropped, malformed } }, close() }`. Nunca lança; envelope fora do schema →
   (hook/`ingest`: `n` ∈ 2..9; wrapper: 3..9, porque o stderr pertence ao filho), o
   processo escreve ao sair uma linha `{"skillMeObserverReport":1,"events":[…],
   "counters":{…}}` com envelopes já minimizados, em até 1000 ms; falha ou demora é
-  absorvida. A instalação nunca define essa variável. Não é coletor nem ingestão.
+  absorvida. Fds 3..9 só aceitam pipe, aberto como handle de pipe do libuv: arquivo
+  ou TTY não recebem relatório (nada é persistido por esse caminho) e uma escrita
+  bloqueada nunca segura o encerramento — `fs.write` pelo pool de threads travaria
+  o `process.exit` no Windows, constatado no build. O fd 2 usa `process.stderr`
+  (relatório de um único evento do hook através do shell do Codex). A instalação
+  nunca define essa variável. Não é coletor nem ingestão.
 - Entrega Hermes: somente com `SKILL_ME_HERMES_DELIVERY` (array JSON de argv); nesta
   entrega só os testes a definem. A #8 definirá o consumidor real.
 

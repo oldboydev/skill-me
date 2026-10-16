@@ -1,0 +1,5 @@
+name: naive-blocking-observer
+version: 0.0.1
+description: "Fixture sintética da issue 4 (controle RED): observador que escreve de forma síncrona no destino dentro de pre_tool_call."
+provides_hooks:
+  - pre_tool_call
