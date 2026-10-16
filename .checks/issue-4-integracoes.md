@@ -11,6 +11,12 @@ Sources:
 - Conversa de 16/10/2026 — aprovação humana do recorte: fronteira mínima e receptor em
   memória; privacidade completa e armazenamento nas #5/#8; sem instalação pessoal,
   E2E com modelos, coleta bruta, servidor, armazenamento, push ou PR.
+- Conversa de 16/10/2026 — renegociação explícita de C39 após F5 do Verifier:
+  à pergunta "Confirma ajustar C39 para proibir conteúdo bruto nas saídas e registros
+  próprios do debugger, preservando byte a byte a saída original do Codex, como já
+  previsto no plano?", o proprietário respondeu "Confirmo o ajuste ao plano".
+  O texto anterior de C39 e o FAIL da primeira rodada permanecem no histórico Git;
+  não houve alteração do comportamento ou das asserções para obter aprovação.
 - `.tasks/issue-4-integracoes.md` — 14 critérios em 5 fatias e a seção "Fronteira
   mínima — assinatura fechada (U1)", que fixa envelope, limites, comandos e códigos.
 - `AGENTS.md` — regras de teste, reúso, governança; `package.json` privado.
@@ -203,7 +209,7 @@ Proof: `node --test --test-reporter=tap --test-name-pattern="^I4-C37 " tests/int
 **C38** — Wrapper: sem relatório, eventos recusados, consumidor do stdout desconectado (EPIPE), relatório não drenado (sai em ≤ 1000 ms além do filho), JSONL inválido e linha/receptor acima do limite → código do filho preservado nos seis (crit. 12).
 Proof: `node --test --test-reporter=tap --test-name-pattern="^I4-C38 " tests/integrations/failure-matrix.cli.test.mjs` — N=1
 
-**C39** — Canários sintéticos em entrada de ferramenta, resultado, prompt, caminho, erro e raciocínio não aparecem em stdout, stderr, relatório nem em arquivo criado no alvo ou no TEMP dedicado, para hook Claude, hook Codex e wrapper (crit. 12, #5).
+**C39** — Canários sintéticos em entrada de ferramenta, resultado, prompt, caminho, erro e raciocínio não aparecem nas saídas e registros próprios do debugger nem em arquivo criado por ele no alvo ou no TEMP dedicado, para hook Claude, hook Codex e wrapper. Nos hooks, stdout e stderr próprios ficam sem canários; no wrapper, o relatório e qualquer conteúdo acrescentado pelo debugger ficam sem canários. O stdout nativo do Codex é repassado byte a byte e seu stderr é preservado conforme C16/C17 e o plano; a prova distingue esse repasse das saídas próprias do debugger (crit. 12, #5).
 Proof: `node --test --test-reporter=tap --test-name-pattern="^I4-C39 " tests/integrations/failure-matrix.cli.test.mjs` — N=1
 
 **C40** — Toda fixture em `tests/integrations/fixtures/` declara `origin: "synthetic"`, `contract` e `source`, e cada contrato tem ao menos um caso válido e um inválido (crit. 13, AC9).

@@ -29,6 +29,14 @@ registra as decisões em Landing, sem reabrir esta aprovação.
 Base: `236e999fddb4c096634284e426d9d4db5ac526fa`.
 Branch da entrega: `codex/issue-4-integracoes`.
 
+Esclarecimento aprovado de C39 em 16/10/2026: à pergunta "Confirma ajustar C39 para
+proibir conteúdo bruto nas saídas e registros próprios do debugger, preservando byte
+a byte a saída original do Codex, como já previsto no plano?", o proprietário
+respondeu "Confirmo o ajuste ao plano". A vedação alcança os registros e saídas
+próprios do debugger; o stdout nativo e o stderr do Codex continuam preservados
+conforme o contrato abaixo e C16/C17. A correção é do checklist contraditório, sem
+mudança de comportamento, teste ou ampliação para a política integral da #5.
+
 ### Recorte e tamanho
 
 Uma task e uma branch/PR para a issue inteira, conforme AGENTS.md. As fatias são:
