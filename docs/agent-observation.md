@@ -115,7 +115,10 @@ simulação de caminho.
   `rename`. A janela entre essa comparação e o `rename` não é atômica contra editores
   arbitrários (não há CAS no sistema de arquivos).
 - Remoção Hermes apaga também o bytecode que o próprio Hermes grava para o nosso
-  `__init__.py` (`__pycache__/__init__.cpython-*.pyc`); qualquer outro arquivo na
-  pasta do plugin é preservado e reportado.
+  `__init__.py` (`__pycache__/__init__.cpython-*.pyc`), só quando é arquivo regular
+  num `__pycache__` real dentro do alvo; qualquer outro arquivo na pasta do plugin é
+  preservado e reportado. `__pycache__` ou bytecode que é junção/link para fora do
+  alvo faz a remoção inteira ser recusada (código 4), sem seguir o link; link que
+  fica dentro do alvo é tratado como alheio e preservado.
 - Os comandos instalados apontam para o node e para este checkout por caminho
   absoluto: mover o repositório exige reinstalar.

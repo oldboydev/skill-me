@@ -245,6 +245,26 @@ async function runJsonAgent({ op, agent, root, apply, io, ctx, platform, result 
   return { wrote: result.applied };
 }
 
+// O nome sozinho não faz um bytecode ser nosso: a contenção vem antes de
+// listar ou apagar qualquer coisa. Junção/link que resolve fora do alvo é
+// conflito (nada é seguido); `__pycache__` que não é diretório real, ou entrada
+// dele que não é arquivo regular, é alheio e fica — mesmo apontando para dentro
+// do alvo, apagar através dele removeria arquivo de outra origem.
+async function readPluginCache(io, root, dir, state, platform) {
+  await assertContained(root, dir, io, platform);
+  if (!(await io.lstat(dir)).isDirectory()) {
+    state.foreign.push("__pycache__");
+    return;
+  }
+  state.cacheDirOwned = true;
+  for (const name of await io.readdir(dir)) {
+    const file = path.join(dir, name);
+    await assertContained(root, file, io, platform);
+    if (isOwnCache(name) && (await io.lstat(file)).isFile()) state.caches.push(name);
+    else state.foreign.push(`__pycache__/${name}`);
+  }
+}
+
 async function readHermesState(io, root, platform) {
   const manifestText = await readOptional(io, root, manifestPath(root, "hermes"));
   const pluginsDir = path.join(root, "plugins");
@@ -257,6 +277,7 @@ async function readHermesState(io, root, platform) {
     pluginDirExists: await exists(pluginDir),
     files: {},
     caches: [],
+    cacheDirOwned: false,
     foreign: [],
   };
   if (!state.pluginDirExists) return state;
@@ -265,10 +286,7 @@ async function readHermesState(io, root, platform) {
     if (ARTIFACT_NAMES.includes(name)) {
       state.files[name] = sha256(await io.readBytes(full));
     } else if (name === "__pycache__") {
-      for (const cached of await io.readdir(full)) {
-        if (isOwnCache(cached)) state.caches.push(cached);
-        else state.foreign.push(`__pycache__/${cached}`);
-      }
+      await readPluginCache(io, root, full, state, platform);
     } else {
       state.foreign.push(name);
     }
@@ -364,7 +382,7 @@ async function installHermesArtifacts(io, root, artifacts, state) {
   }
 }
 
-async function removeHermesArtifacts(io, root, plan, state) {
+async function removeHermesArtifacts(io, root, plan, state, platform) {
   const pluginDir = path.join(root, PLUGIN_REL_DIR);
   for (const removal of plan.removals) {
     const file = path.join(pluginDir, removal.name);
@@ -372,8 +390,17 @@ async function removeHermesArtifacts(io, root, plan, state) {
     if (sha256(await io.readBytes(file)) !== removal.sha256) throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/${removal.name}`);
     await io.unlink(file);
   }
-  for (const cached of state.caches) await io.unlink(path.join(pluginDir, "__pycache__", cached));
-  await removeDirIfEmpty(io, path.join(pluginDir, "__pycache__"));
+  const cacheDir = path.join(pluginDir, "__pycache__");
+  for (const cached of state.caches) {
+    const file = path.join(cacheDir, cached);
+    // Mesma conferência para o cache: link posto depois da leitura não é seguido.
+    await assertContained(root, file, io, platform);
+    if (!(await io.lstat(file)).isFile()) throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/__pycache__/${cached}`);
+    await io.unlink(file);
+  }
+  // Só o diretório real que foi inspecionado; uma junção alheia vazia seria
+  // removida por rmdir no Windows.
+  if (state.cacheDirOwned) await removeDirIfEmpty(io, cacheDir);
   await removeDirIfEmpty(io, pluginDir);
   if (state.manifest.created.pluginsDir) await removeDirIfEmpty(io, path.join(root, "plugins"));
 }
@@ -403,7 +430,7 @@ async function runHermesAgent({ op, root, apply, io, platform, result }) {
     result.conflicts = plan.conflicts;
     if (!needsWrite(plan)) return;
     if (op === "install" && plan.writeArtifacts) await step(result, "artifacts", () => installHermesArtifacts(io, root, artifacts, state));
-    if (op === "uninstall") await step(result, "artifacts", () => removeHermesArtifacts(io, root, plan, state));
+    if (op === "uninstall") await step(result, "artifacts", () => removeHermesArtifacts(io, root, plan, state, platform));
     if (plan.manifestAction) {
       await step(result, "manifest", () =>
         plan.manifestAction === "delete" ? deleteManifest(io, root, "hermes") : writeManifest(io, root, "hermes", plan.manifestBody),

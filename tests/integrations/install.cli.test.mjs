@@ -70,6 +70,33 @@ function withoutHooks(doc) {
   return rest;
 }
 
+// Link de arquivo exige privilégio no Windows (EPERM): o subcaso fica registrado
+// por diagnóstico e roda no Linux/WSL.
+function linkFileOrDiagnose(t, existing, link, subcase) {
+  try {
+    symlinkSync(existing, link, "file");
+    return true;
+  } catch (error) {
+    if (error.code !== "EPERM") throw error;
+    t.diagnostic(`subcaso ${subcase} não executado: criar symlink de arquivo exige privilégio neste Windows (EPERM); coberto no Linux/WSL`);
+    return false;
+  }
+}
+
+// Remoção Hermes com cache que resolve para fora do alvo: prévia e aplicação
+// recusam com 4, sem declarar sucesso e sem mudar nada no alvo.
+function assertHermesUninstallEscapes(target, label) {
+  const before = snapshotTree(target);
+  for (const apply of [false, true]) {
+    const result = cli(["uninstall", "--agent", "hermes", "--target", target, ...(apply ? ["--apply"] : [])]);
+    assert.equal(result.status, 4, `${label} apply=${apply}: ${result.stdout}`);
+    assert.equal(result.report.status, "conflict", label);
+    assert.equal(result.report.applied, false, label);
+    assert.deepEqual(result.report.conflicts.map((c) => c.code), ["target_escape"], label);
+  }
+  assert.deepEqual(snapshotTree(target), before, `${label}: nada removido dentro do alvo`);
+}
+
 // Agentes-sentinela no PATH: se qualquer comando os iniciar, um arquivo aparece.
 function sentinelPath(label) {
   const dir = path.join(scratch(label), "bin com espaço");
@@ -196,20 +223,34 @@ test("I4-C27 alvo fora do diretório, link que escapa e política gerenciada sã
 
   // settings.json como link de arquivo para fora (exige privilégio no Windows).
   const escapeFile = claudeTarget("escape-file", null);
-  let fileLinkCreated = true;
-  try {
-    symlinkSync(path.join(outside, "settings.json"), path.join(escapeFile, "settings.json"), "file");
-  } catch (error) {
-    if (error.code !== "EPERM") throw error;
-    fileLinkCreated = false;
-    t.diagnostic("subcaso link de arquivo não executado: criar symlink de arquivo exige privilégio neste Windows (EPERM); coberto no Linux/WSL");
-  }
-  if (fileLinkCreated) {
+  if (linkFileOrDiagnose(t, path.join(outside, "settings.json"), path.join(escapeFile, "settings.json"), "link de arquivo settings.json")) {
     const fileResult = cli(["install", "--agent", "claude", "--target", escapeFile, "--apply"]);
     assert.equal(fileResult.status, 4, fileResult.stdout);
     assert.ok(fileResult.report.conflicts.some((c) => c.code === "target_escape"));
   }
   assert.deepEqual(snapshotTree(outside), outsideBefore, "nada escrito fora do alvo");
+
+  // Hermes instalado: `__pycache__` do plugin vira junção/link de diretório para
+  // fora do alvo, com um arquivo externo de nome igual ao bytecode próprio.
+  const cacheOutside = scratch("cache-outside");
+  writeFileSync(path.join(cacheOutside, "__init__.cpython-311.pyc"), "arquivo externo sintético do usuário\n");
+  const cacheOutsideBefore = snapshotTree(cacheOutside);
+  const cacheDirEscape = hermesTarget("escape-cache-dir");
+  assert.equal(cli(["install", "--agent", "hermes", "--target", cacheDirEscape, "--apply"]).status, 0);
+  symlinkSync(cacheOutside, path.join(cacheDirEscape, "plugins", "skill-me-observer", "__pycache__"), "junction");
+  assertHermesUninstallEscapes(cacheDirEscape, "__pycache__ junção/link de diretório");
+  assert.deepEqual(snapshotTree(cacheOutside), cacheOutsideBefore, "arquivo externo preservado (junção/link de diretório)");
+
+  // `__pycache__` real com link de arquivo de nome próprio apontando para fora:
+  // o nome não comprova propriedade.
+  const cacheFileEscape = hermesTarget("escape-cache-file");
+  assert.equal(cli(["install", "--agent", "hermes", "--target", cacheFileEscape, "--apply"]).status, 0);
+  const realCache = path.join(cacheFileEscape, "plugins", "skill-me-observer", "__pycache__");
+  mkdirSync(realCache);
+  if (linkFileOrDiagnose(t, path.join(cacheOutside, "__init__.cpython-311.pyc"), path.join(realCache, "__init__.cpython-311.pyc"), "link de arquivo no __pycache__")) {
+    assertHermesUninstallEscapes(cacheFileEscape, "__pycache__ com link de arquivo");
+  }
+  assert.deepEqual(snapshotTree(cacheOutside), cacheOutsideBefore, "arquivo externo preservado (link de arquivo)");
 
   // Diretório de política gerenciada do Claude é recusado antes de qualquer leitura.
   const managed = process.platform === "win32" ? "C:\\Program Files\\ClaudeCode" : process.platform === "darwin" ? "/Library/Application Support/ClaudeCode" : "/etc/claude-code";
@@ -397,4 +438,43 @@ test("I4-C34 Hermes: artefatos com hash, habilitação manual, pasta alheia e ed
   assert.equal(existsSync(path.join(hermes, "plugins", "skill-me-observer", "plugin.yaml")), false);
   assert.equal(existsSync(path.join(hermes, "plugins", "skill-me-observer", "kwargs.json")), false);
   assert.ok(statSync(path.join(hermes, "plugins", "other-plugin")).isDirectory());
+
+  // Bytecode que o Hermes grava para o nosso `__init__.py` (arquivo regular num
+  // `__pycache__` real) continua saindo com a remoção: a árvore volta à anterior.
+  const cachedHome = hermesTarget("hermes-cache");
+  const cachedBefore = snapshotTree(cachedHome, { withMtime: false });
+  assert.equal(cli(["install", "--agent", "hermes", "--target", cachedHome, "--apply"]).status, 0);
+  const ownCache = path.join(cachedHome, "plugins", "skill-me-observer", "__pycache__");
+  mkdirSync(ownCache);
+  for (const name of ["__init__.cpython-311.pyc", "__init__.cpython-311.opt-1.pyc"]) writeFileSync(path.join(ownCache, name), "bytecode sintético\n");
+  const cleaned = cli(["uninstall", "--agent", "hermes", "--target", cachedHome, "--apply"]);
+  assert.equal(cleaned.status, 0, cleaned.stdout);
+  assert.equal(cleaned.report.status, "applied");
+  assert.deepEqual(cleaned.report.changes.filter((c) => c.action === "remove_cache").map((c) => c.file).sort(), [
+    "plugins/skill-me-observer/__pycache__/__init__.cpython-311.opt-1.pyc",
+    "plugins/skill-me-observer/__pycache__/__init__.cpython-311.pyc",
+  ]);
+  assert.deepEqual(snapshotTree(cachedHome, { withMtime: false }), cachedBefore);
+
+  // `__pycache__` que não é diretório real do plugin — junção/link para o cache de
+  // outro plugin dentro do alvo, ou arquivo com esse nome — é alheio: nada nele
+  // nem através dele é apagado; os artefatos próprios saem; conflito 4.
+  for (const variant of ["link para cache de outro plugin", "arquivo regular"]) {
+    const home = hermesTarget(`hermes-cache-${variant === "arquivo regular" ? "file" : "link"}`);
+    assert.equal(cli(["install", "--agent", "hermes", "--target", home, "--apply"]).status, 0);
+    const otherCache = path.join(home, "plugins", "other-plugin", "__pycache__");
+    mkdirSync(otherCache);
+    writeFileSync(path.join(otherCache, "__init__.cpython-311.pyc"), "bytecode de outro plugin\n");
+    const cacheEntry = path.join(home, "plugins", "skill-me-observer", "__pycache__");
+    if (variant === "arquivo regular") writeFileSync(cacheEntry, "arquivo do usuário\n");
+    else symlinkSync(otherCache, cacheEntry, "junction");
+    const otherBefore = snapshotTree(path.join(home, "plugins", "other-plugin"));
+    const entryBefore = snapshotTree(path.join(home, "plugins", "skill-me-observer"));
+    const result = cli(["uninstall", "--agent", "hermes", "--target", home, "--apply"]);
+    assert.equal(result.status, 4, `${variant}: ${result.stdout}`);
+    assert.deepEqual(result.report.conflicts.map((c) => c.code), ["foreign_files_preserved"], variant);
+    assert.ok(!result.report.changes.some((c) => c.action === "remove_cache"), variant);
+    assert.deepEqual(snapshotTree(path.join(home, "plugins", "other-plugin")), otherBefore, `${variant}: cache do outro plugin preservado`);
+    assert.deepEqual(snapshotTree(path.join(home, "plugins", "skill-me-observer")), { __pycache__: entryBefore.__pycache__ }, `${variant}: só a entrada alheia fica`);
+  }
 });

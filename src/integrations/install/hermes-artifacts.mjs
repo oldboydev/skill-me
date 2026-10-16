@@ -10,7 +10,8 @@ export const ARTIFACT_NAMES = Object.freeze(["__init__.py", "kwargs.json", "plug
 // Bytecode que o próprio Hermes grava ao importar o plugin
 // (`__pycache__/__init__.cpython-311.pyc`) é cache derivado do nosso
 // `__init__.py`: a remoção o apaga junto. Qualquer outro arquivo na pasta é
-// alheio e fica.
+// alheio e fica. O nome é condição necessária, não suficiente: contenção e
+// arquivo regular num `__pycache__` real são conferidos em `run.mjs`.
 const OWN_CACHE = /^__init__\.cpython-\d+(\.opt-\d+)?\.pyc$/;
 
 export function isOwnCache(name) {
