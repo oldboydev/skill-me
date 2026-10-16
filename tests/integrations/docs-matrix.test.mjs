@@ -4,7 +4,8 @@ import path from "node:path";
 import test from "node:test";
 import { REPO_ROOT } from "./helpers/cli.mjs";
 
-const GUIDE = readFileSync(path.join(REPO_ROOT, "docs", "agent-observation.md"), "utf8");
+// Checkout no Windows com core.autocrlf traz CRLF; o conteúdo é o mesmo.
+const GUIDE = readFileSync(path.join(REPO_ROOT, "docs", "agent-observation.md"), "utf8").replaceAll("\r\n", "\n");
 
 // Linhas da primeira tabela depois do cabeçalho `## <título>`, como arrays de células.
 function table(title) {
