@@ -3,7 +3,7 @@ import test from "node:test";
 import { buildEnvelope, validateEnvelope, EVENT_KIND_FIELDS } from "../../src/integrations/boundary.mjs";
 import { claudeHookDraft } from "../../src/integrations/adapters/claude.mjs";
 import { codexHookDraft } from "../../src/integrations/adapters/codex-hooks.mjs";
-import { codexExecDraft } from "../../src/integrations/adapters/codex-exec.mjs";
+import { codexExecDraft, processExitDraft } from "../../src/integrations/adapters/codex-exec.mjs";
 import { hermesDraft } from "../../src/integrations/adapters/hermes.mjs";
 import { loadFixture } from "./helpers/fixtures.mjs";
 
@@ -83,42 +83,70 @@ test("I4-C3b lacunas: ausente, tipo errado e enum desconhecido nunca viram valor
   assert.equal(explicit.envelope.observedAt, "2026-10-16T12:00:00.000Z");
 });
 
-// Seis categorias que nunca podem sair do debugger, cada uma marcada por um
-// canário próprio nas fixtures sintéticas. A tabela atravessa adaptador +
-// fronteira para todo caso válido de cada contrato, cobrindo cada eventKind
-// que esses contratos produzem.
-const EXCLUDED_CATEGORIES = ["args", "result", "prompt", "path", "reasoning", "error"];
+// Seis categorias que nunca saem do debugger, com os nomes nativos que o plano
+// atribui a cada uma ("Fora de toda saída do debugger") e um canário próprio.
+const EXCLUDED = Object.freeze({
+  args: ["tool_input", "args", "command_args", "arguments", "command"],
+  result: ["tool_response", "result", "aggregated_output", "content"],
+  prompt: ["prompt", "child_goal"],
+  path: ["cwd", "transcript_path", "file_path", "changes"],
+  reasoning: ["last_assistant_message", "reasoning"],
+  error: ["error", "error_message", "message", "child_summary"],
+});
+const CATEGORIES = Object.keys(EXCLUDED);
+const canary = (category) => `SKILLME-CANARY-${category}`;
+const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
-function allDraftsFromFixtures() {
-  const out = [];
-  for (const c of loadFixture("claude-hooks.json").cases.filter((c) => c.valid))
-    out.push({ name: `claude/${c.name}`, adapted: claudeHookDraft(c.payload) });
-  for (const c of loadFixture("codex-hooks.json").cases.filter((c) => c.valid))
-    out.push({ name: `codex-hooks/${c.name}`, adapted: codexHookDraft(c.payload) });
-  for (const c of loadFixture("codex-exec.json").cases.filter((c) => c.valid))
-    out.push({ name: `codex-exec/${c.name}`, adapted: codexExecDraft(c.event) });
-  for (const c of loadFixture("hermes-hooks.json").cases.filter((c) => c.valid)) {
-    // Registro como o plugin Python o envia: só nomes listados, escalares
-    // inalterados; aqui os valores não escalares são marcados à mão.
-    const listed = {
-      pre_tool_call: ["tool_name", "session_id", "task_id", "tool_call_id", "turn_id"],
-      post_tool_call: ["tool_name", "session_id", "task_id", "tool_call_id", "turn_id", "status", "error_type", "duration_ms"],
-      on_skill_lifecycle: ["action", "skill_name", "provenance", "task_id", "session_id", "use_count", "reused", "reuse_after_patch"],
-      on_session_start: ["session_id", "platform"],
-      on_session_end: ["session_id", "task_id", "turn_id", "completed", "failed", "interrupted"],
-      subagent_start: ["parent_session_id", "parent_turn_id", "parent_subagent_id", "child_session_id", "child_subagent_id", "child_role"],
-      subagent_stop: ["parent_session_id", "parent_turn_id", "child_session_id", "child_role", "child_status", "duration_ms"],
-    }[c.hook];
-    const kwargs = {};
-    for (const name of listed) if (Object.hasOwn(c.kwargs, name)) kwargs[name] = c.kwargs[name];
-    out.push({ name: `hermes/${c.name}`, adapted: hermesDraft({ hook: c.hook, kwargs, nonScalar: [] }) });
+// Acrescenta os nomes nativos das seis categorias, com o canário de cada uma, a
+// um objeto de entrada. Um objeto já presente nesse nome (`tool_input` com
+// `skill`, `error` com `message`) recebe o canário dentro dele, sem perder o
+// que o adaptador lê.
+function withCanaries(input) {
+  const out = { ...input };
+  for (const [category, keys] of Object.entries(EXCLUDED)) {
+    for (const key of keys) {
+      if (isObject(out[key])) out[key] = { ...out[key], value: canary(category) };
+      else if (key === "changes") out[key] = [{ path: `/fixture/${canary(category)}/a.txt`, kind: "update" }];
+      else out[key] = canary(category);
+    }
   }
   return out;
 }
 
+function assertHasAllCanaries(input, label) {
+  const text = JSON.stringify(input);
+  for (const category of CATEGORIES) assert.ok(text.includes(canary(category)), `${label}: entrada sem o canário de ${category}`);
+}
+
+// Toda entrada válida de cada contrato, com as seis categorias injetadas antes
+// de adaptador + fronteira. Hermes entra como registro bruto, sem projeção no
+// teste: restringir aos nomes listados é papel do adaptador/fronteira.
+function nativeInputsWithCanaries() {
+  const out = [];
+  for (const c of loadFixture("claude-hooks.json").cases.filter((c) => c.valid))
+    out.push({ name: `claude/${c.name}`, input: withCanaries(c.payload), adapt: claudeHookDraft });
+  for (const c of loadFixture("codex-hooks.json").cases.filter((c) => c.valid))
+    out.push({ name: `codex-hooks/${c.name}`, input: withCanaries(c.payload), adapt: codexHookDraft });
+  for (const c of loadFixture("codex-exec.json").cases.filter((c) => c.valid)) {
+    const event = withCanaries(c.event);
+    if (isObject(c.event.item)) event.item = withCanaries(c.event.item);
+    out.push({ name: `codex-exec/${c.name}`, input: event, adapt: codexExecDraft });
+  }
+  for (const c of loadFixture("hermes-hooks.json").cases.filter((c) => c.valid))
+    out.push({ name: `hermes/${c.name}`, input: { hook: c.hook, kwargs: withCanaries(c.kwargs), nonScalar: [] }, adapt: hermesDraft });
+  // Fim do filho observado pelo wrapper: a observação também recebe as seis.
+  out.push({ name: "codex-run/process_exit", input: withCanaries({ code: 17, signal: null }), adapt: processExitDraft });
+  return out;
+}
+
+// Nomes de rascunho para as seis categorias; nenhum está na allowlist.
+const DRAFT_KEYS = { args: "toolInput", result: "toolResponse", prompt: "prompt", path: "transcriptPath", reasoning: "lastAssistantMessage", error: "errorMessage" };
+
 test("I4-C42 fronteira emite só a allowlist e nenhuma das seis categorias excluídas", () => {
-  const kindsSeen = new Set();
-  for (const { name, adapted } of allDraftsFromFixtures()) {
+  const representative = new Map();
+  for (const { name, input, adapt } of nativeInputsWithCanaries()) {
+    assertHasAllCanaries(input, name);
+    const adapted = adapt(input);
     if (adapted.kind === "excluded") {
       assert.equal(adapted.reason, "reasoning", name);
       continue;
@@ -127,8 +155,7 @@ test("I4-C42 fronteira emite só a allowlist e nenhuma das seis categorias exclu
     const result = buildEnvelope(adapted.draft, { now: FIXED_NOW });
     assert.equal(result.ok, true, name);
     const json = JSON.stringify(result.envelope);
-    for (const category of EXCLUDED_CATEGORIES)
-      assert.ok(!json.includes(`SKILLME-CANARY-${category}`), `${name} vazou ${category}`);
+    for (const category of CATEGORIES) assert.ok(!json.includes(canary(category)), `${name} vazou ${category}`);
     assert.deepEqual(
       Object.keys(result.envelope),
       ["schemaVersion", "source", "signal", "eventKind", "nativeEvent", "ids", "fields", "gaps", "observedAt"],
@@ -137,13 +164,41 @@ test("I4-C42 fronteira emite só a allowlist e nenhuma das seis categorias exclu
     for (const field of Object.keys(result.envelope.fields))
       assert.ok(EVENT_KIND_FIELDS[result.envelope.eventKind].includes(field), `${name}: ${field}`);
     assert.equal(validateEnvelope(result.envelope), true, name);
-    kindsSeen.add(result.envelope.eventKind);
+    if (!representative.has(result.envelope.eventKind)) representative.set(result.envelope.eventKind, adapted.draft);
   }
-  // Todo eventKind exceto process_exit (produzido pelo wrapper, coberto em C13/C38) aparece.
-  assert.deepEqual(
-    [...kindsSeen].sort(),
-    Object.keys(EVENT_KIND_FIELDS).filter((kind) => kind !== "process_exit").sort(),
-  );
+  // Todo eventKind do envelope v1 aparece, inclusive process_exit.
+  assert.deepEqual([...representative.keys()].sort(), Object.keys(EVENT_KIND_FIELDS).sort());
+
+  // Na própria fronteira, para cada eventKind: as seis categorias no rascunho
+  // entregue a buildEnvelope. Como campo ou ID fora da allowlist, o rascunho é
+  // recusado inteiro; dentro do valor de um campo/ID permitido, o tipo é
+  // inválido, vira lacuna e nada do valor é emitido.
+  const allCanaries = Object.fromEntries(CATEGORIES.map((category) => [category, canary(category)]));
+  for (const [kind, base] of representative) {
+    for (const category of CATEGORIES) {
+      for (const where of ["fields", "ids"]) {
+        const injected = { ...base, [where]: { ...base[where], [DRAFT_KEYS[category]]: canary(category) } };
+        assert.ok(JSON.stringify(injected).includes(canary(category)), `${kind}/${where}/${category}`);
+        assert.deepEqual(buildEnvelope(injected, { now: FIXED_NOW }), { ok: false, reason: "invalid_draft" }, `${kind}/${where}/${category}`);
+      }
+    }
+    const { fieldGaps, ...withoutGaps } = base;
+    const idKeys = Object.keys(base.ids);
+    const fieldKeys = EVENT_KIND_FIELDS[kind];
+    if (idKeys.length + fieldKeys.length === 0) continue;
+    const nested = {
+      ...withoutGaps,
+      ids: Object.fromEntries(idKeys.map((key) => [key, { ...allCanaries }])),
+      fields: Object.fromEntries(fieldKeys.map((key) => [key, { ...allCanaries }])),
+    };
+    assertHasAllCanaries(nested, `${kind}/valores`);
+    const result = buildEnvelope(nested, { now: FIXED_NOW });
+    assert.equal(result.ok, true, kind);
+    assert.deepEqual(result.envelope.ids, {}, kind);
+    assert.deepEqual(result.envelope.fields, {}, kind);
+    assert.deepEqual([...result.envelope.gaps].sort(), [...idKeys, ...fieldKeys].map((key) => `${key}:invalid_type`).sort(), kind);
+    assert.ok(!/SKILLME-CANARY/.test(JSON.stringify(result.envelope)), `${kind}: valores`);
+  }
 
   // Campo ou ID fora da allowlist recusa o rascunho inteiro, nunca é emitido.
   for (const bad of [
