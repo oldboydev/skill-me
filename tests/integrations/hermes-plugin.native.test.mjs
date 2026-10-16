@@ -26,13 +26,27 @@ const scratches = [];
 const runs = {};
 let bytecodeBefore;
 
-async function prepareAndRun(name, { delivery, enable = ["skill-me-observer", "skillme-fixture-tool"], timeout = 30, scenario }) {
+// Entradas do HERMES_HOME criadas, alteradas (conteúdo ou mtime) ou removidas
+// durante o harness, por caminho relativo, com o conteúdo de cada arquivo. O
+// backup que o host grava do config.yaml leva data e hora no nome, que é
+// normalizado para comparar execuções.
+function homeChanges(before, after) {
+  const changes = {};
+  for (const [rel, entry] of Object.entries(after)) {
+    if (JSON.stringify(before[rel]) === JSON.stringify(entry)) continue;
+    changes[rel.replace(/\.good\.\d{8}-\d{6}$/, ".good.<data>")] = entry.type === "file" ? { type: "file", sha256: entry.sha256 } : { type: entry.type };
+  }
+  for (const rel of Object.keys(before)) if (!(rel in after)) changes[rel] = { type: "removed" };
+  return changes;
+}
+
+async function prepareAndRun(name, { delivery, enable = ["skill-me-observer", "skillme-fixture-tool"], installObserver = enable.includes("skill-me-observer"), timeout = 30, scenario }) {
   const sandbox = makeScratch(`hermes-${name}`);
   scratches.push(sandbox);
   const env = harnessEnv(sandbox, delivery ? { SKILL_ME_HERMES_DELIVERY: JSON.stringify(delivery(sandbox)) } : {});
   const home = env.HERMES_HOME;
   mkdirSync(home, { recursive: true });
-  if (enable.includes("skill-me-observer")) {
+  if (installObserver) {
     const installed = runIntegrationsJson(["install", "--agent", "hermes", "--target", home, "--apply"], { env: baseEnv() });
     assert.equal(installed.status, 0, installed.stdout);
   }
@@ -43,9 +57,19 @@ async function prepareAndRun(name, { delivery, enable = ["skill-me-observer", "s
   writeFileSync(path.join(home, "config.yaml"), `plugins:\n  enabled:\n${enable.map((p) => `    - ${p}`).join("\n")}\n  hook_callback_timeout: ${timeout}\n`);
   const pluginDir = path.join(home, "plugins", "skill-me-observer");
   const pluginBefore = existsSync(pluginDir) ? snapshotTree(pluginDir) : null;
+  const homeBefore = snapshotTree(home);
   const run = await runHarness(runtime, { sandbox, env, scenario: { ids: IDS, toolArgs: ARGS, ...scenario } });
   assert.ok(run.result, `${name}: harness sem resultado (status ${run.status})\n${run.stderr.slice(-2000)}`);
-  runs[name] = { ...run, sandbox, home, pluginDir, pluginBefore, pluginAfter: pluginBefore ? snapshotTree(pluginDir) : null };
+  const homeAfter = snapshotTree(home);
+  runs[name] = {
+    ...run,
+    sandbox,
+    home,
+    pluginDir,
+    pluginBefore,
+    pluginAfter: pluginBefore ? snapshotTree(pluginDir) : null,
+    homeChanges: homeChanges(homeBefore, homeAfter),
+  };
 }
 
 async function waitFor(file, ms = 10_000) {
@@ -72,22 +96,22 @@ before(async () => {
   const capture = (sandbox) => [NODE, DELIVERY_FIXTURE, "capture", path.join(sandbox, "captured.ndjson")];
   // Argumento vazio tornaria o argv inválido (plugin inativo): "-" ocupa a posição do arquivo.
   const spawnLog = (mode) => (sandbox) => [NODE, DELIVERY_FIXTURE, mode, "-", path.join(sandbox, "spawns.log")];
+  const captureScenario = {
+    toolCalls: 2,
+    invokes: [
+      ...ALL_SEVEN,
+      { hook: "on_skill_lifecycle", kwargs: kw("additive_and_missing_kwargs") },
+      { hook: "pre_tool_call", kwargs: kw("non_scalar_listed_kwarg") },
+      { hook: "on_skill_lifecycle", kwargs: { action: "loaded", skill_name: "s".repeat(300), session_id: "long-name" } },
+      { hook: "on_skill_lifecycle", kwargs: { action: "loaded", skill_name: "o".repeat(10_000), session_id: "oversize" } },
+    ],
+  };
   const jobs = [
     () => prepareAndRun("inactive", { scenario: { toolCalls: 2, invokes: ALL_SEVEN, directPreToolCalls: 5 } }),
-    () =>
-      prepareAndRun("capture", {
-        delivery: capture,
-        scenario: {
-          toolCalls: 2,
-          invokes: [
-            ...ALL_SEVEN,
-            { hook: "on_skill_lifecycle", kwargs: kw("additive_and_missing_kwargs") },
-            { hook: "pre_tool_call", kwargs: kw("non_scalar_listed_kwarg") },
-            { hook: "on_skill_lifecycle", kwargs: { action: "loaded", skill_name: "s".repeat(300), session_id: "long-name" } },
-            { hook: "on_skill_lifecycle", kwargs: { action: "loaded", skill_name: "o".repeat(10_000), session_id: "oversize" } },
-          ],
-        },
-      }),
+    () => prepareAndRun("capture", { delivery: capture, scenario: captureScenario }),
+    // Controle do C23: mesmo cenário e destino da captura, observer instalado mas
+    // não habilitado — o que aparecer no HERMES_HOME aqui é do host.
+    () => prepareAndRun("hostOnly", { delivery: capture, enable: ["skillme-fixture-tool"], installObserver: true, scenario: captureScenario }),
     () => prepareAndRun("ingest", { delivery: () => [NODE, INTEGRATIONS_CLI, "ingest", "--agent", "hermes"], scenario: { toolCalls: 3, invokes: OTHER_HOOKS } }),
     () => prepareAndRun("stall", { delivery: (s) => [NODE, DELIVERY_FIXTURE, "stall"], timeout: 1, scenario: { toolCalls: 300, directPreToolCalls: 50, settleMaxMs: 2000 } }),
     () => prepareAndRun("naive", { delivery: (s) => [NODE, DELIVERY_FIXTURE, "stall"], timeout: 1, enable: ["naive-blocking-observer", "skillme-fixture-tool"], scenario: { toolCalls: 1 } }),
@@ -236,6 +260,30 @@ test("I4-C23 Python só projeta nomes listados, sem sanitizar, atribuir ou persi
   assert.ok(!records.some((r) => r.kwargs.session_id === "oversize"));
   // O plugin não grava nada: sua pasta fica idêntica.
   assert.deepEqual(capture.pluginAfter, capture.pluginBefore);
+
+  // Nem no resto do HERMES_HOME. O host grava ali os próprios arquivos (SOUL.md,
+  // state.db, caches, backup do config.yaml); o controle — mesmo cenário, plugin
+  // instalado sem habilitar, nenhum código dele executado — mostra exatamente
+  // quais. Com o plugin ativo, as mudanças precisam ser as mesmas, com o mesmo
+  // conteúdo. Só o backup difere entre as duas: é cópia do config.yaml de cada
+  // execução, que difere na lista de habilitados.
+  const hostOnly = runs.hostOnly;
+  assert.equal(hostOnly.result.loaded["skill-me-observer"].enabled, false, "controle não carrega o plugin");
+  assert.deepEqual(hostOnly.result.loaded["skill-me-observer"].hooks, []);
+  assert.equal(hostOnly.result.stats, null, "controle: módulo do plugin nunca importado");
+  assert.ok(capture.result.stats.delivered > 0, "captura: plugin ativo e entregando");
+  const BACKUP = "backups/config/config.yaml.good.<data>";
+  const comparable = (run) => {
+    const { [BACKUP]: backup, ...rest } = run.homeChanges;
+    if (backup) {
+      const [file] = Object.keys(snapshotTree(run.home)).filter((rel) => rel.replace(/\.good\.\d{8}-\d{6}$/, ".good.<data>") === BACKUP);
+      assert.deepEqual(readFileSync(path.join(run.home, file)), readFileSync(path.join(run.home, "config.yaml")), "backup do host é cópia do config.yaml");
+    }
+    return rest;
+  };
+  const hostChanges = comparable(hostOnly);
+  assert.ok(Object.keys(hostChanges).length > 0, "o controle observa as escritas do host");
+  assert.deepEqual(comparable(capture), hostChanges, "nenhum arquivo do HERMES_HOME criado ou alterado pelo plugin");
 });
 
 test("I4-C37 Hermes: seis casos de falha mantêm callbacks neutros e ferramenta inalterada", { skip: SKIP }, () => {
