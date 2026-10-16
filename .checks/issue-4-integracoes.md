@@ -61,6 +61,7 @@ Nenhuma dependência nova; `yaml`/`smol-toml` já existentes só pelo doctor.
 | Escrita com lock + comparação + rename | lock `wx`, temporário no mesmo diretório, releitura e SHA-256 igual à leitura inicial, `rename`; divergência → 4 | escrita direta — perde edição concorrente; CAS com editores arbitrários — não existe no sistema de arquivos |
 | CLI `integrations` e códigos | `plan|install|uninstall --agent … --target … [--apply] [--json]`, `run`, `hook`, `ingest`; códigos 0/2/3/4/5; wrapper 127/126/código do filho | subcomando do doctor — doctor é somente leitura e sem execução por contrato da #3 |
 | Suite nova na CI | script `test:integrations`, incluído em `npm test` e como passo do job `verify` | rodar só localmente — a matriz de três SO declarada não exercitaria a #4 |
+| `not_in_contract` derivado pela fronteira (acrescentado no build, antes do código) | chave presente em `draft.fields` = o contrato fornece (valor ausente → `absent`); campo do `eventKind` sem chave → `<campo>:not_in_contract`; tradução impossível no adaptador → `draft.fieldGaps: {campo: motivo}` com motivo do vocabulário fechado | lista `notInContract` mantida à mão por adaptador — esquece campo em silêncio quando um `eventKind` ganha campo novo |
 
 - Nada mais nesta entrega é difícil de reverter.
 

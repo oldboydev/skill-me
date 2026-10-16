@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "contract": "hermes-plugin-hooks@0.21.4",
+  "queueCapacity": 256,
+  "maxRecordBytes": 8192,
+  "hooks": {
+    "pre_tool_call": ["tool_name", "session_id", "task_id", "tool_call_id", "turn_id"],
+    "post_tool_call": ["tool_name", "session_id", "task_id", "tool_call_id", "turn_id", "status", "error_type", "duration_ms"],
+    "on_skill_lifecycle": ["action", "skill_name", "provenance", "task_id", "session_id", "use_count", "reused", "reuse_after_patch"],
+    "on_session_start": ["session_id", "platform"],
+    "on_session_end": ["session_id", "task_id", "turn_id", "completed", "failed", "interrupted"],
+    "subagent_start": ["parent_session_id", "parent_turn_id", "parent_subagent_id", "child_session_id", "child_subagent_id", "child_role"],
+    "subagent_stop": ["parent_session_id", "parent_turn_id", "child_session_id", "child_role", "child_status", "duration_ms"]
+  }
+}

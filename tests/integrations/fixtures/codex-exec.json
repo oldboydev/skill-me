@@ -1,0 +1,73 @@
+{
+  "origin": "synthetic",
+  "contract": "codex-exec-jsonl@rust-v0.162.1",
+  "source": "https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/exec/src/exec_events.rs (ThreadEvent, ThreadItem com #[serde(flatten)], ThreadItemDetails, Usage); https://learn.chatgpt.com/docs/non-interactive-mode (consulta 16/10/2026)",
+  "note": "Eventos JSONL construídos à mão a partir dos tipos serde; nenhum trace real. Valores SKILLME-CANARY-* marcam conteúdo que nunca pode sair do debugger.",
+  "cases": [
+    { "name": "thread_started", "valid": true, "event": { "type": "thread.started", "thread_id": "0199a213-81c0-7800-8aa1-bbab2a035a53" } },
+    { "name": "turn_started", "valid": true, "event": { "type": "turn.started" } },
+    {
+      "name": "item_started_command",
+      "valid": true,
+      "event": { "type": "item.started", "item": { "id": "item_0", "type": "command_execution", "command": "bash -lc 'cat SKILLME-CANARY-args'", "aggregated_output": "", "exit_code": null, "status": "in_progress" } }
+    },
+    {
+      "name": "item_completed_command",
+      "valid": true,
+      "event": { "type": "item.completed", "item": { "id": "item_0", "type": "command_execution", "command": "bash -lc 'cat SKILLME-CANARY-args'", "aggregated_output": "SKILLME-CANARY-result", "exit_code": 0, "status": "completed" } }
+    },
+    {
+      "name": "item_completed_reasoning",
+      "valid": true,
+      "event": { "type": "item.completed", "item": { "id": "item_1", "type": "reasoning", "text": "**Pensando** SKILLME-CANARY-reasoning" } }
+    },
+    {
+      "name": "item_completed_agent_message",
+      "valid": true,
+      "event": { "type": "item.completed", "item": { "id": "item_2", "type": "agent_message", "text": "SKILLME-CANARY-result" } }
+    },
+    {
+      "name": "item_updated_todo_list",
+      "valid": true,
+      "event": { "type": "item.updated", "item": { "id": "item_3", "type": "todo_list", "items": [{ "text": "SKILLME-CANARY-prompt", "completed": false }] } }
+    },
+    {
+      "name": "item_completed_file_change",
+      "valid": true,
+      "event": { "type": "item.completed", "item": { "id": "item_4", "type": "file_change", "changes": [{ "path": "/home/fixture/SKILLME-CANARY-path/a.txt", "kind": "update" }], "status": "completed" } }
+    },
+    {
+      "name": "item_completed_mcp_tool_call",
+      "valid": true,
+      "event": { "type": "item.completed", "item": { "id": "item_5", "type": "mcp_tool_call", "server": "docs", "tool": "search", "arguments": { "q": "SKILLME-CANARY-args" }, "result": { "content": [{ "type": "text", "text": "SKILLME-CANARY-result" }], "structured_content": null }, "error": null, "status": "completed" } }
+    },
+    {
+      "name": "item_completed_collab_tool_call",
+      "valid": true,
+      "event": { "type": "item.completed", "item": { "id": "item_6", "type": "collab_tool_call", "tool": "spawn_agent", "sender_thread_id": "thread-parent", "receiver_thread_ids": ["thread-child"], "prompt": "SKILLME-CANARY-prompt", "agents_states": { "thread-child": { "status": "running", "message": "SKILLME-CANARY-result" } }, "status": "completed" } }
+    },
+    {
+      "name": "item_completed_web_search",
+      "valid": true,
+      "event": { "type": "item.completed", "item": { "id": "item_7", "type": "web_search", "query": "SKILLME-CANARY-prompt", "action": { "type": "search", "query": "SKILLME-CANARY-prompt" } } }
+    },
+    {
+      "name": "item_completed_error",
+      "valid": true,
+      "event": { "type": "item.completed", "item": { "id": "item_8", "type": "error", "message": "SKILLME-CANARY-error" } }
+    },
+    {
+      "name": "turn_completed",
+      "valid": true,
+      "event": { "type": "turn.completed", "usage": { "input_tokens": 24763, "cached_input_tokens": 24448, "cache_write_input_tokens": 0, "output_tokens": 122, "reasoning_output_tokens": 64 } }
+    },
+    { "name": "turn_failed", "valid": true, "event": { "type": "turn.failed", "error": { "message": "SKILLME-CANARY-error" } } },
+    { "name": "stream_error", "valid": true, "event": { "type": "error", "message": "SKILLME-CANARY-error" } },
+    { "name": "unknown_type", "valid": false, "event": { "type": "future.event", "payload": "SKILLME-CANARY-result" } },
+    { "name": "unknown_item_type", "valid": false, "event": { "type": "item.completed", "item": { "id": "item_9", "type": "hologram", "text": "SKILLME-CANARY-result" } } },
+    { "name": "missing_type", "valid": false, "event": { "thread_id": "x", "text": "SKILLME-CANARY-result" } },
+    { "name": "bad_usage_types", "valid": false, "event": { "type": "turn.completed", "usage": { "input_tokens": "many", "cached_input_tokens": 1.5, "output_tokens": -1, "reasoning_output_tokens": 3 } } },
+    { "name": "invalid_json_line", "valid": false, "rawLine": "{\"type\": \"item.completed\", SKILLME-CANARY-result" },
+    { "name": "non_object_line", "valid": false, "rawLine": "[\"SKILLME-CANARY-result\"]" }
+  ]
+}

@@ -287,7 +287,10 @@ nativeEvent, ids, fields, gaps, observedAt }`.
 - `gaps`: strings `<nome>:<motivo>`, motivo ∈ `absent` (contrato prevê, payload não
   trouxe), `not_in_contract` (o `eventKind` comporta, o contrato do agente não
   fornece), `invalid_type`, `too_long`, `not_identifier`, `unrecognized_value`.
-  Valor rejeitado nunca é substituído por default.
+  Valor rejeitado nunca é substituído por default. A fronteira deriva `not_in_contract`
+  para todo campo do `eventKind` que o rascunho do adaptador não menciona; o adaptador
+  só usa `fieldGaps` quando não consegue traduzir um valor nativo (ex.: `status`
+  Hermes desconhecido → `outcome:unrecognized_value`).
 - `observedAt`: ISO-8601 do relógio do processo observador no momento do
   processamento, identificado como tal; não é timestamp do agente.
 - Envelope serializado > 4096 bytes é descartado (contador `oversize`).

@@ -1,0 +1,485 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { CliUsageError } from "../../doctor/cli-args.mjs";
+import { ARTIFACT_NAMES, PLUGIN_NAME, PLUGIN_REL_DIR, isOwnCache, loadArtifacts, sha256 } from "./hermes-artifacts.mjs";
+import { createNodeIo } from "./io.mjs";
+import {
+  CONFIG_FILE,
+  InvalidConfigError,
+  parseConfig,
+  planJsonInstall,
+  planJsonUninstall,
+  unrecordedOwnedEvents,
+} from "./json-hooks.mjs";
+import { STATE_DIR, manifestPath, manifestRelPath, parseManifest, serializeManifest } from "./manifest.mjs";
+import { ConflictError, assertContained, isManagedPolicyTarget, resolveTarget } from "./target.mjs";
+
+export { createNodeIo };
+export const CLI_PATH = fileURLToPath(new URL("../cli.mjs", import.meta.url));
+
+const AGENTS = ["claude", "codex", "hermes"];
+const COMMANDS = ["plan", "install", "uninstall"];
+// Nome fixo: só um processo do skill-me escreve por alvo/agente (lock), então
+// um temporário que já exista é sobra de execução anterior — se for arquivo
+// regular, é removido; qualquer outra coisa é falha de E/S, nunca apagada.
+const TMP_SUFFIX = ".skill-me-tmp";
+
+const MANUAL_STEPS = {
+  claude: [
+    "Claude Code só executa hooks de settings depois da confiança do workspace; revise as entradas em /hooks.",
+    "Sem consumidor da #8, cada hook observa em memória e descarta ao sair: nada é gravado nem enviado.",
+  ],
+  codex: [
+    "Abra /hooks no Codex e revise/confie nas entradas novas; hooks de projeto só rodam em projeto confiável.",
+    "Hosted tools (ex.: busca web) não passam por hooks locais; para o ciclo de turno use 'integrations run --agent codex'.",
+  ],
+  hermes: [
+    "Habilite manualmente: hermes plugins enable skill-me-observer",
+    "Sem SKILL_ME_HERMES_DELIVERY o plugin fica inativo: callbacks devolvem None sem fila, thread ou processo.",
+  ],
+};
+
+class IncompleteError extends Error {
+  constructor(cause) {
+    super("incomplete");
+    this.code = cause?.code ?? "io_error";
+  }
+}
+
+function rel(root, file) {
+  return path.relative(root, file).split(path.sep).join("/");
+}
+
+// Leitura de arquivo do alvo: ausente é normal; grande demais ou ilegível é
+// configuração inválida (não substituída); mudança durante a leitura é conflito.
+async function readOptional(io, root, file) {
+  let read;
+  try {
+    read = await io.readText(file);
+  } catch {
+    throw new InvalidConfigError("config_unreadable", rel(root, file));
+  }
+  if (read.state === "missing") return null;
+  if (read.state === "too_large") throw new InvalidConfigError("input_too_large", rel(root, file));
+  if (read.state === "changed_during_read") throw new ConflictError("config_changed_during_read", rel(root, file));
+  return read.text;
+}
+
+async function clearStaleTemp(io, tmp) {
+  let stats;
+  try {
+    stats = await io.lstat(tmp);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  if (!stats.isFile()) {
+    const error = new Error("temporário ocupado por algo que não é arquivo");
+    error.code = "tmp_path_occupied";
+    throw error;
+  }
+  await io.unlink(tmp);
+}
+
+async function removeDirIfEmpty(io, dir) {
+  try {
+    if ((await io.readdir(dir)).length === 0) await io.rmdir(dir);
+  } catch {
+    // Diretório já ausente ou ocupado: nada a remover.
+  }
+}
+
+async function withLock(io, root, agent, fn) {
+  const stateDir = path.join(root, STATE_DIR);
+  const lockPath = path.join(stateDir, `${agent}.lock`);
+  try {
+    await io.mkdir(stateDir);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  try {
+    await io.writeExclusive(lockPath, `${process.pid}\n`);
+  } catch (error) {
+    if (error.code === "EEXIST") throw new ConflictError("lock_present", rel(root, lockPath));
+    throw error;
+  }
+  try {
+    return await fn();
+  } finally {
+    await io.unlink(lockPath).catch(() => {});
+    await removeDirIfEmpty(io, stateDir);
+  }
+}
+
+// Troca o arquivo só se o conteúdo atual ainda for o que foi lido sob o lock.
+// Limite registrado no plano: entre esta última comparação e o rename não há
+// atomicidade contra editores arbitrários (o sistema de arquivos não tem CAS).
+async function replaceChecked(io, root, file, text, expectedHash) {
+  const tmp = file + TMP_SUFFIX;
+  await clearStaleTemp(io, tmp);
+  await io.writeExclusive(tmp, text);
+  try {
+    const current = await readOptional(io, root, file);
+    const currentHash = current === null ? null : sha256(Buffer.from(current, "utf8"));
+    if (currentHash !== expectedHash) throw new ConflictError("config_changed_during_apply", rel(root, file));
+    await io.rename(tmp, file);
+  } catch (error) {
+    await io.unlink(tmp).catch(() => {});
+    throw error;
+  }
+}
+
+async function deleteChecked(io, root, file, expectedHash) {
+  const current = await readOptional(io, root, file);
+  const currentHash = current === null ? null : sha256(Buffer.from(current, "utf8"));
+  if (currentHash !== expectedHash) throw new ConflictError("config_changed_during_apply", rel(root, file));
+  await io.unlink(file);
+}
+
+async function writeManifest(io, root, agent, body) {
+  const file = manifestPath(root, agent);
+  const tmp = file + TMP_SUFFIX;
+  await clearStaleTemp(io, tmp);
+  await io.writeExclusive(tmp, serializeManifest(agent, body));
+  try {
+    await io.rename(tmp, file);
+  } catch (error) {
+    await io.unlink(tmp).catch(() => {});
+    throw error;
+  }
+}
+
+async function deleteManifest(io, root, agent) {
+  await io.unlink(manifestPath(root, agent)).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+}
+
+// Executa um passo de escrita registrando seu estado; falha de E/S vira
+// operação incompleta (código 5) com o estado de cada passo, nunca sucesso.
+async function step(result, name, fn) {
+  try {
+    await fn();
+    result.steps.push({ step: name, state: "done" });
+  } catch (error) {
+    if (error instanceof ConflictError) throw error;
+    result.steps.push({ step: name, state: "failed" });
+    throw new IncompleteError(error);
+  }
+}
+
+async function readJsonState(io, root, agent, platform) {
+  const configText = await readOptional(io, root, path.join(root, CONFIG_FILE[agent]));
+  const manifestText = await readOptional(io, root, manifestPath(root, agent));
+  return {
+    parsed: configText === null ? null : parseConfig(agent, configText, platform),
+    configHash: configText === null ? null : sha256(Buffer.from(configText, "utf8")),
+    manifestText,
+    manifest: manifestText === null ? null : parseManifest(agent, manifestText),
+  };
+}
+
+function planJson(op, agent, state, ctx) {
+  const manifestFile = manifestRelPath(agent);
+  if (op === "install") {
+    const plan = planJsonInstall({ agent, parsed: state.parsed, manifest: state.manifest, ctx });
+    const manifestText = serializeManifest(agent, plan.manifestBody);
+    const manifestAction = manifestText === state.manifestText ? null : "write";
+    return {
+      ...plan,
+      conflicts: [],
+      manifestAction,
+      changes: manifestAction ? [...plan.changes, { file: manifestFile, action: "write_manifest" }] : plan.changes,
+    };
+  }
+  if (!state.manifest) {
+    const conflicts = unrecordedOwnedEvents(agent, state.parsed, ctx).map((event) => ({
+      code: "owned_entry_unrecorded",
+      file: CONFIG_FILE[agent],
+      event,
+    }));
+    return { changes: [], conflicts, configChanged: false, manifestAction: null };
+  }
+  const plan = planJsonUninstall({ agent, parsed: state.parsed, manifest: state.manifest, ctx });
+  let manifestAction = null;
+  if (plan.remaining.length === 0) manifestAction = "delete";
+  else if (plan.remaining.length !== state.manifest.entries.length) manifestAction = "write";
+  const manifestChange = manifestAction && { file: manifestFile, action: manifestAction === "delete" ? "delete_manifest" : "write_manifest" };
+  return {
+    ...plan,
+    manifestAction,
+    manifestBody: { ...state.manifest, entries: plan.remaining },
+    changes: manifestChange ? [...plan.changes, manifestChange] : plan.changes,
+  };
+}
+
+async function runJsonAgent({ op, agent, root, apply, io, ctx, platform, result }) {
+  const file = path.join(root, CONFIG_FILE[agent]);
+  for (const candidate of [file, file + TMP_SUFFIX, path.join(root, STATE_DIR), manifestPath(root, agent), manifestPath(root, agent) + TMP_SUFFIX]) {
+    await assertContained(root, candidate, io, platform);
+  }
+  let state = await readJsonState(io, root, agent, platform);
+  let plan = planJson(op, agent, state, ctx);
+  result.changes = plan.changes;
+  result.conflicts = plan.conflicts;
+  const needsWrite = (p) => p.configChanged || p.manifestAction !== null;
+  if (!apply || !needsWrite(plan)) return { wrote: false };
+  await withLock(io, root, agent, async () => {
+    state = await readJsonState(io, root, agent, platform);
+    plan = planJson(op, agent, state, ctx);
+    result.changes = plan.changes;
+    result.conflicts = plan.conflicts;
+    if (!needsWrite(plan)) return;
+    if (plan.configChanged) {
+      await step(result, "config", () =>
+        plan.deleteFile ? deleteChecked(io, root, file, state.configHash) : replaceChecked(io, root, file, plan.newText, state.configHash),
+      );
+    }
+    if (plan.manifestAction) {
+      await step(result, "manifest", () =>
+        plan.manifestAction === "delete" ? deleteManifest(io, root, agent) : writeManifest(io, root, agent, plan.manifestBody),
+      );
+    }
+    result.applied = true;
+  });
+  return { wrote: result.applied };
+}
+
+async function readHermesState(io, root, platform) {
+  const manifestText = await readOptional(io, root, manifestPath(root, "hermes"));
+  const pluginsDir = path.join(root, "plugins");
+  const pluginDir = path.join(root, PLUGIN_REL_DIR);
+  const exists = async (dir) => io.stat(dir).then((s) => s.isDirectory(), () => false);
+  const state = {
+    manifestText,
+    manifest: manifestText === null ? null : parseManifest("hermes", manifestText),
+    pluginsDirExists: await exists(pluginsDir),
+    pluginDirExists: await exists(pluginDir),
+    files: {},
+    caches: [],
+    foreign: [],
+  };
+  if (!state.pluginDirExists) return state;
+  for (const name of await io.readdir(pluginDir)) {
+    const full = path.join(pluginDir, name);
+    if (ARTIFACT_NAMES.includes(name)) {
+      state.files[name] = sha256(await io.readBytes(full));
+    } else if (name === "__pycache__") {
+      for (const cached of await io.readdir(full)) {
+        if (isOwnCache(cached)) state.caches.push(cached);
+        else state.foreign.push(`__pycache__/${cached}`);
+      }
+    } else {
+      state.foreign.push(name);
+    }
+  }
+  return state;
+}
+
+function planHermes(op, state, artifacts) {
+  const changes = [];
+  const conflicts = [];
+  const manifestFile = manifestRelPath("hermes");
+  if (op === "install") {
+    const matches = artifacts.every((a) => state.files[a.name] === a.sha256);
+    const body = {
+      artifacts: artifacts.map((a) => ({ path: a.rel, sha256: a.sha256 })),
+      created: state.manifest?.created ?? { pluginsDir: !state.pluginsDirExists },
+    };
+    if (!state.pluginDirExists) {
+      if (!state.pluginsDirExists) changes.push({ file: "plugins", action: "create_dir" });
+      for (const a of artifacts) changes.push({ file: a.rel, action: "write_artifact" });
+    } else if (state.manifest) {
+      const modified = state.manifest.artifacts.filter((a) => state.files[path.posix.basename(a.path)] !== a.sha256);
+      for (const a of modified) conflicts.push({ code: "owned_entry_modified", file: a.path });
+    } else if (matches && state.foreign.length === 0) {
+      for (const a of artifacts) changes.push({ file: a.rel, action: "adopt_artifact" });
+    } else {
+      conflicts.push({ code: "foreign_artifact", file: PLUGIN_REL_DIR });
+    }
+    const writeArtifacts = changes.some((c) => c.action === "write_artifact");
+    const manifestText = serializeManifest("hermes", body);
+    const manifestAction = conflicts.length === 0 && manifestText !== state.manifestText ? "write" : null;
+    if (manifestAction) changes.push({ file: manifestFile, action: "write_manifest" });
+    return { changes, conflicts, writeArtifacts, manifestAction, manifestBody: body };
+  }
+  if (!state.manifest) {
+    if (state.pluginDirExists) conflicts.push({ code: "owned_entry_unrecorded", file: PLUGIN_REL_DIR });
+    return { changes, conflicts, removals: [], manifestAction: null };
+  }
+  const removals = [];
+  const remaining = [];
+  for (const recorded of state.manifest.artifacts) {
+    const name = path.posix.basename(recorded.path);
+    const current = state.files[name];
+    if (current === undefined) changes.push({ file: recorded.path, action: "already_absent" });
+    else if (current === recorded.sha256) {
+      removals.push({ name, sha256: recorded.sha256 });
+      changes.push({ file: recorded.path, action: "remove_artifact" });
+    } else {
+      conflicts.push({ code: "owned_entry_modified", file: recorded.path });
+      remaining.push(recorded);
+    }
+  }
+  for (const cached of state.caches) changes.push({ file: `${PLUGIN_REL_DIR}/__pycache__/${cached}`, action: "remove_cache" });
+  if (state.foreign.length > 0) conflicts.push({ code: "foreign_files_preserved", file: PLUGIN_REL_DIR });
+  let manifestAction = null;
+  if (remaining.length === 0) manifestAction = "delete";
+  else if (remaining.length !== state.manifest.artifacts.length) manifestAction = "write";
+  if (manifestAction) changes.push({ file: manifestFile, action: manifestAction === "delete" ? "delete_manifest" : "write_manifest" });
+  return {
+    changes,
+    conflicts,
+    removals,
+    manifestAction,
+    manifestBody: { artifacts: remaining, created: state.manifest.created },
+  };
+}
+
+async function installHermesArtifacts(io, root, artifacts, state) {
+  const pluginsDir = path.join(root, "plugins");
+  const pluginDir = path.join(root, PLUGIN_REL_DIR);
+  const tmpDir = path.join(pluginsDir, `.${PLUGIN_NAME}${TMP_SUFFIX}`);
+  if (!state.pluginsDirExists) await io.mkdir(pluginsDir);
+  // Sobra de execução anterior só é limpa se contiver apenas nomes nossos.
+  const leftovers = await io.readdir(tmpDir).catch((error) => (error.code === "ENOENT" ? null : Promise.reject(error)));
+  if (leftovers !== null) {
+    if (!leftovers.every((name) => ARTIFACT_NAMES.includes(name))) {
+      const error = new Error("temporário ocupado");
+      error.code = "tmp_path_occupied";
+      throw error;
+    }
+    for (const name of leftovers) await io.unlink(path.join(tmpDir, name));
+    await io.rmdir(tmpDir);
+  }
+  await io.mkdir(tmpDir);
+  for (const a of artifacts) await io.writeExclusive(path.join(tmpDir, a.name), a.content);
+  try {
+    await io.rename(tmpDir, pluginDir);
+  } catch (error) {
+    for (const a of artifacts) await io.unlink(path.join(tmpDir, a.name)).catch(() => {});
+    await io.rmdir(tmpDir).catch(() => {});
+    if (await io.stat(pluginDir).then(() => true, () => false)) throw new ConflictError("foreign_artifact", PLUGIN_REL_DIR);
+    throw error;
+  }
+}
+
+async function removeHermesArtifacts(io, root, plan, state) {
+  const pluginDir = path.join(root, PLUGIN_REL_DIR);
+  for (const removal of plan.removals) {
+    const file = path.join(pluginDir, removal.name);
+    // Confere de novo antes de apagar: uma edição feita depois da leitura fica.
+    if (sha256(await io.readBytes(file)) !== removal.sha256) throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/${removal.name}`);
+    await io.unlink(file);
+  }
+  for (const cached of state.caches) await io.unlink(path.join(pluginDir, "__pycache__", cached));
+  await removeDirIfEmpty(io, path.join(pluginDir, "__pycache__"));
+  await removeDirIfEmpty(io, pluginDir);
+  if (state.manifest.created.pluginsDir) await removeDirIfEmpty(io, path.join(root, "plugins"));
+}
+
+async function runHermesAgent({ op, root, apply, io, platform, result }) {
+  const artifacts = loadArtifacts();
+  const candidates = [
+    path.join(root, "plugins"),
+    path.join(root, PLUGIN_REL_DIR),
+    path.join(root, "plugins", `.${PLUGIN_NAME}${TMP_SUFFIX}`),
+    ...artifacts.map((a) => path.join(root, a.rel)),
+    path.join(root, STATE_DIR),
+    manifestPath(root, "hermes"),
+    manifestPath(root, "hermes") + TMP_SUFFIX,
+  ];
+  for (const candidate of candidates) await assertContained(root, candidate, io, platform);
+  let state = await readHermesState(io, root, platform);
+  let plan = planHermes(op, state, artifacts);
+  result.changes = plan.changes;
+  result.conflicts = plan.conflicts;
+  const needsWrite = (p) => p.writeArtifacts || (p.removals?.length ?? 0) > 0 || p.manifestAction !== null || (op === "uninstall" && state.caches.length > 0);
+  if (!apply || !needsWrite(plan)) return;
+  await withLock(io, root, "hermes", async () => {
+    state = await readHermesState(io, root, platform);
+    plan = planHermes(op, state, artifacts);
+    result.changes = plan.changes;
+    result.conflicts = plan.conflicts;
+    if (!needsWrite(plan)) return;
+    if (op === "install" && plan.writeArtifacts) await step(result, "artifacts", () => installHermesArtifacts(io, root, artifacts, state));
+    if (op === "uninstall") await step(result, "artifacts", () => removeHermesArtifacts(io, root, plan, state));
+    if (plan.manifestAction) {
+      await step(result, "manifest", () =>
+        plan.manifestAction === "delete" ? deleteManifest(io, root, "hermes") : writeManifest(io, root, "hermes", plan.manifestBody),
+      );
+    }
+    result.applied = true;
+  });
+}
+
+// Prévia (`plan`, ou install/uninstall sem `--apply`) nunca escreve, nunca
+// pega lock e nunca inicia agente. Com `--apply`, só o alvo informado muda.
+export async function runIntegrationCommand({
+  command,
+  agent,
+  target,
+  apply = false,
+  platform = process.platform,
+  io = createNodeIo(),
+  nodePath = process.execPath,
+  cliPath = CLI_PATH,
+}) {
+  const result = {
+    schemaVersion: 1,
+    command,
+    agent,
+    target: typeof target === "string" ? target : null,
+    applied: false,
+    status: "planned",
+    changes: [],
+    conflicts: [],
+    errors: [],
+    steps: [],
+    manualSteps: [],
+    exitCode: 0,
+  };
+  try {
+    if (!COMMANDS.includes(command)) throw new CliUsageError("comando desconhecido", { code: "unknown_command" });
+    if (!AGENTS.includes(agent)) throw new CliUsageError("--agent deve ser claude, codex ou hermes", { code: "invalid_agent" });
+    if (command === "plan" && apply) throw new CliUsageError("plan nunca aplica; use install --apply", { code: "plan_with_apply" });
+    if (agent === "claude" && typeof target === "string" && target !== "" && isManagedPolicyTarget(target, platform)) {
+      throw new ConflictError("managed_policy_target");
+    }
+    const root = await resolveTarget(target, io);
+    result.target = root;
+    const op = command === "uninstall" ? "uninstall" : "install";
+    if (op === "install") result.manualSteps = MANUAL_STEPS[agent];
+    const ctx = { nodePath, cliPath, platform };
+    const doApply = apply && command !== "plan";
+    if (agent === "hermes") await runHermesAgent({ op, root, apply: doApply, io, platform, result });
+    else await runJsonAgent({ op, agent, root, apply: doApply, io, ctx, platform, result });
+    if (result.conflicts.length > 0) {
+      result.status = "conflict";
+      result.exitCode = 4;
+    } else if (!doApply) {
+      result.status = "planned";
+    } else {
+      result.status = result.applied ? "applied" : "unchanged";
+    }
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      result.status = "usage_error";
+      result.exitCode = 2;
+      result.errors.push({ code: error.code });
+    } else if (error instanceof ConflictError) {
+      result.status = "conflict";
+      result.exitCode = 4;
+      result.conflicts.push(error.conflict);
+    } else if (error instanceof InvalidConfigError) {
+      result.status = "invalid_config";
+      result.exitCode = 3;
+      result.errors.push(error.error);
+    } else {
+      result.status = "incomplete";
+      result.exitCode = 5;
+      result.errors.push({ code: error instanceof IncompleteError ? error.code : (error.code ?? "io_error") });
+    }
+  }
+  return result;
+}
