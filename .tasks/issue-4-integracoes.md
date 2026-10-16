@@ -1,7 +1,7 @@
 # Issue #4 — observar execuções em Claude Code, Codex e Hermes
 
-> Implementar com **tlc-implement**, perfil `light`, depois da aprovação deste plano
-> e da resolução de U1. Cada critério vira check com prova referenciada pelo número.
+> Plano e recorte U1 aprovados pelo proprietário em 16/10/2026. Implementar com
+> **tlc-implement**, perfil `light`. Cada critério vira check com prova pelo número.
 > Grok ou Claude implementa e executa as provas; Codex local revisa em processo novo,
 > cópia isolada e sandbox somente leitura. Nada em `Unresolved` é autorização para
 > decidir escopo durante a implementação.
@@ -17,12 +17,15 @@ Codex e Hermes, encaminha eventos ao consumidor do núcleo e permite instalar/re
 as integrações preservando configurações, confiança e arquivos de terceiros. O relatório
 da entrega distingue contratos documentados, fixtures e execução real.
 
-14 critérios em 5 fatias observáveis · 2 contratos externos novos propostos ·
-1 decisão aberta que bloqueia implementação (U1).
+14 critérios em 5 fatias observáveis · 2 contratos externos novos ·
+0 decisões de escopo bloqueantes; U1 resolvida por aprovação explícita.
 
-Status: **Planning**, proposta para aprovação. Autorização em 16/10/2026:
-“pode puxar e seguir”, após identificar #4 em Ready for Agent. Isso autoriza assumir
-e planejar a issue; não resolve a fronteira nova com #5/#8 nem instala nada no perfil pessoal.
+Status: **In Progress**. Aprovação do proprietário em 16/10/2026:
+“Aprovo o recorte recomendado para a #4. Pode seguir com a fronteira mínima e o
+receptor em memória, mantendo privacidade completa e armazenamento nas #5 e #8.”
+O pedido autoriza implementação desse recorte e seus detalhes técnicos, sem instalar
+nada no perfil pessoal. O builder fecha abaixo o contrato exato antes de código e
+registra as decisões em Landing, sem reabrir esta aprovação.
 Base: `236e999fddb4c096634284e426d9d4db5ac526fa`.
 Branch da entrega: `codex/issue-4-integracoes`.
 
@@ -153,31 +156,32 @@ esta entrega e torna a limitação verificável, sem prometer o núcleo de trace
 
 | Surface | Decision | Landing |
 | --- | --- | --- |
-| comandos de integração | ações de prévia, instalação e remoção; defaults seguros | 8–10; assinatura candidata abaixo, sujeita a U1 |
-| comandos de integração | texto/JSON, códigos de uso/conflito/falha parcial | U1 — fechar junto da fronteira aprovada; sem inventar API pública antes disso |
-| execução supervisionada | argumentos, stdin, cwd, permissões, saída e interrupção | 4, 5; política de encaminhamento/persistência de stdout em U1 |
+| comandos de integração | ações de prévia, instalação e remoção; defaults seguros | 8–10; "Comandos `integrations`" na assinatura fechada |
+| comandos de integração | texto/JSON, códigos de uso/conflito/falha parcial | 8–10; códigos 0/2/3/4/5 na assinatura fechada |
+| execução supervisionada | argumentos, stdin, cwd, permissões, saída e interrupção | 4, 5; "Wrapper supervisionado" na assinatura fechada |
 | hooks de comando | entrada, saída neutra e falha do consumidor | 1, 3, 12 |
 | plugin Hermes | callback público, retorno e falha do destino | 6, 7 |
-| fronteira com núcleo | formato, versão, limites e falhas | 14; U1 |
+| fronteira com núcleo | formato, versão, limites e falhas | 14; "Envelope" e "Receptor em memória" na assinatura fechada |
 | configuração instalada | identidade própria, conflito, concorrência, remoção | 8–10 |
 | guia de uso | instalação isolada, confiança manual, versões e lacunas, próximo passo | 2, 3, 13, 14 |
 | telas/HTTP público/agendamento | estados visuais, densidade, autenticação e rate limit | n/a — não há essas superfícies na #4 |
 
 ## Swept
 
-- validation: 8, 12, 13; schema de integração ao núcleo depende de U1.
+- validation: 8, 12, 13, 14; tipos, limites e allowlist do envelope na assinatura fechada.
 - failure modes: 5, 7, 10, 12.
-- idempotency and retry: 9, 10; retries de transporte, se existirem, ficam no contrato
-  aprovado em U1, nunca em três implementações independentes.
+- idempotency and retry: 9, 10; não há retry de transporte nesta entrega: falha de
+  entrega é contada e a entrega do processo fica desligada (Hermes), sem repetição.
 - authorization: 4, 8; confiança continua nativa/manual; instalação pessoal fora do escopo.
 - concurrency and ordering: 9 cobre escritores concorrentes e edições externas;
   1, 3, 6 preservam IDs sem reordenar ou correlacionar por conta própria. Ordenação
-  da timeline fica em #6; filas/limites de transporte dependem de U1.
+  da timeline fica em #6; fila e limites de transporte na assinatura fechada.
 - data lifecycle: 10, 11, 12, 14; retenção/exclusão de traces ficam em #5/#8.
 - external-dependency failure: 5, 7, 12, 13.
 - state transitions: 8–10 — ausência → prévia sem mutação → instalação reconhecida
   → remoção reconhecida; edição posterior → conflito preservado, não remoção forçada.
-- observability: 2, 3, 12–14; códigos/contadores de descarte definidos em U1.
+- observability: 2, 3, 12–14; contadores de descarte com vocabulário fechado na
+  assinatura fechada.
 
 ## Impact
 
@@ -210,13 +214,274 @@ esta entrega e torna a limitação verificável, sem prometer o núcleo de trace
 ## Decided
 
 As regras de autoria, privacidade, confiança e uma branch/PR já vêm das fontes.
-Os dois contratos novos abaixo são **propostas**, dependentes de aprovação e U1;
-nenhuma definição de wire format passa a aprovada apenas por aparecer neste arquivo.
+Os dois contratos novos abaixo estão autorizados dentro do recorte aprovado em U1.
+O builder registra a assinatura concreta e seus limites antes do código que os utiliza;
+essa elaboração técnica não autoriza ampliar coleta, persistência ou transporte remoto.
 
 | Decision | Shape | Alternative rejected |
 | --- | --- | --- |
 | Fronteira única com #5/#8 | entrada nativa → política comum → entrega ao consumidor; preservação de origem/IDs e descarte explícito; detalhes ainda em U1 | três sanitizadores/coletores privados repetiriam regras das outras issues |
 | Propriedade da instalação | registro versionado de alvos e identidade/hash somente de entradas/artefatos próprios; conflito preserva conteúdo editado; nunca backup integral com secrets | restaurar o arquivo inteiro apagaria edições posteriores e copiaria dados alheios |
+
+### Fronteira mínima — assinatura fechada (U1)
+
+Elaboração técnica do recorte aprovado, fechada pelo builder em 16/10/2026 antes de
+qualquer teste ou código de produto. Revisa o rascunho anterior desta seção em um
+ponto: o plugin Python não monta envelope nem aplica regra da fronteira (exigência
+de não duplicar lógica em Python); só projeta nomes de uma lista compartilhada.
+
+Fontes primárias desta assinatura (consulta 16/10/2026, somente leitura):
+
+- Claude: `code.claude.com/docs/en/hooks` (campos comuns, `PreToolUse`, `PostToolUse`,
+  `PostToolUseFailure`, `UserPromptExpansion`, `SessionStart`, `SessionEnd`,
+  `SubagentStart`, `SubagentStop`, exit codes, forma exec com `args` sem shell,
+  timeout em segundos, confiança de workspace) e `/docs/en/permissions` ("Match by
+  input parameter": `Skill(skill:<name>)` só existe para campo direto da entrada,
+  logo a ferramenta `Skill` recebe `tool_input.skill`). Metadado PE local do launcher:
+  `2.1.299.0` (registrado acima); nenhum Claude foi iniciado.
+- Codex: tag oficial `openai/codex` `rust-v0.162.1` — `codex-rs/hooks/src/schema.rs`
+  (structs `*CommandInput`), `hooks/src/engine/command_runner.rs:384-437` (Windows
+  `cmd.exe /C "<linha>"`; POSIX `$SHELL -lc <linha>`), `exec/src/exec_events.rs`
+  (eventos JSONL e itens), `exec/src/cli.rs` (`--json`, alias `--experimental-json`)
+  e `@openai/codex/bin/codex.js` 0.162.1 local (encaminha SIGINT/SIGTERM/SIGHUP e
+  espelha código/sinal do filho). Página `learn.chatgpt.com/docs/hooks`: cobertura
+  sem hosted tools, revisão/confiança por hash em `/hooks`.
+- Hermes 0.21.4 local (hashes acima): `plugins.py` (`VALID_HOOKS`, `register_hook`,
+  `invoke_hook`, opt-in `plugins.enabled`), `plugins_dispatch.py:44-50,209-243`
+  (timeout E exceção em `pre_tool_call` viram bloqueio), `model_tools.py:679-1001`
+  (`handle_function_call` dispara `pre_tool_call`/`post_tool_call`), locais de disparo
+  `tools/skill_usage.py:467-479`, `tools/delegate_tool.py:289-296`,
+  `tools/delegate_tool_results.py:364-372`, `agent/conversation_loop.py:770-777`,
+  `agent/turn_finalizer.py:707-719`. Sondagem isolada (HERMES_HOME temporário,
+  `-I -B`, sem modelos): callback de 3 s com `hook_callback_timeout: 1` bloqueou a
+  ferramenta com `pre_tool_call plugin callback timed out or is still running`.
+
+**Fluxo único.** entrada nativa → adaptador do agente (`src/integrations/adapters/`,
+só mapeia nomes) → `buildEnvelope` (`src/integrations/boundary.mjs`, única dona de
+allowlist, tipos, limites e lacunas) → receptor (`MemoryReceiver`). Claude/Codex
+rodam tudo no processo do hook ou do wrapper. Hermes: o callback Python projeta e
+enfileira; a fronteira roda no processo Node `ingest`, só quando há entrega
+configurada.
+
+**Envelope v1** (objeto JSON, `schemaVersion: 1`):
+`{ schemaVersion, source: { agent, mechanism, contract }, signal, eventKind,
+nativeEvent, ids, fields, gaps, observedAt }`.
+
+- `source.agent` ∈ `claude|codex|hermes`; `mechanism` ∈ `command_hook|exec_jsonl|
+  python_plugin`; `contract` é o contrato contra o qual o adaptador leu, nunca uma
+  versão do agente em execução (que nenhum payload fornece): `claude-code-hooks@
+  docs-2026-10-16`, `codex-hooks@rust-v0.162.1`, `codex-exec-jsonl@rust-v0.162.1`,
+  `hermes-plugin-hooks@0.21.4`.
+- `signal` ∈ `native_hook` (hook de comando), `native_plugin` (Hermes),
+  `supervised_exec` (wrapper). Nenhuma inferência é produzida nesta entrega; não
+  existe valor `inferred`. Atribuição de skill é da #6.
+- `nativeEvent`: nome nativo exato (`PreToolUse`, `item.completed`, `pre_tool_call`).
+- `ids`: só chaves de `sessionId, promptId, turnId, toolUseId, toolCallId, agentId,
+  taskId, threadId, itemId, parentSessionId, parentTurnId, childSessionId,
+  subagentId, parentSubagentId`; valor = string nativa inalterada, 1..256 caracteres.
+  ID maior, vazio ou não string é omitido com lacuna — truncar fabricaria outro ID.
+  Nenhuma correlação entre IDs é calculada.
+- `fields`: só nomes permitidos ao `eventKind`; tipos fechados: `name` (regex
+  `^[\p{L}\p{N} ._:/@+-]{1,128}$`u, sem truncamento), `enum` (valores listados),
+  `integer` (inteiro seguro; `exitCode` com sinal), `boolean`.
+- `gaps`: strings `<nome>:<motivo>`, motivo ∈ `absent` (contrato prevê, payload não
+  trouxe), `not_in_contract` (o `eventKind` comporta, o contrato do agente não
+  fornece), `invalid_type`, `too_long`, `not_identifier`, `unrecognized_value`.
+  Valor rejeitado nunca é substituído por default.
+- `observedAt`: ISO-8601 do relógio do processo observador no momento do
+  processamento, identificado como tal; não é timestamp do agente.
+- Envelope serializado > 4096 bytes é descartado (contador `oversize`).
+- Fora de toda saída do debugger, sempre: argumentos/entrada de ferramenta
+  (`tool_input`, `args`, `command_args`, `arguments`, `command`), resultados
+  (`tool_response`, `result`, `aggregated_output`, `content`), prompts (`prompt`,
+  `child_goal`), caminhos (`cwd`, `transcript_path`, `file_path`, `changes[].path`),
+  raciocínio (itens `reasoning` do `exec --json` são excluídos inteiros, contador
+  `reasoningExcluded`; `last_assistant_message`) e textos livres de erro (`error`,
+  `error_message`, `message`, `child_summary`). A #5 continua dona da política integral.
+
+`eventKind` → campos permitidos:
+
+| eventKind | campos |
+| --- | --- |
+| `tool_pre` | `toolName` |
+| `tool_post` | `toolName`, `outcome`, `interrupted`, `durationMs`, `errorType` |
+| `skill_invocation` | `invocationPath` (`skill_tool`/`direct_command`), `phase` (`pre`/`post`/`expansion`), `skillName`, `commandSource`, `outcome`, `interrupted` |
+| `command_expansion` | `expansionType`, `commandName`, `commandSource` |
+| `skill_lifecycle` | `action`, `skillName`, `provenance`, `useCount`, `reused`, `reuseAfterPatch` |
+| `session_start` | `source`, `platform` |
+| `session_end` | `reason` |
+| `turn_start` | — |
+| `turn_end` | `outcome`, `completed`, `failed`, `interrupted`, `inputTokens`, `cachedInputTokens`, `cacheWriteInputTokens`, `outputTokens`, `reasoningOutputTokens` |
+| `subagent_start` | `agentType`, `childRole` |
+| `subagent_stop` | `agentType`, `childRole`, `childStatus`, `durationMs` |
+| `item` | `phase` (`started`/`updated`/`completed`), `itemType`, `status`, `exitCode`, `toolName`, `mcpServer`, `collabTool` |
+| `error` | — |
+| `process_exit` | `processExitCode`, `processSignal` |
+
+Enums: `outcome` `success|failure|blocked|completed|failed`; `expansionType`
+`slash_command|mcp_prompt`; `source` `startup|resume|clear|compact|fork`; `reason`
+`clear|resume|logout|prompt_input_exit|other`; `itemType` `agent_message|
+command_execution|file_change|mcp_tool_call|collab_tool_call|web_search|todo_list|
+error`; `status` `in_progress|completed|failed|declined`; `collabTool` `spawn_agent|
+send_input|wait|close_agent`; `action` `loaded|patched|edited|created|installed|
+restored|archived|stale`; `provenance` `installed|agent_created|external|local|unknown`.
+Contagens de tokens são números de uso, não conteúdo de raciocínio.
+
+Mapeamento por contrato (qualquer outro evento nativo é recusado e contado em
+`unknownEvent`, sem envelope):
+
+- Claude: `PreToolUse`→`tool_pre`; com `tool_name: "Skill"` → `skill_invocation`
+  `invocationPath: skill_tool`, `phase: pre`, `skillName` ← `tool_input.skill`.
+  `PostToolUse`→`tool_post` `outcome: success` (Skill → `phase: post`);
+  `PostToolUseFailure`→`outcome: failure`, `interrupted` ← `is_interrupt` (opcional:
+  ausência vira lacuna). `UserPromptExpansion` `slash_command` → `skill_invocation`
+  `invocationPath: direct_command`, `phase: expansion`, `skillName` ← `command_name`
+  (o próprio Claude trata comandos personalizados como skills; a #6 decide atribuição);
+  `mcp_prompt` → `command_expansion`. `SessionStart/End`, `SubagentStart/Stop`
+  → `session_*`/`subagent_*`. IDs: `session_id`, `prompt_id`, `tool_use_id`, `agent_id`.
+- Codex hooks: `PreToolUse`/`PostToolUse`→`tool_pre`/`tool_post` (`outcome:
+  not_in_contract` — `tool_response` é conteúdo; não há evento de falha);
+  `SessionStart/End`, `SubagentStart/Stop`. Não existe ferramenta `Skill`: ler
+  `SKILL.md` gera só `tool_pre`/`tool_post` com `toolName`, sem caminho nem skill.
+  IDs: `session_id`, `turn_id`, `tool_use_id`, `agent_id`. Hosted tools não passam por
+  hooks locais (página oficial, "Tool coverage"); nada é afirmado sobre eles.
+- Codex exec: `thread.started`→`session_start` (`threadId`); `turn.started`→
+  `turn_start`; `turn.completed`→`turn_end` `outcome: completed` + `usage.*`;
+  `turn.failed`→`turn_end` `outcome: failed`; `item.started|updated|completed` →
+  `item` (`itemId`, `itemType`, `status`, `exitCode`; `mcp_tool_call` → `toolName`
+  ← `tool`, `mcpServer` ← `server`; `collab_tool_call` → `collabTool`); `error`→
+  `error`. Saída do filho → `process_exit` do wrapper.
+- Hermes: `pre_tool_call`→`tool_pre`; `post_tool_call`→`tool_post` (`status`
+  `ok|error|blocked` → `success|failure|blocked`, `error_type`, `duration_ms`);
+  `on_skill_lifecycle`→`skill_lifecycle`; `on_session_start`→`session_start`;
+  `on_session_end`→`turn_end` (fim do run/turno observado, nunca fim da skill nem da
+  identidade de sessão); `subagent_start/stop`→`subagent_*`. IDs: `session_id`,
+  `task_id`, `tool_call_id`, `turn_id`, `parent_session_id`, `parent_turn_id`,
+  `child_session_id`, `child_subagent_id`, `parent_subagent_id`.
+
+**Receptor em memória** (`src/integrations/memory-receiver.mjs`):
+`createMemoryReceiver({ capacity = 500 })` → `{ receive(envelope) →
+"accepted"|"dropped"|"malformed", snapshot() → { events, counters: { accepted,
+dropped, malformed } }, close() }`. Nunca lança; envelope fora do schema →
+`malformed`; cheio → descarta o novo e preserva os aceitos; após `close()` tudo é
+`dropped`. O módulo não importa `fs`, `net` nem `child_process`: não há persistência.
+
+**O que roda onde, sem consumidor da #8:**
+
+- Hook Claude/Codex instalado: o agente inicia o processo por evento; ele lê o stdin,
+  monta o envelope e o entrega a um `MemoryReceiver` que morre com o processo. Nada
+  sai do processo, nada é escrito; stdout vazio, exit 0.
+- Wrapper Codex: o receptor vive durante o `exec`; nada é escrito pelo debugger.
+- Hermes instalado: sem entrega configurada, o callback devolve `None` sem projetar,
+  sem fila, sem thread e sem processo — observação inativa, declarada no guia.
+- Exportador de fixture: somente com `SKILL_ME_OBSERVER_REPORT_FD=<n>` explícito
+  (hook/`ingest`: `n` ∈ 2..9; wrapper: 3..9, porque o stderr pertence ao filho), o
+  processo escreve ao sair uma linha `{"skillMeObserverReport":1,"events":[…],
+  "counters":{…}}` com envelopes já minimizados, em até 1000 ms; falha ou demora é
+  absorvida. A instalação nunca define essa variável. Não é coletor nem ingestão.
+- Entrega Hermes: somente com `SKILL_ME_HERMES_DELIVERY` (array JSON de argv); nesta
+  entrega só os testes a definem. A #8 definirá o consumidor real.
+
+**Contadores** (vocabulário fechado, só números no relatório): `accepted`,
+`dropped`, `malformed`, `oversize`, `unknownEvent`, `invalidInput`, `inputTooLarge`,
+`stdinTimeout`, `invalidJson`, `oversizeLine`, `partialTrailingLine`,
+`reasoningExcluded`; Hermes `observer_stats()`: `enqueued`, `delivered`,
+`droppedQueueFull`, `deliveryFailed`, `oversize`, `serializationFailed`.
+
+**Limites e timeouts:** stdin do hook ≤ 1 MiB (`ONE_MIB_BYTES` do doctor; excedente é
+drenado e descartado, sem envelope) com prazo de 2000 ms para EOF; linha JSONL ≤
+64 KiB (excedente descartado até o próximo `\n`); fragmento final sem `\n` é
+descartado; receptor 500; fila Hermes 256; registro Hermes serializado ≤ 8192 bytes;
+relatório de fixture 1000 ms. Entradas instaladas: `timeout: 10` (s), exceto
+`SessionEnd`, que mantém o default do agente (Claude 1,5 s; Codex 1 s).
+
+**Hooks Claude/Codex — saída neutra.** O comando `hook` nunca escreve em stdout e
+sempre termina com 0, inclusive com argumento inválido, entrada inválida ou falha
+interna; nunca usa 2 (bloqueio). Uma quebra do próprio Node (módulo ausente) sai
+com 1, que os dois contratos tratam como erro não bloqueante. Entradas instaladas:
+Claude em forma exec — `{"type":"command","command":<node absoluto>,"args":[<cli
+absoluto>,"hook","--agent","claude"],"timeout":10}`, sem shell e sem `matcher`
+(todos), em `PreToolUse`, `PostToolUse`, `PostToolUseFailure`,
+`UserPromptExpansion`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`;
+Codex em `hooks.json` — `{"type":"command","command":<linha>,"timeout":10}` em
+`PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `SubagentStart`,
+`SubagentStop`, com a linha citada para o shell que o Codex usa (Windows: aspas
+duplas, recusando `"`, `%`, CR/LF nos caminhos; POSIX: aspas simples com `'\''`).
+`UserPromptSubmit`/`Stop` não são assinados (o payload carrega prompt/mensagem; o
+ciclo de turno do Codex fica observável pelo wrapper).
+
+**Wrapper supervisionado** — `integrations run --agent codex [--codex-entry
+<arquivo>] -- <argumentos de exec>`: `spawn` sem shell de `[node, <entrada>]` (`.js/
+.mjs/.cjs`) ou do executável nativo; `.cmd/.bat` é recusado (exigiria shell). Sem
+`--codex-entry`, usa `resolveAgents` do doctor e `<packageDir>/bin/codex.js`. Vetor
+do filho: `exec`, `--json` (omitido se `--json` ou `--experimental-json` já aparece
+antes de um `--`), depois os argumentos do usuário literalmente. Nenhuma flag de
+sandbox, aprovação ou bypass é lida, removida ou acrescentada. `cwd`, ambiente e
+stdin são herdados sem alteração; stderr do filho é herdado diretamente (nunca lido);
+stdout do filho é repassado byte a byte ao stdout do wrapper (com backpressure;
+EPIPE do consumidor é absorvido e a leitura continua) e lido em paralelo pelo parser
+incremental. **O que sai:** stdout = JSONL nativo do Codex, inclusive itens de
+raciocínio que o próprio Codex emitir — saída do agente pedida pelo usuário, não
+telemetria do debugger; stderr = do filho. O debugger não grava nada. Saída: código
+do filho (0, 17 ou outro, sem reinterpretação); filho terminado por sinal → o
+wrapper reemite o mesmo sinal sobre si (POSIX); SIGINT/SIGTERM/SIGHUP recebidos são
+encaminhados ao filho; falha de spawn `ENOENT` → 127, outra falha de spawn → 126,
+mensagem fixa no stderr e stdout vazio; uso inválido → 2. Limite de plataforma: no
+Windows, terminar o wrapper externamente (TerminateProcess) não executa handlers e o
+filho segue — mesmo comportamento do `bin/codex.js` oficial; Ctrl+C de console chega
+aos dois processos.
+
+**Hermes** — plugin `skill-me-observer` (`plugin.yaml`, `__init__.py`,
+`kwargs.json`). `register(ctx)` só chama `ctx.register_hook` para `pre_tool_call`,
+`post_tool_call`, `on_skill_lifecycle`, `on_session_start`, `on_session_end`,
+`subagent_start`, `subagent_stop`; nenhuma ferramenta, middleware, comando ou atributo
+do host. Cada callback aceita `**kwargs`, captura `Exception` e devolve `None`. Com
+entrega configurada, projeta somente os nomes listados para o hook em `kwargs.json`
+(mesmo arquivo importado pelo adaptador JS), mantendo valores escalares inalterados
+e marcando os não escalares em `nonScalar` sem copiá-los; `put_nowait` em
+`queue.Queue(256)`; cheio → `droppedQueueFull`. Uma thread daemon, criada no primeiro
+evento, inicia uma vez o processo de entrega (stdin pipe; stdout/stderr descartados;
+sem janela no Windows) e escreve NDJSON; falha de spawn, escrita ou registro >
+8192 bytes é contada e, para falhas de entrega, desliga a entrega do processo — sem
+retry. Destino travado bloqueia só a thread; os callbacks continuam O(1). Nenhum
+tamanho, charset, enum, truncamento, atribuição, envelope ou persistência existe em
+Python. `ingest --agent hermes` lê o NDJSON, aplica o adaptador e a fronteira e
+termina no EOF com 0.
+
+**Comandos `integrations`** (`src/integrations/cli.mjs`, script npm
+`integrations`; o doctor não muda): `plan|install|uninstall --agent
+<claude|codex|hermes> --target <diretório> [--apply] [--json]`. `--target` é
+obrigatório e não tem default; `plan` e qualquer comando sem `--apply` só leem e
+nunca iniciam agentes. Alvos: Claude `<target>/settings.json`; Codex
+`<target>/hooks.json` (`config.toml` nunca é escrito); Hermes
+`<target>/plugins/skill-me-observer/` (`config.yaml` nunca é escrito: habilitar é
+`hermes plugins enable skill-me-observer`, manual). Registro próprio em
+`<target>/.skill-me/<agente>-install.json`: versão, arquivo, SHA-256 do JSON canônico
+de cada grupo próprio (ou de cada artefato Hermes) e o que a instalação criou
+(arquivo, objeto `hooks`, chaves de evento) — nunca cópia de conteúdo alheio.
+Validação: JSON lido pelo `readBoundedText`/`projectConfig` do doctor (≤ 1 MiB,
+arquivo regular, forma de hooks nativa); raiz não objeto, JSON malformado, `hooks`
+inválido ou arquivo grande demais → 3 sem escrita. Reescrita preserva valores
+alheios, ordem de chaves, indentação detectada, newline final e o texto exato de
+números (`JSON.rawJSON`). Escrita: lock exclusivo `<target>/.skill-me/<agente>.lock`
+(`wx`), conteúdo novo em temporário no mesmo diretório, releitura e comparação do
+SHA-256 com a leitura inicial e `rename`; divergência → 4 sem escrita. Limite
+registrado: a janela entre essa última comparação e o `rename` não é atômica contra
+editores arbitrários (não há CAS no sistema de arquivos); lock só exclui outros
+processos do skill-me. Contenção: `realpath` do alvo; todo arquivo tocado precisa
+resolver dentro dele (link para fora → 4); alvo igual ao diretório de política
+gerenciada do Claude (`CLAUDE_MANAGED_SETTINGS_PATH`) → 4. Ordem de aplicação:
+configuração, depois registro; falha posterior à primeira mutação → 5 com o estado
+de cada passo. Reinstalar reconcilia: grupo idêntico ao canônico sem registro é
+adotado. Remoção só apaga grupos/artefatos cujo hash confere com o registro; grupo
+próprio alterado ou arquivo alheio na pasta do plugin → preservado e 4.
+Códigos: `0` concluído ou nada a fazer; `2` uso inválido ou alvo inexistente; `3`
+configuração inválida/ilegível, não substituída; `4` conflito (lock, mudança durante
+a aplicação, alvo fora/link, artefato alheio, entrada própria alterada preservada);
+`5` incompleto (falha de E/S depois de iniciar, estado reportado). Saída texto por
+padrão; `--json` emite `{schemaVersion:1, command, agent, target, applied, status,
+changes:[{file, action, event?}], conflicts:[{code, file, event?}], manualSteps:[…]}`
+com códigos fechados, sem conteúdo de configuração.
 
 ### Ordem e opções técnicas para implementação após aprovação
 
@@ -233,18 +498,18 @@ nenhuma definição de wire format passa a aprovada apenas por aparecer neste ar
 6. Provas de fronteira, documentação e verificação independente; revisão formal só
    depois da implementação completa, evidências e commit limpo.
 
-Assinatura candidata, para tornar U1 revisável: comando separado de `doctor`,
-`integrations plan|install|uninstall --agent <claude|codex|hermes> --target <diretório>`;
-prévia sem escrita é o default e aplicação é explícita. Wrapper candidato:
-`integrations run --agent codex -- <argumentos de exec>`. Nomes e disposição são
-reversíveis; formatos consumidos por outras issues, limites, saída e códigos ainda
-precisam ser fechados em U1. Não instalar estes comandos durante o planejamento.
+A assinatura candidata do planejamento (comando separado de `doctor`, prévia como
+default, wrapper `integrations run --agent codex -- …`) foi mantida e fechada, com
+formato, limites, saída e códigos, em "Fronteira mínima — assinatura fechada (U1)".
 
 ## Contratos examinados e provas previstas
 
 Consulta em 16/10/2026, somente leitura. Documentação corrente não é prova de execução
-nem estabelece sozinha o perfil de uma versão. Não foram iniciados agentes/modelos,
-importados módulos Hermes, executadas skills ou instalados hooks.
+nem estabelece sozinha o perfil de uma versão. No planejamento não foram iniciados
+agentes/modelos, importados módulos Hermes, executadas skills ou instalados hooks.
+Na implementação, o builder importou módulos Hermes 0.21.4 apenas em sondagem e
+testes isolados (HERMES_HOME temporário, `python -I -B`, plugins empacotados
+desviados para diretório vazio, sem modelos e sem configuração pessoal).
 
 | Agente | Fato conferido | Consequência para as provas |
 | --- | --- | --- |
@@ -314,7 +579,7 @@ estiverem atendidos. Merge continua humano.
 
 | # | Kind | Question | Until answered |
 | --- | --- | --- | --- |
-| U1 | blocks implementation | Autorizar nesta #4 somente a fronteira mínima compartilhada de eventos, política conservadora sem conteúdo bruto e consumidor de teste em memória (recomendado), ou priorizar o planejamento/entrega de #5/#8 antes dos adaptadores? | Manter Planning. A opção recomendada não entrega servidor, armazenamento, retenção nem coleta opt-in de conteúdo: #5/#8 permanecem donas dessas capacidades. Antes de codificar, anexar aqui a assinatura/envelope, campos permitidos, tratamento de stdout do wrapper, limites/timeouts e códigos exatos aprovados, com compatibilidade explicitada para #5/#8. Não chamar receptor de fixture de núcleo real. Se a escolha for #5/#8 primeiro, não abrir novas issues nem alterar sua prioridade sem executar a autorização recebida. |
+| U1 | resolved — 16/10/2026 | Fronteira mínima compartilhada e receptor em memória na #4 | Aprovado explicitamente pelo proprietário, conforme citação em Intent. Não entrega servidor, armazenamento, retenção nem coleta opt-in de conteúdo: #5/#8 permanecem donas dessas capacidades. Antes de código, o builder registra assinatura/envelope, campos permitidos, stdout do wrapper, limites/timeouts e códigos exatos; isso é elaboração técnica delegada. Receptor de fixture não é anunciado como núcleo de traces real. |
 
-Aprovar apenas a existência deste arquivo não resolve U1. Nenhuma instalação real
-nem E2E com consumo externo foi solicitada ou é condição para decidir essa fronteira.
+Nenhuma instalação pessoal nem E2E com consumo externo foi solicitada. Não há
+pergunta de escopo pendente; surgindo ampliação real, registrá-la sem executá-la.
