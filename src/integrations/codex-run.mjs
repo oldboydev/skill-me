@@ -134,13 +134,16 @@ export async function runSupervisedCodex({ codexEntry, execArgs }) {
   reader.end();
   observation.submit(processExitDraft({ code: outcome.code, signal: outcome.signal }));
   await observation.flush();
-  // O stdout nativo termina de sair antes do fim (escrita em pipe é assíncrona
-  // no Windows); depois o processo sai explicitamente, porque uma escrita de
-  // relatório que estourou o prazo continuaria segurando o event loop.
-  if (!stdoutBroken && process.stdout.writableLength > 0) {
+  // No POSIX a escrita do stdout em pipe é assíncrona (Node 24, "A note on
+  // process I/O"; no Windows é síncrona): bytes ainda na fila se perderiam com
+  // process.exit. Um write vazio com callback só conclui depois dos anteriores;
+  // esperar `drain` não serve, porque ele só é emitido após um write que
+  // devolveu false. A saída é explícita porque um relatório que estourou o
+  // prazo deixaria um handle aberto segurando o event loop.
+  if (!stdoutBroken) {
     await new Promise((resolve) => {
-      process.stdout.once("drain", resolve);
       process.stdout.once("error", resolve);
+      process.stdout.write("", () => resolve());
     });
   }
 

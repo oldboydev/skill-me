@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { CODEX_GLOBAL_WINDOWS_TARGET, npmCmdShim } from "../doctor/helpers/npm-shims.mjs";
-import { baseEnv, makeScratch } from "./helpers/cli.mjs";
+import { INTEGRATIONS_CLI, baseEnv, makeScratch } from "./helpers/cli.mjs";
 import { FAKE_CODEX, execEventLine, probeOf, runWrapper, writeScenario } from "./helpers/wrapper.mjs";
 
 const scratches = [];
@@ -234,6 +234,39 @@ test("I4-C16 stdout repassado byte a byte e de forma incremental; JSONL consumid
   assert.equal(run.report.counters.invalidJson, 1);
   assert.equal(run.report.counters.unknownEvent, 1);
   assert.equal(run.report.counters.partialTrailingLine, 1);
+});
+
+// Prova extra (além do checklist): consumidor de stdout lento, distinto do
+// canal de relatório sem leitura de C38 — o wrapper espera o repasse nativo
+// terminar, não perde bytes e sai com o código do filho.
+test("I4-C16c consumidor lento recebe todo o stdout nativo antes da saída", async () => {
+  const dir = scratch("slow");
+  const line = '{"type":"item.completed","item":{"id":"item_{i}","type":"agent_message","text":"' + "z".repeat(200) + '"}}';
+  const scenario = writeScenario(dir, "slow", [{ repeat: { count: 3000, line } }]);
+  const expected = Buffer.from(Array.from({ length: 3000 }, (_, i) => line.replaceAll("{i}", String(i)) + "\n").join(""));
+  const result = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [INTEGRATIONS_CLI, "run", "--agent", "codex", "--codex-entry", FAKE_CODEX, "--", "p"], {
+      cwd: dir,
+      env: baseEnv({ FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_EXIT: "17" }),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const chunks = [];
+    child.stdout.pause();
+    // Lê aos poucos: 50 ms entre leituras, muito abaixo da vazão do filho.
+    const timer = setInterval(() => {
+      let chunk;
+      while ((chunk = child.stdout.read()) !== null) chunks.push(chunk);
+    }, 50);
+    child.on("exit", (status) => {
+      clearInterval(timer);
+      child.stdout.resume();
+      child.stdout.on("data", (chunk) => chunks.push(chunk));
+      child.stdout.on("end", () => resolve({ status, stdout: Buffer.concat(chunks) }));
+    });
+  });
+  assert.equal(result.status, 17);
+  assert.equal(result.stdout.length, expected.length);
+  assert.deepEqual(result.stdout, expected);
 });
 
 test("I4-C17 stderr do filho fica separado e raciocínio nunca entra no debugger", async () => {
