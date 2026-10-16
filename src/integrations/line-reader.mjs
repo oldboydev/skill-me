@@ -3,6 +3,10 @@
 // chega, nunca acumula mais que `maxLineBytes` (excedente é descartado até o
 // próximo `\n`) e descarta o fragmento final sem `\n`: um processo que morre no
 // meio de uma escrita deixa um JSON incompleto que não deve ser interpretado.
+
+// Teto de uma linha NDJSON (stdout do Codex e stdin do ingest).
+export const STREAM_MAX_LINE_BYTES = 64 * 1024;
+
 export function createLineReader({ maxLineBytes, onLine, onOversize, onPartialTrailing }) {
   let pending = [];
   let pendingBytes = 0;

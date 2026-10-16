@@ -415,8 +415,11 @@ ciclo de turno do Codex fica observável pelo wrapper).
 
 **Wrapper supervisionado** — `integrations run --agent codex [--codex-entry
 <arquivo>] -- <argumentos de exec>`: `spawn` sem shell de `[node, <entrada>]` (`.js/
-.mjs/.cjs`) ou do executável nativo; `.cmd/.bat` é recusado (exigiria shell). Sem
-`--codex-entry`, usa `resolveAgents` do doctor e `<packageDir>/bin/codex.js`. Vetor
+.mjs/.cjs`) ou do executável nativo; `.cmd/.bat` em `--codex-entry` é uso inválido
+(2: exigiria shell). Sem `--codex-entry`, usa o caminho do launcher devolvido por
+`resolveAgents` do doctor, iniciado sem shell (executável nativo ou launcher POSIX com
+shebang); launcher `.cmd/.bat` no Windows (shim npm) → 127 com mensagem fixa pedindo
+`--codex-entry` apontando para `@openai/codex/bin/codex.js`. Vetor
 do filho: `exec`, `--json` (omitido se `--json` ou `--experimental-json` já aparece
 antes de um `--`), depois os argumentos do usuário literalmente. Nenhuma flag de
 sandbox, aprovação ou bypass é lida, removida ou acrescentada. `cwd`, ambiente e

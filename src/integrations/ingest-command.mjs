@@ -1,8 +1,6 @@
 import { hermesDraft } from "./adapters/hermes.mjs";
-import { createLineReader } from "./line-reader.mjs";
+import { STREAM_MAX_LINE_BYTES, createLineReader } from "./line-reader.mjs";
 import { createObservation } from "./observation.mjs";
-
-export const STREAM_MAX_LINE_BYTES = 64 * 1024;
 
 // Destino da entrega do plugin Hermes: NDJSON `{hook, kwargs, nonScalar}` no
 // stdin, um registro por linha, até o EOF (o processo Hermes terminou ou a
