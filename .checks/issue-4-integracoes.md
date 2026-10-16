@@ -277,3 +277,9 @@ módulos do doctor reutilizados (~70 KB: `config-projection`, `hooks-shape` parc
 ~40 KB ≈ 204 KB → ~51k. Novos arquivos estimados: fonte JS ~100 KB, Python ~10 KB, testes ~130 KB,
 fixtures ~25 KB, guia ~25 KB ≈ 290 KB → ~73k. Total ≈ 124k < 150k: S1–S5 cabem num batch; nenhuma
 fronteira de handoff dentro da entrega. Verifier é do orquestrador, depois do último commit.
+
+Fechamento do batch único (16/10/2026):
+
+- **Fronteira:** C1–C48 fechados em `e60b5e0` (evidência em `.checks/issue-4-integracoes.build.md`); C15 provado no WSL; C18–C23, C37 e C44b nativos só no Windows local, pendentes nas demais plataformas.
+- **Decidido durante o build:** nenhuma decisão nova do proprietário; a nota do coordenador (`.checks/issue-4-integracoes.coordinator.md`) levou às correções de `5612060` e `9b433b5`. Ponto aberto para o orquestrador: redação de C39 para o stdout nativo do wrapper (ver build).
+- **Abandonado:** envelope montado em Python (rascunho anterior: duplicaria a fronteira); `fs.write` no exportador (trava o encerramento no Windows com pipe cheio); espera por `drain` no fim do wrapper (`drain` só existe após backpressure); acrescentar `packageDir` ao retorno do Codex no doctor (mudaria um export fora do recorte).
