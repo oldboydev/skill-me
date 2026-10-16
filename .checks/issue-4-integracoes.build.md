@@ -168,3 +168,181 @@ do check. Fica registrado para o Verifier e para decisão se o texto deve ser aj
   Nenhum valor foi gravado no repositório nem enviado a serviço externo.
 - Nenhuma instalação em perfil pessoal; todos os `--target` apontaram para diretórios
   temporários de teste.
+
+## Correções da verificação independente — round 1 (F1–F4)
+
+Builder: Claude, mesma entrega (tlc-implement `light`). Partida em `485939d`; a rodada FAIL
+está em `.checks/issue-4-integracoes.verified.md` e não foi alterada. Esta seção é evidência
+do autor, **não é verificação independente**; o Verifier é do orquestrador, sobre
+`236e999..HEAD`. Escopo: só F1–F4. Checklist (barra), Landing, doctor, motor vendorizado e
+`AGENTS.md` não mudaram. Nenhuma decisão nova do proprietário.
+
+| Commit | Achado | Conteúdo |
+| --- | --- | --- |
+| `5521819` | F1 (C27/C34) | `install/run.mjs`: contenção do `__pycache__` e de cada entrada antes de listar/apagar; regressões em `install.cli.test.mjs`; guia |
+| `2e99346` | F2 (C38) | `observation.mjs` (`flush({deadlineAt})`), `codex-run.mjs` (prazo contado do fim do filho, reserva 200 ms); medição em `failure-matrix.cli.test.mjs`; carimbo no `fake-codex.mjs` |
+| `c3ac5a2` | F3 (C42) | só teste: `boundary.unit.test.mjs` |
+| `7de3bc2` | F4 (C23) | só teste: `hermes-plugin.native.test.mjs` |
+
+### F1 — cache Hermes vinculado (perda de dados)
+
+- **Correção:** `readPluginCache` aplica `assertContained` (contrato existente de
+  `install/target.mjs`) ao `__pycache__` e a cada entrada antes de listar ou apagar. Junção/
+  link que resolve fora do alvo → `target_escape`, código 4, nada removido (prévia também 4).
+  `__pycache__` que não é diretório real, ou entrada que não é arquivo regular, é alheio →
+  `foreign_files_preserved` (4), preservado mesmo apontando para dentro do alvo. A remoção
+  reconfere contenção e tipo imediatamente antes de cada `unlink` (como o hash dos artefatos)
+  e só faz `rmdir` do `__pycache__` real inspecionado (no Windows `rmdir` removeria uma junção
+  alheia vazia). Nome `__init__.cpython-*.pyc` continua necessário, não suficiente.
+- **Asserções novas:** `I4-C27` — `__pycache__` junção (Windows)/link de diretório (POSIX)
+  para fora, com `__init__.cpython-311.pyc` externo: `uninstall` com e sem `--apply` → 4,
+  `status: conflict`, `applied: false`, `conflicts == ["target_escape"]`, árvore do alvo e
+  diretório externo idênticos (`snapshotTree`); mesmo para link de **arquivo** de nome
+  próprio num `__pycache__` real. `I4-C34` — cache próprio regular (`.pyc` e `.opt-1.pyc`)
+  sai, exit 0, `remove_cache` exatos, árvore volta à anterior; `__pycache__` como junção para
+  o cache de outro plugin dentro do alvo e como arquivo regular → 4,
+  `["foreign_files_preserved"]`, nenhum `remove_cache`, bytecode do outro plugin e a entrada
+  alheia intactos, artefatos próprios removidos.
+- **RED no produto anterior (`485939d`, regressão sem correção):** Windows e WSL, `I4-C27`
+  e `I4-C34` falharam (`expected 4, actual 0`): a prévia planejava `remove_cache` através da
+  junção; a junção para o cache de outro plugin terminava `applied`/0 apagando o bytecode
+  alheio. O subcaso de link de arquivo fica atrás do de junção no mesmo teste; isolado numa
+  sonda descartável no WSL: produto anterior `{uninstallExit:0, status:"applied",
+  linkKept:false}` (link aceito pelo nome e removido), corrigido `{4, ["target_escape"],
+  linkKept:true}`. A reprodução do Verifier não foi executada nem alterada (escreve na pasta
+  dele e importa a cópia antiga).
+- **GREEN:** Windows 2/2 (subcasos de link de arquivo registrados por `t.diagnostic`: EPERM
+  sem privilégio, como o subcaso já existente); WSL 2/2 com os subcasos de link de arquivo
+  executados.
+- **Mudança de comportamento colateral, provada:** `__pycache__` como arquivo regular saía 5
+  (`ENOTDIR` no `readdir`); agora é alheio preservado, 4.
+- **Limite:** a reconferência antes do `unlink` estreita, mas não elimina, a janela contra
+  quem troca diretórios concorrentemente — mesmo limite não atômico já declarado para o
+  `rename` da configuração.
+
+### F2 — 1000 ms além do filho (C38)
+
+- **Medido antes da correção (sem mudar teste nem limiar):** com relatório não drenado, o
+  wrapper saía 1023–1042 ms (Windows: sonda n=8 e teste novo n=4) e 1007–1008 ms (WSL) depois do filho: o
+  prazo de 1000 ms começava no `flush`, depois de detectar o fim do filho, e o encerramento
+  ficava fora dele. Defeito de produto, não só de asserção.
+- **Correção:** `flush({ deadlineAt })` (relógio monotônico; serialização dentro do prazo).
+  O wrapper conta o prazo do `close` do filho: `deadlineAt = fim + 1000 − 200`. Hook e
+  ingest mantêm 1000 ms a partir do `flush`. O plano diz "em até 1000 ms"; o check e o
+  limiar não mudaram.
+- **Calibração da reserva (sonda descartável, prazo contado do `close` e reserva 0):**
+  custo fora do timer — Windows ocioso 23–44 ms (n=20), Windows com 32 laços ocupados em
+  todos os núcleos 23–63 ms (n=15), WSL 4–14 ms (n=20). Reserva de 200 ms ≥ 3× o pior caso
+  medido. Com a reserva: Windows ocioso 824–842 ms (n=20).
+- **Prova (`I4-C38`, caso 4):** o filho falso carimba `Date.now()` no handler de `exit`
+  (`FAKE_CODEX_EXIT_STAMP=1`, último instante observável do filho); o teste carimba ao
+  receber o `exit` do wrapper e exige `0 ≤ intervalo ≤ 1000` ms, sem tolerância. Depois da
+  saída, lê o que ficou no fd 3: a linha do relatório não chegou inteira (sem `"\n"`) —
+  prova que a escrita estava bloqueada. `t.diagnostic` registra o valor medido.
+- **RED:** produto anterior com o teste novo — Windows 1023, 1027, 1026, 1026 ms (fail);
+  WSL 1007, 1008 ms (fail). Mutação `REPORT_DEADLINE_MS = 5000` → fail com 4835 ms
+  (revertida; espera de 5 s distinguida).
+- **GREEN:** Windows 835 ms (isolado), 843 ms (suíte inteira em paralelo), 65536 bytes
+  parados no pipe; WSL 807, 808, 808 ms (isolado), 809 ms (suíte), 146176 bytes no pipe.
+- **O que a medição comprova e o que não:** relógio do sistema nos dois processos, resolução
+  de 1 ms; o carimbo do filho é anterior ao término real e o `exit` visto pelo teste é
+  posterior ao término real do wrapper, logo o intervalo medido é **limite superior** do
+  real. Não mede o término real com precisão maior que isso nem garante o limite sob
+  contenção acima da calibrada; ajuste de relógio do sistema durante a janela invalidaria a
+  medição (não observado).
+
+### F3 — seis categorias em cada eventKind (C42)
+
+- **Correção (só teste; produto inalterado):** toda entrada válida dos quatro contratos
+  (Claude, Codex hooks, Codex exec, Hermes) e a observação de fim do filho
+  (`processExitDraft`) recebem os nomes nativos das seis categorias do plano (`tool_input`,
+  `args`, `command_args`, `arguments`, `command`; `tool_response`, `result`,
+  `aggregated_output`, `content`; `prompt`, `child_goal`; `cwd`, `transcript_path`,
+  `file_path`, `changes[].path`; `last_assistant_message`, `reasoning`; `error`,
+  `error_message`, `message`, `child_summary`), também dentro de `item` no exec. Presença
+  dos seis canários conferida em cada entrada **antes** do adaptador e da fronteira. O
+  registro Hermes entra sem projeção (a tabela `listed` duplicada no teste foi removida).
+  Cobertura exigida: os 14 `eventKind`, inclusive `process_exit`.
+- **Na própria fronteira**, para cada um dos 14 `eventKind`: cada categoria como campo ou ID
+  fora da allowlist no rascunho → `{ok:false, reason:"invalid_draft"}` exato (12 por kind);
+  as seis dentro do valor de cada campo do `eventKind` e de cada ID do rascunho → envelope
+  com `ids {}`, `fields {}`, lacunas exatamente `<nome>:invalid_type`, nenhum canário.
+  Mantidos: chaves do envelope, campos ⊂ allowlist, `validateEnvelope`, rascunhos inválidos,
+  ID > 256, nome fora da regex, nome > 128, envelope > 4096 bytes.
+- **Discriminação (mutações temporárias, revertidas):** M‑F3a adaptador exec copia
+  `event.prompt` para `platform` em `thread.started`; M‑F3b fronteira aceita valor não string
+  em campo `name`. Ambas **passavam** no C42 anterior e **falham** no novo
+  (`codex-exec/thread_started vazou prompt`; canário `error` emitido). M‑F3c fronteira copia
+  valor objeto em `process_exit` → falha no novo (o anterior nem exercitava `process_exit`).
+
+### F4 — HERMES_HOME inteiro (C23)
+
+- **Observação do host (sonda descartável, mesmo harness `-I -B`, HERMES_HOME temporário,
+  sem modelo):** o host grava `SOUL.md`, `state.db`, `cache/schema_columns.json`,
+  `cache/tool_discovery_cache.json`, diretórios (`sessions`, `logs`, `memories`…) e
+  `backups/config/config.yaml.good.<data-hora>`. Em 4 execuções (2 com o observer ativo, 2
+  sem) os hashes foram idênticos por caminho; a única diferença foi o backup, cópia byte a
+  byte do `config.yaml` de cada execução (que difere na lista de habilitados).
+- **Correção (só teste):** nova execução de controle `hostOnly` no `before()` — mesmo
+  cenário e destino da captura, observer **instalado mas não habilitado** (`loaded.enabled
+  false`, `hooks []`, `observer_stats` ausente: módulo nunca importado). `I4-C23` exige que o
+  mapa caminho→{tipo, sha256} das entradas criadas/alteradas (conteúdo ou mtime)/removidas
+  no HERMES_HOME durante a captura seja **igual** ao do controle; o backup (nome normalizado)
+  é conferido como cópia do `config.yaml` da própria execução e só ele sai da comparação. A
+  pasta do plugin continua idêntica (asserção anterior mantida); o controle precisa observar
+  escritas do host (mapa não vazio).
+- **Discriminação:** M4 plugin grava os registros em `HERMES_HOME/skill-me-observer.log` —
+  suíte nativa anterior **8/8 pass**; C23 novo **falha** (caminho extra). M4b plugin
+  acrescenta ao `SOUL.md` criado pelo host (mesmo caminho nos dois lados) → C23 novo falha
+  pelo hash. Mutações revertidas; `src/` igual ao HEAD conferido por `git diff --quiet`.
+- **Limites:** a discriminação depende de o host 0.21.4 (revisão fixada pelos hashes do
+  teste) escrever o mesmo conteúdo para o mesmo cenário; um host não determinístico faria o
+  teste falhar, nunca passar em silêncio. Cobre o HERMES_HOME, como C23 afirma; HOME/TEMP do
+  sandbox não são afirmados. Nativo só no Windows local; WSL sem runtime → pendente.
+
+### Contagens reais em `7de3bc2`
+
+| Execução | governance | code-review | doctor | integrations | exit |
+| --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0, um `node --test --test-reporter=tap` por target | 6/6 | 16/16 | 417: 410 pass, 7 skip | 54: 53 pass, 1 skip | 0 em todos |
+| WSL Ubuntu, Node 24.13.0, `git archive` de `7de3bc2` (CRLF), `env -i` mínimo | 6/6 | 16/16 | 417: 416 pass, 1 skip | 54: 46 pass, 8 skip | 0 em todos |
+| Windows, 54 linhas `Proof:` pelo executor | — | — | — | 54 exit 0: 53 `tests 1/pass 1/fail 0/skipped 0`, C15 `skipped 1` | 0 |
+| WSL, 54 linhas `Proof:` pelo executor | — | — | — | 54 exit 0: 46 pass, 8 `skipped 1` (C18–C23, C37, C44b) | 0 |
+
+Nenhum `fail`, `cancelled` ou `todo`; contagem de testes executados conferida em cada TAP.
+Skips e motivos:
+
+- Windows integrations (1): `I4-C15` — `posix-signals` (TerminateProcess). **C15 passou no
+  WSL**, no batch e na linha individual (`tests 1/pass 1/skipped 0`).
+- WSL integrations (8): `I4-C18..C23`, `I4-C37`, `I4-C44b` — `hermes-runtime-ausente:
+  interpretador do Hermes não encontrado` (conferido: não há runtime Hermes no WSL). Prova
+  nativa do Hermes, inclusive o C23 novo, só no Windows local; Linux **pendente**.
+  `I4-C35` no WSL registrou "observação Hermes não executada … pendente".
+- Windows doctor (7) e WSL doctor (1): os mesmos testes preexistentes da #3 (FIFO, ENOTDIR,
+  symlink de launcher; `.PYD` no WSL).
+- `I4-C27` Windows: dois subcasos de link de arquivo por `t.diagnostic` (EPERM); no WSL os
+  dois executaram e passaram.
+
+Saídas brutas (locais, ignoradas pelo Git) em `.checks/code-review/issue-4/`:
+`red-f1-windows-485939d.txt`, `red-f1-wsl-485939d.txt`, `green-f1-*`, `red-f2-windows-5521819.txt`,
+`red-f2-wsl-5521819.txt`, `mutation-f2-5s-windows.txt`, `green-f2-windows.txt`,
+`mutation-f3{a,b}-{old,new}-test.txt`, `mutation-f3c-new-test.txt`, `green-f4-windows.txt`,
+`mutation-f4-old-test.txt`, `mutation-f4-new-test.txt`, `mutation-f4b-new-test.txt`,
+`batch-{windows,wsl}-7de3bc2-*.tap`, `proofs-{windows,wsl}-7de3bc2.{md,txt}`.
+
+### Pendente: F5/C39 aguarda decisão humana
+
+Não alterado: texto do C39, sua prova (`failure-matrix.cli.test.mjs`, igualdade do stdout
+do wrapper com o do filho) e o comportamento de passthrough nativo do wrapper. A
+contradição literal com C16/C17 e com o plano continua registrada em "Ponto para decisão
+do orquestrador" acima; nenhuma resposta humana foi recebida nem presumida.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token ou credencial impresso; a sonda de ambiente do build anterior
+não foi reexecutada. Incidente menor: numa checagem somente leitura da existência do
+runtime Hermes no WSL, a máscara do diretório home falhou e a saída local da ferramenta
+exibiu o caminho do home do usuário WSL (valor de `HOME`); nada gravado no repositório nem
+enviado. Hermes nativo no Windows com o runtime local localizado pelo helper, `-I -B`,
+HERMES_HOME/HOME/APPDATA/TEMP temporários, sem modelos; nenhum agente iniciado. Processos de
+teste conferidos encerrados ao fim (Windows e WSL).

@@ -283,3 +283,9 @@ Fechamento do batch único (16/10/2026):
 - **Fronteira:** C1–C48 fechados em `e60b5e0` (evidência em `.checks/issue-4-integracoes.build.md`); C15 provado no WSL; C18–C23, C37 e C44b nativos só no Windows local, pendentes nas demais plataformas.
 - **Decidido durante o build:** nenhuma decisão nova do proprietário; a nota do coordenador (`.checks/issue-4-integracoes.coordinator.md`) levou às correções de `5612060` e `9b433b5`. Ponto aberto para o orquestrador: redação de C39 para o stdout nativo do wrapper (ver build).
 - **Abandonado:** envelope montado em Python (rascunho anterior: duplicaria a fronteira); `fs.write` no exportador (trava o encerramento no Windows com pipe cheio); espera por `drain` no fim do wrapper (`drain` só existe após backpressure); acrescentar `packageDir` ao retorno do Codex no doctor (mudaria um export fora do recorte).
+
+Correções do round 1 da verificação independente (16/10/2026):
+
+- **Fronteira:** F1–F4 fechados em `5521819`..`7de3bc2` (evidência em `.checks/issue-4-integracoes.build.md`, "Correções da verificação independente — round 1"); Checks e Landing inalterados.
+- **Decidido durante o build:** nada novo do proprietário. F5/C39 aguarda resposta humana à pergunta do orquestrador; texto, prova e comportamento preservados.
+- **Abandonado:** prazo do relatório contado do `flush` (excedia 1000 ms além do filho); reserva 0 (custo medido de 23–63 ms fora do timer); comparar só caminhos do HERMES_HOME (não detecta acréscimo a arquivo do host); comparar com a execução `inactive` (cenário diferente); tratar todo link em `__pycache__` como `target_escape` (link dentro do alvo não escapa: é alheio).
