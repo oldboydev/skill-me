@@ -64,3 +64,46 @@ Fontes primárias consultadas para a revisão de I/O:
   de que uma escrita retornou `false`.
 
 Estas referências fundamentam a revisão; não substituem uma reprodução do defeito.
+
+## Fechamento após correções e verificação independente
+
+Claude reproduziu separadamente a escrita pendente do relatório em pipe cheio e a
+espera final por `drain`, corrigidas em `5612060` e `9b433b5`. Também corrigiu a
+desconexão do consumidor de stdout e o harness que aguardava `close` com um pipe
+deliberadamente pausado. O registro inicial permanece como hipótese e interrupção,
+sem converter a execução interrompida em PASS nem atribuir retroativamente uma
+causa única ao primeiro processo observado. O orquestrador não alterou produto ou
+testes; essas correções e suas provas foram executadas por Claude.
+
+A primeira verificação independente foi FAIL (42/48), preservada no commit
+`485939d` e no scratch `verify-issue4-78db818`. Encontrou perda de arquivo externo
+sintético na remoção do cache Hermes, uma prova de prazo insuficiente e lacunas
+nas provas de exclusão de dados e de ausência de escrita no HERMES_HOME. O achado
+de isolamento foi comunicado ao proprietário imediatamente; nenhum arquivo pessoal
+foi usado na reprodução. Claude corrigiu esses pontos em `5521819`, `2e99346`,
+`c3ac5a2` e `7de3bc2`, com evidências aditivas em `ea752b6`.
+
+O proprietário aprovou explicitamente a correção da redação contraditória de C39,
+registrada na issue e em `82a21f7`: a vedação alcança as saídas próprias do debugger;
+a saída nativa do Codex continua preservada conforme o plano. Nenhum código ou
+teste foi modificado por esse esclarecimento.
+
+O Verifier independente encerrou a rodada 2 com PASS, 48/48 checks, no HEAD
+`82a21f7777bc33c2ae5ff17dbe90be50b97055ba`. Repetiu os targets afetados em cópias
+isoladas: Windows 60 testes, 59 pass e 1 skip; WSL 60 testes, 52 pass e 8 skips,
+ambos com exit 0 explícito. Reproduziu a remoção com junção: conflito/4 e arquivo
+externo preservado. C38 mediu 838 ms no Windows e 808 ms no WSL; a prova é uma
+amostra nos ambientes declarados, não garantia contra carga arbitrária. C23/C42
+foram conferidos nas novas asserções. Detalhes e limites em
+`.checks/issue-4-integracoes.verified.md`; E2E com modelos, macOS e Hermes nativo no
+WSL não foram anunciados como executados.
+
+Quanto ao relato autoral de impressão de ambiente em diagnóstico, a busca do
+orquestrador por formatos conhecidos de credenciais nos 18 commits até `82a21f7`
+não encontrou correspondências. A busca independente no HEAD também não encontrou
+correspondências em 169 arquivos. São verificações heurísticas; não demonstram
+ausência universal de segredo nem comprovam o destino da saída de diagnóstico.
+Nenhum valor foi recuperado ou reproduzido pelo orquestrador/Verifier.
+
+Este fechamento registra coordenação e evidências; a revisão formal do motor é a
+etapa seguinte e não está substituída pelo PASS do Verifier.
