@@ -273,6 +273,7 @@ test("governance-C1 C3 workflow sempre publica CI sem IA nem release", () => {
       "npm run test:governance",
       "npm run test:code-review",
       "npm run test:doctor",
+      "npm run test:integrations",
     ],
   );
   const ci = workflow.jobs.ci;

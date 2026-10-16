@@ -53,6 +53,7 @@ jobs:
       - run: npm run test:governance
       - run: npm run test:code-review
       - run: npm run test:doctor
+      - run: npm run test:integrations
 
   ci:
     name: CI
