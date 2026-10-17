@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
 import path from "node:path";
+import { runSystemTool } from "./system-tool.mjs";
 
 // DACL de arquivos no Windows, para que a reescrita da configuração não amplie
 // o acesso do original (revisão formal round 4; forma e alternativas na linha
@@ -13,8 +13,6 @@ import path from "node:path";
 // texto do script. A saída do PowerShell nunca é repassada nem registrada.
 
 const POWERSHELL = process.env.SystemRoot ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : null;
-// Muito acima dos ~0,2–0,3 s medidos por chamada; só evita espera indefinida.
-const TIMEOUT_MS = 20_000;
 const DACL_SDDL = /^D:[^\r\n]*$/;
 
 // HResult do erro mais interno: 0x80070002/0x80070003 (arquivo ou pasta
@@ -54,30 +52,11 @@ const CREATE_WITH_DACL = script(
   "try { $file.Write($bytes,0,$bytes.Length); $file.Flush($true) } finally { $file.Dispose() }",
 );
 
-// Código de saída e stdout; `status` nulo quando o processo não pôde ser
-// criado, foi bloqueado ou excedeu o prazo.
+// Código de saída e stdout (system-tool.mjs); `status` nulo também sem
+// %SystemRoot%.
 function runPowerShell(source, lines) {
-  return new Promise((resolve) => {
-    if (POWERSHELL === null) {
-      resolve({ status: null, stdout: "" });
-      return;
-    }
-    const child = spawn(POWERSHELL, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", source], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
-    const chunks = [];
-    let settled = false;
-    const settle = (status) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ status, stdout: Buffer.concat(chunks).toString("utf8") });
-    };
-    const timer = setTimeout(() => child.kill(), TIMEOUT_MS);
-    child.on("error", () => settle(null));
-    child.on("close", (status) => settle(status));
-    child.stdout?.on("data", (chunk) => chunks.push(chunk));
-    child.stdin?.on("error", () => {});
-    child.stdin?.end(lines.map((line) => `${line}\n`).join(""));
-  });
+  if (POWERSHELL === null) return Promise.resolve({ status: null, stdout: "" });
+  return runSystemTool(POWERSHELL, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", source], { lines });
 }
 
 // Mensagens fixas: nada do caminho, da DACL ou do conteúdo.

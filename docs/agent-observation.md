@@ -57,7 +57,7 @@ próprios.
 | 2 | uso inválido ou alvo inexistente |
 | 3 | configuração inválida/ilegível — não é substituída; também quando a mudança deixaria o arquivo acima de 1 MiB, o teto de leitura do próprio instalador (`output_too_large`, recusado antes de escrever, inclusive na prévia) |
 | 4 | conflito — lock, mudança durante a aplicação, link para fora do alvo, política gerenciada, artefato alheio ou entrada própria editada (preservada) |
-| 5 | incompleto — falha de E/S depois de iniciar; o estado de cada passo é reportado. No Windows, também a DACL da configuração que não pôde ser lida nem aplicada (`config_access_unavailable`), recusada antes de gravar qualquer conteúdo |
+| 5 | incompleto — falha de E/S depois de iniciar; o estado de cada passo é reportado. Também o acesso da configuração — DACL no Windows, ACL no Linux e no macOS — que não pôde ser lido nem aplicado (`config_access_unavailable`), recusado antes de gravar qualquer conteúdo |
 
 O wrapper devolve o código do Codex; sinal do Codex é reemitido (POSIX); falha ao
 iniciar sai 127 (não encontrado) ou 126.
@@ -69,9 +69,26 @@ puder ser atribuído, grupo e "outros" recebem só o que os dois já concediam n
 (quem pertencia só ao grupo antigo passa a "outros" e não ganha acesso). Esse acesso é
 o do arquivo conferido antes de o temporário ser criado — contido no alvo e com o
 conteúdo lido sob o lock: trocada a configuração depois da leitura (outro arquivo ou
-link), nada é gravado no temporário e o comando sai com 4; mudança de modo, dono ou
-grupo depois da conferência também é 4. O dono passa a ser quem executa o comando; ACL
-POSIX, atributos estendidos e bits especiais não são preservados nem detectados.
+link), nada é gravado no temporário e o comando sai com 4; mudança de modo, dono,
+grupo ou ACL depois da conferência também é 4.
+
+No Linux a ACL POSIX da configuração faz parte desse acesso. O instalador a lê — com
+modo, dono e grupo, do mesmo descritor aberto — pelo Python do sistema
+(`/usr/bin/python3`, script fixo, só o xattr `system.posix_acl_access` do descritor) e,
+antes do conteúdo e antes dos bits finais, dá ao temporário exatamente essa ACL, ou
+nenhuma quando a configuração não tem ACL estendida: uma ACL default da pasta, mesmo
+posta depois da configuração, não chega ao temporário nem ao arquivo final, e uma ACL
+estendida que restringe alguém abaixo de "outros" continua valendo. Se a ACL não puder
+ser lida nem aplicada — Python ausente ou bloqueado, sistema de arquivos sem ACL POSIX
+(NFSv4, SMB, `/mnt/c` do WSL) ou ACL estendida com o grupo original não atribuível —, o
+comando sai com 5 (`config_access_unavailable`, passo `config: failed`) sem gravar
+conteúdo, e a configuração fica como estava. No macOS a ACL (ACEs) não é copiada:
+configuração com ACE, ou pasta com ACE herdável que chegaria ao temporário, é recusada
+da mesma forma (ACE detectada pelo `ls -le` do sistema; caminho não executado
+localmente, só pela CI). Configuração criada do zero, registro e lock não têm conteúdo
+preexistente e ficam com a ACL herdada da pasta. O dono passa a ser quem executa o
+comando; rótulos SELinux/AppArmor, demais atributos estendidos e bits especiais não são
+copiados.
 
 No Windows o acesso é a DACL. O instalador a lê pelo PowerShell do Windows
 (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`, só tipos .NET, script

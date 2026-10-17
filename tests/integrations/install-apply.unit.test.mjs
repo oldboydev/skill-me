@@ -5,7 +5,8 @@ import { after, test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import { replacementMode } from "../../src/integrations/install/io.mjs";
 import { parseConfig, planJsonInstall, planJsonUninstall } from "../../src/integrations/install/json-hooks.mjs";
-import { widenedRecipients } from "./helpers/posix-access.mjs";
+import { widenedAclRecipients, widenedRecipients } from "./helpers/posix-access.mjs";
+import { rawAcl, readAcl, removeAcl, setAcl } from "./helpers/posix-acl.mjs";
 import { createNodeIo, runIntegrationCommand } from "../../src/integrations/install/run.mjs";
 import { INTEGRATIONS_CLI, makeScratch, REPO_ROOT } from "./helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers } from "./helpers/installed-hooks.mjs";
@@ -2207,8 +2208,9 @@ const R8_EXTERNAL = JSON.stringify({ nota: "documento externo sintético" }, nul
 
 // io real que troca uma vez a configuração — logo depois do evento `on` ou na
 // primeira tentativa de rename do temporário, que então falha com
-// `renameFails` — e observa o temporário da configuração.
-function accessSwapIo(files, { on, renameFails }, swap) {
+// `renameFails` — e observa o temporário da configuração (com `acl`, também
+// as entradas da ACL POSIX dele, no Linux).
+function accessSwapIo(files, { on, renameFails }, swap, { acl = false } = {}) {
   const io = createNodeIo();
   const probe = { swapped: false, requested: [], temp: [], renameAttempts: 0 };
   const counts = {};
@@ -2225,7 +2227,8 @@ function accessSwapIo(files, { on, renameFails }, swap) {
   const observeTemp = (moment) => {
     const stats = lstatSync(configTemp);
     const dacl = POSIX_ACCESS ? null : readAces(configTemp);
-    probe.temp.push({ moment, mode: stats.mode & 0o7777, gid: stats.gid, dacl, canary: readFileSync(configTemp).includes(R8_CANARY) });
+    const entries = acl ? readAcl(configTemp).access : undefined;
+    probe.temp.push({ moment, mode: stats.mode & 0o7777, gid: stats.gid, dacl, ...(acl ? { entries } : {}), canary: readFileSync(configTemp).includes(R8_CANARY) });
   };
   return {
     probe,
@@ -2549,6 +2552,118 @@ test(
         temp: row.temp.map((moment) => ({ moment, ampliados: [], canary: true })),
         atConfig: row.atConfig,
         aside: row.aside ?? "ausente",
+        tempLeft: "ausente",
+        manifest: row.manifest ?? "ausente",
+        lockReleased: true,
+      });
+    }
+    assert.deepEqual(observed, expected);
+  },
+);
+
+// Linux: ACL POSIX da configuração mudada ou trocada em volta da conferência —
+// achado P1 da revisão formal round 5, na ordem de R8-F1 (como I4-C25h para a
+// DACL). Fixture sintética: pasta com ACL default que concede leitura a um uid
+// sintético (sem conta) e configuração lida com ACL estendida que o restringe
+// abaixo de "outros" (canário sintético). O io de `accessSwapIo` registra a
+// ACL pedida para o temporário e, depois da gravação e antes de cada tentativa
+// de rename, as entradas da ACL dele (acesso efetivo pelo algoritmo de acl(5)
+// em helpers/posix-access.mjs) e se o canário está nele. A ACL ampliada ou
+// removida pelo dono depois da conferência — antes de criar o temporário ou
+// antes da nova tentativa de um rename negado — não chega ao temporário e
+// vira 4; uma falha de E/S no rename apaga o temporário próprio, criado com a
+// ACL conferida. Controles: instalação do Claude e remoção do Codex sem troca.
+const ACL_SYN_UID = 2147400001;
+const ACL_OTHER_UID = 2147400003;
+const ACL_HOME_DEFAULT = `u::rwx,u:${ACL_SYN_UID}:r-x,g::r-x,m::r-x,o::---`;
+const ACL_RESTRICTED = `u::rw-,u:${ACL_SYN_UID}:---,g::r--,m::r--,o::r--`;
+const ACL_WIDENED = `u::rw-,u:${ACL_SYN_UID}:r--,g::r--,m::r--,o::r--`;
+
+test(
+  "I4-C25k Linux: o temporário recebe a ACL POSIX da configuração conferida; ACL mudada em volta da conferência não leva o conteúdo lido a um acesso mais amplo",
+  { skip: process.platform !== "linux" ? "posix-acl: ACL POSIX (xattr) só no Linux; no Windows o mesmo contrato de acesso é provado por I4-C25h" : false },
+  async () => {
+    const READ = "configuração lida sob o lock";
+    const restricted = ["user::rw-", `user:${ACL_SYN_UID}:---`, "group::r--", "mask::r--", "other::r--"];
+    const widenedByOwner = ["user::rw-", `user:${ACL_SYN_UID}:r--`, "group::r--", "mask::r--", "other::r--"];
+    const strippedByOwner = ["user::rw-", "group::r--", "other::r--"];
+    const changed = (agent) => ({ code: "config_changed_during_apply", file: CONFIG_OF[agent] });
+    const done = [
+      { step: "config", state: "done" },
+      { step: "manifest", state: "done" },
+    ];
+    const both = ["conteúdo gravado", "antes do rename"];
+    const rows = [
+      { agent: "claude", op: "install", label: "controle: nada muda", temp: both, renameAttempts: 1, steps: done, atConfig: ["configuração (8 eventos próprios)", restricted], manifest: "registro próprio (8)" },
+      { agent: "codex", op: "uninstall", label: "controle: nada muda", temp: both, renameAttempts: 1, steps: done, atConfig: ["configuração original", restricted], manifest: "ausente" },
+      { agent: "claude", op: "install", label: "ACL ampliada pelo dono imediatamente antes de criar o temporário", swap: "widen", on: ["criação do temporário", 1], conflict: changed("claude"), temp: ["conteúdo gravado"], renameAttempts: 0, atConfig: [READ, widenedByOwner] },
+      { agent: "claude", op: "install", label: "ACL estendida removida pelo dono imediatamente antes de criar o temporário", swap: "strip", on: ["criação do temporário", 1], conflict: changed("claude"), temp: ["conteúdo gravado"], renameAttempts: 0, atConfig: [READ, strippedByOwner] },
+      { agent: "claude", op: "install", label: "rename negado (EPERM) e ACL ampliada antes da nova tentativa", swap: "widen", renameFails: "EPERM", conflict: changed("claude"), temp: both, renameAttempts: 1, atConfig: [READ, widenedByOwner] },
+      { agent: "claude", op: "install", label: "falha de E/S no rename", renameFails: "EIO", failure: "EIO", temp: both, renameAttempts: 1, atConfig: [READ, restricted] },
+    ];
+    const observed = [];
+    const expected = [];
+    for (const [index, row] of rows.entries()) {
+      const label = `${row.agent} ${row.op} — ${row.label}`;
+      const dir = makeScratch(`f5 acl ${index}`);
+      scratches.push(dir);
+      const home = path.join(dir, "perfil", row.agent === "claude" ? ".claude" : ".codex");
+      mkdirSync(home, { recursive: true });
+      const config = path.join(home, CONFIG_OF[row.agent]);
+      writeFileSync(config, R8_READ[row.agent]);
+      setAcl(config, ACL_RESTRICTED);
+      setAcl(home, ACL_HOME_DEFAULT, { kind: "default" });
+      if (row.op === "uninstall") assert.equal((await runIntegrationCommand({ command: "install", agent: row.agent, target: home, apply: true, io: createNodeIo() })).exitCode, 0, label);
+      const readBefore = readFileSync(config);
+      const original = { gid: lstatSync(config).gid, entries: readAcl(config).access };
+      const originalRaw = rawAcl(config);
+      const recipients = {
+        "uid sintético": { uid: ACL_SYN_UID, groups: [] },
+        "membro só do grupo dono": { uid: ACL_OTHER_UID, groups: [original.gid] },
+        outros: { uid: ACL_OTHER_UID, groups: [] },
+      };
+      const known = [
+        [READ, readBefore],
+        ["configuração original", R8_READ[row.agent]],
+      ];
+      const swaps = { widen: () => setAcl(config, ACL_WIDENED), strip: () => removeAcl(config) };
+      const files = { config, manifest: path.join(home, ".skill-me", `${row.agent}-install.json`) };
+      const { io, probe } = accessSwapIo(files, row, row.swap ? swaps[row.swap] : null, { acl: true });
+      const result = await runIntegrationCommand({ command: row.op, agent: row.agent, target: home, apply: true, io });
+      observed.push({
+        label,
+        swapped: probe.swapped,
+        exitCode: result.exitCode,
+        status: result.status,
+        applied: result.applied,
+        conflicts: result.conflicts,
+        errors: result.errors,
+        steps: result.steps,
+        renameAttempts: probe.renameAttempts,
+        requested: probe.requested.map((like) => (like === null ? "nenhum" : like.acl === originalRaw ? "ACL da configuração lida" : like.acl === undefined ? "ACL não transmitida" : "outra ACL")),
+        temp: probe.temp.map((o) => ({ moment: o.moment, ampliados: widenedAclRecipients(original, { gid: o.gid, entries: o.entries }, recipients), aclDaLida: isDeepStrictEqual(o.entries, original.entries), canary: o.canary })),
+        atConfig: existsSync(config) ? [accessEntry(config, known, false), readAcl(config).access] : "ausente",
+        tempLeft: existsSync(`${config}.skill-me-tmp`) ? "presente" : "ausente",
+        manifest: describeEntry(files.manifest),
+        lockReleased: !existsSync(path.join(home, ".skill-me", `${row.agent}.lock`)),
+      });
+      // O temporário só existe com a ACL conferida — nenhum destinatário ganha
+      // acesso sobre a configuração lida em nenhum instante observado — e só é
+      // promovido sem troca; mudada a ACL, a mudança do dono fica como está.
+      const control = row.label.startsWith("controle");
+      expected.push({
+        label,
+        swapped: Boolean(row.swap),
+        exitCode: control ? 0 : row.failure ? 5 : 4,
+        status: control ? "applied" : row.failure ? "incomplete" : "conflict",
+        applied: control,
+        conflicts: row.conflict ? [row.conflict] : [],
+        errors: row.failure ? [{ code: row.failure }] : [],
+        steps: row.steps ?? (row.failure ? [{ step: "config", state: "failed" }] : []),
+        renameAttempts: row.renameAttempts,
+        requested: row.temp.length > 0 ? ["ACL da configuração lida"] : [],
+        temp: row.temp.map((moment) => ({ moment, ampliados: [], aclDaLida: true, canary: true })),
+        atConfig: row.atConfig,
         tempLeft: "ausente",
         manifest: row.manifest ?? "ausente",
         lockReleased: true,

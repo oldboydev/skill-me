@@ -16,10 +16,19 @@
 // (helpers/windows-acl.mjs). Com SKILL_ME_TEST_FS_PROBE_NO_POWERSHELL=1, o
 // `spawn` do PowerShell do Windows pelo processo do CLI aponta para um
 // executável inexistente ao lado dele: a falha real de criação de processo
-// (ENOENT), como num sistema sem o componente ou com ele removido.
+// (ENOENT), como num sistema sem o componente ou com ele removido. No Linux,
+// com SKILL_ME_TEST_FS_PROBE_ACL=1 cada observação traz também as entradas
+// da ACL de acesso do temporário (helpers/posix-acl.mjs), observado também
+// logo depois do `fchmod` do handle (`after_chmod`); com
+// SKILL_ME_TEST_FS_PROBE_NO_PYTHON=1 o `spawn` de /usr/bin/python3 aponta
+// para um executável inexistente (sistema sem Python); com
+// SKILL_ME_TEST_FS_PROBE_FAIL_ACL_APPLY=1, só o `spawn` do Python que grava
+// a ACL num temporário (o script com `setxattr`) aponta para ele — a falha
+// depois de o temporário existir.
 import { appendFileSync, lstatSync, readFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
+import { readAcl } from "./posix-acl.mjs";
 import { readAces } from "./windows-acl.mjs";
 
 const require = createRequire(import.meta.url);
@@ -29,6 +38,9 @@ const canary = process.env.SKILL_ME_TEST_FS_PROBE_CANARY ?? "";
 const failChown = process.env.SKILL_ME_TEST_FS_PROBE_FAIL_CHOWN === "1";
 const failRenameTo = process.env.SKILL_ME_TEST_FS_PROBE_FAIL_RENAME_TO ?? "";
 const noPowerShell = process.env.SKILL_ME_TEST_FS_PROBE_NO_POWERSHELL === "1";
+const withAcl = process.env.SKILL_ME_TEST_FS_PROBE_ACL === "1";
+const noPython = process.env.SKILL_ME_TEST_FS_PROBE_NO_PYTHON === "1";
+const failAclApply = process.env.SKILL_ME_TEST_FS_PROBE_FAIL_ACL_APPLY === "1";
 const isTemp = (file) => typeof file === "string" && file.endsWith(".skill-me-tmp");
 
 function record(moment, file) {
@@ -36,15 +48,24 @@ function record(moment, file) {
   const entry = { moment, file: path.basename(file), mode: stats.mode & 0o7777, uid: stats.uid, gid: stats.gid, size: stats.size };
   if (canary !== "" && stats.isFile()) entry.containsCanary = readFileSync(file).includes(canary);
   if (process.platform === "win32") entry.dacl = readAces(file);
+  if (withAcl) entry.acl = readAcl(file).access;
   appendFileSync(log, JSON.stringify(entry) + "\n");
 }
 
-if (noPowerShell) {
+if (noPowerShell || noPython || failAclApply) {
   const childProcess = require("node:child_process");
   const realSpawn = childProcess.spawn;
-  childProcess.spawn = function spawnWithoutPowerShell(command, ...rest) {
-    const missing = typeof command === "string" && path.win32.basename(command).toLowerCase() === "powershell.exe";
-    return realSpawn.call(this, missing ? path.join(path.dirname(command), "powershell-ausente-na-prova.exe") : command, ...rest);
+  // Nome do executável inexistente que substitui o comando, ou null.
+  const missing = (command, args) => {
+    if (typeof command !== "string") return null;
+    if (noPowerShell && path.win32.basename(command).toLowerCase() === "powershell.exe") return "powershell-ausente-na-prova.exe";
+    if (command !== "/usr/bin/python3") return null;
+    const applies = Array.isArray(args) && args.some((arg) => typeof arg === "string" && arg.includes("setxattr"));
+    return noPython || (failAclApply && applies) ? "python3-ausente-na-prova" : null;
+  };
+  childProcess.spawn = function spawnWithoutTool(command, args, ...rest) {
+    const absent = missing(command, args);
+    return realSpawn.call(this, absent === null ? command : path.join(path.dirname(command), absent), args, ...rest);
   };
 }
 
@@ -61,6 +82,15 @@ if (log) {
         if (property === "chown" && failChown) {
           return async () => {
             throw Object.assign(new Error("EPERM injetado pelo teste"), { code: "EPERM" });
+          };
+        }
+        // Com a ACL registrada, também logo depois do `fchmod`, que com ACL
+        // mexe na máscara: o instante em que uma entrada herdada se abriria.
+        if (property === "chmod" && withAcl) {
+          return async (...args) => {
+            const result = await value.apply(target, args);
+            record("after_chmod", file);
+            return result;
           };
         }
         if (property === "writeFile" || property === "write") {
