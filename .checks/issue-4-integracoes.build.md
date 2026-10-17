@@ -2423,3 +2423,245 @@ usuário, `sudo`, arquivo privado real ou perfil pessoal; nenhum diretório gere
 E2E; nenhum bypass/confiança concedido; nenhum subagente; nenhuma operação recusada pela plataforma nesta
 rodada (o batch do Windows rodou fora do sandbox, como nas rodadas anteriores, pela capacidade de `taskkill`
 dos próprios testes do motor).
+
+## Correção da revisão formal round 5 — ACL POSIX do temporário (17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega, retomada autorizada após desligamento. Partida em `437dc3d`
+(HEAD do despacho, limpo; produto e testes = `e513af7`, `git diff --quiet e513af7 437dc3d -- src tests docs scripts
+package.json package-lock.json` verdadeiro). Relatório formal autêntico `.checks/code-review/issue-4/formal-round5-report.json`
+lido e não reescrito (SHA-256 `b62ebc7d…b10f3dd7`); `.verified.md` não foi alterado. Esta seção é evidência do autor,
+**não é verificação independente** nem revisão formal: nenhum `review:run`/`review:check`/`pr:create`/push/PR/merge/
+Verifier/subagente foi executado; contadores, override, estado do motor (5 de 10 tentativas formais) e histórico não
+foram tocados; scratches de Verifiers, recovery e rodadas anteriores não foram lidos nem mexidos (11 scratches
+`skill-me i4 failure-*`/`lstat-check` de 16/10 e de 17/10 09:53 no TEMP do Windows são de rodadas anteriores e ficaram).
+A sonda adicional interrompida na rodada 6 (`verifier-residual-probe.mjs`) **não** foi executada, recriada, reformulada
+nem substituída, e não houve sonda ad hoc do produto: a prova é a regressão versionada. Antes da forma, o comportamento
+das APIs foi conferido só em arquivos sintéticos num scratch privado do WSL (`/tmp/skillme-f5-api-*`, 0700; `api_check.py`
+e `fd_check.mjs` em `%TEMP%\skill-me-f5\probes`), sem importar nem executar o produto; nenhuma ACL fora desses scratches
+foi alterada. O root só leu as capacidades do WSL; nenhuma execução aqui é atribuída a ele ou à revisão formal. Commits:
+`a5114a7` (Landing, antes do código), `550007f` (correção, regressões e guia) e o desta evidência.
+`git diff --name-only 437dc3d..550007f`: `.checks/issue-4-integracoes.md` (uma linha de Landing),
+`docs/agent-observation.md`, `src/integrations/install/{io,run,windows-access}.mjs`, novos
+`src/integrations/install/{posix-acl,system-tool}.mjs`, `tests/integrations/helpers/{fs-probe,posix-access}.mjs`, novo
+`tests/integrations/helpers/posix-acl.mjs`, `tests/integrations/{install-apply.unit,install-permissions.cli}.test.mjs` e
+novo `tests/integrations/posix-acl.unit.test.mjs`; nada em doctor, `scripts/`, configuração do motor, dependências,
+`AGENTS.md`, task, critérios ou `.verified.md`.
+
+**Classificação.** O P1 da revisão formal 5 (`io.mjs:43/84–87`, AC6/C25) foi estabelecido por **leitura estática**.
+Agora foi **reproduzido por execução** no produto intacto `437dc3d` (= `e513af7`), no WSL, só com dados sintéticos dentro
+do scratch de cada linha: com `settings.json`/`hooks.json` 0640 sem ACL estendida (canário sintético no lugar de um
+segredo) numa pasta que recebeu, depois da configuração, ACL default concedendo `r-x` a um uid sintético sem conta,
+`install --apply` e `uninstall --apply` saem 0 e o temporário com o canário concede leitura a esse uid a partir do
+`fchmod` (instantes `after_chmod`, `before_content`, `after_content`, `before_rename`); o arquivo final fica com a ACL
+herdada (`user:<uid>:r-x`, `mask::r--`). Também sem detecção: ACL estendida da configuração que restringe o uid abaixo
+de "outros" é descartada (o uid passa a ler como "outros"); ACL com grupo nomeado vira a herdada (o grupo dono também
+ganha leitura); a ACL mudada pelo dono depois da conferência não era comparada. A exposição é o estado calculado pelo
+modelo de acesso do teste sobre as ACLs observadas; nenhum outro usuário existe nem leu nada (scratch 0700). Não é escopo
+novo: é o AC6 já aprovado. Por leitura, a mesma raiz vale no macOS (ACE herdável da pasta chega ao temporário), tratada
+pela recusa abaixo.
+
+### Mecanismo e fontes
+
+- Node não expõe xattr nem ACL. Linux: a ACL de acesso é o xattr `system.posix_acl_access` — a própria libacl a guarda
+  nele (`acl_ea.h` do pacote `acl` 2.3.2: `ACL_EA_ACCESS "system.posix_acl_access"`, `ACL_EA_VERSION 0x0002`, entradas
+  `e_tag`/`e_perm`/`e_id`) —, lido e gravado pelo Python do sistema (`/usr/bin/python3`, aqui 3.12.3; `os.getxattr`/
+  `setxattr`/`removexattr`, disponíveis só no Linux, desde 3.3, aceitam descritor) sobre o descritor do processo passado
+  como fd 3 (`spawn` com `stdio[3]`). Nenhuma dependência nova, download, compilação, `sudo` ou instalação.
+- Fontes primárias consultadas nesta rodada: acl(5) (man7.org) — "OBJECT CREATION AND DEFAULT ACLs" (o objeto novo herda
+  a ACL default como ACL de acesso e as entradas que correspondem aos bits de modo ficam limitadas pelo `mode`),
+  "CORRESPONDENCE BETWEEN ACL ENTRIES AND FILE PERMISSION BITS" (com `ACL_MASK`, os bits de grupo são a máscara; mudar os
+  bits muda as entradas) e "ACCESS CHECK ALGORITHM"; umask(2); getxattr(2)/removexattr(2) (`ENODATA`, `ENOTSUP`,
+  variantes por descritor); acl_set_file(3), acl_from_text(3), acl_get_file(3), acl_to_text(3) e `acl.h`
+  (`ACL_TYPE_ACCESS 0x8000`, `ACL_TYPE_DEFAULT 0x4000`) só para as fixtures; documentação do módulo `os` do Python
+  ("Linux extended attributes"); file_cmds da Apple (`ls/print.c`, `ls/ls.c`, `chmod/chmod_acl.c`): `-e` imprime cada ACE
+  como `" %d: …"` só quando há ACL, `-i` o inode no início, o sufixo do modo é `@` (xattr) antes de `+` (ACL), e
+  `chmod +a` aceita `read` em diretório. setfacl(1) indicado no despacho foi lido para a forma curta; `getfacl`/`setfacl`
+  não existem no Ubuntu do WSL.
+- Constatado em execução (scratch sintético, antes do código): arquivo criado 0600 na pasta com ACL default →
+  `user:<uid>:r-x #effective:---` com `mask::---`; `fchmod 0640` → `mask::r--` e `#effective:r--` (o mecanismo do
+  achado); `fremovexattr` antes do `fchmod` remove a herdada; `fsetxattr` com o xattr bruto de outro arquivo reproduz a
+  ACL (relida igual, modo atualizado) e o `fchmod` ao mesmo modo a mantém; procfs → `ENOTSUP`; drvfs do WSL (`/mnt/c`,
+  9p) → `ENOTSUP`; `/tmp` ext4 → `ENODATA`; o fd de um `FileHandle` do Node chega ao Python como o mesmo inode.
+
+### Correção (`posix-acl.mjs`, `system-tool.mjs`, `io.mjs`, `windows-access.mjs`, `run.mjs`; linha de Landing de `a5114a7`)
+
+- `src/integrations/install/posix-acl.mjs` (novo): `aclOf(handle, file)` (`:82`) — Linux: script fixo `READ_ACL` (`:28`)
+  pelo fd 3 → hexadecimal validado por `^(?:[0-9a-f]{2})+$` ou `null` (`ENODATA`); macOS: `ls -ledi` no caminho real com
+  o inode do descritor (`listsAce`, `:66`) → ACE → recusa; outra plataforma → recusa. `matchAcl(handle, file, acl,
+  sameGroup)` (`:105`) — Linux: ACL estendida com grupo dono diferente ou fora do formato → recusa; script fixo
+  `APPLY_ACL` (`:40`) grava a ACL ou remove a do descritor e relê (sai 0 só com o pedido); macOS: ACE herdada no
+  temporário → recusa. Python com caminho fixo, `-I -S`, ambiente vazio; mensagens fixas (`config_access_unavailable`).
+- `system-tool.mjs` (novo): o executor que estava em `windows-access.mjs` (prazo de 20 s, stderr descartado, stdout só
+  para quem chamou), agora com `fd` opcional (fd 3 do filho) e `env`; `windows-access.mjs` passa a usá-lo sem mudar
+  scripts, argumentos nem ambiente do PowerShell (consolidação, não cópia).
+- `io.mjs`: `accessOf` POSIX (`:91`) abre a configuração (`O_RDONLY|O_NONBLOCK|O_NOCTTY`) e devolve modo/dono/grupo do
+  `fstat` e `acl` do mesmo descritor; `sameAccess` (`:20`) inalterada no código — a forma ganhou `acl`, então ACL mudada
+  → 4 nas conferências já existentes; `matchAccess` (`:41`): `fchown` → `matchAcl` → `fchmod`; `matchAccessOrDiscard`
+  (`:58`, usada por `writeExclusive`, `:112`): falha antes do conteúdo apaga o temporário vazio enquanto o caminho for o
+  inode do handle (`dev`/`ino` em `bigint`) e propaga o erro (cai no `step` existente: 5, `config: failed`).
+- `run.mjs`: só comentários (forma do acesso com ACL); ordem de `replaceChecked` inalterada.
+- Guia (`docs/agent-observation.md`): código 5 generalizado; parágrafo do Linux (ACL lida do descritor, copiada ou
+  removida antes do conteúdo e dos bits, ACL default não chega, ACL restritiva continua valendo, recusas) e do macOS
+  (ACE recusada, só pela CI); a frase anterior "ACL POSIX … não são preservados nem detectados" saiu.
+
+### Regressões
+
+- **`I4-C25j`** (`install-permissions.cli.test.mjs:372`, asserção `:485`) — CLI real sob `umask 022` com o instrumento
+  `fs-probe.mjs` (com `SKILL_ME_TEST_FS_PROBE_ACL=1` registra as entradas da ACL do temporário em cada instante,
+  inclusive `after_chmod`; `…_NO_PYTHON=1` e `…_FAIL_ACL_APPLY=1` apontam o `spawn` do Python, ou só o do script que
+  grava, para um executável inexistente — falha real de criação de processo). 25 linhas: 7 de fixture (arquivo novo 0640
+  na pasta com ACL default fica legível pelo uid sintético) e 18 comandos — Claude e Codex com 0640 sem ACL numa pasta com
+  ACL default (Claude: instalar, instalar de novo, remover; Codex: instalar, remover), ACL estendida restritiva (instalar,
+  remover), ACL com grupo nomeado numa pasta com ACL default (instalar, remover), controle sem ACL (instalar, remover),
+  Python ausente na instalação do Claude e na remoção do Codex, falha ao gravar a ACL no temporário, ACL estendida com
+  grupo não atribuível (EPERM injetado no `fchown`; só com grupo suplementar, presente no WSL) e configuração ausente sem
+  Python (criada com a ACL herdada, sem conteúdo preexistente; a remoção a apaga). Afirma código, status, erros, passos,
+  instantes do temporário, destinatários ampliados em cada instante (uid nomeado, membro só do grupo dono, membro só do
+  grupo sintético, "outros" — modelo de acl(5) em `helpers/posix-access.mjs`), canário, ACL final (estendida e
+  entradas), ampliados no final, conteúdo, registro, lock e sobra de temporário.
+- **`I4-C25k`** (`install-apply.unit.test.mjs:2582`, asserção `:2672`) — `runIntegrationCommand` com o io real de
+  `accessSwapIo` (agora também com as entradas da ACL do temporário). 6 linhas: controles (instalação Claude, remoção
+  Codex), ACL ampliada pelo dono imediatamente antes de criar o temporário, ACL estendida removida pelo dono no mesmo
+  instante, rename negado (EPERM) e ACL ampliada antes da nova tentativa, falha de E/S no rename. Afirma a ACL pedida
+  (igual ao xattr bruto lido pelo teste antes do comando), ampliados e "ACL da lida" em cada instante, canário,
+  conflitos, passos, tentativas, entradas e ACL finais, registro e lock.
+- **`I4-C25l`** (`posix-acl.unit.test.mjs:34`, asserção `:92`) — contrato do módulo, 9 linhas: leitura sem ACL (`null`),
+  com ACL (xattr exato), procfs (`ENOTSUP` → recusa); no temporário 0600 recém-criado na pasta com ACL default (herdada
+  sob máscara fechada, conferida): cópia exata, remoção da herdada, e recusa com mensagem fixa para ACL com grupo não
+  atribuível, fora do formato, recusada pelo kernel (marca 0x40) — nessas três a ACL do temporário fica intacta — e
+  aceita mas relida diferente (só as três entradas do modo: o kernel a converte em bits).
+- **`I4-C25m`** (`install-permissions.cli.test.mjs:502`, asserção `:557`) — macOS, **não executado** (sem macOS local; só a
+  CI macOS o roda): controle sem ACE, ACE herdável na pasta (`group:everyone allow read,file_inherit`) e ACE na
+  configuração (`user:nobody deny read`) → 0 e 5 `config_access_unavailable` sem canário no temporário nem sobra.
+- Helpers: `tests/integrations/helpers/posix-acl.mjs` (novo; libacl pela API de texto via `ctypes`, pelo caminho —
+  independente do produto, que usa o xattr bruto pelo descritor); `posix-access.mjs` (+ modelo de acesso efetivo da ACL
+  e `widenedAclRecipients`); `fs-probe.mjs` (aditivo: ACL, `after_chmod` só com ACL, Python ausente/falha ao gravar; o
+  caso do PowerShell mantém o mesmo nome inexistente). Fixtures: uid/gid `2147400001..3`, sem conta, sem `sudo`.
+- Testes existentes: nenhuma asserção alterada. `accessSwapIo` ganhou o quarto parâmetro opcional (`{ acl }`) e
+  `runUnderProbe` passou a aceitar opções nomeadas (a de `failChown` continua igual).
+- Mutações de desenvolvimento (não versionadas, cópias WSL do worktree antes do commit; M1–M5 antes da linha "aceita mas
+  relida diferente" de `I4-C25l`, M6 depois; `f5-mutations-wsl-550007f-wip.txt`): `fchmod` antes da ACL (M1, `I4-C25j`),
+  herdada não removida (M2, `I4-C25j`), ACL fora da comparação (M3, `I4-C25k`), temporário vazio não apagado (M4,
+  `I4-C25j`), grupo ignorado (M5, `I4-C25j`/`I4-C25l`), sem releitura (M6, `I4-C25l`) — 6/6 detectadas.
+
+### Reprodução RED no produto `437dc3d` (cópias isoladas próprias)
+
+- Windows: `git -c core.autocrlf=false archive 437dc3d` (SHA-256 `36c0b7b7…ee58e51b`) extraído em
+  `%TEMP%\skill-me-f5\red-437dc3d` + `node_modules`; por cima, `git archive 550007f --` dos 6 arquivos de teste/helpers
+  (SHA-256 `743e6658…5fc8a713`). 93 blobs (`src`, `tests/integrations`) conferidos sem normalização, 0 diferentes.
+  Resultado (`f5-red-tests-windows-437dc3d.tap`, três arquivos): **26 tests, 21 pass, 1 fail, 4 skip** — falha só o
+  arquivo `posix-acl.unit.test.mjs` por `ERR_MODULE_NOT_FOUND` (módulo novo); `I4-C25j`/`I4-C25k`/`I4-C25l` em skip
+  `posix-acl`, `I4-C25m` em `macos-acl`, `I4-C25b` em `posix-modes`; `I4-C25f/g/h` e os demais passam (os helpers alterados
+  mantêm a barra do Windows; o achado é POSIX).
+- WSL (distro `Ubuntu` explícita, 24.04.3, Node 24.13.0, ext4, `env -i` só com `PATH`): mesmos tars em
+  `/tmp/skillme-f5-red-437dc3d`, 93 blobs conferidos. **26 tests, 20 pass, 3 fail, 3 skip** — falham `I4-C25j` e
+  `I4-C25k` por diff de asserção (`ERR_ASSERTION`) e o arquivo do módulo novo por import; `I4-C25g/h` em `windows-dacl`,
+  `I4-C25m` em `macos-acl`; `I4-C25b`, `I4-C25f` e os demais passam (`f5-red-tests-wsl-437dc3d.tap`).
+- RED de desenvolvimento antes do código: as mesmas regressões, na versão de então (antes de `after_chmod` e da última
+  linha de `I4-C25l`), no worktree com o produto ainda sem correção (`f5-dev-red-wsl-a5114a7-wip.tap`), mesmas
+  divergências.
+
+Valores observados no WSL (`437dc3d` → `550007f`):
+
+| Linha | `437dc3d` | `550007f` |
+| --- | --- | --- |
+| C25j fixture: arquivo novo 0640 na pasta com ACL default | uid sintético lê | igual (é a fixture) |
+| C25j Claude/Codex 0640 sem ACL, ACL default (instalar, de novo, remover) | 0; temporário com canário legível pelo uid sintético desde `after_chmod`; final com a ACL herdada (`user:<uid>:r-x`, `mask::r--`) | 0; nenhum ampliado em instante algum; final sem ACL estendida, 0640 como o lido |
+| C25j ACL estendida restritiva (instalar, remover) | 0; ACL descartada, uid sintético lê como "outros" (temporário e final) | 0; ACL exata no temporário e no final |
+| C25j ACL com grupo nomeado + ACL default (instalar, remover) | 0; ACL herdada no lugar: uid sintético e grupo dono ganham leitura | 0; ACL exata, nenhum ampliado |
+| C25j sem Python (instalar Claude, remover Codex) | 0 aplicado com a herdada | 5 `config_access_unavailable`, passo `config: failed`, sem temporário, configuração com bytes e ACL, registro como estava |
+| C25j falha ao gravar a ACL no temporário | 0 aplicado com a herdada | 5; temporário só em `created` (vazio, sem ampliado), apagado |
+| C25j ACL estendida com grupo não atribuível | 0; ACL descartada, uid sintético lê | 5; temporário só em `created`, apagado |
+| C25j controles (sem ACL; configuração ausente sem Python) | iguais | iguais (criada do zero com a ACL herdada, sem conteúdo preexistente) |
+| C25k controles | 0; ACL não transmitida; temporário com a herdada (uid sintético lê); final idem | 0; ACL pedida = a lida; temporário com ela, nenhum ampliado; final com ela |
+| C25k ACL ampliada/removida pelo dono antes de criar o temporário | 0 aplicado (mudança não detectada) | 4, temporário com a ACL conferida, sem rename, apagado; a mudança do dono fica |
+| C25k EPERM + ACL ampliada antes da nova tentativa | 0 depois de 2 tentativas | 4, 1 tentativa, temporário apagado |
+| C25k falha de E/S no rename | 5 `EIO`; temporário legível pelo uid sintético, apagado | 5 `EIO`; temporário com a ACL conferida, apagado |
+
+### Mudanças colaterais de comportamento, provadas
+
+- Linux: reescrita de configuração existente passa a exigir `/usr/bin/python3`; sem ele, 5 antes de qualquer conteúdo
+  (antes, 0 sem garantia). Configuração criada do zero, exclusão, registro, lock, prévia e Hermes não usam Python
+  (`I4-C25j`, linha da configuração ausente; demais suítes verdes).
+- Linux: ACL mudada depois de obtida → 4 (antes não era comparada) (`I4-C25k`); sistema de arquivos sem ACL POSIX
+  (`ENOTSUP`: NFSv4, SMB, drvfs do WSL) → 5 (provado no módulo com procfs em `I4-C25l`; montagens de rede não exercitadas).
+- `accessOf` POSIX abre a configuração para leitura (antes, só `stat`); a leitura sob o lock já exigia a mesma permissão.
+- Falha ao preparar o acesso do temporário depois de criado (antes, uma falha do `fchmod` deixava o temporário vazio)
+  agora o apaga pelo inode; no Windows nada mudou.
+- macOS: ACE na configuração ou herdada pelo temporário → 5 (antes, 0 sem detecção) — só por leitura e pela CI.
+- Custo: 4 chamadas do Python por reescrita sem nova tentativa (obter, conferir, gravar no temporário, conferir antes do
+  `rename`) e mais 1 por nova tentativa; o lote do WSL continuou em 19 s.
+
+### Contagens reais em `550007f`
+
+Um batch por plataforma: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs scripts/code-review/review.test.mjs`. Windows: worktree com HEAD `550007f` e
+`git diff --quiet 550007f -- src tests docs scripts package.json package-lock.json`, pelo shell normal da sessão, sem
+pedir desativação de sandbox (os testes de timeout/`taskkill` do motor, que só encerram processos dos próprios testes,
+passaram; nenhuma recusa do ambiente); Hermes nativo pelo helper. WSL: distro `Ubuntu` explícita (24.04.3), Node 24.13.0, `git -c core.autocrlf=false archive 550007f`
+(SHA-256 `bed974eb…10b21d0e01`) no ext4 (`/tmp/skillme-f5-batch-550007f`), 147 arquivos de `src`, `tests`, `scripts`,
+`docs`, `package.json` e `package-lock.json` iguais aos blobs sem normalização, `env -i` só com `PATH`; exit do próprio
+`wsl.exe`. Nenhum spawn lendo por `/mnt/c`.
+
+| Execução | tests | pass | fail | cancelled | skipped | todo | exit | duração |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 87 + governança 6 + motor 16 | 109 | 103 | 0 | 0 | 6 | 0 | 0 | 106 s |
+| WSL — integrações 87 + governança 6 + motor 16 | 109 | 97 | 0 | 0 | 12 | 0 | 0 | 19 s |
+
+Cruzamento das 54 linhas `Proof:` com os TAPs (`f5-proofs-vs-batch-{windows,wsl}-550007f.txt`, mesmo script das rodadas
+anteriores; cada padrão casou exatamente um teste executado, declarado no arquivo da prova): Windows 53 PASS + `I4-C15`
+SKIP; WSL 46 PASS + 8 SKIP. Fora das linhas `Proof:` (55): 16 do motor, 5 de governança e 34 de integração — os 30
+anteriores e os novos `I4-C25j`, `I4-C25k`, `I4-C25l`, `I4-C25m` (+4 em relação aos 105 de `e513af7`). Skips e motivos:
+
+- Windows (6): `I4-C15` `posix-signals`, `I4-C25b` `posix-modes`, `I4-C25j`/`I4-C25k`/`I4-C25l` `posix-acl` (passam no
+  WSL) e `I4-C25m` `macos-acl`. Diagnósticos `não executado` (22): os mesmos da rodada anterior (18 de link de arquivo sem
+  privilégio e, no `I4-C25f`, 3 de link e 1 de modo POSIX — executados no WSL).
+- WSL (12): `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente` (prova nativa do Hermes só no Windows, executada
+  nesse batch, 8 PASS; Linux **pendente**), `I4-C25g`, `I4-C25h`, `I4-C25i` `windows-dacl` (executados no Windows, 3 PASS)
+  e `I4-C25m` `macos-acl`. Nenhum diagnóstico de grupo suplementar ausente: as linhas de grupo de `I4-C25b`/`I4-C25j`
+  rodaram.
+- **macOS:** `I4-C25m` e o caminho `darwin` de `posix-acl.mjs` não foram executados em lugar nenhum por mim; ficam para
+  a CI macOS (matriz já declarada). Nada aqui afirma execução nativa no macOS.
+- Medição C38: Windows 835 ms depois do filho, 65536 bytes no pipe; WSL 807 ms, 146176 bytes.
+- Doctor (417) não reexecutado: nenhum arquivo do doctor, dos módulos reutilizados, de `scripts/`,
+  `code-review.config.json`, `package.json`/lock ou `AGENTS.md` mudou desde `437dc3d` (`I4-C45`, no lote, confere a
+  interface do doctor com as integrações instaladas).
+
+### Examinado e não alterado (limites e resíduos)
+
+- Janela não atômica entre a última conferência e a criação/o `rename`, como antes: a troca encontra o temporário com a
+  ACL conferida e é recusada antes do `rename` (`I4-C25k`). Duas trocas exatas entre os processos das conferências não se
+  distinguem.
+- Dependência runtime declarada: `/usr/bin/python3` (3.5+, `os.*xattr` do Linux) só para reescrever configuração
+  existente no Linux; o PATH não é consultado (sistema sem esse caminho → 5). macOS: `/bin/ls`. Prazo de 20 s só por
+  leitura (não testado; exige processo que não responde).
+- Não copiados: rótulo SELinux/AppArmor, demais xattrs (`security.*`, `user.*`), bits especiais; dono passa a quem
+  executa. ACL com IDs mapeados por namespace de usuário e montagens NFSv4/SMB não exercitadas (estas recusam por
+  `ENOTSUP`, provado com procfs).
+- `accessOf` segue link como o `stat` (abre o destino); macOS confere o inode do caminho real contra o descritor.
+- Limites anteriores inalterados: link inicial contido vira arquivo regular; bytes idênticos; outro diretório real no
+  mesmo caminho; prévia sem reconferência entre as próprias leituras; `stat` no `catch` do staging; passos parciais de
+  `artifacts`; raiz trocada por arquivo; `mkdir` do staging com `EEXIST`; vínculo de herança/SACL do Windows; Hermes
+  nativo só no Windows (Linux pendente); macOS só pela CI; E2E real pendente.
+
+### Sobras próprias desta rodada (preservadas)
+
+Nenhum `rm` nem limpeza opaca. Windows `%TEMP%\skill-me-f5\`: `probes/` (`api_check.py`, `fd_check.mjs`, `wsl-copy.sh`,
+`wsl-run.sh`, `verify-blobs.sh`, `proofs-vs-batch.mjs`, `mutate.py`, `mutants.sh`, `mutants-m6.sh`, `mut-summary.sh`,
+listas de blobs), `red-437dc3d/` (cópia RED), `437dc3d-lf.tar`, `overlay-550007f-tests.tar`, `a5114a7-lf.tar`,
+`550007f-lf.tar` e os TAPs de desenvolvimento. WSL `/tmp`: `skillme-f5-probes`, `skillme-f5-api-*`, `skillme-f5-fd-*`
+(scratches sintéticos das conferências de API, um com ACL default que concede leitura a um uid sintético),
+`skillme-f5-devred`, `skillme-f5-devgreen{,2,3}`, `skillme-f5-mut-M1..M6`, `skillme-f5-red-437dc3d`,
+`skillme-f5-batch-550007f`. Scratches dos testes: removidos pelo `after()` de cada arquivo (só diretórios de
+`makeScratch`, caminho absoluto sob o TEMP); nenhum `skill-me i4 acl…`, `f5 acl…`, `f5 posix-acl…` ou `macos acl…`
+restou nas duas plataformas. Cópias locais (ignoradas) em `.checks/code-review/issue-4/f5-*`.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token, credencial ou valor de ambiente impresso. Canários e documentos sintéticos; os TAPs
+registram códigos, conflitos, passos, rótulos de conteúdo, se o canário está no temporário (booleano), entradas de ACL
+com uid/gid sintéticos ou do dono (`user::`/`group::`) e caminhos sintéticos (conferido: nenhuma ocorrência dos
+canários, `S-1-5-21`, `D:P(`, `API_TOKEN` nem de nomes de conta em entradas de ACL nos `f5-*`). Nenhum outro usuário
+criado ou personificado, `sudo`, arquivo privado real ou perfil pessoal; nenhum diretório gerenciado real; todos os
+`--target` em temporários; nenhuma ACL fora dos scratches; nenhum agente, modelo, download ou E2E; nenhum
+bypass/confiança concedido; nenhum subagente; nenhuma operação recusada pela plataforma nesta rodada.

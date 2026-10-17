@@ -910,3 +910,41 @@ limites não podem autorizar uma exposição concreta no caminho suportado.
 Cinco tentativas formais de dez consumidas; histórico e critérios preservados.
 Codex coordena e revisa, sem implementar produto/testes. Próximo parecer independente
 e formal6 só após correção, provas e commit limpo; nenhuma publicação antecipada.
+
+Correção da revisão formal round 5 (17/10/2026):
+
+- **Fronteira:** P1 (`io.mjs:43/84–87`, ACL POSIX do temporário) fechado em `550007f`, com a linha de Landing antes do
+  código em `a5114a7`; **reproduzido por execução** (a revisão foi estática) pelas regressões novas no produto intacto
+  `437dc3d` (= `e513af7`) em cópias isoladas, só com dados sintéticos e uid/gid numéricos sem conta: no WSL, configuração
+  0640 sem ACL numa pasta que recebeu depois ACL default para um uid sintético saía 0 na instalação e na remoção (Claude e
+  Codex) com o temporário — já com o canário — e o arquivo final legíveis por esse uid a partir do `fchmod`; ACL estendida
+  restritiva era descartada (o uid passava a ler como "outros"); ACL com grupo nomeado virava a herdada; a ACL mudada
+  pelo dono depois da conferência não era comparada. RED: WSL 26 tests, 20 pass, 3 fail (`I4-C25j`, `I4-C25k` por diff
+  de asserção; o arquivo do módulo novo por import), 3 skips; Windows 26 tests, 21 pass, 1 fail (só o import), 4 skips.
+  GREEN nos dois lotes de 109 testes em `550007f` (Windows 103 pass/6 skips, WSL 97 pass/12 skips, 0 fail/cancel, exit 0;
+  54 linhas `Proof:` casadas). Agora, no Linux, modo/dono/grupo e a ACL de acesso (`system.posix_acl_access`) vêm do
+  mesmo descritor, lidos pelo Python do sistema (`/usr/bin/python3 -I -S`, script fixo, fd 3), entram na comparação
+  única e o temporário recebe exatamente essa ACL (ou perde a herdada) pelo descritor, conferida, antes do `fchmod` e do
+  conteúdo; sem como garantir (Python ausente, `ENOTSUP`, grupo não atribuível com ACL, falha ao gravar), 5
+  `config_access_unavailable` antes do conteúdo e o temporário vazio sai pelo inode. macOS: ACE na configuração ou
+  herdada pelo temporário → 5 (detecção por `ls -ledi` com inode conferido; **não executado**, só a CI). Checks
+  inalterados; Landing +1 linha; regressões `I4-C25j` (25 linhas), `I4-C25k` (6), `I4-C25l` (contrato do módulo, 9) no
+  Linux e `I4-C25m` (macOS, só CI); nenhuma asserção existente mudou; guia atualizado. Evidência em
+  `.checks/issue-4-integracoes.build.md`, "Correção da revisão formal round 5". Nenhuma verificação independente nem
+  revisão formal pedida ou executada; contadores e histórico intactos; a sonda bloqueada da rodada 6 não foi executada,
+  recriada nem substituída e não houve sonda ad hoc do produto (só a conferência de API em arquivos sintéticos de scratch
+  privado); estas provas são do autor e não aprovam a entrega.
+- **Decidido durante o build:** nada novo do proprietário. Mecanismo: xattr bruto da ACL pelo descritor via Python do
+  sistema (a libacl guarda a ACL nesse xattr), executor de processo compartilhado com a DACL do Windows; cópia exata da
+  ACL do original ou remoção da herdada antes do `fchmod`; `ENOTSUP` e indisponibilidade recusam com 5; macOS só detecta
+  e recusa — tudo na linha de Landing de `a5114a7`.
+- **Abandonado:** só `chmod` com a ressalva no guia; remover só a herdada e copiar bits; `fchmod` antes da ACL; criar já
+  com o modo final; conferir só a ACL default da pasta; `getfacl`/`setfacl`/`getfattr`; `ls -l` com `+`; libacl por
+  `ctypes` no produto; addon/helper compilado/`sudo`/dependência npm; Python pelo PATH; recusar toda ACL ou desligar a
+  reescrita no Linux; tratar `ENOTSUP` como "sem ACL"; interpretar ACL NFSv4 ou copiar a do macOS; Python no macOS.
+- **Limites registrados, não corrigidos:** dependência de `/usr/bin/python3` para reescrever configuração existente no
+  Linux; rótulos SELinux/AppArmor, demais xattrs e bits especiais não copiados; dono passa a quem executa; NFSv4/SMB e IDs
+  mapeados por namespace só por leitura; prazo de 20 s não testado; macOS sem execução local; mesma janela não atômica
+  entre conferência e criação/`rename`; os demais já registrados.
+- **Próxima ação (orquestrador):** verificação independente 11 pelos testes versionados e leitura permitida; revisão
+  formal 6 só depois de PASS e relatório commitado.
