@@ -319,3 +319,9 @@ Landing). As provas conferem as quatro classes de pertencimento pelo modelo POSI
 `tests/integrations/helpers/posix-access.mjs`, na regra pura (512 modos) e no CLI real
 POSIX (0640 e 0604 com grupo não atribuível); a barra dos checks não mudou. Evidência
 em `.checks/issue-4-integracoes.build.md`.
+
+Correções da revisão formal round 1 (17/10/2026):
+
+- **Fronteira:** F1–F4 fechados em `bdc1969`..`bb05bcc` (F2 em `4f2932a` + `38bc660`), evidência em `.checks/issue-4-integracoes.build.md`, "Correções da revisão formal — round 1"; Checks inalterados; Landing +4 linhas (F2, regra de grupo corrigida, F3, F4). Achado irmão de F1 (pasta própria do plugin como junção → remoção apaga bytecode de outro plugin) só reportado: aguarda decisão.
+- **Decidido durante o build:** nada novo do proprietário; o coordenador apontou o contraexemplo 0604 da regra de grupo (nota acima, encerrada em `38bc660`).
+- **Abandonado:** limpar o staging pelos nomes de `ARTIFACT_NAMES` (era o defeito F1); `chmod` depois do conteúdo (janela legível; mutação detectada); limitar só o grupo novo aos bits de "outros" (contraexemplo 0604); adotar grupo editado pela assinatura (apagaria a edição na remoção); medir caracteres em vez de bytes UTF-8 e conferir o tamanho só na instalação (mutações detectadas).

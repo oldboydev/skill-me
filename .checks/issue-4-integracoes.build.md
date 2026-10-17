@@ -346,3 +346,192 @@ exibiu o caminho do home do usuário WSL (valor de `HOME`); nada gravado no repo
 enviado. Hermes nativo no Windows com o runtime local localizado pelo helper, `-I -B`,
 HERMES_HOME/HOME/APPDATA/TEMP temporários, sem modelos; nenhum agente iniciado. Processos de
 teste conferidos encerrados ao fim (Windows e WSL).
+
+## Correções da revisão formal — round 1 (F1–F4, 17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega. Partida em `fe213e9`; base integral
+`236e999`. Escopo: só os quatro findings formais que bloqueiam AC6
+(`.checks/code-review/issue-4/formal-round1-report.json`, cópia ignorada). Esta seção é
+evidência do autor, **não é verificação independente** nem revisão formal: nenhum
+`review:run`/`review:check`/`pr:create`/push/PR/Verifier foi executado; o estado do motor
+(1 de 2 tentativas) e o `.verified.md` não foram tocados. Checks (a barra), doctor, motor
+vendorizado, `code-review.config.json`, `AGENTS.md`, `package.json` e outras issues não
+mudaram (`git diff --name-only fe213e9..bb05bcc` nesses caminhos: vazio). Landing recebeu 4
+linhas, cada uma antes do código que a fecha.
+
+| Commit | Finding | Conteúdo |
+| --- | --- | --- |
+| `bdc1969` | F1 | `install/run.mjs`: staging Hermes só é limpo com propriedade comprovada; regressões em `I4-C27`/`I4-C34` |
+| `4f2932a` | F2 | `install/io.mjs`, `install/run.mjs`: temporário POSIX nunca amplia o acesso; `I4-C25b` (POSIX real), `I4-C25c` (regra pura), instrumento `helpers/fs-probe.mjs`; Landing; guia |
+| `38bc660` | F2 | regra de grupo não atribuível corrigida após contraexemplo do coordenador (0604); modelo `helpers/posix-access.mjs`; Landing; nota do coordenador preservada e encerrada no checklist |
+| `3993713` | F3 | `install/json-hooks.mjs`, `install/run.mjs`: reinstalar sobre grupo próprio editado é conflito; `I4-C32b`; Landing |
+| `bb05bcc` | F4 | `install/json-hooks.mjs`: saída acima de 1 MiB recusada antes de escrever; `I4-C26b`; Landing; guia |
+
+### F1 — staging Hermes vinculado ou alheio (perda de dados)
+
+- **Correção:** `readStaging`/`isOwnStagedFile` reutilizam `assertContained` e o hash dos
+  artefatos: só é sobra própria um diretório real (lstat, não junção/link) cujas entradas são
+  arquivos regulares do tamanho e SHA-256 do artefato de mesmo nome. Junção/link para dentro
+  do alvo, arquivo no lugar do diretório, link de arquivo ou conteúdo alheio →
+  `foreign_artifact` em `plugins/.skill-me-observer.skill-me-tmp`, código 4, na prévia e na
+  aplicação, antes de qualquer exclusão; escape para fora continua `target_escape`.
+  `removeOwnedStaging` reconfere a propriedade imediatamente antes de cada `unlink` (também no
+  rollback de `rename`) e só faz `rmdir` do diretório real. Nome em `ARTIFACT_NAMES` deixou de
+  ser critério.
+- **Asserções:** `I4-C34` — junção/link para `plugins/victim-plugin` (só `__init__.py` e
+  `plugin.yaml`), diretório real com esses nomes e conteúdo alheio, arquivo, link de arquivo de
+  nome próprio: prévia e aplicação → 4, `status: conflict`, `applied: false`, `changes: []`,
+  conflitos exatamente `foreign_artifact` no staging, árvore inteira do alvo idêntica
+  (`snapshotTree` com mtime). Sobra própria (cópias exatas de 2 artefatos) → 0, staging
+  removido, 3 artefatos com o hash do registro e, após remover, árvore igual à anterior.
+  `I4-C27` — staging como junção para fora com arquivos de mesmos nomes → 4 `target_escape`,
+  externo intacto (guarda: já passava).
+- **RED (`fe213e9`):** teste — Windows e WSL, prévia `expected 4, actual 0`. Sonda descartável
+  com `--apply`: Windows, junção → `0/applied` e **arquivos do outro plugin apagados**;
+  diretório real alheio → `0/applied`, conteúdo alheio apagado. WSL, junção → `5/incomplete`
+  com os arquivos do outro plugin **já apagados**; diretório alheio → `0`, apagado; link de
+  arquivo → `0`, link removido.
+- **GREEN:** Windows 12/12 (link de arquivo por `t.diagnostic`: EPERM); WSL 12/12 com o link
+  de arquivo executado; sonda: todos os casos `4/conflict`, outro plugin e conteúdo alheio
+  intactos.
+
+### F2 — temporário e arquivo final POSIX ampliavam o acesso
+
+- **Correção (POSIX; Windows inalterado):** `accessOf` lê modo/dono/grupo do original;
+  `writeExclusive(…, {like})` cria o temporário (`wx`) só com os bits de dono do original,
+  iguala o grupo (`fchown(-1, gid)`) e aplica os bits finais (`fchmod`) antes de escrever o
+  conteúdo; `replaceChecked` reconfere modo/dono/grupo junto com o hash antes do `rename`
+  (mudou → 4; arquivo sumido → 4). Grupo não atribuível: grupo **e** "outros" recebem a
+  interseção do que os dois concediam (`replacementMode`), dono intacto.
+- **Prova real (`I4-C25b`, WSL, CLI iniciado por `/bin/sh` com `umask 022`):** instrumento de
+  teste pré-carregado (`--import`; envolve `open`/`rename` de `node:fs/promises` por
+  `syncBuiltinESMExports`; registra só modo, uid, gid, tamanho e presença do canário sintético)
+  observa o temporário em `created`, `before_content`, `after_content` e `before_rename`.
+  Install e uninstall, Claude 0600/0640/0660 e Codex 0600/0640, conteúdo com canário
+  sintético: sequência exata dos 4 instantes, nenhum destinatário ganha acesso em nenhum
+  instante (modelo POSIX das quatro classes), temporário vazio até o modo final, modo e grupo
+  do original no `rename` e no arquivo final, remoção restaura o texto. Grupo suplementar do
+  usuário em 0640 → grupo e modo preservados. EPERM injetado no `chown` do handle (0640 e
+  0604) → grupo diferente, nenhuma ampliação em instante algum, final 0600. `I4-C25c`: tabela e
+  os 512 modos pelo mesmo modelo. Windows: `I4-C25b` `# SKIP posix-modes`.
+- **RED (`bdc1969`, WSL):** `claude 0600 install created: modo 0644 amplia o original 0600`;
+  sonda sem instrumento: 0600 e 0640 viram 0644 após install **e continuam 0644 após
+  uninstall**, Claude e Codex. `I4-C25c`: export inexistente.
+- **Contraexemplo do coordenador (nota preservada no checklist):** a regra de `4f2932a`
+  limitava só o grupo novo; em 0604 quem pertencia só ao grupo antigo passaria a "outros" e
+  ganharia leitura. Procedente; meu teste tinha a mesma lacuna (só conferia o grupo novo). RED
+  em `4f2932a`: `I4-C25c` `0604 → 0604`; `I4-C25b` com EPERM, `before_content`: "só do grupo
+  antigo" ganha leitura. Corrigido em `38bc660`.
+- **Discriminação (mutações só em cópias WSL):** M-F2a `chmod` depois do conteúdo → falha em
+  `created` (um teste só do modo final passaria); M-F2b criar já com o modo final → falha no
+  grupo suplementar; M-F2c copiar os bits de grupo sem igualar o grupo → falha em
+  `before_content`. As três foram aplicadas sobre o estado anterior a `38bc660`.
+- **GREEN:** WSL 14/14 (permissões, unidade e instalador); Windows 3 pass + 1 skip declarado.
+  Sonda: 0600/0640 permanecem após install e uninstall, nos dois agentes.
+- **Limites (não anunciados como preservados):** o dono do arquivo novo é quem executa (sem
+  privilégio não há `chown` de dono; executar como outro usuário, p. ex. root, troca o dono);
+  ACL POSIX/Windows, xattr e bits especiais não são preservados nem detectados — em arquivo
+  com ACL POSIX os bits de grupo do modo são a máscara; o Windows não recebe tratamento de
+  modo. O caminho EPERM foi exercitado por injeção no handle: um grupo do qual o usuário não é
+  membro exigiria root para preparar. Continua a janela não atômica já declarada entre a
+  última conferência e o `rename`. Nenhum `chmod`/`chown` fora de diretórios temporários de
+  teste.
+
+### F3 — reinstalação sobre grupo próprio editado
+
+- **Correção:** `planJsonInstall`: evento sem o grupo registrado e sem o canônico, mas com
+  grupo de assinatura própria → `owned_entry_modified` (com registro, que continua com a
+  entrada) ou `owned_entry_unrecorded` (sem registro); nada acrescentado nem adotado no
+  evento; os demais seguem; código 4. `run.mjs` deixou de descartar os conflitos da
+  instalação. `planJsonUninstall`: grupo de assinatura própria que resta sem conflito no
+  evento → `owned_entry_unrecorded`, 4.
+- **Asserções (`I4-C32b`, Claude e Codex):** instalar, editar o timeout do grupo próprio de
+  `PreToolUse` para 99 (editor que preserva tokens numéricos), reinstalar (prévia e aplicação)
+  → 4, conflitos exatamente `[owned_entry_modified, PreToolUse]`, `changes: []`, bytes da
+  configuração e do registro iguais, um único grupo próprio no evento (o editado); remover → 4,
+  mesmo conflito, só o editado resta, registro = `[entrada original de PreToolUse]`; remover de
+  novo → 4, nenhum byte muda. Sem registro: reinstalar → 4 `owned_entry_unrecorded`, nenhuma
+  mudança no evento, demais adotados; duas remoções → 4 com o editado ativo. Cópia editada ao
+  lado do registrado → remoção 4 `owned_entry_unrecorded`. C24, C28 e C33 (prévia,
+  idempotência, reconciliação) inalterados e verdes.
+- **RED (`4f2932a`):** teste Windows, prévia `expected 4, actual 0` com `add_group`. Sonda da
+  cadeia nos dois agentes: reinstalação `0`, **2** grupos próprios; remoção `0/applied` sem
+  conflito; editado (99) ativo; registro apagado.
+- **Discriminação (cópias WSL):** M-F3a adotar o editado pela assinatura e M-F3b remover a
+  conferência na remoção → `I4-C32b` falha; C28/C32/C33 passam com as duas (a suíte anterior
+  não as detectaria).
+- **GREEN:** Windows 14/14 no instalador; WSL 11/11; sonda: reinstalação
+  `4/owned_entry_modified` com 1 grupo, remoção `4/conflict`, editado reportado, registro
+  mantido.
+
+### F4 — saída acima de 1 MiB
+
+- **Correção:** os planos puros de instalação e remoção (compartilhados por Claude e Codex)
+  medem `Buffer.byteLength(texto, "utf8")` contra `ONE_MIB_BYTES`, o mesmo teto inclusivo de
+  `readBoundedText`/`projectConfig`; acima → 3 `invalid_config`, `errors:
+  [{code:"output_too_large", file}]`, sem escrita nem registro, inclusive na prévia.
+- **Asserções (`I4-C26b`, Claude e Codex):** entrada ASCII válida de exatamente 1 048 512 bytes
+  sem hooks → prévia e aplicação 3 com o erro exato, saída sem conteúdo, árvore idêntica;
+  remoção seguinte 0 `unchanged`; reinstalação 3 de novo; arquivo igual. Saída de exatamente
+  1 048 576 bytes (calibrada pelos bytes que a instalação acrescenta nesta máquina) → 0
+  `applied`, reinstalação 0 `unchanged` com bytes iguais, remoção 0 restaurando a entrada. Um
+  byte acima → 3. Dez `x` → `ç`: mesma quantidade de caracteres da saída no limite e 10 bytes
+  UTF-8 acima → 3. Claude: arquivo minificado pelo usuário depois da instalação, cuja
+  reescrita indentada passaria do limite → remoção 3, configuração e registro intactos.
+- **RED (`3993713`):** teste Windows, prévia `expected 3, actual 0`. Sonda nos dois agentes:
+  entrada de 1 048 512 bytes → install `0/applied`, arquivo com 1 051 751 (Claude) / 1 050 331
+  (Codex) bytes; reinstalação e remoção `3/input_too_large`.
+- **Discriminação (cópias WSL):** M-F4a medir caracteres → falha no caso UTF-8; M-F4b não
+  conferir na remoção → falha no caso minificado; M-F4c `>=` → falha na saída exatamente no
+  limite (`expected 0, actual 3`).
+- **GREEN:** Windows 19/19 (instalador + guia); WSL 16/16; sonda: `3/output_too_large`, arquivo
+  intacto, remoção `0/unchanged`.
+- **Limite:** a remoção que só cresce por reformatação foi provada no Claude; o Codex usa o
+  mesmo plano puro.
+
+### Contagens reais em `bb05bcc`
+
+Um batch por target: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs`. WSL: Ubuntu, Node 24.13.0, cópia por `git archive` de
+`bb05bcc` no ext4 (`/tmp`), `env -i` só com `PATH`; exit capturado do próprio `wsl.exe`.
+
+| Execução | tests | pass | fail | cancelled | skipped | exit |
+| --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 58 + governança 6 | 64 | 62 | 0 | 0 | 2 | 0 |
+| WSL — integrações 58 + governança 6 | 64 | 56 | 0 | 0 | 8 | 0 |
+
+Cruzamento das 54 linhas `Proof:` do checklist com o batch (cada padrão casou exatamente um
+teste): Windows 53 PASS + `I4-C15` SKIP; WSL 46 PASS + 8 SKIP. Extras fora das linhas
+`Proof:` (todos executados): `I4-C16c`, `I4-C25b`, `I4-C25c`, `I4-C26b`, `I4-C32b` e 5 testes
+de governança. Skips e motivos:
+
+- Windows: `I4-C15` `posix-signals` (passa no WSL); `I4-C25b` `posix-modes` (passa no WSL).
+  `I4-C27`/`I4-C34`: subcasos de link de arquivo registrados por `t.diagnostic` (EPERM sem
+  privilégio); executados no WSL.
+- WSL: `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente` — Hermes nativo só no
+  Windows (executado nesse batch); Linux **pendente**. `I4-C35` registra a observação Hermes
+  pendente.
+- Doctor (417) e motor de revisão (16) não foram reexecutados: nenhum arquivo deles, nem os
+  módulos do doctor reutilizados, mudou desde as contagens de `7de3bc2`/`82a21f7`.
+
+Saídas brutas (locais, ignoradas) em `.checks/code-review/issue-4/`: `red-formal-*`,
+`green-formal-*`, `mutation-formal-*`, `observation-plugin-dir-link-*`,
+`batch-{windows,wsl}-bb05bcc.tap`, `proofs-vs-batch-{windows,wsl}-bb05bcc.txt`.
+
+### Pendências e limites desta rodada
+
+- **Achado fora do escopo literal de F1, comunicado e não corrigido (perda de dados):** se a
+  própria pasta `plugins/skill-me-observer` for trocada por junção/link para outro plugin
+  dentro do alvo, `uninstall --apply` sai 4, mas apaga o bytecode
+  `__pycache__/__init__.cpython-311.pyc` desse outro plugin (sonda sintética no Windows e no
+  WSL, `victimBytecodeKept: false`; `observation-plugin-dir-link-*`). Mesma causa (link interno
+  + nome), outro caminho. Aguarda decisão do orquestrador/proprietário; nada foi alterado.
+- Sobras sintéticas das minhas sondas, não removidas porque a remoção por shell foi negada
+  pela política de permissões desta sessão: `TEMP/skill-me-formal-probes` (sondas, mutantes,
+  helpers), `TEMP/f3-claude-*` (sonda F3 que falhou antes da limpeza), 19 cópias
+  `/tmp/skillme-formal2-*` e `/tmp/skill-me plugin-dir-link probe-*` no WSL. Os diretórios
+  `skill-me i4 *` restantes no TEMP do Windows são de 16/10, anteriores a esta rodada.
+- E2E real dos três agentes continua pendente; Hermes nativo só no Windows; macOS só pela CI.
+- Privacidade: nenhum valor de ambiente, token ou credencial impresso; as sondas imprimiram só
+  códigos, modos, contagens e tamanhos; conteúdo sintético. Nenhuma instalação em perfil
+  pessoal; todos os `--target` em temporários.
