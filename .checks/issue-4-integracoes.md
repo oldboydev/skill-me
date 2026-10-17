@@ -584,3 +584,29 @@ para decisão" fica como histórico, não um bloqueio contratual comprovado nest
 
 Este PASS encerra a etapa independente, sem declarar revisão formal aprovada. Próxima ação:
 revisão formal obrigatória do commit limpo, terceira tentativa no histórico preservado da #4.
+
+### Revisão formal round 3 — ancestral Hermes e alias gerenciado (17/10/2026)
+
+`changes_requested` em `af607599d6d45e74a89de93b5616345127678082`: AC6 unmet,
+demais oito AC met, verificação insuficiente. Relatório autêntico preservado no estado
+comum Git e em `.checks/code-review/issue-4/formal-round3-report.json`.
+Dois achados bloqueantes por leitura, ainda exigindo reprodução e provas pelo Claude:
+
+- P1: durante remoção Hermes sem cache, troca do ancestral `plugins` por junção/link
+  depois da primeira exclusão permite alcançar artefatos de mesmo hash fora do alvo.
+  `stillRealDir` do filho não reconfere a contenção do ancestral a cada efeito.
+- P2: alias de `--target` para diretório gerenciado Claude passa pela recusa textual;
+  o caminho real de `resolveTarget` não é verificado novamente antes dos efeitos.
+
+Segurança e possível perda externa comunicadas imediatamente ao proprietário, distinguindo
+leitura de reprodução. As correções anteriores de JSON/temporários e metadados foram
+reconhecidas, mas não provam estes estados novos. O PASS independente round 6 mantém seu
+método e limites; não constitui aprovação formal da entrega nem execução desses cenários.
+
+Correções/provas dentro de AC6/C27/C34 continuam autorizadas pelas rodadas necessárias já
+aprovadas. Claude implementa e prova, Codex coordena/revisa. Preservar critérios, histórico,
+core e scratches. Usar somente fixtures sintéticas próprias; nunca acessar ou escrever
+perfis pessoais/diretórios gerenciados reais para reproduzir o alias. Não repetir a sonda
+adicional bloqueada da rodada 6. Depois das correções, nova verificação independente pelos
+testes versionados e revisão formal do conteúdo novo. Três tentativas formais consumidas
+do teto exclusivo dez; nenhum PR, push ou merge antes de aprovação válida.
