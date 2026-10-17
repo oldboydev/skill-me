@@ -55,7 +55,7 @@ próprios.
 | --- | --- |
 | 0 | concluído ou nada a fazer |
 | 2 | uso inválido ou alvo inexistente |
-| 3 | configuração inválida/ilegível — não é substituída |
+| 3 | configuração inválida/ilegível — não é substituída; também quando a mudança deixaria o arquivo acima de 1 MiB, o teto de leitura do próprio instalador (`output_too_large`, recusado antes de escrever, inclusive na prévia) |
 | 4 | conflito — lock, mudança durante a aplicação, link para fora do alvo, política gerenciada, artefato alheio ou entrada própria editada (preservada) |
 | 5 | incompleto — falha de E/S depois de iniciar; o estado de cada passo é reportado |
 

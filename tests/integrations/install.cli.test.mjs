@@ -230,6 +230,110 @@ test("I4-C26 configuração inválida ou grande demais não é substituída", ()
   }
 });
 
+// Teto de leitura do instalador (`ONE_MIB_BYTES` do doctor, em bytes UTF-8):
+// uma escrita que o ultrapassasse deixaria o arquivo inadministrável.
+const ONE_MIB = 1024 * 1024;
+const CONFIG_FILE = { claude: "settings.json", codex: "hooks.json" };
+const fileBytes = (file) => statSync(file).size;
+
+// Configuração válida sem hooks, com o preenchimento sintético num valor alheio.
+function paddedConfig(agent, padding) {
+  return agent === "claude"
+    ? JSON.stringify({ env: { SYNTHETIC_PAD: padding } }, null, 2) + "\n"
+    : JSON.stringify({ description: padding, hooks: {} }, null, 2) + "\n";
+}
+function paddedToBytes(agent, total) {
+  return paddedConfig(agent, "x".repeat(total - Buffer.byteLength(paddedConfig(agent, ""), "utf8")));
+}
+function sizedTarget(agent, label, text) {
+  const target = path.join(scratch(label), `.${agent}`);
+  mkdirSync(target);
+  writeFileSync(path.join(target, CONFIG_FILE[agent]), text);
+  return target;
+}
+
+// Recusa antes de qualquer escrita, na prévia e na aplicação: código 3, motivo
+// fechado, sem conteúdo bruto na saída e sem nada criado ou alterado no alvo.
+function assertOutputTooLarge(agent, target, command, label) {
+  const before = snapshotTree(target);
+  for (const apply of [false, true]) {
+    const result = cli([command, "--agent", agent, "--target", target, ...(apply ? ["--apply"] : [])]);
+    assert.equal(result.status, 3, `${label} apply=${apply}: ${result.stdout.slice(0, 400)}`);
+    assert.equal(result.report.status, "invalid_config", label);
+    assert.equal(result.report.applied, false, label);
+    assert.deepEqual(result.report.errors, [{ code: "output_too_large", file: CONFIG_FILE[agent] }], label);
+    assert.ok(!result.stdout.includes("xxxxxxxx") && !result.stdout.includes("çççç"), `${label}: saída sem conteúdo da configuração`);
+  }
+  assert.deepEqual(snapshotTree(target), before, `${label}: nada escrito, nenhum registro`);
+}
+
+test("I4-C26b escrita que deixaria a configuração acima de 1 MiB é recusada antes de alterar arquivos", () => {
+  for (const agent of ["claude", "codex"]) {
+    const file = CONFIG_FILE[agent];
+
+    // Entrada válida próxima do limite (1 MiB − 64 bytes, ASCII, sem hooks): a
+    // leitura aceita, a saída com os grupos próprios excederia o teto.
+    const nearText = paddedToBytes(agent, ONE_MIB - 64);
+    assert.equal(Buffer.byteLength(nearText, "utf8"), ONE_MIB - 64);
+    const near = sizedTarget(agent, `near-limit-${agent}`, nearText);
+    assertOutputTooLarge(agent, near, "install", `${agent} entrada de 1 MiB − 64 bytes`);
+    // Remoção seguinte: nada a remover; reinstalação recusa de novo.
+    const nothing = cli(["uninstall", "--agent", agent, "--target", near, "--apply"]);
+    assert.equal(nothing.status, 0, nothing.stdout.slice(0, 400));
+    assert.equal(nothing.report.status, "unchanged");
+    assertOutputTooLarge(agent, near, "install", `${agent} reinstalação após recusa`);
+    assert.equal(readFileSync(path.join(near, file), "utf8"), nearText);
+
+    // Calibração: bytes que a instalação acrescenta nesta máquina (caminhos
+    // absolutos do node e do CLI); o preenchimento é a única diferença.
+    const probeText = paddedConfig(agent, "x".repeat(1000));
+    const probe = sizedTarget(agent, `calibrate-${agent}`, probeText);
+    assert.equal(cli(["install", "--agent", agent, "--target", probe, "--apply"]).status, 0);
+    const added = fileBytes(path.join(probe, file)) - Buffer.byteLength(probeText, "utf8");
+
+    // Saída exatamente no limite: aceita; reinstalar e remover continuam
+    // funcionando sobre o arquivo de 1 MiB.
+    const exactText = paddedToBytes(agent, ONE_MIB - added);
+    const exact = sizedTarget(agent, `exact-limit-${agent}`, exactText);
+    const installed = cli(["install", "--agent", agent, "--target", exact, "--apply"]);
+    assert.equal(installed.status, 0, installed.stdout.slice(0, 400));
+    assert.equal(installed.report.status, "applied");
+    assert.equal(fileBytes(path.join(exact, file)), ONE_MIB, `${agent}: saída exatamente no limite`);
+    const exactOutput = readFileSync(path.join(exact, file));
+    assert.ok(exactOutput.toString("utf8").length <= ONE_MIB, "caracteres da saída no limite");
+    const again = cli(["install", "--agent", agent, "--target", exact, "--apply"]);
+    assert.equal(again.status, 0, again.stdout.slice(0, 400));
+    assert.equal(again.report.status, "unchanged");
+    assert.deepEqual(readFileSync(path.join(exact, file)), exactOutput);
+    const removed = cli(["uninstall", "--agent", agent, "--target", exact, "--apply"]);
+    assert.equal(removed.status, 0, removed.stdout.slice(0, 400));
+    assert.equal(removed.report.status, "applied");
+    assert.equal(readFileSync(path.join(exact, file), "utf8"), exactText, `${agent}: remoção restaura a entrada`);
+
+    // Um byte acima do limite: recusado.
+    assertOutputTooLarge(agent, sizedTarget(agent, `over-limit-${agent}`, paddedToBytes(agent, ONE_MIB - added + 1)), "install", `${agent} saída de 1 MiB + 1`);
+
+    // Bytes UTF-8, não caracteres: dez "x" viram "ç" (2 bytes cada) — a saída
+    // teria a mesma quantidade de caracteres da saída no limite e 10 bytes a mais.
+    const multibyteText = exactText.replace("x".repeat(10), "ç".repeat(10));
+    assert.equal(multibyteText.length, exactText.length);
+    assert.equal(Buffer.byteLength(multibyteText, "utf8"), Buffer.byteLength(exactText, "utf8") + 10);
+    assertOutputTooLarge(agent, sizedTarget(agent, `utf8-over-${agent}`, multibyteText), "install", `${agent} saída de 1 MiB + 10 bytes UTF-8`);
+  }
+
+  // Remoção cuja reescrita passaria do limite: depois da instalação o usuário
+  // grava o arquivo minificado com um valor grande; a serialização indentada
+  // sem os grupos próprios excederia o teto → recusa sem tocar configuração e registro.
+  const minified = claudeTarget("minified", JSON.stringify({ env: { FOO: "bar" } }, null, 2) + "\n");
+  assert.equal(cli(["install", "--agent", "claude", "--target", minified, "--apply"]).status, 0);
+  const settings = path.join(minified, "settings.json");
+  const doc = JSON.parse(readFileSync(settings, "utf8"));
+  doc.list = new Array(200_000).fill(0);
+  writeFileSync(settings, JSON.stringify(doc));
+  assert.ok(fileBytes(settings) < ONE_MIB, "entrada minificada abaixo do limite");
+  assertOutputTooLarge("claude", minified, "uninstall", "claude remoção com reescrita acima de 1 MiB");
+});
+
 test("I4-C27 alvo fora do diretório, link que escapa e política gerenciada são recusados", (t) => {
   const outside = scratch("outside");
   writeFileSync(path.join(outside, "settings.json"), "{}\n");

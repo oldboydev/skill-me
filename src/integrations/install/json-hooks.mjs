@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { CliUsageError } from "../../doctor/cli-args.mjs";
-import { projectConfig } from "../../doctor/config-projection.mjs";
+import { ONE_MIB_BYTES, projectConfig } from "../../doctor/config-projection.mjs";
 
 export const CLAUDE_EVENTS = Object.freeze([
   "PreToolUse",
@@ -120,6 +120,14 @@ export function serializeConfig(doc, format) {
   return format.trailing ? body + format.newline : body;
 }
 
+// Texto que será gravado precisa continuar legível pelo próprio instalador
+// (mesmo teto, em bytes UTF-8, de `readBoundedText`/`projectConfig`); acima
+// dele, a operação é recusada antes de qualquer escrita, inclusive na prévia.
+function administrableText(text, file) {
+  if (Buffer.byteLength(text, "utf8") > ONE_MIB_BYTES) throw new InvalidConfigError("output_too_large", file);
+  return text;
+}
+
 // Leitura validada: o projetor do doctor decide a forma nativa (JSON válido,
 // envelope do hooks.json do Codex, forma de `hooks`); por cima, a raiz precisa
 // ser objeto e `hooks`, se presente, objeto — nunca substituídos por default.
@@ -194,7 +202,7 @@ export function planJsonInstall({ agent, parsed, manifest, ctx }) {
     changes,
     conflicts,
     configChanged,
-    newText: configChanged ? serializeConfig(doc, parsed?.format ?? DEFAULT_FORMAT) : null,
+    newText: configChanged ? administrableText(serializeConfig(doc, parsed?.format ?? DEFAULT_FORMAT), file) : null,
     manifestBody: { file, entries, created },
   };
 }
@@ -249,7 +257,7 @@ export function planJsonUninstall({ agent, parsed, manifest, ctx }) {
     conflicts,
     configChanged,
     deleteFile,
-    newText: configChanged && !deleteFile ? serializeConfig(doc, parsed.format) : null,
+    newText: configChanged && !deleteFile ? administrableText(serializeConfig(doc, parsed.format), file) : null,
     remaining,
   };
 }
