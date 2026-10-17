@@ -425,3 +425,17 @@ agora estão autorizadas, sem apagar relatórios nem enfraquecer Checks. O teto
 formal exclusivo da #4 foi registrado como 10 (máximo do motor), sem mudar o
 core ou o limite de outras issues. Merge autorizado após verificações aprovadas;
 nova sessão somente depois da conclusão confirmada da #4.
+
+### Fechamento da verificação independente round 4 — 17/10/2026
+
+PASS 48/48 em `2830d7f9effa8b292818d602e924254b16985d79`, conforme relatório
+completo em `.checks/issue-4-integracoes.verified.md`. A reprodução independente
+do achado da rodada 3 agora preserva fonte, bytecode, `kwargs.json` e registro,
+sem `remove_cache`; C34f/g também provam diretório vazio e troca durante apply.
+Lote único por plataforma: 86 testes, Windows 84 pass/2 skips e WSL 78 pass/8
+skips, nenhuma falha e exit 0 em ambos. Inclui as 70 provas de
+integração/governança e 16 do motor pelo ajuste de configuração autorizado.
+Original limpo e sem escrita pelo Verifier nesta rodada; relatório traz
+asserções localizadas, origem dos julgamentos carregados e limites reais.
+Histórico FAIL preservado no Git e nos scratches. A revisão formal seguinte
+continua obrigatória; este fechamento não declara o PR pronto antes dela.
