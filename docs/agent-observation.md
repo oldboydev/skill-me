@@ -136,5 +136,8 @@ simulação de caminho.
   diretórios reais (janela não atômica, como na escrita da configuração). Ponto de
   montagem de volume (Windows) ou bind mount (POSIX) aparece como diretório real e
   não é distinguido; criá-lo exige privilégio.
+- Diretórios que a instalação criou (`plugins` do Hermes, `.skill-me` dos três
+  agentes) saem na remoção só quando vazios e ainda diretórios reais: se o usuário
+  os trocou por junção/link, a remoção conclui o que é nosso e o link fica.
 - Os comandos instalados apontam para o node e para este checkout por caminho
   absoluto: mover o repositório exige reinstalar.

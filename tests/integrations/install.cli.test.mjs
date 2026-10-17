@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
@@ -896,4 +896,78 @@ test("I4-C34b Hermes: pasta própria trocada por junção/link ou arquivo não �
   assert.deepEqual(cleaned.report.changes.filter((c) => c.action === "remove_cache").map((c) => c.file), ["plugins/skill-me-observer/__pycache__/__init__.cpython-311.pyc"]);
   assert.deepEqual(snapshotTree(control, { withMtime: false }), controlBefore, "árvore volta à anterior");
   assert.deepEqual(snapshotTree(controlOther), controlOtherBefore, "outro plugin intacto, inclusive mtime");
+});
+
+function linkPointsTo(link, target) {
+  try {
+    return lstatSync(link).isSymbolicLink() && realpathSync(link) === realpathSync(target);
+  } catch {
+    return false;
+  }
+}
+
+test("I4-C34d diretório criado pela instalação e trocado depois por junção/link do usuário fica na limpeza", () => {
+  // Controle: sem troca, `plugins` e `.skill-me` reais criados pela instalação
+  // saem na remoção e a árvore volta à anterior.
+  const fresh = path.join(scratch("container-real"), "hermes home");
+  mkdirSync(fresh);
+  writeFileSync(path.join(fresh, "config.yaml"), HERMES_CONFIG_YAML);
+  const freshBefore = snapshotTree(fresh, { withMtime: false });
+  assert.equal(cli(["install", "--agent", "hermes", "--target", fresh, "--apply"]).status, 0);
+  assert.equal(json(path.join(fresh, ".skill-me", "hermes-install.json")).created.pluginsDir, true);
+  const freshRemoved = cli(["uninstall", "--agent", "hermes", "--target", fresh, "--apply"]);
+  assert.equal(freshRemoved.status, 0, freshRemoved.stdout);
+  assert.deepEqual(snapshotTree(fresh, { withMtime: false }), freshBefore, "plugins e .skill-me criados pela instalação saem");
+
+  // Depois da instalação o usuário move o diretório criado por ela (`plugins` do
+  // Hermes; `.skill-me`, comum aos agentes) para outro lugar do alvo e põe no
+  // lugar uma junção (Windows) / symlink (POSIX). A remoção conclui o que é
+  // nosso; o destino fica vazio e o link do usuário continua.
+  const scenarios = [
+    { label: "Hermes: plugins → plugin-store", agent: "hermes", moved: "plugins", store: "plugin-store", target: () => {
+      const home = path.join(scratch("container-link"), "hermes home");
+      mkdirSync(home);
+      writeFileSync(path.join(home, "config.yaml"), HERMES_CONFIG_YAML);
+      return home;
+    } },
+    { label: "Claude: .skill-me → state-store", agent: "claude", moved: ".skill-me", store: "state-store", target: () => claudeTarget("state-link") },
+  ];
+  const observed = [];
+  const expected = [];
+  for (const scenario of scenarios) {
+    const target = scenario.target();
+    assert.equal(cli(["install", "--agent", scenario.agent, "--target", target, "--apply"]).status, 0, scenario.label);
+    const moved = path.join(target, scenario.moved);
+    const store = path.join(target, scenario.store);
+    renameSync(moved, store);
+    symlinkSync(store, moved, "junction");
+    const { status, report } = cli(["uninstall", "--agent", scenario.agent, "--target", target, "--apply"]);
+    observed.push({
+      label: scenario.label,
+      result: `${status} ${report.status} conflicts=${report.conflicts.map(conflictText).join(",")}`,
+      changes: report.changes.map((c) => `${c.action}${c.event ? `:${c.event}` : ""}:${c.file}`).sort(),
+      storeLeftEmpty: existsSync(store) && lstatSync(store).isDirectory() && readdirSync(store).length === 0,
+      linkKept: linkPointsTo(moved, store),
+    });
+  }
+  expected.push({
+    label: "Hermes: plugins → plugin-store",
+    result: "0 applied conflicts=",
+    changes: ["delete_manifest:.skill-me/hermes-install.json", ...HERMES_ARTIFACTS.map((file) => `remove_artifact:${file}`)].sort(),
+    storeLeftEmpty: true,
+    linkKept: true,
+  });
+  expected.push({
+    label: "Claude: .skill-me → state-store",
+    result: "0 applied conflicts=",
+    changes: [
+      "delete_manifest:.skill-me/claude-install.json",
+      ...CLAUDE_EVENTS.map((event) => `remove_group:${event}:settings.json`),
+      // PreToolUse já existia no arquivo do usuário; as demais chaves foram criadas pela instalação.
+      ...CLAUDE_EVENTS.filter((event) => event !== "PreToolUse").map((event) => `remove_event_key:${event}:settings.json`),
+    ].sort(),
+    storeLeftEmpty: true,
+    linkKept: true,
+  });
+  assert.deepEqual(observed, expected);
 });

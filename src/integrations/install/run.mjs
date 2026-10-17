@@ -82,9 +82,12 @@ async function clearStaleTemp(io, tmp) {
   await io.unlink(tmp);
 }
 
+// Só diretório real: um link posto pelo usuário no lugar de um diretório que a
+// instalação criou (`plugins`, `.skill-me`) fica — no Windows `rmdir` numa
+// junção a remove quando o destino está vazio.
 async function removeDirIfEmpty(io, dir) {
   try {
-    if ((await io.readdir(dir)).length === 0) await io.rmdir(dir);
+    if ((await io.lstat(dir)).isDirectory() && (await io.readdir(dir)).length === 0) await io.rmdir(dir);
   } catch {
     // Diretório já ausente ou ocupado: nada a remover.
   }
