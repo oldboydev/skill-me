@@ -112,17 +112,34 @@ async function withLock(io, root, agent, fn) {
   }
 }
 
+const sameAccess = (a, b) => a.mode === b.mode && a.uid === b.uid && a.gid === b.gid;
+
+// Modo/dono/grupo do arquivo a substituir (POSIX); sumiu depois da leitura →
+// conflito, como a mudança de conteúdo.
+async function accessBeforeReplace(io, root, file) {
+  try {
+    return await io.accessOf(file);
+  } catch (error) {
+    if (error.code === "ENOENT") throw new ConflictError("config_changed_during_apply", rel(root, file));
+    throw error;
+  }
+}
+
 // Troca o arquivo só se o conteúdo atual ainda for o que foi lido sob o lock.
+// O temporário herda o acesso do original sem nunca ampliá-lo (ver io.mjs);
+// uma mudança de modo/dono/grupo durante a aplicação também é conflito.
 // Limite registrado no plano: entre esta última comparação e o rename não há
 // atomicidade contra editores arbitrários (o sistema de arquivos não tem CAS).
 async function replaceChecked(io, root, file, text, expectedHash) {
   const tmp = file + TMP_SUFFIX;
+  const like = expectedHash === null ? null : await accessBeforeReplace(io, root, file);
   await clearStaleTemp(io, tmp);
-  await io.writeExclusive(tmp, text);
+  await io.writeExclusive(tmp, text, { like });
   try {
     const current = await readOptional(io, root, file);
     const currentHash = current === null ? null : sha256(Buffer.from(current, "utf8"));
     if (currentHash !== expectedHash) throw new ConflictError("config_changed_during_apply", rel(root, file));
+    if (like !== null && !sameAccess(await io.accessOf(file), like)) throw new ConflictError("config_changed_during_apply", rel(root, file));
     await io.rename(tmp, file);
   } catch (error) {
     await io.unlink(tmp).catch(() => {});

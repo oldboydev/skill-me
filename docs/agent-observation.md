@@ -62,6 +62,13 @@ próprios.
 O wrapper devolve o código do Codex; sinal do Codex é reemitido (POSIX); falha ao
 iniciar sai 127 (não encontrado) ou 126.
 
+Reescrita de `settings.json`/`hooks.json` no POSIX: o arquivo novo mantém os bits de
+modo e o grupo do original e nunca concede mais acesso do que ele — o temporário nasce
+só com os bits de dono e recebe grupo e modo antes do conteúdo; se o grupo original não
+puder ser atribuído, o grupo recebe no máximo o que "outros" recebiam. O dono passa a
+ser quem executa o comando; ACL (POSIX ou Windows), atributos estendidos e bits
+especiais não são preservados nem detectados. No Windows nada disso é aplicado.
+
 ### Confiança continua manual
 
 | Agente | Passo manual |

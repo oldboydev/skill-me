@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
+import { replacementMode } from "../../src/integrations/install/io.mjs";
 import { createNodeIo, runIntegrationCommand } from "../../src/integrations/install/run.mjs";
 import { makeScratch } from "./helpers/cli.mjs";
 
@@ -68,4 +69,33 @@ test("I4-C33b falha ao gravar o registro depois da configuração não é declar
   assert.equal(Object.keys(written.hooks).length, 9, "Stop de terceiro + 8 eventos próprios");
   assert.equal(existsSync(path.join(dir, ".skill-me", "claude-install.json")), false);
   assert.equal(existsSync(path.join(dir, ".skill-me", "claude.lock")), false, "lock liberado mesmo com falha");
+});
+
+test("I4-C25c regra pura: o arquivo que substitui a configuração nunca recebe bit que o original não tinha", () => {
+  // Mesmo grupo do original: bits idênticos. Grupo diferente que não pôde ser
+  // igualado: o grupo novo recebe no máximo o que "outros" já recebiam.
+  const table = [
+    [0o600, true, 0o600],
+    [0o640, true, 0o640],
+    [0o660, true, 0o660],
+    [0o644, true, 0o644],
+    [0o640, false, 0o600],
+    [0o660, false, 0o600],
+    [0o644, false, 0o644],
+    [0o664, false, 0o644],
+    [0o674, false, 0o644],
+    [0o604, false, 0o604],
+    [0o751, false, 0o711],
+    [0o777, false, 0o777],
+  ];
+  for (const [mode, sameGroup, expected] of table) {
+    assert.equal(replacementMode({ mode }, sameGroup), expected, `0${mode.toString(8)} sameGroup=${sameGroup}`);
+  }
+  for (let mode = 0; mode <= 0o777; mode += 1) {
+    assert.equal(replacementMode({ mode }, true), mode);
+    const regrouped = replacementMode({ mode }, false);
+    assert.equal(regrouped & ~mode, 0, `0${mode.toString(8)}: nenhum bit novo`);
+    assert.equal(regrouped & 0o707, mode & 0o707, `0${mode.toString(8)}: dono e outros intactos`);
+    assert.equal((regrouped >> 3) & 0o7 & ~(mode & 0o7), 0, `0${mode.toString(8)}: grupo novo não excede outros`);
+  }
 });

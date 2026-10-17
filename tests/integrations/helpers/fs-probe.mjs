@@ -1,0 +1,63 @@
+// Pré-carga só de teste (`node --import <este arquivo> cli.mjs …`): observa o
+// temporário da reescrita de configuração (`*.skill-me-tmp`) nos instantes em
+// que um terceiro poderia abri-lo — logo após a criação, imediatamente antes e
+// depois da escrita do conteúdo e imediatamente antes do rename. Registra só
+// modo, dono, grupo, tamanho e se o canário sintético está no arquivo, em
+// JSONL no caminho de SKILL_ME_TEST_FS_PROBE_LOG; nunca o conteúdo. O produto
+// não lê essas variáveis: o instrumento envolve `open`/`rename` de
+// node:fs/promises e publica os wrappers nos imports ESM com
+// `syncBuiltinESMExports`. Com SKILL_ME_TEST_FS_PROBE_FAIL_CHOWN=1, `chown`
+// no handle do temporário falha com EPERM, como para um grupo do qual o
+// usuário não é membro.
+import { appendFileSync, lstatSync, readFileSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
+import path from "node:path";
+
+const require = createRequire(import.meta.url);
+const fsp = require("node:fs/promises");
+const log = process.env.SKILL_ME_TEST_FS_PROBE_LOG;
+const canary = process.env.SKILL_ME_TEST_FS_PROBE_CANARY ?? "";
+const failChown = process.env.SKILL_ME_TEST_FS_PROBE_FAIL_CHOWN === "1";
+const isTemp = (file) => typeof file === "string" && file.endsWith(".skill-me-tmp");
+
+function record(moment, file) {
+  const stats = lstatSync(file);
+  const entry = { moment, file: path.basename(file), mode: stats.mode & 0o7777, uid: stats.uid, gid: stats.gid, size: stats.size };
+  if (canary !== "" && stats.isFile()) entry.containsCanary = readFileSync(file).includes(canary);
+  appendFileSync(log, JSON.stringify(entry) + "\n");
+}
+
+if (log) {
+  const realOpen = fsp.open;
+  const realRename = fsp.rename;
+  fsp.open = async function probedOpen(file, flags, mode) {
+    const handle = await realOpen(file, flags, mode);
+    if (!isTemp(file) || typeof flags !== "string" || !flags.includes("x")) return handle;
+    record("created", file);
+    return new Proxy(handle, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (typeof value !== "function") return value;
+        if (property === "chown" && failChown) {
+          return async () => {
+            throw Object.assign(new Error("EPERM injetado pelo teste"), { code: "EPERM" });
+          };
+        }
+        if (property === "writeFile" || property === "write") {
+          return async (...args) => {
+            record("before_content", file);
+            const result = await value.apply(target, args);
+            record("after_content", file);
+            return result;
+          };
+        }
+        return value.bind(target);
+      },
+    });
+  };
+  fsp.rename = async function probedRename(from, to) {
+    if (isTemp(from)) record("before_rename", from);
+    return realRename(from, to);
+  };
+  syncBuiltinESMExports();
+}
