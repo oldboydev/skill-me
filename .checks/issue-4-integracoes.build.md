@@ -1947,3 +1947,220 @@ TAPs registram códigos, conflitos, passos, tipos, rótulos de conteúdo reconhe
 nunca conteúdo de configuração. Nenhuma instalação em perfil pessoal; nenhum diretório gerenciado real
 acessado; todos os `--target` em temporários; nenhum agente, modelo, download ou E2E; nenhum
 bypass/confiança concedido; nenhum subagente; nenhuma operação recusada pela plataforma nesta rodada.
+
+## Correção da verificação independente round 8 — acesso do temporário conferido antes da gravação (17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega. Partida em `006bd5d` (só o relatório
+independente 8 e o Handoff desde `ef341c6`; produto e testes = `e570541`, `git diff --quiet e570541
+006bd5d -- src tests docs scripts package.json package-lock.json` verdadeiro), checkout limpo, HEAD do
+despacho conferido; SHA-256 do relatório rastreado e da cópia ignorada `verifier-round8-report.md`
+iguais (`8a9cfb5f…5110b5b9`, 125567 bytes); `.verified.md` não foi alterado. Esta seção é evidência do
+autor, **não é verificação independente** nem revisão formal: nenhum `review:run`/`review:check`/
+`pr:create`/push/PR/merge/Verifier foi executado; contadores, override, estado do motor (3 de 10
+tentativas formais) e histórico não foram tocados; scratches de Verifiers e recovery não foram lidos nem
+mexidos. A sonda adicional interrompida na rodada 6 (`verifier-residual-probe.mjs`) **não** foi
+executada, recriada nem substituída, e não houve sonda ad hoc: a prova é a regressão versionada; os
+auxiliares desta rodada (`%TEMP%\skill-me-r8\probes`, copiados da rodada 7 trocando só o prefixo para
+`skillme-r8-`) só copiam, rodam e conferem blobs e cruzam `Proof:` com TAP, sem cenário de produto
+próprio. Commits: `9a1e122` (Landing, antes do código), `b197650` (correção, regressão e guia) e o desta
+evidência. `git diff --name-only 006bd5d..b197650`: `.checks/issue-4-integracoes.md` (uma linha de
+Landing), `docs/agent-observation.md`, `src/integrations/install/{io,run}.mjs` e
+`tests/integrations/install-apply.unit.test.mjs`; nada em doctor, `scripts/`, configuração do motor,
+dependências, `AGENTS.md`, task, helpers de teste ou `.verified.md`.
+
+**Classificação.** R8-F1 é o achado bloqueante do Verifier8 (C25/C25b, AC6), estabelecido por **leitura
+estática**, sem reprodução, sonda ou execução específica pelo Verifier. Agora foi **reproduzido** pela
+regressão nova no produto intacto `006bd5d` (= `e570541`) no WSL (POSIX), só com dados sintéticos dentro
+do scratch de cada linha: o texto calculado da configuração lida `0600` (com um canário sintético no
+lugar de um segredo) foi gravado num temporário `0644` — grupo e "outros" ganhavam leitura — antes de a
+comparação recusar com 4 e apagar o temporário. Isso valeu para arquivo regular diferente `0644` contido
+no alvo e para link para documento `0644` fora do alvo, nos dois instantes anteriores à conferência
+(logo depois da leitura do registro sob o lock e imediatamente antes do `stat` do acesso), também na
+remoção do Codex. Nenhum outro usuário, `sudo`, arquivo privado real ou leitura por terceiro: a
+exposição é o estado do temporário observado pelo próprio teste. No Windows (ACL; o modo POSIX não se
+aplica) o produto antigo também gravava o conteúdo lido no temporário depois da troca, antes do
+conflito. Não é escopo novo.
+
+### Reprodução RED no produto `006bd5d` (cópias isoladas próprias)
+
+- Windows: `git -c core.autocrlf=false archive 006bd5d` (SHA-256 `c873f7ec…f1ea35e4`) extraído em
+  `%TEMP%\skill-me-r8\red-006bd5d` + `node_modules`; 61 arquivos de `src` e dos helpers de teste iguais
+  aos blobs de `006bd5d` (os mesmos de `e570541`) **sem** normalização; teste sobreposto com o blob
+  commitado em `b197650` (`832a9502…`).
+- WSL (distro `Ubuntu` explícita, 24.04.3, Node 24.13.0, ext4, `env -i` só com `PATH`): mesmo tar em
+  `/tmp/skillme-r8-red-006bd5d`, 62 blobs conferidos (os 61 + o teste).
+- Resultado nas duas: `install-apply.unit` **19 tests, 18 pass, 1 fail** — só `I4-C25f`, por diff de
+  asserção (`ERR_ASSERTION`); as 18 anteriores passam (`round8-red-tests-{windows,wsl}-006bd5d.tap`). O
+  diff toca só `requested` e `temp`: 6 linhas no WSL e 4 no Windows (as linhas de link e de modo não rodam
+  lá); as outras 7 linhas são iguais no produto antigo e no corrigido (janela residual, nova tentativa e
+  controles). RED de desenvolvimento, antes do commit, com a versão do teste anterior à troca de redação
+  do rótulo (`antes da acesso do original`): Windows no worktree (só console) e WSL
+  (`round8-red-new-wsl-006bd5d-wip.tap`), mesmas linhas divergentes.
+
+Valores observados (WSL \| Windows), contra `b197650` (iguais nas duas, salvo as colunas "ACL" no Windows):
+
+| `I4-C25f` (configuração lida `0600` com canário) | `006bd5d` | `b197650` |
+| --- | --- | --- |
+| Claude install, arquivo regular diferente `0644`, logo depois da leitura do registro sob o lock | `4 config_changed_during_apply` **depois** de gravar o temporário: acesso pedido `0644`, temporário `0644` com o canário, grupo e "outros" ganham acesso; apagado em seguida \| temporário com o canário (ACL) | `4` sem criar o temporário; substituto `0644` e configuração lida `0600` intactos |
+| idem, imediatamente antes de obter o acesso do original (`accessOf`) | igual \| igual | igual |
+| Claude install, link para documento externo `0644`, nos mesmos dois instantes | `4 target_escape settings.json` depois de gravar o temporário `0644` com o canário \| não executado (EPERM) | `4 target_escape` sem temporário; link, externo `0644` e configuração lida `0600` intactos |
+| Codex uninstall, arquivo regular diferente `0644`, antes do `accessOf` | `4` depois do temporário `0644` com o canário \| temporário com o canário | `4` sem temporário; registro (6) intacto |
+| Claude install sem configuração, arquivo do usuário posto logo depois da leitura do registro | `4` depois de criar e apagar o temporário com o texto próprio (sem canário) \| igual | `4` sem temporário (mudança colateral, abaixo) |
+| janela residual: troca (arquivo regular; link só no WSL) imediatamente antes de criar o temporário | temporário `0600` (acesso conferido) com o canário, `4`, temporário apagado, sem `rename` | igual |
+| acesso do próprio arquivo ampliado para `0644` imediatamente antes de criar o temporário | temporário `0600`, `4` pela comparação de acesso | igual (só WSL) |
+| rename negado (EPERM) e arquivo trocado antes da nova tentativa | `0600` depois da gravação e antes do `rename`, `4`, 1 tentativa | igual |
+| controles: Claude install, Codex uninstall, Claude install sem configuração | `0`; `0600` nos dois instantes; arquivo final `0600` (configuração original restaurada no Codex) | igual |
+
+### Correção (`run.mjs`, `io.mjs`; linha de Landing de `9a1e122`)
+
+- `replaceChecked` (`run.mjs:359`): com a configuração lida presente, `configContained` (raiz e contenção
+  do arquivo) e só então `accessBeforeReplace` (`:363`), o acesso que o temporário recebe. `stillAsRead`
+  (`:365`) é a conferência que já vinha no `beforeRename` — raiz e contenção, releitura com o SHA-256 da
+  leitura sob o lock e modo/dono/grupo iguais ao obtido —, agora chamada **antes de criar o temporário**
+  (`:372`) e passada como `beforeRename` de `writeViaTemp` (cada tentativa, inclusive as novas por
+  `EPERM`/`EACCES`/`EBUSY`). A comparação de acesso passa a usar `accessBeforeReplace` (sumiu → 4), como a
+  primeira leitura. Configuração ausente na leitura: `like` nulo e a mesma conferência (continua
+  ausente) antes do temporário.
+- Nenhum outro efeito mudou: `writeViaTemp`, `matchAccess`/`replacementMode`, a limpeza do `catch` e o
+  registro ficam como estavam; em `io.mjs` e no comentário de `configContained` em `runJsonAgent`
+  (`:511`) só o registro de que o acesso é o conferido.
+- Guia (`docs/agent-observation.md`, parágrafo da reescrita POSIX): acesso do arquivo conferido antes de
+  criar o temporário; troca depois da leitura → 4 sem gravar; Windows com a mesma conferência.
+
+### Regressão (`tests/integrations/install-apply.unit.test.mjs`)
+
+- **`I4-C25f`** (asserção em `:2406`) — 13 linhas (6 trocas antes da conferência, 4 depois dela, 3
+  controles), pela API pública `runIntegrationCommand` com io real instrumentado (`accessSwapIo`,
+  `:2192`) que dispara a troca dentro do comando: logo depois da 2ª leitura do registro (a sob o lock),
+  imediatamente antes do 1º `accessOf` da configuração, imediatamente antes de criar o temporário ou na
+  1ª tentativa de `rename` (EPERM). O io registra o acesso pedido a `writeExclusive` (`like`) e, depois
+  da gravação real e antes de cada `rename`, modo, grupo e se o canário está no temporário; quem ganhou
+  acesso é calculado por `widenedRecipients` (helper existente) sobre o original `0600`. Afirma troca
+  ocorrida, código, `status`, `applied`, conflito exato, erros, passos, tentativas de `rename`,
+  **nenhum acesso pedido nem temporário com conteúdo nas 6 trocas antes da conferência**, temporário só
+  com `0600` e nenhum destinatário ampliado nas demais, o que fica no caminho da configuração
+  (substituto, link, arquivo do usuário, configuração com N eventos, configuração original) com o modo,
+  a configuração lida movida com bytes e `0600`, o documento externo com bytes e `0644`, temporário
+  ausente no fim, registro e lock liberado.
+- Por que o modo depois da gravação basta: `writeExclusive` cria só com os bits de dono e aplica
+  grupo/modo antes do conteúdo (os quatro instantes já provados em `I4-C25b`); nada muda o modo depois —
+  o instante observado é o mais amplo em que o temporário tem conteúdo.
+- Discriminação (por leitura, sem mutações executadas — não exigidas no `light`): conferir só a
+  contenção antes do `stat` deixaria as linhas de arquivo regular e a de link "antes do `accessOf`" com o
+  temporário `0644`; comparar o conteúdo e só depois ler o acesso deixaria as linhas "antes do
+  `accessOf`" com o acesso do substituto. As duas alternativas rejeitadas no Landing falham nesta tabela.
+- Plataformas: 13 linhas no WSL; 9 no Windows, com colunas de acesso "ACL" e `t.diagnostic` para as 3 de
+  link de arquivo (EPERM sem privilégio) e a de modo POSIX. Não há PASS de modo POSIX no Windows: lá o
+  teste afirma só código, conflito, temporário (existência e canário) e arquivos.
+- Nenhuma asserção existente mudou: o diff do arquivo troca a linha de import (acrescenta `chmodSync`) e
+  acrescenta código no fim. Nenhum helper alterado.
+
+### Mudanças colaterais de comportamento, provadas
+
+- Configuração trocada (arquivo regular, link) entre a leitura sob o lock e a conferência: antes,
+  temporário gravado com o acesso do substituto e 4 depois; agora 4 sem temporário (`I4-C25f`).
+- Configuração ausente na leitura e arquivo posto antes da conferência: antes, temporário criado com o
+  texto próprio e apagado, 4; agora 4 sem criar o temporário (`I4-C25f`).
+- Configuração removida entre a releitura e o `stat` da conferência: antes 5 (`ENOENT` no
+  `beforeRename`); agora 4 `config_changed_during_apply` (`accessBeforeReplace`). Só por leitura; não
+  testado (exige remoção exatamente entre dois syscalls).
+- Aplicação sem troca: uma conferência a mais antes do temporário — contenção (`lstat`/`realpath`/`stat`
+  da raiz, `lstat`/`realpath` do arquivo) duas vezes, uma releitura limitada da configuração e um
+  `stat` a mais; resultados dos testes anteriores iguais. A releitura nova roda sob o lock, antes de
+  criar o temporário, e não mantém o arquivo aberto durante o `rename`.
+
+### Contagens reais em `b197650`
+
+Um batch por plataforma: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs scripts/code-review/review.test.mjs`. Windows: worktree com HEAD
+`b197650` e `git diff --quiet b197650 -- src tests docs scripts package.json package-lock.json`,
+executado fora do sandbox pelos testes de timeout/taskkill do motor (só processos dos próprios testes),
+Hermes nativo pelo helper (`python -I -B`, HERMES_HOME e HOME/APPDATA/TEMP temporários, sem modelo). WSL:
+distro `Ubuntu` explícita (24.04.3), Node 24.13.0, `git -c core.autocrlf=false archive b197650` (SHA-256
+`358779f9…d883c502`) no ext4 (`/tmp/skillme-r8-batch-b197650`), 140 arquivos de `src`, `tests`,
+`scripts`, `docs`, `package.json` e `package-lock.json` iguais aos blobs sem normalização, `env -i` só com
+`PATH`; exit do próprio `wsl.exe`. Nenhum spawn lendo por `/mnt/c`.
+
+| Execução | tests | pass | fail | cancelled | skipped | todo | exit | duração |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 80 + governança 6 + motor 16 | 102 | 100 | 0 | 0 | 2 | 0 | 0 | 33 s |
+| WSL — integrações 80 + governança 6 + motor 16 | 102 | 94 | 0 | 0 | 8 | 0 | 0 | 17 s |
+
+Cruzamento das 54 linhas `Proof:` com os TAPs (`round8-proofs-vs-batch-{windows,wsl}-b197650.txt`, mesmo
+script das rodadas anteriores; cada padrão casou exatamente um teste executado, declarado no arquivo da
+prova): Windows 53 PASS + `I4-C15` SKIP; WSL 46 PASS + 8 SKIP. Fora das linhas `Proof:` (48, todos
+executados): 16 do motor, 5 de governança e 27 de integração — os 26 anteriores e o novo `I4-C25f` (+1
+em relação aos 101 de `e570541`). Skips e motivos:
+
+- Windows (2): `I4-C15` `posix-signals` e `I4-C25b` `posix-modes` (passam no WSL). Diagnósticos de link
+  de arquivo (EPERM sem privilégio): os 18 anteriores e as 3 linhas de link de `I4-C25f`; mais a linha de
+  modo de `I4-C25f` e o aviso das colunas "ACL" — tudo executado no WSL, sem diagnóstico.
+- WSL (8): `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente`: prova nativa do Hermes só no
+  Windows (executada nesse batch, 8 PASS); Linux **pendente**.
+- Medição C38: Windows 833 ms depois do filho, 65536 bytes no pipe; WSL 808 ms, 146176 bytes.
+- GREEN intermediário (antes do commit, cópia WIP): suítes de instalação, 38 testes — Windows 37 pass/1
+  skip (`posix-modes`), WSL 38/38 (`round8-green-install-suites-*-wip.tap`).
+- `I4-C29` não foi repetido em laço: no caminho concorrente só entram, sob o lock e antes do temporário,
+  uma conferência de metadado, uma releitura limitada e um `stat`; nada novo disputa o `rename`; passou
+  nos dois lotes.
+- Doctor (417) não reexecutado: nenhum arquivo do doctor, dos módulos reutilizados, de `scripts/`,
+  `code-review.config.json`, `package.json`/lock ou `AGENTS.md` mudou desde `006bd5d` (`I4-C45`, no
+  lote, confere a interface do doctor com as integrações instaladas).
+
+### Nota do coordenador (`coordinator-replace-access-order.md`) — confirmação e fechamento
+
+- **Link para fora (`accessOf` seguia o link antes de `configContained`):** confirmado e reproduzido no
+  WSL (linhas de link de `I4-C25f`: acesso pedido `0644` do externo, temporário `0644` com o canário antes
+  do `target_escape`). Nenhum preflight anterior eliminava o cenário: a contenção sob o lock vinha antes
+  da leitura, e a guarda da raiz em `writeViaTemp` não olha o arquivo. A última validação relevante antes
+  da gravação era só essa guarda da raiz; apagar depois não atende C25b. Fechado em `b197650`.
+- **Variante do arquivo REGULAR (contenção passa; hash comparado só depois da escrita):** confirmada e
+  reproduzida (linhas de arquivo regular, inclusive Codex); fechada pela conferência antes do temporário.
+- **`stat` isolado:** continua possível só entre a conferência de contenção e o `stat` do acesso (link
+  posto nesse intervalo) — só metadado, recusado pela conferência seguinte, sem gravação; registrado
+  como limite, sem política nova de permissões nem privacidade da #5. Nota encerrada.
+
+### Examinado e não alterado (limites e resíduos)
+
+- Janela não atômica entre a última conferência e a criação do temporário/o `rename`: uma troca nesse
+  intervalo encontra o temporário com o acesso conferido — nunca o do substituto — e é recusada antes do
+  `rename` (linhas de janela residual e de nova tentativa de `I4-C25f`). Duas trocas exatas entre os
+  syscalls das conferências (substituto no `stat`, original na releitura, substituto de novo no `stat`
+  seguinte) não se distinguem sem CAS/inode.
+- `stat` do acesso segue um link posto entre a conferência de contenção e ele: metadado de fora do alvo,
+  sem gravação; a conferência seguinte recusa com `target_escape`.
+- Acesso mudado pelo dono no próprio arquivo entre a leitura sob o lock e o `stat`: é o acesso do
+  documento substituído e o temporário o recebe (não amplia sobre ele); depois do `stat`, 4 (linha de
+  acesso ampliado de `I4-C25f`). Registrado no Landing (alternativa "guardar o acesso na leitura sob o
+  lock" rejeitada); sem linha dedicada para o intervalo anterior.
+- Configuração removida entre a releitura e o `stat`: agora 4, só por leitura.
+- Windows: o temporário recebe a ACL herdada do diretório (limite já declarado); a ordem nova só evita
+  gravar o conteúdo lido depois de uma troca.
+- Limites anteriores inalterados: link inicial contido vira arquivo regular; bytes idênticos; outro
+  diretório real no mesmo caminho; prévia sem reconferência entre as próprias leituras; `stat` no `catch`
+  do staging; passos parciais de `artifacts`; raiz trocada por arquivo; `mkdir` do staging com `EEXIST`;
+  Hermes nativo só no Windows (Linux pendente); macOS só pela CI; E2E real pendente.
+
+### Sobras próprias desta rodada (preservadas)
+
+Nenhum `rm` nem limpeza opaca. Windows `%TEMP%\skill-me-r8\`: `probes/` (`wsl-copy.sh`, `wsl-run.sh`,
+`verify-blobs.sh`, `proofs-vs-batch.mjs` e listas de blobs), `red-006bd5d/` (cópia RED),
+`006bd5d-lf.tar`, `9a1e122-lf.tar`, `b197650-lf.tar`, `blobs-006bd5d-src-helpers.{raw,txt}`, `results/`
+e o rascunho desta seção. WSL `/tmp`: `skillme-r8-{wip-red,wip-green,red-006bd5d,batch-b197650,probes}`.
+Scratches dos testes: removidos pelo `after()` existente (só diretórios de `makeScratch`, caminho
+absoluto sob o TEMP; os links criados apontam para dentro do próprio scratch da linha); nenhum
+`skill-me i4 r8 …` restou nas duas plataformas. Os scratches `skill-me i4 failure-*`/`lstat-check`
+anteriores a esta rodada continuam no TEMP do Windows, não tocados. Cópias locais (ignoradas) em
+`.checks/code-review/issue-4/round8-*`. Scratches de Verifiers, recovery e histórico formal não foram
+tocados.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token, credencial ou valor de ambiente impresso. Canário e documentos sintéticos;
+os TAPs registram códigos, conflitos, passos, modos, rótulos de conteúdo reconhecido, se o canário está
+no temporário (booleano) e caminhos sintéticos, nunca conteúdo de configuração (o canário não aparece em
+nenhum TAP desta rodada). Nenhum outro usuário, `sudo`, arquivo privado real ou perfil pessoal; nenhum
+diretório gerenciado real acessado; todos os `--target` em temporários; nenhum agente, modelo, download
+ou E2E; nenhum bypass/confiança concedido; nenhum subagente; nenhuma operação recusada pela plataforma
+nesta rodada (o batch do Windows rodou fora do sandbox, como nas rodadas anteriores, pela capacidade de
+`taskkill` dos próprios testes do motor).

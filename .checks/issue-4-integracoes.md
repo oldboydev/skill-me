@@ -748,3 +748,40 @@ depois, nova verificação independente. A revisão formal 4 aguarda PASS e comm
 Três tentativas formais de dez consumidas; critérios e histórico preservados. A autorização
 do proprietário para as rodadas necessárias, merge da #4 após aprovação e uma nova
 sessão depois da conclusão permanece vigente após “pc desligou pode continar”.
+
+Correção da verificação independente round 8 (17/10/2026):
+
+- **Fronteira:** R8-F1 fechado em `b197650`, com a linha de Landing antes do código em `9a1e122`;
+  **reproduzido** (não só lido) pela regressão nova `I4-C25f` no produto intacto `006bd5d` (= `e570541`)
+  em cópias isoladas (Windows e WSL: `install-apply.unit` 19 tests, 18 pass, 1 fail — só `I4-C25f`, por
+  diff de asserção) e GREEN nos dois lotes de 102 testes em `b197650` (Windows 100 pass/2 skips, WSL 94
+  pass/8 skips, exit 0; 54 linhas `Proof:` casadas). WSL: o texto calculado da configuração lida `0600`
+  (canário sintético) ia para um temporário `0644` — grupo e "outros" ganhavam acesso — antes do
+  conflito, com arquivo regular diferente contido no alvo e com link para documento externo, também na
+  remoção do Codex; Windows: o conteúdo lido era gravado no temporário depois da troca (ACL; o modo
+  POSIX não se aplica). Agora a conferência — contenção, SHA-256 da leitura sob o lock e o modo/dono/grupo
+  obtidos — vem antes de criar o temporário e antes de cada tentativa de `rename`: troca antes dela → 4
+  sem temporário; depois dela, o temporário tem o acesso conferido e é recusado antes do `rename`.
+  Checks inalterados; Landing +1 linha; regressão `I4-C25f` (13 linhas; 3 de link e 1 de modo só no WSL,
+  com diagnóstico no Windows); nenhuma asserção existente mudou; guia +1 frase. Evidência em
+  `.checks/issue-4-integracoes.build.md`, "Correção da verificação independente round 8". Nenhuma
+  verificação independente nem revisão formal pedida ou executada; contadores e histórico intactos; a
+  sonda bloqueada da rodada 6 não foi executada nem substituída e não houve sonda ad hoc; estas provas
+  são do autor e não aprovam a entrega.
+- **Nota do coordenador (`coordinator-replace-access-order.md`):** link para fora e variante do arquivo
+  regular — confirmados por execução e fechados; `stat` isolado entre a contenção e o `stat` do acesso —
+  mantido como limite (só metadado, sem gravação). Nota encerrada.
+- **Decidido durante o build:** nada novo do proprietário. Acesso lido depois da contenção e confirmado
+  pela mesma conferência do `rename` antes de criar o temporário; o acesso aplicado é o do documento
+  substituído no instante da conferência (mudança do dono no próprio arquivo antes do `stat` é adotada;
+  depois, 4) — tudo na linha de Landing de `9a1e122`.
+- **Abandonado:** só a contenção antes do acesso; comparar o conteúdo e ler o acesso depois, sem
+  reconferir; guardar o acesso na leitura sob o lock; gravar só com os bits de dono e aplicar grupo/modo
+  antes do `rename`; conteúdo e metadado pelo mesmo handle (inode); CAS.
+- **Limites registrados, não corrigidos (fora do achado):** janela entre a última conferência e a
+  criação/o `rename` (temporário com o acesso conferido, recusado antes do `rename`); duas trocas exatas
+  entre os syscalls das conferências; `stat` do acesso através de link posto logo depois da contenção
+  (metadado); configuração removida entre a releitura e o `stat` passa de 5 a 4 (só por leitura); os
+  demais já registrados.
+- **Próxima ação (orquestrador):** verificação independente 9 pelos testes versionados e leitura
+  permitida; revisão formal 4 só depois de PASS e relatório commitado.
