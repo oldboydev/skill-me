@@ -1046,3 +1046,197 @@ test("I4-C34d diretório criado pela instalação e trocado depois por junção/
   });
   assert.deepEqual(observed, expected);
 });
+
+// Registro parcial: depois de uma remoção com conflito o registro guarda só o
+// que ficou. O que a remoção já tirou deixa de ser comprovadamente nosso.
+const OWN_DIR = "plugins/skill-me-observer";
+const OWN_BYTECODE = `${OWN_DIR}/__pycache__/__init__.cpython-311.pyc`;
+const HERMES_MANIFEST = ".skill-me/hermes-install.json";
+function describeHermesRun(home, [command, ...flags]) {
+  const { status, report } = cli([command, "--agent", "hermes", "--target", home, ...flags]);
+  const changes = report.changes.map((c) => `${c.action}:${c.file}`).join(",");
+  return `${[command, ...flags].join(" ")} → ${status} ${report.status} applied=${report.applied} changes=[${changes}] conflicts=${report.conflicts.map(conflictText).join(",")}`;
+}
+// Instala, edita só `kwargs.json` e remove: sai 4 com o registro só desse arquivo.
+function partialHermesRegistry(label) {
+  const home = hermesTarget(label);
+  const initial = snapshotTree(home, { withMtime: false });
+  assert.equal(cli(["install", "--agent", "hermes", "--target", home, "--apply"]).status, 0, label);
+  const plugin = path.join(home, ...OWN_DIR.split("/"));
+  const kwargs = path.join(plugin, "kwargs.json");
+  const installedKwargs = readFileSync(kwargs);
+  writeFileSync(kwargs, Buffer.concat([installedKwargs, Buffer.from("\n")]));
+  assert.equal(
+    describeHermesRun(home, ["uninstall", "--apply"]),
+    `uninstall --apply → 4 conflict applied=true changes=[remove_artifact:${OWN_DIR}/__init__.py,remove_artifact:${OWN_DIR}/plugin.yaml,write_manifest:${HERMES_MANIFEST}] conflicts=owned_entry_modified:${OWN_DIR}/kwargs.json`,
+    label,
+  );
+  assert.deepEqual(json(path.join(home, ...HERMES_MANIFEST.split("/"))).artifacts.map((a) => a.path), [`${OWN_DIR}/kwargs.json`], label);
+  return { home, initial, plugin, kwargs, installedKwargs };
+}
+function writeHermesBytecode(plugin, text) {
+  mkdirSync(path.join(plugin, "__pycache__"));
+  const bytecode = path.join(plugin, "__pycache__", "__init__.cpython-311.pyc");
+  writeFileSync(bytecode, text);
+  return bytecode;
+}
+
+test("I4-C34f Hermes: registro parcial de remoção anterior não autoriza apagar bytecode nem registrar fonte que não são nossos", () => {
+  const observed = [];
+  const expected = [];
+  const userSource = "# fonte sintética do usuário\n";
+  const userBytecode = "bytecode sintético da fonte do usuário\n";
+
+  // `kwargs.json` continua editado e o usuário põe na pasta um `__init__.py` novo
+  // (de outra origem ou cópia exata do pacote) ou nenhum, com o bytecode ao lado:
+  // nem nome nem conteúdo fazem a fonte voltar a ser nossa. Prévia, aplicação e
+  // repetição não listam nem apagam nada; bytes, tipo e mtime ficam.
+  const sources = [
+    { label: "fonte de outra origem", write: (file) => writeFileSync(file, userSource) },
+    { label: "cópia exata da fonte do pacote", write: (file) => copyFileSync(path.join(HERMES_PLUGIN_SOURCE, "__init__.py"), file) },
+    { label: "sem fonte", write: null },
+  ];
+  const repeated = [["uninstall"], ["uninstall", "--apply"], ["uninstall", "--apply"]];
+  for (const [index, source] of sources.entries()) {
+    const { home, plugin } = partialHermesRegistry(`partial-edited-${index}`);
+    if (source.write) source.write(path.join(plugin, "__init__.py"));
+    const bytecode = writeHermesBytecode(plugin, userBytecode);
+    const bytecodeHash = sha256File(bytecode);
+    const before = snapshotTree(home);
+    observed.push({
+      label: source.label,
+      results: repeated.map((args) => describeHermesRun(home, args)),
+      bytecode: bytecodeState(bytecode, bytecodeHash),
+      targetIntact: isDeepStrictEqual(snapshotTree(home), before),
+    });
+    expected.push({
+      label: source.label,
+      results: repeated.map((args) => `${args.join(" ")} → 4 conflict applied=false changes=[] conflicts=owned_entry_modified:${OWN_DIR}/kwargs.json,foreign_files_preserved:${OWN_DIR}`),
+      bytecode: "intacto",
+      targetIntact: true,
+    });
+  }
+
+  // `kwargs.json` restaurado: a remoção tira só ele e o registro; a fonte e o
+  // bytecode do usuário ficam e a remoção reporta conflito, nunca sucesso.
+  {
+    const label = "kwargs.json restaurado, fonte e bytecode do usuário";
+    const { home, plugin, kwargs, installedKwargs } = partialHermesRegistry("partial-restored");
+    writeFileSync(kwargs, installedKwargs);
+    writeFileSync(path.join(plugin, "__init__.py"), userSource);
+    writeHermesBytecode(plugin, userBytecode);
+    const { "kwargs.json": _ownKwargs, ...userFiles } = snapshotTree(plugin, { withMtime: false });
+    const removal = `changes=[remove_artifact:${OWN_DIR}/kwargs.json,delete_manifest:${HERMES_MANIFEST}] conflicts=foreign_files_preserved:${OWN_DIR}`;
+    observed.push({
+      label,
+      results: repeated.map((args) => describeHermesRun(home, args)),
+      pluginLeft: snapshotTree(plugin, { withMtime: false }),
+      manifest: existsSync(path.join(home, ...HERMES_MANIFEST.split("/"))),
+    });
+    expected.push({
+      label,
+      results: [
+        `uninstall → 4 conflict applied=false ${removal}`,
+        `uninstall --apply → 4 conflict applied=true ${removal}`,
+        `uninstall --apply → 4 conflict applied=false changes=[] conflicts=owned_entry_unrecorded:${OWN_DIR}`,
+      ],
+      pluginLeft: userFiles,
+      manifest: false,
+    });
+  }
+
+  // Reinstalar sobre o resíduo (fonte do usuário, `plugin.yaml` ausente): a pasta
+  // não é uma instalação nossa completa e nada é registrado. Com a fonte do
+  // usuário já fora da pasta, a remoção seguinte não toma o bytecode dela por
+  // órfão da nossa fonte.
+  {
+    const label = "reinstalação sobre o resíduo";
+    const { home, plugin, kwargs, installedKwargs } = partialHermesRegistry("partial-reinstall");
+    writeFileSync(kwargs, installedKwargs);
+    const source = path.join(plugin, "__init__.py");
+    writeFileSync(source, userSource);
+    const bytecode = writeHermesBytecode(plugin, userBytecode);
+    const bytecodeHash = sha256File(bytecode);
+    const before = snapshotTree(home);
+    const reinstall = [["install"], ["install", "--apply"]].map((args) => describeHermesRun(home, args));
+    const targetIntact = isDeepStrictEqual(snapshotTree(home), before);
+    renameSync(source, path.join(path.dirname(home), "fonte do usuário movida.py"));
+    observed.push({ label, results: [...reinstall, describeHermesRun(home, ["uninstall", "--apply"])], targetIntact, bytecode: bytecodeState(bytecode, bytecodeHash) });
+    expected.push({
+      label,
+      results: [
+        `install → 4 conflict applied=false changes=[] conflicts=foreign_artifact:${OWN_DIR}`,
+        `install --apply → 4 conflict applied=false changes=[] conflicts=foreign_artifact:${OWN_DIR}`,
+        `uninstall --apply → 4 conflict applied=true changes=[remove_artifact:${OWN_DIR}/kwargs.json,delete_manifest:${HERMES_MANIFEST}] conflicts=foreign_files_preserved:${OWN_DIR}`,
+      ],
+      targetIntact: true,
+      bytecode: "intacto",
+    });
+  }
+
+  // Controles. Reinstalar sobre o resíduo com cópias exatas do pacote adota e
+  // registra os três artefatos; a remoção devolve a árvore anterior à instalação.
+  {
+    const label = "reinstalação com cópias exatas do pacote";
+    const { home, initial, plugin, kwargs, installedKwargs } = partialHermesRegistry("partial-adopt");
+    writeFileSync(kwargs, installedKwargs);
+    for (const name of ["__init__.py", "plugin.yaml"]) copyFileSync(path.join(HERMES_PLUGIN_SOURCE, name), path.join(plugin, name));
+    const reinstall = describeHermesRun(home, ["install", "--apply"]);
+    const recorded = json(path.join(home, ...HERMES_MANIFEST.split("/"))).artifacts.map((a) => a.path).sort();
+    observed.push({ label, results: [reinstall, describeHermesRun(home, ["uninstall", "--apply"])], recorded, treeRestored: isDeepStrictEqual(snapshotTree(home, { withMtime: false }), initial) });
+    expected.push({
+      label,
+      results: [
+        `install --apply → 0 applied applied=true changes=[adopt_artifact:${OWN_DIR}/__init__.py,adopt_artifact:${OWN_DIR}/plugin.yaml,write_manifest:${HERMES_MANIFEST}] conflicts=`,
+        `uninstall --apply → 0 applied applied=true changes=[${HERMES_ARTIFACTS.map((file) => `remove_artifact:${file}`).join(",")},delete_manifest:${HERMES_MANIFEST}] conflicts=`,
+      ],
+      recorded: HERMES_ARTIFACTS,
+      treeRestored: true,
+    });
+  }
+
+  // Registro parcial que ainda guarda a fonte: o `__init__.py` editado ficou na
+  // primeira remoção e voltou aos bytes instalados; ele e o bytecode próprio saem.
+  {
+    const label = "registro parcial que ainda guarda a fonte";
+    const home = hermesTarget("partial-source-recorded");
+    const initial = snapshotTree(home, { withMtime: false });
+    assert.equal(cli(["install", "--agent", "hermes", "--target", home, "--apply"]).status, 0, label);
+    const plugin = path.join(home, ...OWN_DIR.split("/"));
+    const init = path.join(plugin, "__init__.py");
+    const installedInit = readFileSync(init);
+    writeFileSync(init, Buffer.concat([installedInit, Buffer.from("# edição do usuário\n")]));
+    const first = describeHermesRun(home, ["uninstall", "--apply"]);
+    writeFileSync(init, installedInit);
+    writeHermesBytecode(plugin, "bytecode sintético próprio\n");
+    observed.push({ label, results: [first, describeHermesRun(home, ["uninstall", "--apply"])], treeRestored: isDeepStrictEqual(snapshotTree(home, { withMtime: false }), initial) });
+    expected.push({
+      label,
+      results: [
+        `uninstall --apply → 4 conflict applied=true changes=[remove_artifact:${OWN_DIR}/kwargs.json,remove_artifact:${OWN_DIR}/plugin.yaml,write_manifest:${HERMES_MANIFEST}] conflicts=owned_entry_modified:${OWN_DIR}/__init__.py`,
+        `uninstall --apply → 0 applied applied=true changes=[remove_artifact:${OWN_DIR}/__init__.py,remove_cache:${OWN_BYTECODE},delete_manifest:${HERMES_MANIFEST}] conflicts=`,
+      ],
+      treeRestored: true,
+    });
+  }
+
+  // Fonte registrada já ausente: o bytecode ao lado é órfão da nossa fonte e sai.
+  {
+    const label = "fonte registrada já ausente (bytecode órfão da nossa fonte)";
+    const home = hermesTarget("partial-orphan");
+    const initial = snapshotTree(home, { withMtime: false });
+    assert.equal(cli(["install", "--agent", "hermes", "--target", home, "--apply"]).status, 0, label);
+    const plugin = path.join(home, ...OWN_DIR.split("/"));
+    writeHermesBytecode(plugin, "bytecode sintético próprio\n");
+    renameSync(path.join(plugin, "__init__.py"), path.join(path.dirname(home), "fonte própria movida.py"));
+    observed.push({ label, results: [describeHermesRun(home, ["uninstall", "--apply"])], treeRestored: isDeepStrictEqual(snapshotTree(home, { withMtime: false }), initial) });
+    expected.push({
+      label,
+      results: [
+        `uninstall --apply → 0 applied applied=true changes=[already_absent:${OWN_DIR}/__init__.py,remove_artifact:${OWN_DIR}/kwargs.json,remove_artifact:${OWN_DIR}/plugin.yaml,remove_cache:${OWN_BYTECODE},delete_manifest:${HERMES_MANIFEST}] conflicts=`,
+      ],
+      treeRestored: true,
+    });
+  }
+  assert.deepEqual(observed, expected);
+});

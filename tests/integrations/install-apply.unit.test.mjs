@@ -161,6 +161,73 @@ test("I4-C34c Hermes: pasta própria, __pycache__ ou artefato trocados durante a
   assert.deepEqual(observed, expected);
 });
 
+test("I4-C34g Hermes: fonte posta durante a remoção conserva o bytecode dela", async () => {
+  // Depois da leitura sob o lock — logo após a exclusão do nosso `__init__.py`
+  // ou, com a fonte registrada já ausente (bytecode órfão), do primeiro artefato —
+  // o usuário põe uma fonte nova e o bytecode dela no lugar do cache próprio.
+  // Antes de apagar o bytecode a remoção reconfere que a fonte continua ausente.
+  const userSource = "# fonte sintética nova do usuário\n";
+  const userBytecode = "bytecode sintético da fonte nova do usuário\n";
+  const variants = [
+    { label: "nossa fonte removida pela própria remoção", trigger: "__init__.py", recordedSourceAbsent: false },
+    { label: "fonte registrada já ausente", trigger: "kwargs.json", recordedSourceAbsent: true },
+  ];
+  const observed = [];
+  const expected = [];
+  for (const { label, trigger, recordedSourceAbsent } of variants) {
+    const dir = makeScratch("source-during-uninstall");
+    scratches.push(dir);
+    const home = path.join(dir, "hermes home");
+    mkdirSync(home);
+    const io = createNodeIo();
+    assert.equal((await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io })).exitCode, 0, label);
+    const own = path.join(home, "plugins", "skill-me-observer");
+    mkdirSync(path.join(own, "__pycache__"));
+    const bytecode = path.join(own, "__pycache__", "__init__.cpython-311.pyc");
+    writeFileSync(bytecode, "bytecode sintético próprio\n");
+    const source = path.join(own, "__init__.py");
+    if (recordedSourceAbsent) renameSync(source, path.join(dir, "fonte própria movida.py"));
+    const manifest = path.join(home, ".skill-me", "hermes-install.json");
+    const manifestBefore = readFileSync(manifest);
+    let raced = false;
+    const instrumented = {
+      ...io,
+      async unlink(file) {
+        await io.unlink(file);
+        if (!raced && path.basename(path.dirname(file)) === "skill-me-observer" && path.basename(file) === trigger) {
+          raced = true;
+          writeFileSync(source, userSource);
+          writeFileSync(bytecode, userBytecode);
+        }
+      },
+    };
+    const result = await runIntegrationCommand({ command: "uninstall", agent: "hermes", target: home, apply: true, io: instrumented });
+    observed.push({
+      label,
+      raced,
+      exitCode: result.exitCode,
+      status: result.status,
+      conflicts: result.conflicts,
+      source: existsSync(source) && readFileSync(source, "utf8") === userSource,
+      bytecode: existsSync(bytecode) ? (readFileSync(bytecode, "utf8") === userBytecode ? "intacto" : "alterado") : "apagado",
+      manifestKept: existsSync(manifest) && readFileSync(manifest).equals(manifestBefore),
+      lockReleased: !existsSync(path.join(home, ".skill-me", "hermes.lock")),
+    });
+    expected.push({
+      label,
+      raced: true,
+      exitCode: 4,
+      status: "conflict",
+      conflicts: [{ code: "config_changed_during_apply", file: "plugins/skill-me-observer/__init__.py" }],
+      source: true,
+      bytecode: "intacto",
+      manifestKept: true,
+      lockReleased: true,
+    });
+  }
+  assert.deepEqual(observed, expected);
+});
+
 test("I4-C25c regra pura: o arquivo que substitui a configuração não amplia o acesso de nenhum destinatário", () => {
   // Mesmo grupo do original: bits idênticos. Grupo diferente que não pôde ser
   // igualado: nenhum destinatário — só do grupo antigo, só do novo, dos dois ou

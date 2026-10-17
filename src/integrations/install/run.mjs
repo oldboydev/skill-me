@@ -398,6 +398,15 @@ function planHermes(op, state, artifacts) {
     } else if (state.manifest) {
       const modified = state.manifest.artifacts.filter((a) => state.files[path.posix.basename(a.path)] !== a.sha256);
       for (const a of modified) conflicts.push({ code: "owned_entry_modified", file: a.path });
+      // Registro parcial (remoção anterior com conflito): artefato fora dele só
+      // volta ao registro com o conteúdo exato do pacote, como na adoção sem
+      // registro. Ausente ou diferente, a pasta não é uma instalação nossa
+      // completa e nada é registrado — senão a remoção seguinte tomaria a fonte
+      // do usuário, e o bytecode dela, por nossos.
+      const recorded = state.manifest.artifacts.map((a) => path.posix.basename(a.path));
+      const unrecorded = artifacts.filter((a) => !recorded.includes(a.name));
+      if (unrecorded.some((a) => state.files[a.name] !== a.sha256)) conflicts.push({ code: "foreign_artifact", file: PLUGIN_REL_DIR });
+      else if (conflicts.length === 0) for (const a of unrecorded) changes.push({ file: a.rel, action: "adopt_artifact" });
     } else if (matches && state.foreign.length === 0) {
       for (const a of artifacts) changes.push({ file: a.rel, action: "adopt_artifact" });
     } else {
@@ -428,12 +437,22 @@ function planHermes(op, state, artifacts) {
       remaining.push(recorded);
     }
   }
-  // O bytecode acompanha a fonte: com o `__init__.py` preservado (editado,
-  // trocado por link ou de outro plugin de mesmo nome), o cache dele também fica.
+  // O bytecode acompanha a fonte e só é nosso com ela comprovada pelo registro:
+  // `__init__.py` registrado e removido agora como nosso, ou já ausente (órfão
+  // da nossa fonte). Preservado (editado, trocado por link ou de outro plugin de
+  // mesmo nome) ou fora do registro — registro parcial de uma remoção anterior,
+  // com fonte nova do usuário (até cópia exata) ou nenhuma —, o cache fica.
+  const recordedNames = state.manifest.artifacts.map((a) => path.posix.basename(a.path));
+  const sourceRecorded = recordedNames.includes("__init__.py");
   const sourcePreserved = remaining.some((a) => path.posix.basename(a.path) === "__init__.py");
-  const caches = sourcePreserved ? [] : state.caches;
+  const caches = sourceRecorded && !sourcePreserved ? state.caches : [];
   for (const cached of caches) changes.push({ file: `${PLUGIN_REL_DIR}/__pycache__/${cached}`, action: "remove_cache" });
-  if (state.foreign.length > 0) conflicts.push({ code: "foreign_files_preserved", file: PLUGIN_REL_DIR });
+  // Fora do registro, nome de artefato não comprova nada: o arquivo é alheio,
+  // como o bytecode sem fonte registrada, e fica reportado.
+  const unrecorded = Object.keys(state.files).filter((name) => !recordedNames.includes(name));
+  if (state.foreign.length > 0 || unrecorded.length > 0 || (!sourceRecorded && state.caches.length > 0)) {
+    conflicts.push({ code: "foreign_files_preserved", file: PLUGIN_REL_DIR });
+  }
   let manifestAction = null;
   if (remaining.length === 0) manifestAction = "delete";
   else if (remaining.length !== state.manifest.artifacts.length) manifestAction = "write";
@@ -500,6 +519,14 @@ async function removeHermesArtifacts(io, root, plan, state, platform) {
     await pluginDirStillOwn();
     await stillRealDir(cacheDir, cacheRel);
   };
+  // O bytecode só sai com a fonte ausente — removida acima como nossa ou já
+  // ausente na leitura. Uma fonte posta depois é de outra origem e o bytecode
+  // ao lado pode ser dela.
+  const sourceStillAbsent = async () => {
+    if ((await entryKind(io, path.join(pluginDir, "__init__.py"))) !== "absent") {
+      throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/__init__.py`);
+    }
+  };
   if (state.pluginDirExists) {
     for (const removal of plan.removals) {
       const file = path.join(pluginDir, removal.name);
@@ -513,6 +540,7 @@ async function removeHermesArtifacts(io, root, plan, state, platform) {
     for (const cached of plan.caches) {
       const file = path.join(cacheDir, cached);
       await cacheDirStillOwn();
+      await sourceStillAbsent();
       // Mesma conferência para o cache: link posto depois da leitura não é seguido.
       await assertContained(root, file, io, platform);
       if (!(await io.lstat(file)).isFile()) throw new ConflictError("config_changed_during_apply", `${cacheRel}/${cached}`);
