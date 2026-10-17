@@ -50,11 +50,15 @@ export async function resolveTarget(targetArg, io) {
   return io.realpath(path.resolve(targetArg));
 }
 
+// Novas sondagens de uma entrada que sumiu entre o lstat e o realpath.
+const VANISHED_REPROBES = 3;
+
 // Todo caminho tocado precisa resolver dentro da raiz: um link (ou junção)
 // no próprio caminho ou em qualquer ancestral que leve para fora é conflito.
 // Link pendente também é recusado — escrever nele criaria o alvo fora.
 export async function assertContained(root, candidate, io, platform = process.platform) {
   let probe = candidate;
+  let reprobes = 0;
   for (;;) {
     let stats;
     try {
@@ -71,10 +75,14 @@ export async function assertContained(root, candidate, io, platform = process.pl
       real = await io.realpath(probe);
     } catch (error) {
       if (stats.isSymbolicLink() && error.code === "ENOENT") throw new ConflictError("target_escape", path.relative(root, candidate));
+      if (error.code !== "ENOENT") throw error;
       // Entrada que sumiu entre o lstat e o realpath (ex.: temporário de outro
-      // processo do skill-me renomeado nesse intervalo): sonda o caminho de novo.
-      if (error.code === "ENOENT") continue;
-      throw error;
+      // processo do skill-me renomeado nesse intervalo): o mesmo caminho é
+      // sondado de novo, poucas vezes — oscilando além disso, nada se comprova
+      // e a operação para em conflito, sem laço sem progresso.
+      reprobes += 1;
+      if (reprobes > VANISHED_REPROBES) throw new ConflictError("config_changed_during_read", path.relative(root, candidate));
+      continue;
     }
     if (!isInside(root, real, platform)) throw new ConflictError("target_escape", path.relative(root, candidate));
     return;

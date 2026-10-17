@@ -547,32 +547,63 @@ test("I4-C29b substituição negada por handle aberto é repetida, refazendo as 
 
 // A contenção roda fora do lock: o temporário transitório de outro processo do
 // skill-me pode existir no `lstat` e já ter sido renomeado no `realpath`. A
-// entrada que sumiu é sondada de novo (agora ausente), em vez de virar falha de
-// E/S; a aplicação segue.
-test("I4-C29c entrada que some entre o lstat e o realpath da contenção é sondada de novo", async () => {
+// entrada que sumiu uma vez é sondada de novo (agora ausente), em vez de virar
+// falha de E/S; a aplicação segue. Instável em sondagens sucessivas (o `lstat`
+// sempre a encontra, o `realpath` sempre devolve ENOENT), a repetição é
+// limitada e termina em conflito sem efeito — nota do coordenador sobre o laço
+// sem progresso. O instrumento para de oscilar depois de 1000 chamadas, só
+// para que uma repetição sem limite também termine e possa ser contada.
+test("I4-C29c entrada que some entre o lstat e o realpath da contenção é sondada de novo, com limite", async () => {
+  const UNSTABLE_CAP = 1000;
   const observed = [];
+  const expected = [];
   for (const rel of ["settings.json.skill-me-tmp", ".skill-me/claude-install.json.skill-me-tmp"]) {
-    const dir = target("vanishing-temp");
-    const transient = path.join(dir, ...rel.split("/"));
-    mkdirSync(path.dirname(transient), { recursive: true });
-    writeFileSync(transient, "temporário transitório de outro processo\n");
-    const io = createNodeIo();
-    let vanished = false;
-    const instrumented = {
-      ...io,
-      async realpath(file) {
-        if (file === transient && !vanished) {
-          vanished = true;
-          rmSync(transient);
-        }
-        return io.realpath(file);
-      },
-    };
-    const result = await runIntegrationCommand({ command: "install", agent: "claude", target: dir, apply: true, io: instrumented });
-    observed.push({ rel, vanished, exitCode: result.exitCode, status: result.status, errors: result.errors, conflicts: result.conflicts, events: Object.keys(readClaudeHandlers(dir)).length });
+    for (const mode of ["some uma vez", "instável em sondagens sucessivas"]) {
+      const dir = target("vanishing-temp");
+      const transient = path.join(dir, ...rel.split("/"));
+      mkdirSync(path.dirname(transient), { recursive: true });
+      writeFileSync(transient, "temporário transitório de outro processo\n");
+      const io = createNodeIo();
+      let realpathCalls = 0;
+      const instrumented = {
+        ...io,
+        async realpath(file) {
+          if (file !== transient || !existsSync(transient)) return io.realpath(file);
+          realpathCalls += 1;
+          if (mode === "some uma vez" || realpathCalls > UNSTABLE_CAP) {
+            rmSync(transient);
+            return io.realpath(file);
+          }
+          throw Object.assign(new Error("ENOENT simulado: a entrada sumiu de novo"), { code: "ENOENT" });
+        },
+      };
+      const result = await runIntegrationCommand({ command: "install", agent: "claude", target: dir, apply: true, io: instrumented });
+      observed.push({
+        case: `${rel} — ${mode}`,
+        realpathCalls,
+        exitCode: result.exitCode,
+        status: result.status,
+        errors: result.errors,
+        conflicts: result.conflicts,
+        events: Object.keys(readClaudeHandlers(dir)).length,
+        manifest: existsSync(path.join(dir, ".skill-me", "claude-install.json")),
+      });
+      expected.push(
+        mode === "some uma vez"
+          ? { case: `${rel} — ${mode}`, realpathCalls: 1, exitCode: 0, status: "applied", errors: [], conflicts: [], events: 8, manifest: true }
+          : {
+              case: `${rel} — ${mode}`,
+              realpathCalls: 4,
+              exitCode: 4,
+              status: "conflict",
+              errors: [],
+              // Caminho relativo como no `target_escape` da mesma função (separador da plataforma).
+              conflicts: [{ code: "config_changed_during_read", file: rel.split("/").join(path.sep) }],
+              events: 0,
+              manifest: false,
+            },
+      );
+    }
   }
-  assert.deepEqual(
-    observed,
-    ["settings.json.skill-me-tmp", ".skill-me/claude-install.json.skill-me-tmp"].map((rel) => ({ rel, vanished: true, exitCode: 0, status: "applied", errors: [], conflicts: [], events: 8 })),
-  );
+  assert.deepEqual(observed, expected);
 });
