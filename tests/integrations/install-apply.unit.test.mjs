@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import path from "node:path";
 import { after, test } from "node:test";
 import { replacementMode } from "../../src/integrations/install/io.mjs";
+import { widenedRecipients } from "./helpers/posix-access.mjs";
 import { createNodeIo, runIntegrationCommand } from "../../src/integrations/install/run.mjs";
 import { makeScratch } from "./helpers/cli.mjs";
 
@@ -71,9 +72,10 @@ test("I4-C33b falha ao gravar o registro depois da configuração não é declar
   assert.equal(existsSync(path.join(dir, ".skill-me", "claude.lock")), false, "lock liberado mesmo com falha");
 });
 
-test("I4-C25c regra pura: o arquivo que substitui a configuração nunca recebe bit que o original não tinha", () => {
+test("I4-C25c regra pura: o arquivo que substitui a configuração não amplia o acesso de nenhum destinatário", () => {
   // Mesmo grupo do original: bits idênticos. Grupo diferente que não pôde ser
-  // igualado: o grupo novo recebe no máximo o que "outros" já recebiam.
+  // igualado: nenhum destinatário — só do grupo antigo, só do novo, dos dois ou
+  // de nenhum — ganha acesso (contraexemplo do coordenador: 0604).
   const table = [
     [0o600, true, 0o600],
     [0o640, true, 0o640],
@@ -84,7 +86,9 @@ test("I4-C25c regra pura: o arquivo que substitui a configuração nunca recebe 
     [0o644, false, 0o644],
     [0o664, false, 0o644],
     [0o674, false, 0o644],
-    [0o604, false, 0o604],
+    [0o604, false, 0o600],
+    [0o606, false, 0o600],
+    [0o646, false, 0o644],
     [0o751, false, 0o711],
     [0o777, false, 0o777],
   ];
@@ -94,8 +98,7 @@ test("I4-C25c regra pura: o arquivo que substitui a configuração nunca recebe 
   for (let mode = 0; mode <= 0o777; mode += 1) {
     assert.equal(replacementMode({ mode }, true), mode);
     const regrouped = replacementMode({ mode }, false);
-    assert.equal(regrouped & ~mode, 0, `0${mode.toString(8)}: nenhum bit novo`);
-    assert.equal(regrouped & 0o707, mode & 0o707, `0${mode.toString(8)}: dono e outros intactos`);
-    assert.equal((regrouped >> 3) & 0o7 & ~(mode & 0o7), 0, `0${mode.toString(8)}: grupo novo não excede outros`);
+    assert.equal(regrouped & 0o700, mode & 0o700, `0${mode.toString(8)}: dono intacto`);
+    assert.deepEqual(widenedRecipients({ mode, gid: 1 }, { mode: regrouped, gid: 2 }), [], `0${mode.toString(8)} → 0${regrouped.toString(8)}`);
   }
 });

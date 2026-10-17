@@ -5,6 +5,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { baseEnv, INTEGRATIONS_CLI, makeScratch } from "./helpers/cli.mjs";
+import { widenedRecipients } from "./helpers/posix-access.mjs";
 
 const scratches = [];
 after(() => {
@@ -59,29 +60,28 @@ function observations(log, tempName) {
     .filter((entry) => entry.file === tempName);
 }
 
-// Em nenhum instante observado o temporário concede mais que o original: nenhum
-// bit fora do modo original e, se o grupo do temporário for outro, o grupo não
-// recebe mais do que "outros" recebiam. No rename, com o conteúdo, modo e grupo
-// são os do original.
-function assertTempNeverWider(seen, original, label) {
+// Em nenhum instante observado o temporário concede a algum destinatário mais
+// do que o original concedia (modelo POSIX em helpers/posix-access.mjs, que
+// confere cada classe também quando o grupo do temporário é outro).
+function assertTempNeverWider(seen, original, label, { preserved = true } = {}) {
   assert.deepEqual(
     seen.map((o) => o.moment),
     ["created", "before_content", "after_content", "before_rename"],
     `${label}: instantes observados do temporário`,
   );
   for (const o of seen) {
-    assert.equal(o.mode & ~original.mode, 0, `${label} ${o.moment}: modo ${octal(o.mode)} amplia o original ${octal(original.mode)}`);
-    if (o.gid !== original.gid) {
-      assert.equal(((o.mode >> 3) & 0o7) & ~(original.mode & 0o7), 0, `${label} ${o.moment}: outro grupo com acesso além de "outros"`);
-    }
+    assert.deepEqual(widenedRecipients(original, o), [], `${label} ${o.moment}: ${octal(o.mode)} gid ${o.gid === original.gid ? "igual" : "outro"} sobre ${octal(original.mode)}`);
   }
   const [created, beforeContent, afterContent, beforeRename] = seen;
   assert.equal(created.size, 0, `${label}: criado vazio`);
   assert.equal(beforeContent.size, 0, `${label}: proteção antes do conteúdo`);
   assert.equal(afterContent.containsCanary, true, `${label}: o temporário contém a configuração`);
   assert.equal(beforeRename.containsCanary, true, label);
-  assert.equal(beforeRename.mode, original.mode, `${label}: modo do original antes do rename`);
-  assert.equal(beforeRename.gid, original.gid, `${label}: grupo do original antes do rename`);
+  if (preserved) {
+    // Grupo atribuível: no rename, com o conteúdo, modo e grupo são os do original.
+    assert.equal(beforeRename.mode, original.mode, `${label}: modo do original antes do rename`);
+    assert.equal(beforeRename.gid, original.gid, `${label}: grupo do original antes do rename`);
+  }
 }
 
 function assertFinal(file, original, label) {
@@ -134,25 +134,29 @@ test(
     installAndRemove("claude", 0o640, "claude 0640 grupo suplementar", supplementary);
 
     // O grupo original não pode ser atribuído (EPERM injetado no `chown` do
-    // handle): o arquivo fica com outro grupo, que não recebe mais do que
-    // "outros" recebiam (nada, em 0640) — 0600 —, em nenhum instante.
-    const target = scratch("perm-chown-eperm");
-    const file = path.join(target, CONFIG.claude.file);
-    writeFileSync(file, CONFIG.claude.text);
-    chownSync(file, process.geteuid(), supplementary);
-    chmodSync(file, 0o640);
-    const log = path.join(scratch("probe-chown-eperm"), "probe.jsonl");
-    writeFileSync(log, "");
-    const run = runUnderProbe(["install", "--agent", "claude", "--target", target, "--apply"], log, { failChown: true });
-    assert.equal(run.status, 0, JSON.stringify(run.report));
-    const seen = observations(log, "settings.json.skill-me-tmp");
-    assert.deepEqual(seen.map((o) => o.moment), ["created", "before_content", "after_content", "before_rename"]);
-    for (const o of seen) {
-      assert.notEqual(o.gid, supplementary, `${o.moment}: grupo original não atribuído`);
-      assert.equal(o.mode & ~0o600, 0, `${o.moment}: modo ${octal(o.mode)} com grupo/outros acima do que "outros" tinham`);
+    // handle): o arquivo fica com outro grupo e nenhum destinatário ganha
+    // acesso em nenhum instante. Em 0604 os membros do grupo antigo não liam e
+    // passam à classe "outros" (contraexemplo do coordenador); em 0640 o grupo
+    // novo não pode receber a leitura do antigo. Nos dois, o resultado é 0600.
+    for (const mode of [0o640, 0o604]) {
+      const label = `claude ${octal(mode)} grupo não atribuível`;
+      const target = scratch(`perm-chown-eperm-${octal(mode)}`);
+      const file = path.join(target, CONFIG.claude.file);
+      writeFileSync(file, CONFIG.claude.text);
+      chownSync(file, process.geteuid(), supplementary);
+      chmodSync(file, mode);
+      const original = { mode, gid: supplementary };
+      const log = path.join(scratch("probe-chown-eperm"), "probe.jsonl");
+      writeFileSync(log, "");
+      const run = runUnderProbe(["install", "--agent", "claude", "--target", target, "--apply"], log, { failChown: true });
+      assert.equal(run.status, 0, `${label}: ${JSON.stringify(run.report)}`);
+      const seen = observations(log, "settings.json.skill-me-tmp");
+      assertTempNeverWider(seen, original, label, { preserved: false });
+      for (const o of seen) assert.notEqual(o.gid, supplementary, `${label} ${o.moment}: grupo original não atribuído`);
+      const final = statSync(file);
+      assert.notEqual(final.gid, supplementary, label);
+      assert.deepEqual(widenedRecipients(original, { mode: final.mode & 0o7777, gid: final.gid }), [], `${label}: arquivo final`);
+      assert.equal(final.mode & 0o7777, 0o600, `${label}: modo final`);
     }
-    assert.equal(seen[2].containsCanary, true);
-    assert.equal(statSync(file).mode & 0o7777, 0o600, "modo final sem os bits do grupo original");
-    assert.notEqual(statSync(file).gid, supplementary);
   },
 );

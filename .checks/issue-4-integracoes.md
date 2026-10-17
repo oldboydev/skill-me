@@ -70,6 +70,7 @@ Nenhuma dependência nova; `yaml`/`smol-toml` já existentes só pelo doctor.
 | Resolução padrão do Codex no wrapper (acrescentado no build, antes do código) | sem `--codex-entry`: `resolveAgents` (export existente do doctor) → caminho do launcher; executável nativo ou launcher POSIX (link/script com shebang) é iniciado sem shell; launcher `.cmd`/`.bat` no Windows → 127 com mensagem fixa pedindo `--codex-entry <…/@openai/codex/bin/codex.js>` | acrescentar `packageDir` ao retorno do Codex no doctor — mudaria um export do doctor, fora do recorte ("reusar pelos exports existentes"); reinterpretar o shim npm aqui — duplicaria o parser do doctor; iniciar o `.cmd` com shell — reinterpretaria os argumentos |
 | `not_in_contract` derivado pela fronteira (acrescentado no build, antes do código) | chave presente em `draft.fields` = o contrato fornece (valor ausente → `absent`); campo do `eventKind` sem chave → `<campo>:not_in_contract`; tradução impossível no adaptador → `draft.fieldGaps: {campo: motivo}` com motivo do vocabulário fechado | lista `notInContract` mantida à mão por adaptador — esquece campo em silêncio quando um `eventKind` ganha campo novo |
 | Reescrita não amplia o acesso POSIX (acrescentado na correção formal F2, antes do código) | POSIX: modo/dono/grupo do arquivo substituído (`stat`); temporário criado (`wx`) só com os bits de dono do original; grupo do temporário diferente → `fchown(-1, grupo original)`; sem permissão para isso, bits de grupo limitados aos de "outros"; `fchmod` aos bits finais (iguais aos do original quando o grupo confere) antes de escrever o conteúdo; modo/dono/grupo reconferidos junto com o hash antes do `rename` (mudou → 4). Dono do arquivo novo é o processo (sem privilégio não há `chown` de dono); ACL POSIX/Windows, xattr e bits especiais não são preservados nem detectados. Windows: inalterado (acesso por ACL; modo do `stat` não a representa) | `chmod` depois de escrever — janela com o conteúdo sob o modo amplo, e quem abrir o arquivo nessa janela continua lendo; criar já com o modo final — com o grupo errado concederia acesso a outro grupo antes do `fchown`; reescrever o próprio arquivo (preservaria inode e ACL) — perde a troca única e a comparação de hash antes do `rename` da linha "Escrita com lock + comparação + rename" |
+| Grupo não atribuível: interseção de grupo e "outros" (acrescentado na correção formal F2 após o contraexemplo do coordenador, antes do código que o fecha; substitui só a regra de grupo da linha anterior) | grupo do temporário diferente do original e `fchown` negado → bits de grupo **e** de "outros" = interseção dos dois no original; bits de dono intactos (0640 → 0600, 0604 → 0600, 0664 → 0644) | limitar só o grupo novo aos bits de "outros" (linha anterior) — em 0604 quem pertencia só ao grupo antigo não lia, passa a "outros" e ganharia leitura; recusar a substituição — a interseção já impede ampliação nos quatro casos de pertencimento sem impedir a instalação |
 
 - Nada mais nesta entrega é difícil de reverter.
 
@@ -296,3 +297,23 @@ Correções do round 1 da verificação independente (16/10/2026):
 - **Fronteira:** F1–F4 fechados em `5521819`..`7de3bc2` (evidência em `.checks/issue-4-integracoes.build.md`, "Correções da verificação independente — round 1"); Checks e Landing inalterados.
 - **Decidido durante o build:** nada novo do proprietário. F5/C39 aguarda resposta humana à pergunta do orquestrador; texto, prova e comportamento preservados.
 - **Abandonado:** prazo do relatório contado do `flush` (excedia 1000 ms além do filho); reserva 0 (custo medido de 23–63 ms fora do timer); comparar só caminhos do HERMES_HOME (não detecta acréscimo a arquivo do host); comparar com a execução `inactive` (cenário diferente); tratar todo link em `__pycache__` como `target_escape` (link dentro do alvo não escapa: é alheio).
+
+### Coordenação durante F2 — 17/10/2026
+
+O coordenador encontrou um contraexemplo no fallback de grupo ainda em implementação:
+`replacementMode({mode: 0o604}, false)` mantinha `0604`; um membro somente do grupo
+antigo, antes sem leitura, vira "outros" e ganha leitura após mudar o gid. Isso é
+ampliação dentro de F2/AC6. Detalhes e sonda somente leitura em
+`.checks/code-review/issue-4/coordinator-f2-group-feedback.md`. Conferir antes de
+fechar F2, sem alterar a barra dos checks. Nenhum código/teste foi corrigido pelo
+coordenador; esta nota é evidência de coordenação e deve ser preservada/encerrada
+com a prova correspondente pelo builder.
+
+Encerramento pelo builder (17/10/2026): contraexemplo confirmado — RED na regra de
+`4f2932a`: `I4-C25c` (`0604` sem grupo atribuível → `0604`) e `I4-C25b` com EPERM
+injetado no `chown` (`before_content`: o destinatário "só do grupo antigo" ganha
+leitura). A regra passou à interseção de grupo e "outros" (linha correspondente em
+Landing). As provas conferem as quatro classes de pertencimento pelo modelo POSIX de
+`tests/integrations/helpers/posix-access.mjs`, na regra pura (512 modos) e no CLI real
+POSIX (0640 e 0604 com grupo não atribuível); a barra dos checks não mudou. Evidência
+em `.checks/issue-4-integracoes.build.md`.

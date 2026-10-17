@@ -8,14 +8,17 @@ import { readBoundedText } from "../../doctor/snapshot-read.mjs";
 const POSIX_ACCESS = process.platform !== "win32";
 
 // Bits finais do arquivo que substitui `original`: os mesmos quando o grupo
-// do arquivo novo é o do original. Se o grupo não pôde ser igualado, o grupo
-// novo não recebe mais do que "outros" já recebiam — copiar os bits de grupo
-// daria a outro grupo o acesso que só o grupo original tinha.
+// do arquivo novo é o do original. Se o grupo não pôde ser igualado, quem não
+// é o dono muda de classe: membro do grupo novo passa a usar os bits de grupo
+// e membro só do grupo antigo passa a "outros" (no POSIX, o grupo do arquivo
+// usa os bits de grupo mesmo que "outros" seja mais amplo — em 0604 ele não
+// lia). Sem saber quem pertence a cada grupo, grupo e "outros" recebem só o
+// que os dois já concediam: ninguém ganha acesso.
 export function replacementMode(original, sameGroup) {
   const mode = original.mode & 0o777;
   if (sameGroup) return mode;
-  const groupWithinOthers = (mode >> 3) & mode & 0o7;
-  return (mode & ~0o070) | (groupWithinOthers << 3);
+  const grantedToBoth = (mode >> 3) & mode & 0o7;
+  return (mode & 0o700) | (grantedToBoth << 3) | grantedToBoth;
 }
 
 // Grupo e bits finais aplicados pelo próprio handle, antes de qualquer
@@ -27,7 +30,7 @@ async function matchAccess(handle, like) {
       await handle.chown(-1, like.gid);
       sameGroup = true;
     } catch {
-      // Sem permissão para o grupo original: bits de grupo limitados acima.
+      // Sem permissão para o grupo original: bits limitados em replacementMode.
     }
   }
   await handle.chmod(replacementMode(like, sameGroup));
