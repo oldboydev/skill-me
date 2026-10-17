@@ -602,3 +602,29 @@ estiverem atendidos. Merge continua humano.
 
 Nenhuma instalação pessoal nem E2E com consumo externo foi solicitada. Não há
 pergunta de escopo pendente; surgindo ampliação real, registrá-la sem executá-la.
+
+## Autorização de continuidade — 17/10/2026
+
+Após a terceira verificação independente (FAIL em `7083702`) e as correções
+`c066a5f`/`6f1740d`, com provas autorais registradas em `cba2752`, o proprietário
+respondeu nesta conversa:
+
+> use quantas rodadas precisar. após terminar pode fazer o merge e finalizar.
+> depois em uma nova sessão pode pegar uma nova issues e planejar e fazer o loop
+> de desenvolvimento.
+
+Esta autorização permite as rodadas independentes e formais necessárias para
+concluir a #4, mantendo histórico, critérios e separação entre Claude/Grok autor
+e Codex revisor. A exceção da verificação independente supera o limite de três
+rodadas da skill nesta entrega. O override formal exclusivo da #4 usa o teto de
+10 suportado pelo motor, sem alterar o core nem o limite das demais issues.
+Só novas correções ou mudanças de contexto justificam repetir uma revisão;
+uma aprovação válida encerra essa etapa.
+
+O proprietário também autoriza push da branch, criação do PR pelo comando de
+entrega e merge após aprovação das verificações aplicáveis. A regra anterior
+"merge continua humano" fica superada por esta delegação explícita para a #4.
+Não autoriza merge com falhas, contorno de proteção, deploy ou publicação do
+pacote. Depois de merge/encerramento confirmados, abrir uma nova sessão neste
+projeto para selecionar a próxima issue e seguir planejamento e desenvolvimento
+com as regras do repositório. O escopo funcional e C39 permanecem como aprovados.

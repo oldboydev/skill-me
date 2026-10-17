@@ -16,6 +16,11 @@
     }
   },
   "roundOverrides": {
+    "4": {
+      "profile": "light",
+      "maxRounds": 10,
+      "approval": "Proprietário autorizou em 17/10/2026: use quantas rodadas precisar. Registro e autorização de merge em .tasks/issue-4-integracoes.md; exclusivo da issue #4, preservando o histórico e o máximo de 10 suportado pelo motor."
+    },
     "3": {
       "profile": "light",
       "maxRounds": 9,

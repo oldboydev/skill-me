@@ -412,3 +412,16 @@ Correção pós-verificação round 3 — registro parcial (17/10/2026):
   reconciliação por conteúdo exato); reconferir a fonte antes da pasta e do `__pycache__` (através
   de uma pasta trocada por junção leria a fonte de outro plugin e apontaria o arquivo errado,
   contra `I4-C34c`); ler o cabeçalho do `.pyc` (não comprova origem; a decisão vem do registro).
+
+### Autorização do proprietário para concluir — 17/10/2026
+
+Após as correções/provas em `cba2752`, o proprietário autorizou nesta conversa:
+"use quantas rodadas precisar. após terminar pode fazer o merge e finalizar.
+depois em uma nova sessão pode pegar uma nova issues e planejar e fazer o loop
+de desenvolvimento." Registro completo e limites em
+`.tasks/issue-4-integracoes.md`, seção "Autorização de continuidade". As notas
+anteriores de ausência de exceção ficam como histórico; as rodadas necessárias
+agora estão autorizadas, sem apagar relatórios nem enfraquecer Checks. O teto
+formal exclusivo da #4 foi registrado como 10 (máximo do motor), sem mudar o
+core ou o limite de outras issues. Merge autorizado após verificações aprovadas;
+nova sessão somente depois da conclusão confirmada da #4.
