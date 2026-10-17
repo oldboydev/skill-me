@@ -2665,3 +2665,200 @@ canários, `S-1-5-21`, `D:P(`, `API_TOKEN` nem de nomes de conta em entradas de 
 criado ou personificado, `sudo`, arquivo privado real ou perfil pessoal; nenhum diretório gerenciado real; todos os
 `--target` em temporários; nenhuma ACL fora dos scratches; nenhum agente, modelo, download ou E2E; nenhum
 bypass/confiança concedido; nenhum subagente; nenhuma operação recusada pela plataforma nesta rodada.
+
+## Correção da CI inicial do PR #16 — Windows (17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega, continuidade autorizada depois da primeira CI. Partida em
+`f08d8ef` (HEAD limpo, só o Handoff da CI; `git diff --quiet 550007f f08d8ef -- src tests docs scripts package.json
+package-lock.json` verdadeiro: produto e testes = `550007f`). Esta seção é evidência do autor, **não é verificação
+independente** nem revisão formal: nenhum `review:run`/`review:check`/`pr:create`/push/PR/merge/Verifier/subagente;
+contadores, override, estado do motor (6 de 10 tentativas formais) e histórico intocados; `.verified.md` não alterado.
+A sonda bloqueada da preparação 6 (`verifier-residual-probe`) não foi executada, recriada, reformulada nem reencaminhada;
+a CI não foi reexecutada. Commits: `835a723` (testes, helper e regressão) e o desta evidência. `git diff --name-only
+f08d8ef..835a723`: `tests/integrations/helpers/cli.mjs`, `tests/integrations/install-apply.unit.test.mjs` e
+`tests/integrations/install.cli.test.mjs`; nada em `src`, `docs`, `scripts`, doctor, configuração do motor,
+dependências, workflow da CI, `AGENTS.md`, task, critérios, Checks ou `.verified.md`. Landing inalterado: não há
+decisão de produto nem porta de mão única — a correção é do contrato de caminho das fixtures e de duas remoções de fixture.
+
+**Classificação.** As 13 falhas da run 39071778945 (job Windows 117510753707, `windows-latest`, Node 24.13.0 fixado no
+workflow, HEAD `b5eaa21`) têm duas causas nos testes; nenhum defeito de produto foi encontrado:
+
+1. 12 testes de `install-apply.unit.test.mjs` (`I4-C25f`, `C25h`, `C27b`, `C27d`, `C29b`, `C29c`, `C30c`, `C30d`,
+   `C31b`, `C34h`, `C34i`, `C34j`): intervenções por caminho absoluto nunca disparavam, porque o caminho montado pelo
+   teste (a partir de `makeScratch`) e o que o instalador passa ao io eram grafias diferentes do mesmo diretório.
+2. `I4-C32b` (`install.cli.test.mjs:905` na CI): a fixture "registro perdido" não existiu — o `rmSync` de `.skill-me`
+   não apagou nada e não lançou —, e o produto, encontrando o registro, reportou corretamente `owned_entry_modified`.
+
+Na `I4-C29c` a causa 2 também estava presente (a intervenção apagava com `rmSync`), mascarada pela 1.
+
+### Diagnóstico — causa 1 (grafia do caminho)
+
+- Fato do log, sem dump de ambiente: o único caminho absoluto de scratch impresso pela CI, no `ENOENT` de `I4-C34h`, é
+  `C:\Users\RUNNER~1\AppData\Local\Temp\skill-me i4 f1 plugins 0 ação-…\plugins próprio movido` — o TEMP do runner
+  com o componente curto 8.3 `RUNNER~1`, conservado por `makeScratch`.
+- Contrato das APIs, fonte `v24.13.0`: `lib/fs.js` `realpathSync` (JS) percorre os componentes com `binding.lstat` e só
+  substitui link (`if (!isFileType(stats, S_IFLNK))` → componente mantido como escrito); `realpathSync.native` e
+  `lib/internal/fs/promises.js` `realpath` chamam `binding.realpath` (libuv `uv_fs_realpath`, no Windows
+  `GetFinalPathNameByHandleW`: nomes longos, letra de unidade maiúscula). O instalador resolve o alvo por `io.realpath`
+  = `realpath` de `fs/promises` (`io.mjs:79`, `target.mjs:54`) e monta dessa raiz todo caminho que passa ao io;
+  `makeScratch` devolvia o `realpathSync` em JS.
+- Confronto local (Node 24.21.0, pastas próprias em scratch, aliases sintéticos): `…\SK272F~1\PASTAC~1` →
+  `realpathSync` devolve o próprio alias, `realpathSync.native` e `fs/promises` `realpath` devolvem o nome longo (iguais
+  entre si); com a letra `c:` minúscula, idem (JS conserva, os outros dois devolvem `C:`); com os componentes em
+  outra caixa, `fs/promises` `realpath` devolve a caixa gravada e o JS conserva a escrita.
+- Contraste no mesmo log: passaram os testes que casam por nome (`I4-C30`, `basename(file).startsWith`; `I4-C34c`/`C34g`,
+  `basename(dirname(file))`), o que compara com `realpathSync.native` (`I4-C27c`) e todos os de CLI (o instrumento
+  `fs-probe.mjs` casa por `basename`/sufixo). Falharam os que comparam o caminho inteiro (`file === tmp`,
+  `from === deny`, `to === stepRenamedTo`, `dirname(file) === pluginDir`…), com os indicadores das próprias intervenções
+  em zero (`mutated: false`, `attempts: 0`, `realpathCalls: 0`, `renameAttempts: 0`, `requested: []`) e a aplicação
+  concluindo com 0.
+- macOS e Ubuntu: as duas APIs coincidem (o link `/var` → `/private/var` é resolvido por ambas); as mesmas provas
+  passaram na mesma run.
+
+### Diagnóstico — causa 2 (`rmSync` no Windows com Node 24.13.0)
+
+- `I4-C32b` (Claude, segunda metade) removia `.skill-me` com `rmSync(…, { recursive: true })` para provar a reinstalação
+  sem registro. Na CI o produto devolveu `owned_entry_modified`, que `planJsonInstall` só produz com entrada registrada
+  (`json-hooks.mjs:192`): o registro continuava lá. A primeira metade (com registro) passou.
+- Fonte `v24.13.0`, `src/node_file.cc` `RmSync`: `auto file_path = std::filesystem::path(path.ToStringView());` — no
+  Windows, `std::filesystem::path` de `char` converte pela página de código ANSI, não por UTF-8; com "ação" o caminho
+  convertido não existe, `symlink_status` dá `not_found` e a função retorna sem erro. O lado JS (`validateRmOptionsSync`,
+  `lib/internal/fs/utils.js`) só faz `lstatSync` pela libuv (UTF-8 correto: a pasta existe) e também não lança. Em
+  `v24.21.0` a linha é `path.ToPath()`, que no Windows usa `ConvertUTF8ToWideString` (`src/util-inl.h`). Correção
+  upstream: nodejs/node#61108 ("fs: fix rmSync to handle non-ASCII characters", fecha #56049), lançada na 24.13.1
+  (notas da versão, PR #61661).
+- Não reproduzível aqui: o Node local é 24.21.0 (com a correção), nenhum outro Node foi instalado ou baixado, e o
+  24.13.0 do WSL usa o caminho byte a byte do Linux. A prova da causa são as fontes das duas versões, a nota da versão
+  e o estado observado na CI; a regressão é a pré-condição conferida (abaixo), que a próxima CI exerce.
+- Os demais `rmSync` das provas não decidem asserção: o `after()` de cada arquivo (com `force`; no Windows com Node até
+  24.13.0 vira no-op silencioso — sobra no TEMP do runner, efêmero), `install-permissions.cli.test.mjs:241` (`I4-C25g`:
+  o arquivo de controle da fixture fica; a prova só lista `*.skill-me-tmp` e lê a configuração — passou na CI) e
+  `skill-tree-hash.cli.test.mjs:101` (só com o runtime Hermes, ausente na CI). Ficam inalterados (limites abaixo). O
+  produto não usa `rmSync`, `cpSync`, `rm` nem `realpathSync`.
+
+### Correção (`835a723`)
+
+- `tests/integrations/helpers/cli.mjs:17` — `makeScratch` devolve `realpathSync.native(mkdtempSync(…))`, a grafia do
+  caminho real que o instalador resolve, com o porquê no comentário. Não é "acrescentar realpath": o helper já resolvia,
+  com a API cuja semântica não é a do produto.
+- `tests/integrations/install.cli.test.mjs:901–909` (`I4-C32b`) — `unlinkSync` do registro e `rmdirSync` de `.skill-me`
+  (libuv, UTF-8 → UTF-16; `rmdir` falha se sobrar algo além do registro) e `assert.equal(existsSync(stateDir), false,
+  "<agente>: a prova parte sem registro")` antes da reinstalação.
+- `tests/integrations/install-apply.unit.test.mjs:674` (`I4-C29c`) — a intervenção apaga o temporário transitório com
+  `unlinkSync`, que lança se falhar.
+- Nenhuma asserção existente mudou; nenhuma tolerância, linha, intervenção ou skip removidos; os esperados das 12
+  tabelas e do `I4-C32b` são os mesmos.
+
+### Regressão `I4-C30f` (`install-apply.unit.test.mjs:57`, asserção `:109`)
+
+Alias sintético de uma pasta própria (`temporario-longo-da-prova`, no scratch do teste) posto em TEMP/TMP/TMPDIR só
+durante a chamada síncrona de `makeScratch` (`withTempDir`, `:34`, que restaura as variáveis). Windows: nome curto 8.3
+(`TEMPOR~1`, única entrada da pasta nova; usado só se existir e resolver para a pasta, senão diagnóstico de linha não
+executada) e letra de unidade minúscula; POSIX: link simbólico. Por linha, afirma que o alias é outra grafia, que o
+scratch foi criado sob ele (a troca do TEMP valeu), que o scratch é igual ao `realpath` do io de produção e que uma
+intervenção pelo caminho absoluto do temporário da configuração dispara exatamente 1 vez em `writeExclusive` e 1 vez
+no `rename`, com a instalação real saindo 0 com 8 eventos próprios; `assert.ok(aliases.length > 0)`.
+
+### Reprodução RED (cópias isoladas próprias, Windows)
+
+- `git -c core.autocrlf=false archive f08d8ef` (SHA-256 `41831cc7…12788346`) em `%TEMP%\skill-me-ci1\red-f08d8ef` +
+  `node_modules`; 135 blobs de `src`/`tests` conferidos sem normalização, 0 diferentes. TEMP sintético com a estrutura
+  da CI: pasta `%TEMP%\skill-me-ci1\usuario-longo-sintetico\AppData\Local\Temp`, usada pelo alias
+  `…\skill-me-ci1\USUARI~1\AppData\Local\Temp` (existe; `realpathSync.native` → nome longo; `realpathSync` conserva o
+  alias). Só TEMP/TMP do processo de teste; nenhuma configuração global.
+- `f08d8ef` intacto, suíte de integrações sob esse TEMP (`ci1-red-f08d8ef-temp8dot3-windows.tap`): **87 tests, 69 pass,
+  12 fail, 6 skip**, exit 1 — exatamente as 12 falhas da CI em `install-apply`, com as mesmas assinaturas
+  (`attempts: 0` em 16 linhas, `realpathCalls: 0`, `mutated: false`, `ENOENT scandir '…USUARI~1…\plugins próprio
+  movido'` no `I4-C34h`). `I4-C32b` passa (o `rmSync` do 24.21.0 apaga): a falha dele não se reproduz neste Node. 6 skips
+  de plataforma (o Hermes local roda; a CI tinha 14).
+- `I4-C30f` sobre o helper antigo: por cima dessa cópia, `git archive 835a723 --` dos dois arquivos de teste (SHA-256
+  `0d059a18…e5b4a755`), mantido o `helpers/cli.mjs` de `f08d8ef` (3 blobs conferidos); TEMP normal: **1 test, 0 pass,
+  1 fail** — nas duas linhas Windows `scratchIsRealPath: false` e `hits` `{writeExclusive: 0, rename: 0}`; as guardas
+  `aliasIsAnotherSpelling` e `createdUnderAlias` conferem (`ci1-red-c30f-old-helper-windows.tap`). No POSIX a linha do
+  link passa com os dois helpers (as duas APIs coincidem): não há RED POSIX; o helper antigo não foi executado no WSL.
+
+### GREEN
+
+- Worktree em `835a723`, mesma suíte sob o TEMP 8.3 (`ci1-green-835a723-temp8dot3-windows.tap`): **88 tests, 82 pass,
+  0 fail, 0 cancelled, 6 skip**, exit 0 — as 12, o `I4-C32b` e o `I4-C30f` (sem diagnóstico: as duas linhas Windows
+  executadas); os mesmos 22 diagnósticos de linha não executada do RED; TEMP sintético vazio depois (o `after()` limpou).
+- `I4-C32b` e `I4-C29c` com `unlink`/`rmdir` passam no Windows 24.21.0 e no WSL 24.13.0 (lotes abaixo); o efeito no
+  Windows com 24.13.0 só a próxima CI exerce.
+
+### Contagens reais em `835a723`
+
+Um batch por plataforma: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs scripts/code-review/review.test.mjs`. Windows: worktree com HEAD `835a723` e
+`git diff --quiet 835a723 -- src tests docs scripts package.json package-lock.json`, shell normal da sessão (os testes
+de timeout/`taskkill` do motor só encerram processos próprios e passaram), TEMP normal, Hermes nativo pelo helper. WSL:
+distro `Ubuntu` explícita, Node 24.13.0, `git -c core.autocrlf=false archive 835a723` (SHA-256 `deb2a2aa…f80c1e90`) no
+ext4 (`/tmp/skillme-ci1-batch-835a723`) com o `node_modules` local, 147 arquivos de `src`, `tests`, `scripts`, `docs`,
+`package.json` e `package-lock.json` iguais aos blobs sem normalização, `env -i` só com `PATH`, exit do próprio
+`wsl.exe`; nenhum spawn por `/mnt/c`, nenhum download.
+
+| Execução | tests | pass | fail | cancelled | skipped | todo | exit | duração |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 88 + governança 6 + motor 16 | 110 | 104 | 0 | 0 | 6 | 0 | 0 | 107 s |
+| WSL — integrações 88 + governança 6 + motor 16 | 110 | 98 | 0 | 0 | 12 | 0 | 0 | 19 s |
+
+Cruzamento das 54 linhas `Proof:` com os TAPs (`ci1-proofs-vs-batch-{windows,wsl}-835a723.txt`, mesmo script das rodadas
+anteriores; cada padrão casou exatamente um teste executado, declarado no arquivo da prova): Windows 53 PASS +
+`I4-C15` SKIP; WSL 46 PASS + 8 SKIP. Fora das linhas `Proof:` (56): os 55 de `550007f` e o novo `I4-C30f` (+1). Os 13
+testes da CI passam nos dois lotes. Skips e motivos:
+
+- Windows (6): `I4-C15` `posix-signals`, `I4-C25b` `posix-modes`, `I4-C25j`/`I4-C25k`/`I4-C25l` `posix-acl` (passam no
+  WSL) e `I4-C25m` `macos-acl`. Diagnósticos `não executado` (22): os mesmos das rodadas anteriores (18 de link de
+  arquivo sem privilégio e, no `I4-C25f`, 3 de link e 1 de modo POSIX — executados no WSL).
+- WSL (12): `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente` (Hermes nativo só no Windows, 8 PASS no lote;
+  Linux **pendente**), `I4-C25g`, `I4-C25h`, `I4-C25i` `windows-dacl` (3 PASS no Windows) e `I4-C25m` `macos-acl`.
+- Medição C38: Windows 821 ms depois do filho, 65536 bytes no pipe; WSL 807 ms, 146176 bytes.
+- Doctor (417) não reexecutado: carry com origem na CI do HEAD `b5eaa21` (tabela abaixo, 0 fail nos três SO); nenhum
+  arquivo do doctor, dos módulos reutilizados, de `scripts/`, configuração, dependências ou `AGENTS.md` mudou.
+
+### Evidência remota da run 39071778945 (HEAD `b5eaa21`, Node 24.13.0)
+
+Logs públicos dos três jobs salvos no diretório ignorado (`ci-first-{windows,macos,ubuntu}-pr16-39071778945.log`); aqui só
+totais. Execução remota do HEAD anterior à correção, não execução minha.
+
+| Job | governança | motor | doctor | integrações |
+| --- | --- | --- | --- | --- |
+| macOS 14 (117510753658) | 6 pass | 16 pass | 417: 416 pass, 1 skip | 87: 73 pass, 0 fail, 14 skip; `I4-C25m` executado nativamente, PASS (250,939083 ms) |
+| Ubuntu 22.04 (117510753848) | 6 pass | 16 pass | 417: 416 pass, 1 skip | 87: 75 pass, 0 fail, 12 skip |
+| Windows latest (117510753707) | 6 pass | 16 pass | 417: 410 pass, 7 skip | 87: 60 pass, 13 fail, 14 skip |
+
+Nada aqui afirma CI corrigida antes de uma nova execução real nem execução em Windows com Node 24.13.0.
+
+### Examinado e não alterado (limites e resíduos)
+
+- Produto: uma só API de caminho real (`fs/promises` `realpath`) para a raiz e para cada conferência (`assertContained`,
+  `dirRealPath`), e `path.win32.relative` compara sem caixa: nome curto, letra minúscula ou outra caixa no `--target`
+  resolvem para a mesma raiz. Alias 8.3 do diretório gerenciado (`C:\PROGRA~1\ClaudeCode`) não casa a recusa textual, mas
+  o caminho real devolvido é o nome longo, que passa pela mesma recusa de `I4-C27c` antes de qualquer leitura; não
+  exercitado com o diretório real (a prova nunca o toca).
+- `rmSync` restante nas provas (`after()`, `I4-C25g`, `skill-tree-hash.cli.test.mjs:101`): no Windows com Node até
+  24.13.0 não apaga caminho com "ação" e não lança. Nenhuma asserção depende deles; consequências: scratches sintéticos
+  ficam no TEMP desse ambiente (na CI, runner efêmero) e, só com o runtime Hermes num Windows com esse Node (combinação
+  não exercitada em lugar nenhum), o plugin de fixture da observação ficaria na árvore de `I4-C35`. Sem falha
+  demonstrada, não alterados.
+- Workflow da CI (`node-version: 24.13.0`) inalterado, fora do escopo autorizado.
+- Limites anteriores inalterados (janelas não atômicas, ACL/DACL, Hermes Linux, macOS só pela CI, E2E pendente).
+
+### Sobras próprias desta rodada (preservadas)
+
+Nenhum `rm` nem limpeza opaca. Windows `%TEMP%\skill-me-ci1\`: `probes/` (`verify-blobs.sh`, `proofs-vs-batch.mjs`,
+`wsl-copy.sh`, `wsl-run.sh` — cópias dos da rodada f5 com o prefixo `/tmp/skillme-ci1-*` — e listas de blobs),
+`red-f08d8ef/` (cópia RED com a sobreposição), `f08d8ef-lf.tar`, `835a723-lf.tar`, `overlay-835a723-tests.tar`,
+`usuario-longo-sintetico\AppData\Local\Temp` (vazia) e os TAPs; das conferências de API do nome curto,
+`%TEMP%\skill-me-8dot3-probe-*` e `%TEMP%\skill-me-8dot3-probe2 ação-*` (cada uma com uma pasta vazia de nome longo).
+WSL `/tmp`: `skillme-ci1-batch-835a723`, `skillme-ci1-batch-835a723.verify-blobs.sh` e `.blobs.txt`. Scratches dos
+testes removidos pelo `after()` de cada arquivo (Windows 24.21.0 e WSL). Cópias locais (ignoradas) em
+`.checks/code-review/issue-4/ci1-*` e os três logs da run.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token, credencial ou valor de ambiente impresso; o TEMP da CI foi inferido só do caminho já
+presente no log. Fixtures e aliases sintéticos em pastas próprias; nenhuma configuração global do Windows, outro Node,
+download, `sudo`, perfil pessoal, agente, modelo ou E2E; `--target` sempre em scratch. Consultas públicas de leitura ao
+GitHub: fontes do Node `v24.13.0`/`v24.21.0`, PRs, issue e notas de versão do nodejs/node, logs dos jobs da run do PR
+#16. TAPs desta rodada sem canários, `S-1-5-21`, `D:P(`, `API_TOKEN` nem nome de conta do runner (conferido). Nenhuma
+operação recusada pela plataforma nesta rodada; nenhum subagente.

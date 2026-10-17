@@ -1003,3 +1003,36 @@ Continuidade já autorizada: Claude corrige a causa comprovada e prova a regress
 nova verificação independente e formal7 exigidas para qualquer conteúdo alterado.
 Seis tentativas formais de dez consumidas, todas preservadas. PR16 permanece aberto
 e In Review; não criar outro PR nem novas issues. Merge só após conteúdo e gates válidos.
+
+Correção da CI inicial do PR #16 — Windows (17/10/2026):
+
+- **Fronteira:** as 13 falhas da run 39071778945 fechadas em `835a723`, só em testes/helper (produto, guia, doctor,
+  scripts, CI, Checks e Landing inalterados; nenhuma decisão de produto). Duas causas, nenhum defeito de produto:
+  (1) `makeScratch` resolvia com o `realpathSync` em JS, que conserva o nome curto 8.3 do TEMP do runner
+  (`C:\Users\RUNNER~1\…`, impresso no próprio log), enquanto o instalador resolve o alvo por `fs/promises` `realpath`
+  (semântica de `realpathSync.native`: nome longo) — as intervenções por caminho absoluto de 12 testes de
+  `install-apply` nunca disparavam; agora `realpathSync.native`. (2) `I4-C32b`: o `rmSync` do Node 24 até 24.13.0 no
+  Windows não apaga caminho com "ação" e não lança (fonte `v24.13.0` vs `v24.21.0`; nodejs/node#56049, corrigido por
+  #61108 na 24.13.1); o registro ficava e o produto reportou corretamente `owned_entry_modified`. `I4-C32b` e a
+  intervenção de `I4-C29c` removem por `unlink`/`rmdir`, e `I4-C32b` confere que parte sem registro. Regressão nova
+  `I4-C30f` (alias sintético no TEMP: 8.3 e letra minúscula no Windows, link no POSIX). **RED por execução** no
+  `f08d8ef` intacto em cópia isolada, com TEMP sintético `…\USUARI~1\AppData\Local\Temp` de pasta própria: 87 tests,
+  69 pass, 12 fail (as mesmas 12 da CI, mesmas assinaturas), 6 skips; `I4-C30f` no helper antigo 1 fail; o RED do
+  `I4-C32b` só existe no Node 24.13.0 do Windows (não instalado aqui) e fica provado pela fonte e pela CI. GREEN sob o
+  mesmo TEMP: 88 tests, 82 pass, 0 fail. Lotes finais de 110 testes em `835a723`: Windows 104 pass/6 skips, WSL
+  (Ubuntu, Node 24.13.0) 98 pass/12 skips, 0 fail/cancel, exit 0; 54 linhas `Proof:` casadas (Windows 53 PASS +
+  `I4-C15` SKIP; WSL 46 PASS + 8 SKIP), 56 fora delas (55 + `I4-C30f`). Nenhuma asserção existente mudou. Doctor 417
+  é carry da CI (0 fail nos três SO). Evidência em `.checks/issue-4-integracoes.build.md`, "Correção da CI inicial do
+  PR #16 — Windows". Provas do autor, não aprovam a entrega; a CI não foi reexecutada nem declarada corrigida.
+- **Decidido durante o build:** nada novo do proprietário. Contrato das fixtures: o scratch é a grafia do caminho real
+  que o instalador resolve.
+- **Abandonado:** comparar caminhos normalizando nos testes (espalharia a regra por cada intervenção); casar só por
+  `basename` (enfraqueceria intervenções que distinguem pastas); trocar a API de `realpath` do produto (o produto já é
+  coerente consigo mesmo); mudar o Node da CI ou o workflow (fora do escopo); trocar todos os `rmSync` das provas (sem
+  falha demonstrada fora do `I4-C32b`/`I4-C29c`).
+- **Limites registrados, não corrigidos:** no Windows com Node até 24.13.0 o `rmSync` restante (`after()`, `I4-C25g`,
+  Hermes em `I4-C35`) não apaga caminho com "ação" — sobras sintéticas no TEMP, nenhuma asserção depende dele;
+  Windows com 24.13.0 não executado localmente (só a próxima CI); os já registrados.
+- **Próxima ação (orquestrador):** verificação independente 12 pelos testes versionados e leitura permitida; revisão
+  formal 7 só depois de PASS e relatório commitado; push no PR #16 só depois dos gates, e nova CI depois do push.
+  Seis tentativas formais de dez consumidas.
