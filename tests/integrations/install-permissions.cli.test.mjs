@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, chownSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { baseEnv, INTEGRATIONS_CLI, makeScratch } from "./helpers/cli.mjs";
+import { baseEnv, INTEGRATIONS_CLI, makeScratch, runIntegrationsJson } from "./helpers/cli.mjs";
+import { readClaudeHandlers, readCodexHandlers } from "./helpers/installed-hooks.mjs";
 import { widenedRecipients } from "./helpers/posix-access.mjs";
+import { grantsOf, readAces, setDacl, widenedSids } from "./helpers/windows-acl.mjs";
 
 const scratches = [];
 after(() => {
@@ -113,7 +115,7 @@ function installAndRemove(agent, mode, label, gid) {
 
 test(
   "I4-C25b POSIX: instalar e remover preservam modo e grupo restritos; o temporário nunca amplia o acesso",
-  { skip: process.platform === "win32" ? "posix-modes: no Windows o acesso é decidido por ACL; modo e grupo POSIX não se aplicam (limite declarado)" : false },
+  { skip: process.platform === "win32" ? "posix-modes: no Windows o acesso é decidido pela DACL, provada em I4-C25g; modo e grupo POSIX não se aplicam" : false },
   (t) => {
     for (const [agent, mode] of [
       ["claude", 0o600],
@@ -158,5 +160,166 @@ test(
       assert.deepEqual(widenedRecipients(original, { mode: final.mode & 0o7777, gid: final.gid }), [], `${label}: arquivo final`);
       assert.equal(final.mode & 0o7777, 0o600, `${label}: modo final`);
     }
+  },
+);
+
+// Windows: configuração com DACL protegida mais restritiva que a pasta —
+// achado P1 da revisão formal round 4 (`io.mjs:71`). A pasta do alvo é fixture
+// sintética com DACL protegida: controle total ao usuário do teste e leitura
+// herdável por arquivos a "Usuários" (SID conhecido) — um arquivo criado nela
+// recebe essa leitura, conferido como controle da fixture. A configuração tem
+// o canário sintético no lugar de um segredo e DACL protegida só com o usuário
+// do teste. Instalar, instalar de novo e remover (Claude e Codex) não concedem
+// a nenhum SID mais do que a configuração concedia: nem o temporário em nenhum
+// instante observado — o instrumento registra a DACL dele em cada instante,
+// com o conteúdo antes do rename —, nem o arquivo final. Controles:
+// configuração que herda da pasta (as entradas herdadas viram explícitas, com
+// o mesmo acesso), configuração ausente (criada do zero só com conteúdo
+// próprio, com a ACL herdada) e PowerShell do Windows indisponível — recusa
+// com 5 antes de qualquer conteúdo, na instalação e numa remoção que
+// reescreveria o arquivo.
+const WINDOWS_HOME_DACL = "D:P(A;OICI;FA;;;{usuario})(A;OI;FR;;;BU)";
+const OWNER_ONLY_DACL = "D:P(A;;FA;;;{usuario})";
+const OWNER_FULL = { "usuário do teste": "controle total" };
+const HOME_GRANTS = { Usuários: "leitura", "usuário do teste": "controle total" };
+const DONE_STEPS = [
+  { step: "config", state: "done" },
+  { step: "manifest", state: "done" },
+];
+
+function runWindowsUnderProbe(args, log, { noPowerShell = false } = {}) {
+  const env = baseEnv({ SKILL_ME_TEST_FS_PROBE_LOG: log, SKILL_ME_TEST_FS_PROBE_CANARY: CANARY, ...(noPowerShell ? { SKILL_ME_TEST_FS_PROBE_NO_POWERSHELL: "1" } : {}) });
+  const run = runIntegrationsJson(args, { env, nodeArgs: [`--import=${PROBE}`], timeout: 120_000 });
+  return { status: run.status, report: run.report };
+}
+
+// Temporário da configuração nos instantes observados: quais instantes, quem
+// ganhou acesso sobre a configuração lida (sem original não há o que comparar)
+// e se o canário — o conteúdo preexistente — esteve nele.
+function tempSeen(seen, original) {
+  return {
+    instantes: [...new Set(seen.map((o) => o.moment))],
+    ampliados: original === null ? "sem conteúdo preexistente" : [...new Set(seen.flatMap((o) => widenedSids(original, o.dacl)))].sort(),
+    canário: seen.some((o) => o.containsCanary),
+  };
+}
+
+function configState(agent, home) {
+  const file = path.join(home, CONFIG[agent].file);
+  if (!existsSync(file)) return "ausente";
+  const text = readFileSync(file, "utf8");
+  if (text === CONFIG[agent].text) return "configuração lida";
+  const events = Object.keys(agent === "claude" ? readClaudeHandlers(home) : readCodexHandlers(home)).length;
+  return `${events} eventos próprios${text.includes(CANARY) ? " + valores alheios com o canário" : ""}`;
+}
+
+test(
+  "I4-C25g Windows: instalar e remover preservam a DACL protegida da configuração; o temporário nunca concede acesso a outro SID",
+  { skip: process.platform !== "win32" ? "windows-dacl: DACL do Windows; no POSIX o acesso é provado por I4-C25b" : false },
+  () => {
+    const observed = [];
+    const expected = [];
+    let logs = 0;
+    const fixture = (agent, label, configDacl) => {
+      const dir = scratch(`dacl ${agent} ${label}`);
+      const home = path.join(dir, "perfil", agent === "claude" ? ".claude" : ".codex");
+      mkdirSync(home, { recursive: true });
+      setDacl(home, WINDOWS_HOME_DACL);
+      const control = path.join(home, "arquivo novo da pasta.json");
+      writeFileSync(control, "{}\n");
+      observed.push({ caso: `${agent} ${label}: fixture — arquivo novo herda da pasta`, dacl: grantsOf(readAces(control)) });
+      expected.push({ caso: `${agent} ${label}: fixture — arquivo novo herda da pasta`, dacl: { protegida: false, acessos: HOME_GRANTS, herdadas: 2 } });
+      rmSync(control);
+      const file = path.join(home, CONFIG[agent].file);
+      if (configDacl !== null) writeFileSync(file, CONFIG[agent].text);
+      if (configDacl !== null && configDacl !== "herdada") setDacl(file, configDacl);
+      return { dir, home, agent, label, original: configDacl === null ? null : readAces(file) };
+    };
+    // Executa um comando com o instrumento e registra o observado ao lado do esperado.
+    const step = (target, command, want, { noPowerShell = false } = {}) => {
+      const { dir, home, agent, label, original } = target;
+      const caso = `${agent} ${label}: ${command}${noPowerShell ? " sem PowerShell do Windows" : ""}`;
+      const log = path.join(dir, `probe ${++logs}.jsonl`);
+      writeFileSync(log, "");
+      const run = runWindowsUnderProbe([command, "--agent", agent, "--target", home, "--apply"], log, { noPowerShell });
+      const file = path.join(home, CONFIG[agent].file);
+      const final = existsSync(file) ? readAces(file) : null;
+      observed.push({
+        caso,
+        exit: run.status,
+        status: run.report.status,
+        errors: run.report.errors,
+        steps: run.report.steps,
+        temporário: tempSeen(observations(log, `${CONFIG[agent].file}.skill-me-tmp`), original),
+        final: final === null ? "ausente" : grantsOf(final),
+        ampliadosNoFinal: final === null || original === null ? "sem comparação" : widenedSids(original, final),
+        configuração: configState(agent, home),
+        registro: existsSync(path.join(home, ".skill-me", `${agent}-install.json`)),
+        lockLiberado: !existsSync(path.join(home, ".skill-me", `${agent}.lock`)),
+        temporárioDeixado: readdirSync(home).filter((name) => name.endsWith(".skill-me-tmp")),
+      });
+      expected.push({ caso, errors: [], ampliadosNoFinal: [], lockLiberado: true, temporárioDeixado: [], ...want });
+    };
+    const written = (canário = true) => ({ instantes: ["before_rename"], ampliados: [], canário });
+    const untouched = { instantes: [], ampliados: [], canário: false };
+    const protectedFinal = { protegida: true, acessos: OWNER_FULL, herdadas: 0 };
+
+    // DACL protegida só com o usuário do teste: instalar, instalar de novo, remover.
+    for (const agent of ["claude", "codex"]) {
+      const installed = `${agent === "claude" ? 8 : 6} eventos próprios + valores alheios com o canário`;
+      const target = fixture(agent, "protegida", OWNER_ONLY_DACL);
+      step(target, "install", { exit: 0, status: "applied", steps: DONE_STEPS, temporário: written(), final: protectedFinal, configuração: installed, registro: true });
+      step(target, "install", { exit: 0, status: "unchanged", steps: [], temporário: untouched, final: protectedFinal, configuração: installed, registro: true });
+      step(target, "uninstall", { exit: 0, status: "applied", steps: DONE_STEPS, temporário: written(), final: protectedFinal, configuração: "configuração lida", registro: false });
+    }
+
+    // Controle: configuração que herda da pasta — o mesmo acesso, com as
+    // entradas herdadas tornadas explícitas numa DACL protegida.
+    {
+      const target = fixture("claude", "herdada", "herdada");
+      const explicitFinal = { protegida: true, acessos: HOME_GRANTS, herdadas: 0 };
+      step(target, "install", { exit: 0, status: "applied", steps: DONE_STEPS, temporário: written(), final: explicitFinal, configuração: "8 eventos próprios + valores alheios com o canário", registro: true });
+      step(target, "uninstall", { exit: 0, status: "applied", steps: DONE_STEPS, temporário: written(), final: explicitFinal, configuração: "configuração lida", registro: false });
+    }
+
+    // Controle: configuração ausente — criada do zero só com conteúdo próprio
+    // (nada preexistente a proteger), com a ACL herdada; a remoção a apaga.
+    {
+      const target = fixture("claude", "ausente", null);
+      const fresh = { instantes: ["created", "before_content", "after_content", "before_rename"], ampliados: "sem conteúdo preexistente", canário: false };
+      step(target, "install", {
+        exit: 0,
+        status: "applied",
+        steps: DONE_STEPS,
+        temporário: fresh,
+        final: { protegida: false, acessos: HOME_GRANTS, herdadas: 2 },
+        ampliadosNoFinal: "sem comparação",
+        configuração: "8 eventos próprios",
+        registro: true,
+      });
+      step(target, "uninstall", {
+        exit: 0,
+        status: "applied",
+        steps: DONE_STEPS,
+        temporário: { ...untouched, ampliados: "sem conteúdo preexistente" },
+        final: "ausente",
+        ampliadosNoFinal: "sem comparação",
+        configuração: "ausente",
+        registro: false,
+      });
+    }
+
+    // PowerShell do Windows indisponível: nada é gravado — a configuração fica
+    // com bytes e DACL, sem temporário, o registro como estava e o lock liberado.
+    {
+      const refused = { exit: 5, status: "incomplete", errors: [{ code: "config_access_unavailable" }], steps: [{ step: "config", state: "failed" }], temporário: untouched, final: protectedFinal };
+      step(fixture("claude", "sem powershell", OWNER_ONLY_DACL), "install", { ...refused, configuração: "configuração lida", registro: false }, { noPowerShell: true });
+      const codex = fixture("codex", "sem powershell", OWNER_ONLY_DACL);
+      const installed = "6 eventos próprios + valores alheios com o canário";
+      step(codex, "install", { exit: 0, status: "applied", steps: DONE_STEPS, temporário: written(), final: protectedFinal, configuração: installed, registro: true });
+      step(codex, "uninstall", { ...refused, configuração: installed, registro: true }, { noPowerShell: true });
+    }
+
+    assert.deepEqual(observed, expected);
   },
 );

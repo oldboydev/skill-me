@@ -11,10 +11,16 @@
 // usuário não é membro. Com SKILL_ME_TEST_FS_PROBE_FAIL_RENAME_TO=<nome>, o
 // rename cujo destino tem esse nome de arquivo falha com EIO (falha real de
 // E/S no processo do CLI, sem depender de um obstáculo no caminho), com ou
-// sem o registro de observações.
+// sem o registro de observações. No Windows cada observação traz também a
+// DACL do temporário, decomposta em ACEs com SIDs rotulados
+// (helpers/windows-acl.mjs). Com SKILL_ME_TEST_FS_PROBE_NO_POWERSHELL=1, o
+// `spawn` do PowerShell do Windows pelo processo do CLI aponta para um
+// executável inexistente ao lado dele: a falha real de criação de processo
+// (ENOENT), como num sistema sem o componente ou com ele removido.
 import { appendFileSync, lstatSync, readFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
+import { readAces } from "./windows-acl.mjs";
 
 const require = createRequire(import.meta.url);
 const fsp = require("node:fs/promises");
@@ -22,13 +28,24 @@ const log = process.env.SKILL_ME_TEST_FS_PROBE_LOG;
 const canary = process.env.SKILL_ME_TEST_FS_PROBE_CANARY ?? "";
 const failChown = process.env.SKILL_ME_TEST_FS_PROBE_FAIL_CHOWN === "1";
 const failRenameTo = process.env.SKILL_ME_TEST_FS_PROBE_FAIL_RENAME_TO ?? "";
+const noPowerShell = process.env.SKILL_ME_TEST_FS_PROBE_NO_POWERSHELL === "1";
 const isTemp = (file) => typeof file === "string" && file.endsWith(".skill-me-tmp");
 
 function record(moment, file) {
   const stats = lstatSync(file);
   const entry = { moment, file: path.basename(file), mode: stats.mode & 0o7777, uid: stats.uid, gid: stats.gid, size: stats.size };
   if (canary !== "" && stats.isFile()) entry.containsCanary = readFileSync(file).includes(canary);
+  if (process.platform === "win32") entry.dacl = readAces(file);
   appendFileSync(log, JSON.stringify(entry) + "\n");
+}
+
+if (noPowerShell) {
+  const childProcess = require("node:child_process");
+  const realSpawn = childProcess.spawn;
+  childProcess.spawn = function spawnWithoutPowerShell(command, ...rest) {
+    const missing = typeof command === "string" && path.win32.basename(command).toLowerCase() === "powershell.exe";
+    return realSpawn.call(this, missing ? path.join(path.dirname(command), "powershell-ausente-na-prova.exe") : command, ...rest);
+  };
 }
 
 if (log) {

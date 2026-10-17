@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { CliUsageError } from "../../doctor/cli-args.mjs";
 import { ARTIFACT_NAMES, PLUGIN_NAME, PLUGIN_REL_DIR, isOwnCache, loadArtifacts, sha256 } from "./hermes-artifacts.mjs";
-import { createNodeIo } from "./io.mjs";
+import { createNodeIo, sameAccess } from "./io.mjs";
 import {
   CONFIG_FILE,
   InvalidConfigError,
@@ -278,10 +278,8 @@ async function withLock(io, root, agent, platform, result, fn) {
   if (failure) throw failure;
 }
 
-const sameAccess = (a, b) => a.mode === b.mode && a.uid === b.uid && a.gid === b.gid;
-
-// Modo/dono/grupo do arquivo a substituir (POSIX); sumiu depois da leitura →
-// conflito, como a mudança de conteúdo.
+// Acesso do arquivo a substituir — modo/dono/grupo (POSIX) ou DACL (Windows);
+// sumiu depois da leitura → conflito, como a mudança de conteúdo.
 async function accessBeforeReplace(io, root, file) {
   try {
     return await io.accessOf(file);
@@ -348,8 +346,10 @@ async function writeViaTemp(io, root, file, text, { like = null, dirUnchanged = 
 // O acesso é lido antes da conferência para que ela o confirme no documento
 // com o conteúdo lido; lido depois dela, viria de um documento não conferido.
 // O temporário herda esse acesso sem nunca ampliá-lo (ver io.mjs); uma mudança
-// de modo/dono/grupo também é conflito. `rootUnchanged` guarda a pasta do
-// temporário (a raiz) na criação, em cada tentativa e na limpeza;
+// de modo/dono/grupo — ou da DACL, no Windows — também é conflito, e a DACL
+// que não pode ser lida nem aplicada recusa antes de qualquer conteúdo
+// (`config_access_unavailable`: passo falho, 5). `rootUnchanged` guarda a
+// pasta do temporário (a raiz) na criação, em cada tentativa e na limpeza;
 // `configContained`, cada leitura da configuração — só o arquivo virar link
 // para fora não impede apagar o temporário próprio.
 // Limite registrado no plano: entre a última conferência e a criação ou o

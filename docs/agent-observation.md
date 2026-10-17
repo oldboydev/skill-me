@@ -57,7 +57,7 @@ próprios.
 | 2 | uso inválido ou alvo inexistente |
 | 3 | configuração inválida/ilegível — não é substituída; também quando a mudança deixaria o arquivo acima de 1 MiB, o teto de leitura do próprio instalador (`output_too_large`, recusado antes de escrever, inclusive na prévia) |
 | 4 | conflito — lock, mudança durante a aplicação, link para fora do alvo, política gerenciada, artefato alheio ou entrada própria editada (preservada) |
-| 5 | incompleto — falha de E/S depois de iniciar; o estado de cada passo é reportado |
+| 5 | incompleto — falha de E/S depois de iniciar; o estado de cada passo é reportado. No Windows, também a DACL da configuração que não pôde ser lida nem aplicada (`config_access_unavailable`), recusada antes de gravar qualquer conteúdo |
 
 O wrapper devolve o código do Codex; sinal do Codex é reemitido (POSIX); falha ao
 iniciar sai 127 (não encontrado) ou 126.
@@ -71,9 +71,25 @@ o do arquivo conferido antes de o temporário ser criado — contido no alvo e c
 conteúdo lido sob o lock: trocada a configuração depois da leitura (outro arquivo ou
 link), nada é gravado no temporário e o comando sai com 4; mudança de modo, dono ou
 grupo depois da conferência também é 4. O dono passa a ser quem executa o comando; ACL
-(POSIX ou Windows), atributos estendidos e bits especiais não são preservados nem
-detectados. No Windows modo e grupo não são aplicados; a conferência antes de criar o
-temporário é a mesma.
+POSIX, atributos estendidos e bits especiais não são preservados nem detectados.
+
+No Windows o acesso é a DACL. O instalador a lê pelo PowerShell do Windows
+(`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`, só tipos .NET, script
+fixo com caminho e dados pelo stdin) e confere, junto com o conteúdo lido sob o lock, que
+ela continua a mesma antes de criar o temporário e antes de cada tentativa de `rename`;
+mudou → 4. O temporário já é criado com essa DACL — as mesmas entradas, na mesma ordem —
+e recebe o conteúdo pelo handle da criação: em nenhum instante tem a ACL herdada da pasta,
+e o `rename` leva essa DACL para a configuração. As entradas herdadas viram explícitas e a
+DACL fica protegida: o acesso efetivo é o mesmo, mas mudanças posteriores nas permissões
+da pasta deixam de chegar ao arquivo, também depois da remoção (para voltar a herdar,
+reative a herança nas propriedades de segurança do arquivo). O dono passa a ser quem
+executa; SACL e rótulo de integridade não são copiados. Se a DACL não puder ser lida nem
+aplicada — PowerShell do Windows ausente ou bloqueado (AppLocker/WDAC, modo de linguagem
+restrito), ou sem resposta em 20 s —, o comando sai com 5 (`config_access_unavailable`,
+passo `config: failed`) sem gravar conteúdo com outro acesso, e a configuração fica como
+estava; um prazo esgotado durante a criação pode deixar o temporário, já com a DACL
+conferida (sobra reportada como as demais, abaixo). Configuração criada do zero,
+registro e lock não têm conteúdo preexistente e ficam com a ACL herdada da pasta.
 
 ### Confiança continua manual
 

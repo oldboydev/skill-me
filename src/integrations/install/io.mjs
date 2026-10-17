@@ -1,11 +1,18 @@
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rmdir, stat, unlink } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import { ONE_MIB_BYTES } from "../../doctor/config-projection.mjs";
 import { createProductionFsAdapter } from "../../doctor/fs-adapter.mjs";
 import { readBoundedText } from "../../doctor/snapshot-read.mjs";
+import { createWithDacl, readDacl } from "./windows-access.mjs";
 
-// No Windows o acesso é decidido por ACL; modo e ids do `stat` não a
-// representam. Lá a reescrita segue como antes (limite declarado no checklist).
+// No Windows o acesso é decidido pela DACL; modo e ids do `stat` não a
+// representam. Lá o acesso do arquivo substituído é a DACL (windows-access.mjs).
 const POSIX_ACCESS = process.platform !== "win32";
+
+// Mesmo acesso, na forma devolvida por `accessOf` — modo, dono e grupo (POSIX)
+// ou a DACL inteira (Windows): a comparação única das conferências feitas
+// antes de criar o temporário e antes de cada rename.
+export const sameAccess = (a, b) => isDeepStrictEqual(a, b);
 
 // Bits finais do arquivo que substitui `original`: os mesmos quando o grupo
 // do arquivo novo é o do original. Se o grupo não pôde ser igualado, quem não
@@ -54,20 +61,26 @@ export function createNodeIo() {
     mkdir: (dir) => mkdir(dir),
     readBytes: (file) => readFile(file),
     readText: (file) => readBoundedText(file, { fs: doctorFs, maxBytes: ONE_MIB_BYTES }),
-    // POSIX: modo, dono e grupo do arquivo que será substituído; `null` no Windows.
+    // Acesso do arquivo que será substituído: modo, dono e grupo (POSIX) ou a
+    // DACL em SDDL (Windows). Ausente → ENOENT; DACL que não pôde ser lida no
+    // Windows → `config_access_unavailable`.
     async accessOf(file) {
-      if (!POSIX_ACCESS) return null;
+      if (!POSIX_ACCESS) return { dacl: await readDacl(file) };
       const stats = await stat(file);
       return { mode: stats.mode & 0o777, uid: stats.uid, gid: stats.gid };
     },
     // `wx`: falha se o caminho já existe — serve de lock e impede que um
     // temporário sobrescreva algo que não seja nosso. Com `like` (de
     // `accessOf`, conferido pelo chamador no documento com o conteúdo lido
-    // antes da gravação), o temporário que vai substituir uma configuração
-    // nasce só com os bits de dono do original e recebe grupo e bits finais
-    // antes do conteúdo: em nenhum instante concede mais do que o original
-    // concedia.
+    // antes da gravação), o temporário que vai substituir uma configuração em
+    // nenhum instante concede mais do que o original concedia. POSIX: nasce só
+    // com os bits de dono do original e recebe grupo e bits finais antes do
+    // conteúdo. Windows: já nasce com a DACL do original (explícita e
+    // protegida) e o conteúdo vai pelo handle da criação — nunca existe com a
+    // ACL herdada da pasta; sem como criá-lo assim, falha com
+    // `config_access_unavailable`.
     async writeExclusive(file, data, { like = null } = {}) {
+      if (like !== null && !POSIX_ACCESS) return createWithDacl(file, data, like.dacl);
       const handle = await open(file, "wx", like ? like.mode & 0o700 : 0o666);
       try {
         if (like) await matchAccess(handle, like);

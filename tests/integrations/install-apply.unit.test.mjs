@@ -10,6 +10,7 @@ import { createNodeIo, runIntegrationCommand } from "../../src/integrations/inst
 import { INTEGRATIONS_CLI, makeScratch, REPO_ROOT } from "./helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers } from "./helpers/installed-hooks.mjs";
 import { sha256File, snapshotTree } from "./helpers/tree.mjs";
+import { grantsOf, readAces, sddlAces, setDacl, widenedSids } from "./helpers/windows-acl.mjs";
 
 const scratches = [];
 after(() => {
@@ -460,7 +461,12 @@ test("I4-C25e plano puro: chaves JSON __proto__ ficam próprias nos textos plane
 // EPERM/EACCES/EBUSY enquanto o handle existe (6 aplicações paralelas de
 // I4-C29 bastam). Simulado aqui pelo `rename` instrumentado, nas duas
 // plataformas: novas tentativas curtas, cada uma depois de refazer as
-// conferências do temporário e da configuração.
+// conferências do temporário e da configuração. O limite de tempo é o das
+// esperas entre tentativas (no máximo 630 ms): o tempo de `accessOf` e de
+// `writeExclusive` (leitura do acesso, criação dos temporários e do lock) fica
+// de fora — no Windows, ler e aplicar a DACL são processos do PowerShell, um
+// por conferência (revisão formal round 4), que nada têm a ver com essas
+// esperas; no POSIX são `stat`/`open`.
 test("I4-C29b substituição negada por handle aberto é repetida, refazendo as conferências antes de cada tentativa", async () => {
   const deny = (code) => Object.assign(new Error(`${code} simulado`), { code });
   const scenarios = [
@@ -480,8 +486,19 @@ test("I4-C29b substituição negada por handle aberto é repetida, refazendo as 
     const tmp = temp === "config" ? `${settings}.skill-me-tmp` : path.join(dir, ".skill-me", "claude-install.json.skill-me-tmp");
     const io = createNodeIo();
     let attempts = 0;
+    let accessMs = 0;
+    const timed = (op) => async (...args) => {
+      const before = Date.now();
+      try {
+        return await io[op](...args);
+      } finally {
+        accessMs += Date.now() - before;
+      }
+    };
     const instrumented = {
       ...io,
+      accessOf: timed("accessOf"),
+      writeExclusive: timed("writeExclusive"),
       async rename(from, to) {
         if (from !== tmp) return io.rename(from, to);
         attempts += 1;
@@ -507,7 +524,7 @@ test("I4-C29b substituição negada por handle aberto é repetida, refazendo as 
       steps: result.steps.map((s) => `${s.step}:${s.state}`),
       atTemp: existsSync(tmp) ? (readFileSync(tmp, "utf8") === USER_TEMP ? "arquivo do usuário intacto" : "outro conteúdo") : "nada",
       settings: settingsText === ORIGINAL ? "original" : settingsText.includes("editado durante a espera") ? "edição externa preservada" : Object.keys(JSON.parse(settingsText).hooks ?? {}).length === 9 ? "instalada" : "outro",
-      waitedUnderOneSecond: Date.now() - started < 1000 + 500,
+      waitedUnderOneSecond: Date.now() - started - accessMs < 1000 + 500,
     });
   }
   const done = ["config:done", "manifest:done"];
@@ -2174,8 +2191,10 @@ test("I4-C27d raiz ou ancestral trocados durante a aplicação não levam leitur
 // conteúdo (os quatro instantes de `I4-C25b`). Controles: troca na nova
 // tentativa de um rename negado, acesso do próprio arquivo ampliado depois da
 // conferência, configuração ausente na leitura e nada muda. No Windows o
-// acesso é ACL (o modo POSIX não se aplica): as colunas de acesso ficam "ACL",
-// e as linhas de link de arquivo e de modo rodam no Linux/WSL.
+// acesso é a DACL (o modo POSIX não se aplica): as colunas de modo ficam
+// "ACL", o acesso pedido é conferido contra a DACL da configuração lida (a
+// proteção efetiva dela é afirmada em I4-C25h) e as linhas de link de arquivo
+// e de modo rodam no Linux/WSL.
 const POSIX_ACCESS = process.platform !== "win32";
 const octal = (mode) => `0${mode.toString(8)}`;
 const R8_CANARY = "sintetico-r8-canario-nao-e-segredo";
@@ -2205,7 +2224,8 @@ function accessSwapIo(files, { on, renameFails }, swap) {
   };
   const observeTemp = (moment) => {
     const stats = lstatSync(configTemp);
-    probe.temp.push({ moment, mode: stats.mode & 0o7777, gid: stats.gid, canary: readFileSync(configTemp).includes(R8_CANARY) });
+    const dacl = POSIX_ACCESS ? null : readAces(configTemp);
+    probe.temp.push({ moment, mode: stats.mode & 0o7777, gid: stats.gid, dacl, canary: readFileSync(configTemp).includes(R8_CANARY) });
   };
   return {
     probe,
@@ -2223,7 +2243,7 @@ function accessSwapIo(files, { on, renameFails }, swap) {
       async writeExclusive(file, data, options) {
         if (file !== configTemp) return io.writeExclusive(file, data, options);
         if (due("criação do temporário")) fire();
-        probe.requested.push(options?.like ? options.like.mode : null);
+        probe.requested.push(options?.like ?? null);
         await io.writeExclusive(file, data, options);
         observeTemp("conteúdo gravado");
       },
@@ -2238,6 +2258,15 @@ function accessSwapIo(files, { on, renameFails }, swap) {
       },
     },
   };
+}
+
+// Acesso que o instalador pediu para o temporário: no POSIX o modo; no Windows,
+// se a DACL transmitida é, ACE por ACE, a da configuração lida antes do
+// comando (`originalDacl`, decomposta pelo helper, sem confiar no instalador).
+function requestedAccess(like, originalDacl) {
+  if (like === null) return "nenhum";
+  if (POSIX_ACCESS) return octal(like.mode);
+  return typeof like.dacl === "string" && isDeepStrictEqual(sddlAces(like.dacl), originalDacl) ? "DACL da configuração lida" : "outra DACL";
 }
 
 // O que está num caminho, sem seguir link, reconhecido pelos bytes conhecidos
@@ -2257,7 +2286,7 @@ function accessEntry(file, known, withMode) {
 }
 
 test("I4-C25f configuração trocada depois da leitura sob o lock: o conteúdo lido não vai para um temporário com o acesso de outro documento", async (t) => {
-  if (!POSIX_ACCESS) t.diagnostic('Windows: acesso por ACL — as colunas de acesso POSIX não se aplicam e ficam "ACL"; código, conflito, temporário e arquivos são afirmados');
+  if (!POSIX_ACCESS) t.diagnostic('Windows: acesso pela DACL — as colunas de modo POSIX não se aplicam e ficam "ACL"; acesso pedido (DACL conferida), código, conflito, temporário e arquivos são afirmados');
   const READ = "configuração lida sob o lock";
   const REGULAR = "arquivo regular diferente 0644";
   const LINK = "link para documento externo 0644";
@@ -2317,6 +2346,7 @@ test("I4-C25f configuração trocada depois da leitura sob o lock: o conteúdo l
     if (row.op === "uninstall") assert.equal((await runIntegrationCommand({ command: "install", agent: row.agent, target: home, apply: true, io: createNodeIo() })).exitCode, 0, label);
     const readBefore = row.absent ? null : readFileSync(config);
     const original = POSIX_ACCESS && !row.absent ? { mode: lstatSync(config).mode & 0o7777, gid: lstatSync(config).gid } : null;
+    const originalDacl = !POSIX_ACCESS && !row.absent ? readAces(config) : null;
     if (original !== null) assert.equal(original.mode, 0o600, `${label}: configuração lida 0600`);
     const known = [
       [READ, readBefore],
@@ -2354,7 +2384,7 @@ test("I4-C25f configuração trocada depois da leitura sob o lock: o conteúdo l
       errors: result.errors,
       steps: result.steps,
       renameAttempts: probe.renameAttempts,
-      requested: probe.requested.map((mode) => (mode === null ? "nenhum" : octal(mode))),
+      requested: probe.requested.map((like) => requestedAccess(like, originalDacl)),
       temp: probe.temp.map((o) => ({
         moment: o.moment,
         mode: !POSIX_ACCESS ? "ACL" : original === null ? "sem original" : octal(o.mode),
@@ -2388,7 +2418,7 @@ test("I4-C25f configuração trocada depois da leitura sob o lock: o conteúdo l
           ]
         : [],
       renameAttempts: row.control || row.renameFails ? 1 : 0,
-      requested: moments.length > 0 ? [POSIX_ACCESS && !row.absent ? "0600" : "nenhum"] : [],
+      requested: moments.length > 0 ? [row.absent ? "nenhum" : POSIX_ACCESS ? "0600" : "DACL da configuração lida"] : [],
       temp: moments.map((moment) => ({
         moment,
         mode: !POSIX_ACCESS ? "ACL" : row.absent ? "sem original" : "0600",
@@ -2405,3 +2435,125 @@ test("I4-C25f configuração trocada depois da leitura sob o lock: o conteúdo l
   }
   assert.deepEqual(observed, expected);
 });
+
+// Windows: DACL da configuração mudada ou trocada em volta da conferência —
+// achado P1 da revisão formal round 4, na ordem de R8-F1. Fixture de I4-C25g:
+// pasta com leitura herdável a "Usuários" e configuração lida com DACL
+// protegida só do usuário do teste (canário sintético). O io de
+// `accessSwapIo` registra a DACL pedida para o temporário e, depois da
+// gravação e antes de cada tentativa de rename, a DACL dele e se o canário
+// está nele. A DACL ampliada pelo dono depois da conferência — antes de criar
+// o temporário ou antes da nova tentativa de um rename negado — não chega ao
+// temporário e vira 4; o documento posto antes de o acesso ser obtido não
+// fornece DACL a nada (4 sem temporário); uma falha de E/S no rename apaga o
+// temporário próprio, criado com a DACL conferida. Controles: instalação do
+// Claude e remoção do Codex sem troca.
+const WINDOWS_HOME_DACL = "D:P(A;OICI;FA;;;{usuario})(A;OI;FR;;;BU)";
+const OWNER_ONLY_DACL = "D:P(A;;FA;;;{usuario})";
+const OWNER_AND_USERS_READ_DACL = "D:P(A;;FA;;;{usuario})(A;;FR;;;BU)";
+
+// Caminho com o que está nele (sem seguir link) e a DACL, decomposta por SID.
+function daclEntry(file, known) {
+  if (!existsSync(file)) return "ausente";
+  return [accessEntry(file, known, false), grantsOf(readAces(file))];
+}
+
+test(
+  "I4-C25h Windows: o temporário recebe a DACL da configuração conferida; DACL mudada ou documento trocado em volta da conferência não leva o conteúdo lido a um acesso mais amplo",
+  { skip: POSIX_ACCESS ? "windows-dacl: DACL do Windows; no POSIX o mesmo contrato de acesso é provado por I4-C25f" : false },
+  async () => {
+    const READ = "configuração lida sob o lock";
+    const ownerOnly = { protegida: true, acessos: { "usuário do teste": "controle total" }, herdadas: 0 };
+    const widenedByOwner = { protegida: true, acessos: { Usuários: "leitura", "usuário do teste": "controle total" }, herdadas: 0 };
+    const inherited = { protegida: false, acessos: { Usuários: "leitura", "usuário do teste": "controle total" }, herdadas: 2 };
+    const changed = (agent) => ({ code: "config_changed_during_apply", file: CONFIG_OF[agent] });
+    const done = [
+      { step: "config", state: "done" },
+      { step: "manifest", state: "done" },
+    ];
+    const both = ["conteúdo gravado", "antes do rename"];
+    const rows = [
+      { agent: "claude", op: "install", label: "controle: nada muda", temp: both, renameAttempts: 1, steps: done, atConfig: ["configuração (8 eventos próprios)", ownerOnly], manifest: "registro próprio (8)" },
+      { agent: "codex", op: "uninstall", label: "controle: nada muda", temp: both, renameAttempts: 1, steps: done, atConfig: ["configuração original", ownerOnly], manifest: "ausente" },
+      { agent: "claude", op: "install", label: "DACL ampliada pelo dono imediatamente antes de criar o temporário", swap: "widen", on: ["criação do temporário", 1], conflict: changed("claude"), temp: ["conteúdo gravado"], renameAttempts: 0, atConfig: [READ, widenedByOwner] },
+      { agent: "claude", op: "install", label: "rename negado (EPERM) e DACL ampliada antes da nova tentativa", swap: "widen", renameFails: "EPERM", conflict: changed("claude"), temp: both, renameAttempts: 1, atConfig: [READ, widenedByOwner] },
+      { agent: "claude", op: "install", label: "documento com a ACL herdada posto imediatamente antes de obter o acesso", swap: "substitute", on: ["acesso do original", 1], conflict: changed("claude"), temp: [], renameAttempts: 0, atConfig: ["documento substituto", inherited], aside: [READ, ownerOnly] },
+      { agent: "codex", op: "uninstall", label: "documento com a ACL herdada posto imediatamente antes de obter o acesso", swap: "substitute", on: ["acesso do original", 1], conflict: changed("codex"), temp: [], renameAttempts: 0, atConfig: ["documento substituto", inherited], aside: [READ, ownerOnly], manifest: "registro próprio (6)" },
+      { agent: "claude", op: "install", label: "falha de E/S no rename", renameFails: "EIO", failure: "EIO", temp: both, renameAttempts: 1, atConfig: [READ, ownerOnly] },
+    ];
+    const observed = [];
+    const expected = [];
+    for (const [index, row] of rows.entries()) {
+      const label = `${row.agent} ${row.op} — ${row.label}`;
+      const dir = makeScratch(`r4 dacl ${index}`);
+      scratches.push(dir);
+      const home = path.join(dir, "perfil", row.agent === "claude" ? ".claude" : ".codex");
+      mkdirSync(home, { recursive: true });
+      setDacl(home, WINDOWS_HOME_DACL);
+      const config = path.join(home, CONFIG_OF[row.agent]);
+      const aside = path.join(dir, "configuração lida movida.json");
+      writeFileSync(config, R8_READ[row.agent]);
+      setDacl(config, OWNER_ONLY_DACL);
+      if (row.op === "uninstall") assert.equal((await runIntegrationCommand({ command: "install", agent: row.agent, target: home, apply: true, io: createNodeIo() })).exitCode, 0, label);
+      const readBefore = readFileSync(config);
+      const originalDacl = readAces(config);
+      const known = [
+        [READ, readBefore],
+        ["configuração original", R8_READ[row.agent]],
+        ["documento substituto", R8_SUBSTITUTE],
+      ];
+      const swaps = {
+        widen: () => setDacl(config, OWNER_AND_USERS_READ_DACL),
+        substitute: () => {
+          renameSync(config, aside);
+          writeFileSync(config, R8_SUBSTITUTE);
+        },
+      };
+      const files = { config, manifest: path.join(home, ".skill-me", `${row.agent}-install.json`) };
+      const { io, probe } = accessSwapIo(files, row, row.swap ? swaps[row.swap] : null);
+      const result = await runIntegrationCommand({ command: row.op, agent: row.agent, target: home, apply: true, io });
+      observed.push({
+        label,
+        swapped: probe.swapped,
+        exitCode: result.exitCode,
+        status: result.status,
+        applied: result.applied,
+        conflicts: result.conflicts,
+        errors: result.errors,
+        steps: result.steps,
+        renameAttempts: probe.renameAttempts,
+        requested: probe.requested.map((like) => requestedAccess(like, originalDacl)),
+        temp: probe.temp.map((o) => ({ moment: o.moment, ampliados: widenedSids(originalDacl, o.dacl), canary: o.canary })),
+        atConfig: daclEntry(config, known),
+        aside: daclEntry(aside, known),
+        tempLeft: existsSync(`${config}.skill-me-tmp`) ? "presente" : "ausente",
+        manifest: describeEntry(files.manifest),
+        lockReleased: !existsSync(path.join(home, ".skill-me", `${row.agent}.lock`)),
+      });
+      // O temporário só existe com a DACL conferida — nenhum SID ganha acesso
+      // sobre a configuração lida em nenhum instante observado — e só é
+      // promovido sem troca; trocada a DACL ou o documento, a mudança do dono e
+      // o documento posto ficam como estão.
+      const control = row.label.startsWith("controle");
+      expected.push({
+        label,
+        swapped: Boolean(row.swap),
+        exitCode: control ? 0 : row.failure ? 5 : 4,
+        status: control ? "applied" : row.failure ? "incomplete" : "conflict",
+        applied: control,
+        conflicts: row.conflict ? [row.conflict] : [],
+        errors: row.failure ? [{ code: row.failure }] : [],
+        steps: row.steps ?? (row.failure ? [{ step: "config", state: "failed" }] : []),
+        renameAttempts: row.renameAttempts,
+        requested: row.temp.length > 0 ? ["DACL da configuração lida"] : [],
+        temp: row.temp.map((moment) => ({ moment, ampliados: [], canary: true })),
+        atConfig: row.atConfig,
+        aside: row.aside ?? "ausente",
+        tempLeft: "ausente",
+        manifest: row.manifest ?? "ausente",
+        lockReleased: true,
+      });
+    }
+    assert.deepEqual(observed, expected);
+  },
+);
