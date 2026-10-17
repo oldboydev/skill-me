@@ -1702,3 +1702,248 @@ os TAPs registram códigos, conflitos, passos, tipos e caminhos sintéticos, nun
 configuração. Nenhuma instalação em perfil pessoal; nenhum diretório gerenciado real acessado; todos os
 `--target` em temporários; nenhum agente, modelo, download ou E2E; nenhum bypass/confiança concedido;
 nenhum subagente; nenhuma operação recusada pela plataforma nesta rodada.
+
+## Correção da verificação independente round 7 — staging próprio, destino da promoção e raiz da configuração (17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega. Partida em `2e7fd75` (só o relatório
+independente 7 e o Handoff desde `6053d2c`; produto e testes = `8ef51d8`, `git diff --quiet 8ef51d8 --
+src` verdadeiro), checkout limpo, HEAD do despacho conferido; SHA-256 do relatório rastreado e da cópia
+ignorada `verifier-round7-report.md` iguais (`1177ec41…80658ecd`). Esta seção é evidência do autor,
+**não é verificação independente** nem revisão formal: nenhum `review:run`/`review:check`/`pr:create`/
+push/PR/merge/Verifier foi executado; `.verified.md`, contadores, override, estado do motor (3 de 10
+tentativas formais) e histórico não foram tocados; scratches de Verifiers e recovery não foram lidos nem
+mexidos. A sonda adicional do Verifier interrompida na rodada 6 (`verifier-residual-probe.mjs`) **não**
+foi executada, recriada nem substituída, e não houve sonda ad hoc: as provas são as regressões
+versionadas; os auxiliares desta rodada (`%TEMP%\skill-me-r7\probes`) só copiam, rodam e conferem blobs e
+cruzam `Proof:` com TAP, sem cenário de produto próprio. Commits: `851c3bd` (Landing, antes do código),
+`e570541` (correção, regressões e guia) e o desta evidência. `git diff --name-only 2e7fd75..e570541`:
+`.checks/issue-4-integracoes.md` (uma linha de Landing), `docs/agent-observation.md`,
+`src/integrations/install/{run,target}.mjs` e `tests/integrations/install-apply.unit.test.mjs`; nada em
+doctor, `scripts/`, configuração do motor, dependências, `AGENTS.md`, task, helpers de teste ou `.verified.md`.
+
+**Classificação.** R7-F1/F2/F3 são os achados bloqueantes do Verifier7 (AC6/C25/C27/C34), estabelecidos
+por **leitura**, sem reprodução pelo Verifier. Agora foram **reproduzidos** pelas regressões novas no
+produto intacto `8ef51d8`, nas duas plataformas, só com dados sintéticos dentro do scratch de cada linha
+(todo destino "fora do alvo" é uma pasta irmã no mesmo scratch). Consequências estabelecidas pela
+execução, comunicadas no retorno: cópias exatas de outra pasta do alvo apagadas e junção removida
+(Windows) durante a limpeza da sobra; artefatos gravados fora do alvo e um link promovido a pasta do
+plugin com registro gravado e saída 0; diretório vazio do usuário substituído pela instalação (POSIX
+nativo; Windows pela emulação declarada); configuração do Claude/Codex reescrita ou apagada na pasta
+movida para fora da raiz real; temporário próprio apagado através da troca; `.skill-me`/`plugins`
+criadas fora da raiz. **Achado adicional do mesmo R7-F2, só no Windows e sem emulação:** um **arquivo** do
+usuário posto em `plugins/skill-me-observer` depois do plano era substituído pelo `rename` nativo do
+staging (saída 0, bytes do arquivo perdidos); no POSIX o mesmo `rename` falha (`ENOTDIR`) e caía no
+`catch` (4). Fechado pela mesma conferência; perda de dados comunicada no retorno. Nenhum é escopo novo.
+
+### Reprodução RED no produto `8ef51d8` (cópias isoladas próprias)
+
+- Windows: `git -c core.autocrlf=false archive 8ef51d8` (SHA-256 do tar `34439095…ac77c811`, o mesmo da
+  rodada anterior) extraído em `%TEMP%\skill-me-r7\red-8ef51d8` + `node_modules`; 61 arquivos de `src` e
+  dos helpers de teste iguais aos blobs de `8ef51d8` **sem** normalização; teste sobreposto com o blob
+  commitado em `e570541` (`011679ba…`, SHA-256 LF `c486d5f9…11df6d`).
+- WSL (distro `Ubuntu` explícita, Node 24.13.0, ext4, `env -i` só com `PATH`): mesmo tar em
+  `/tmp/skillme-r7-red2-8ef51d8`, os mesmos 61 arquivos iguais aos blobs, mesmo blob do teste.
+- Resultado igual nas duas: `install-apply.unit` **18 tests, 15 pass, 3 fail** — falham exatamente
+  `I4-C34i`, `I4-C34j` e `I4-C27d`, todas por diff de asserção (`ERR_ASSERTION`), sem exceção; as 15
+  anteriores passam (`round7-red-tests-{windows,wsl}-8ef51d8.tap`). A primeira execução RED, com a versão
+  do teste anterior a uma troca de expressão equivalente (`realHome`), fica preservada como
+  `round7-red-new-*-antes-da-expressao-equivalente.tap`: diffs de asserção idênticos aos finais.
+
+Valores observados no produto antigo (Windows | WSL), contra `e570541` (igual nas duas):
+
+| `I4-C34i` (staging trocado; `plugins` estável) | `8ef51d8` | `e570541` |
+| --- | --- | --- |
+| sobra própria, 1ª exclusão, junção/link → outra pasta do alvo com cópias exatas | `0 applied`, cópias **apagadas**, junção removida pelo `rmdir`, plugin instalado \| `5 ENOTDIR` depois de **apagar** as cópias | `4 config_changed_during_apply` no staging, nada através dele, pasta intacta, link fica |
+| sobra própria, 1ª exclusão, → pasta externa com cópias | `4 target_escape` no arquivo (contenção do filho), `lstat`/`realpath` através do link \| igual | `4` no staging, sem nenhum acesso através dele |
+| sobra própria, última exclusão, → outra pasta vazia | `0`, junção removida pelo `rmdir` \| `5 ENOTDIR` | `4`, link fica |
+| logo depois de criar o staging, → pasta externa vazia | `0`, 3 artefatos gravados **fora do alvo**, link promovido a `plugins/skill-me-observer`, registro gravado \| igual | `4`, nada gravado fora |
+| 1º artefato, → outra pasta vazia / pasta externa vazia | `0`, restantes gravados através do link, link promovido \| igual | `4`; staging próprio movido com `__init__.py` |
+| 1º artefato, arquivo no lugar do staging | `5 ENOENT` \| `5 ENOTDIR` | `4`, arquivo do usuário intacto |
+| 3º artefato (antes da promoção), → pasta externa / outra pasta com cópias | `0`, link promovido a pasta do plugin \| igual | `4`, nenhuma promoção |
+| limpeza depois de `rename` falho (EIO), 1ª exclusão, → outra pasta com cópias | `5 EIO`, cópias **apagadas** (Windows: junção removida) \| `5 EIO`, cópias apagadas | `5 EIO`, passo `artifacts: failed`, pasta intacta, link fica |
+| controles: instalação, sobra própria limpa, `rename` falho sem troca | `0`, `0`, `5` com a sobra própria limpa \| igual | igual |
+
+| `I4-C34j` (entrada surgida no destino depois do 3º artefato) | `8ef51d8` | `e570541` |
+| --- | --- | --- |
+| diretório real vazio (`plugins` presente ou criada pela instalação) | `0 applied`, destino **substituído** pelo staging, registro gravado (Windows pela emulação declarada; WSL nativo) | `4 foreign_artifact` em `plugins/skill-me-observer`, nenhuma promoção, destino intacto (tipo, mtime, árvore), staging próprio completo no lugar |
+| diretório com arquivo do usuário / junção-link para pasta vazia do alvo | `4` pelo `catch`, promoção tentada, staging limpo \| igual | `4`, nenhuma promoção, staging no lugar |
+| arquivo do usuário | `0`, arquivo **substituído** pelo `rename` nativo do Windows \| `4` pelo `catch` (`ENOTDIR`) | `4`, nenhuma promoção, arquivo intacto |
+| controles: nada surge (`plugins` presente ou criada) | `0` \| `0` | `0` |
+
+| `I4-C27d` (raiz ou ancestral trocados por junção/link para a pasta movida) | `8ef51d8` (iguais nas duas) | `e570541` |
+| --- | --- | --- |
+| Claude install, depois da última leitura da prévia | `4 target_escape .skill-me` depois de **criar** `.skill-me` na pasta movida | `4 target_escape .`, nada criado |
+| Claude install, lock criado (leitura sob o lock) | `4 .skill-me`, configuração **lida** através da troca | `4 .` antes da leitura |
+| Claude install, registro lido sob o lock / temporário criado; ancestral, temporário criado | `4 .skill-me` tardio, configuração **reescrita** na pasta movida (8 eventos) | `4 .` + lock mantido; configuração movida com os bytes originais; temporário próprio fica lá |
+| Claude uninstall (reescrita), temporário criado | `4` tardio, configuração movida **reescrita** | `4 .`, bytes iguais |
+| Claude uninstall que apaga o arquivo: registro lido sob o lock / leitura da exclusão; ancestral | `4` tardio, configuração movida **apagada** | `4 .`, arquivo intacto |
+| Codex install, rename negado (EPERM) com a troca | nova tentativa **grava** na pasta movida | `4 .`, 1 tentativa |
+| Codex install, rename com falha (EIO) com a troca | `5`, temporário próprio **apagado através da troca** | `5 EIO`, temporário fica na pasta movida |
+| Codex uninstall, temporário criado | `4` tardio, `hooks.json` movido **reescrito** | `4 .`, bytes iguais |
+| Hermes install sem `plugins`, registro lido sob o lock | `4 target_escape plugins` depois de **criar** `plugins` na pasta movida | `4 .`, nada criado |
+| só o arquivo da configuração trocado por link de arquivo para ele movido para fora (WSL) | install `0` (lido através do link, link substituído); remoção `0` (link apagado, registro apagado) | `4 target_escape settings.json`, nada lido nem apagado através dele; temporário próprio limpo |
+| controles: nada muda, rename negado uma vez, alvo por alias, link de arquivo contido (WSL) | `0` | `0` (o link contido continua substituído por arquivo regular, julgado na rodada 6) |
+
+### Correção (`run.mjs`, `target.mjs`; linha de Landing de `851c3bd`)
+
+- `assertContained` nomeia a própria raiz como `.` (`target.mjs:67`); nenhum chamador anterior passava a raiz.
+- `rootUnchangedGuard` (`run.mjs:189`) é `dirUnchangedGuard` sobre a raiz com a referência `root` — a
+  mesma regra de `.skill-me`/`plugins`, sem cópia. `withLock` (`:248`) a confere antes do `mkdir` de
+  `.skill-me` e a entrega a `fn`.
+- Claude/Codex (`runJsonAgent`, `:500`): `configContained` = raiz + `assertContained` do arquivo; usada
+  antes da leitura sob o lock (`readJsonState`, `:432`, gancho novo `beforeConfigRead`), a cada
+  releitura em `beforeRename` (`replaceChecked`, `:349`) e antes da leitura e do `unlink` da exclusão
+  (`deleteChecked`, `:364`). `writeViaTemp` recebe a raiz como `dirUnchanged` (criação, cada tentativa,
+  limpeza) — a opção já usada pelo registro.
+- Hermes: `assertStillRealDir` (`:197`) é o antigo `stillRealDir` local da remoção, agora compartilhado
+  com o staging. `installHermesArtifacts` (`:754`): raiz antes do `mkdir` de `plugins`; `stagingStillOwn`
+  (`plugins` + staging diretório real) antes de cada artefato gravado, antes da promoção e, via
+  `removeOwnedStaging` (`:735`), antes do `readdir`, de cada arquivo e do `rmdir` da sobra (também na
+  limpeza do `catch`); a contenção e o tipo checados uma vez no início da limpeza saíram (cobertos pela
+  conferência). Antes do `rename`, a pasta do plugin precisa continuar ausente (`:783`), senão
+  `foreign_artifact` sem promoção nem limpeza do staging.
+
+### Regressões (`tests/integrations/install-apply.unit.test.mjs`)
+
+Pela API pública `runIntegrationCommand` com io real instrumentado que dispara a troca dentro do
+comando, depois de um efeito real; tabela `observed`/`expected` comparada por inteiro.
+
+- **`I4-C34i`** (asserção em `:1753`) — 13 linhas (10 trocas + 3 controles). Registra toda operação que
+  atravessa o caminho do staging depois da troca (leitura, gravação, exclusão, promoção e metadado de um
+  filho; só o `lstat` do próprio caminho fica de fora) e cada promoção tentada. Afirma troca ocorrida,
+  código, `status`, `applied`, conflitos, erros, passos, **nenhuma operação através do staging trocado**,
+  promoções, destino alheio igual ao snapshot anterior (bytes, mtime, tipo), o que está no caminho do
+  staging (link → destino; arquivo do usuário), o conteúdo exato do staging próprio movido (derivado do
+  arquivo que disparou a troca: ordem do `readdir`), pasta do plugin, registro e lock.
+- **`I4-C34j`** (`:1893`) — 7 linhas (5 entradas + 2 controles). Afirma código, conflito exato, passos,
+  **nenhuma promoção com a entrada presente**, destino com tipo, mtime e árvore iguais, o que ficou no
+  destino, staging próprio completo no lugar (bytes do pacote), registro ausente e lock liberado;
+  controles com uma promoção para destino ausente. No Windows o io emula a semântica POSIX só para o
+  diretório vazio, com `t.diagnostic`; no GREEN ela nunca é acionada (nenhuma promoção sobre entrada
+  presente).
+- **`I4-C27d`** (`:2158`) — 20 linhas (15 trocas + 5 controles; 3 com link de arquivo, executadas no WSL e
+  com `t.diagnostic` no Windows). Registra leitura de conteúdo, gravação e exclusão através do caminho
+  trocado e as tentativas de `rename` do temporário. Afirma código, `status`, `applied`, conflitos exatos
+  (`.` e o do lock quando ele já existia), erros, passos, tentativas, **nenhuma operação através da
+  troca**, o link no caminho trocado, a árvore inteira da pasta real reconhecida pelo conteúdo
+  (configuração com N eventos próprios, registro, lock e temporário próprios), bytes da configuração
+  movida iguais aos de antes, o arquivo movido para fora e o alias.
+- Nenhuma asserção existente mudou: o diff do arquivo só troca as duas linhas de import (acrescenta
+  `rmdirSync` e `INTEGRATIONS_CLI`) e acrescenta código no fim.
+
+### Mudanças colaterais de comportamento, provadas
+
+- Staging trocado durante a instalação: antes 0 (gravação/promoção através do link, exclusão de cópias)
+  ou 5 (`ENOTDIR`/`ENOENT`); agora 4 `config_changed_during_apply` no staging (`I4-C34i`). Troca entre a
+  leitura do plano e o início da limpeza: de `foreign_artifact` para `config_changed_during_apply` (por
+  leitura; sem linha dedicada).
+- Pasta do plugin surgida depois do plano: antes 0 (diretório vazio no POSIX; arquivo no Windows) ou 4
+  com o staging limpo e promoção tentada; agora 4 sem promoção e com o staging próprio no lugar
+  (`I4-C34j`). A instalação seguinte, com o caminho livre, limpa a sobra (controle já existente de
+  `I4-C34`).
+- Raiz ou ancestral trocados: antes efeitos na pasta movida e 4 tardio por `.skill-me`/`plugins` (ou 5
+  com o temporário apagado através da troca); agora 4 `target_escape .` antes do efeito (`I4-C27d`).
+- Configuração trocada por link de arquivo para fora durante a aplicação: antes lida através do link e
+  0 (link substituído ou apagado); agora 4 `target_escape` no arquivo (`I4-C27d`, WSL).
+- Aplicação sem troca: até 3 conferências a mais por efeito (`lstat`/`realpath`/`stat` da raiz,
+  `lstat`/`realpath` do arquivo); nenhuma leitura de conteúdo nova; resultados dos testes anteriores iguais.
+
+### Contagens reais em `e570541`
+
+Um batch por plataforma: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs scripts/code-review/review.test.mjs`. Windows: worktree com HEAD
+`e570541` e `git diff --quiet e570541 -- src tests docs scripts package.json package-lock.json`,
+executado fora do sandbox pelos testes de timeout/taskkill do motor (só processos dos próprios testes),
+Hermes nativo pelo helper (`python -I -B`, HERMES_HOME e HOME/APPDATA/TEMP temporários, sem modelo). WSL:
+distro `Ubuntu` explícita, Node 24.13.0, `git -c core.autocrlf=false archive e570541` (SHA-256
+`b8575dea…8470da0a`) no ext4 (`/tmp/skillme-r7-batch-e570541`), 140 arquivos de `src`, `tests`,
+`scripts`, `docs`, `package.json` e `package-lock.json` iguais aos blobs sem normalização, `env -i` só com
+`PATH`; exit do próprio `wsl.exe`. Nenhum spawn lendo por `/mnt/c`.
+
+| Execução | tests | pass | fail | cancelled | skipped | todo | exit | duração |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 79 + governança 6 + motor 16 | 101 | 99 | 0 | 0 | 2 | 0 | 0 | 33 s |
+| WSL — integrações 79 + governança 6 + motor 16 | 101 | 93 | 0 | 0 | 8 | 0 | 0 | 17 s |
+
+Cruzamento das 54 linhas `Proof:` com os TAPs (`round7-proofs-vs-batch-{windows,wsl}-e570541.txt`, mesmo
+script das rodadas anteriores; cada padrão casou exatamente um teste executado, declarado no arquivo da
+prova): Windows 53 PASS + `I4-C15` SKIP; WSL 46 PASS + 8 SKIP. Fora das linhas `Proof:` (47, todos
+executados): 16 do motor, 5 de governança e 26 de integração — os 23 anteriores e os novos `I4-C34i`,
+`I4-C34j`, `I4-C27d` (+3 em relação aos 98 de `8ef51d8`). Skips e motivos:
+
+- Windows (2): `I4-C15` `posix-signals` e `I4-C25b` `posix-modes` (passam no WSL). Diagnósticos de link
+  de arquivo (EPERM sem privilégio): os 15 anteriores e as 3 linhas novas de `I4-C27d` — executadas no
+  WSL, sem diagnóstico.
+- WSL (8): `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente`: prova nativa do Hermes só no
+  Windows (executada nesse batch, 8 PASS); Linux **pendente**.
+- Medição C38: Windows 828 ms depois do filho, 65536 bytes no pipe; WSL 808 ms, 146176 bytes.
+- GREEN intermediário (antes do commit, cópia WIP): suítes de instalação, 38 testes — Windows 37 pass/1
+  skip (`posix-modes`), WSL 38/38 (`round7-green-install-suites-*-wip.tap`).
+- `I4-C29` não foi repetido em laço: no caminho concorrente só entram, sob o lock, conferências de
+  metadado da raiz e do arquivo (`lstat`/`realpath`/`stat`), sem `rename`, exclusão ou leitura nova que
+  disputem com os leitores das outras execuções; passou nos dois lotes. Sem mutações adicionais (não
+  exigidas no `light`): cada linha nova falhou no produto antigo.
+- Doctor (417) não reexecutado: nenhum arquivo do doctor, dos módulos reutilizados, de `scripts/`,
+  `code-review.config.json`, `package.json`/lock ou `AGENTS.md` mudou desde `2e7fd75` (`I4-C45`, no
+  lote, confere a interface do doctor com as integrações instaladas).
+
+### Nota do coordenador (`coordinator-formal3-residuals.md`) — confirmação e fechamento
+
+- **Pasta própria do staging trocada durante sua limpeza:** confirmado e reproduzido (`I4-C34i`, linhas
+  da sobra própria): cópias exatas de outra pasta do alvo apagadas através da junção/link e a junção
+  removida pelo `rmdir` no Windows (0); no POSIX, 5 depois das exclusões. Fechado em `e570541`.
+- **Ressalvas finais do autor:** (a) `settings.json`/`hooks.json` sem referência contra a troca de um
+  ancestral da raiz — confirmado como defeito do AC6 (R7-F3), reproduzido e fechado (`I4-C27d`); a
+  formulação anterior "fora dos ancestrais compartilhados dos achados" fica como histórico. (b) `stat`
+  no `catch` do `rename` do staging com `plugins` trocada — mantido como limite de metadado, como julgou
+  o Verifier7; a conferência nova do destino fica antes do `try`, sem levar mais casos a esse ramo.
+  (c) conflito no meio do passo `artifacts` sem o passo listado e com `applied: false` — semântica
+  anterior mantida (não há 0 falso; 4 continua distinto de 5).
+- **Mesmo lifecycle do staging:** (a) staging virando link depois da criação ou de um artefato gravado —
+  confirmado e reproduzido (gravação fora do alvo, link promovido, registro gravado, 0); fechado.
+  (b) pasta do plugin vazia surgida depois do plano — confirmado no POSIX nativo e, pela emulação
+  declarada, no Windows; o Windows nativo também substituía um **arquivo** do usuário nesse caminho.
+  Fechado pela conferência antes da promoção.
+
+### Examinado e não alterado (limites e resíduos)
+
+- Janela não atômica entre cada conferência nova e o syscall; outro diretório real posto no mesmo
+  caminho (raiz, staging, pasta do plugin) e arquivo com bytes idênticos não se distinguem.
+- Raiz trocada por um **arquivo** regular: por leitura, a conferência da raiz responde
+  `config_changed_during_apply` em `.` antes do efeito; a liberação do lock pela pasta de estado pode
+  então terminar com E/S no POSIX (`ENOTDIR` no `lstat` através do arquivo → passo `lock: failed`, 5,
+  lock mantido, regra de R5) e, no Windows, provavelmente como conflito do lock. Não testado nem
+  executado (dependente de plataforma; nenhum efeito através da troca pela leitura do fluxo).
+- A prévia (fora do lock) confere a contenção uma vez antes das leituras; uma troca entre a leitura da
+  configuração e a do registro na prévia não é reconferida (só leitura, sem efeito; a aplicação
+  reconfere sob o lock). As leituras do estado Hermes sob o lock seguem a referência de `plugins`
+  conferida no início da leitura (desenho da rodada formal 3).
+- `rmdir` vazio de `.skill-me` depois de liberar o lock e de `plugins` no fim da remoção: syscalls
+  seguidos à última conferência (janela), inalterados.
+- `mkdir` do staging com `EEXIST` (entrada posta entre o plano e o `mkdir`): continua 5, sem nada
+  gravado através dela; não reclassificado.
+- `stat` no `catch` do `rename` do staging, conflito no meio de `artifacts`, staging real com artefato
+  alterado antes da promoção, `settings.json` como symlink contido, remoções concorrentes de
+  `.skill-me`, diretório gerenciado que seja link: limites já registrados, inalterados.
+- Hermes nativo só no Windows; Linux pendente; macOS só pela CI; E2E real dos três agentes pendente.
+
+### Sobras próprias desta rodada (preservadas)
+
+Nenhum `rm` nem limpeza opaca. Windows `%TEMP%\skill-me-r7\`: `probes/` (`wsl-copy.sh`, `wsl-run.sh`,
+`verify-blobs.sh`, `proofs-vs-batch.mjs` copiados/adaptados da rodada anterior), `red-8ef51d8/` (cópia
+RED), `8ef51d8-lf.tar`, `851c3bd-lf.tar`, `e570541-lf.tar`, listas de blobs, `results/` e o rascunho desta
+seção. WSL `/tmp`: `skillme-r7-{red-8ef51d8,red2-8ef51d8,wip1,batch-e570541,probes}` e
+`skillme-r7-blobs-{8ef51d8,e570541}.txt`. Scratches dos testes: removidos pelo `after()` existente (só
+diretórios de `makeScratch`, caminho absoluto sob o TEMP; as junções/symlinks criados apontam para
+dentro do próprio scratch da linha); nenhum `skill-me i4 r7 …` restou nas duas plataformas. Restam no
+TEMP do Windows 11 scratches `skill-me i4 failure-*`/`lstat-check` de 16/10 e 17/10 09:53, anteriores a
+esta rodada e não criados por ela — não tocados. Cópias locais (ignoradas) em
+`.checks/code-review/issue-4/round7-*`. Scratches de Verifiers, recovery e histórico formal não foram tocados.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token, credencial ou valor de ambiente impresso. Testes com conteúdo sintético; os
+TAPs registram códigos, conflitos, passos, tipos, rótulos de conteúdo reconhecido e caminhos sintéticos,
+nunca conteúdo de configuração. Nenhuma instalação em perfil pessoal; nenhum diretório gerenciado real
+acessado; todos os `--target` em temporários; nenhum agente, modelo, download ou E2E; nenhum
+bypass/confiança concedido; nenhum subagente; nenhuma operação recusada pela plataforma nesta rodada.

@@ -679,3 +679,46 @@ fixtures próprias, corrige e prova; depois haverá nova verificação independe
 método permitido. Nenhuma formal4, PR ou merge antes do parecer válido. Três tentativas
 formais consumidas, teto exclusivo dez, critérios/histórico/core intactos. Codex não
 implementou produto/testes.
+
+Correção da verificação independente round 7 (17/10/2026):
+
+- **Fronteira:** R7-F1/F2/F3 fechados em `e570541`, com a linha de Landing antes do código em `851c3bd`;
+  **reproduzidos** (não só lidos) pelas regressões novas no produto intacto `8ef51d8` em cópias
+  isoladas (Windows e WSL: `install-apply.unit` 18 tests, 15 pass, 3 fail — só `I4-C34i`, `I4-C34j` e
+  `I4-C27d`, por diff de asserção) e GREEN nos dois lotes de 101 testes em `e570541` (Windows 99 pass/2
+  skips, WSL 93 pass/8 skips, exit 0; 54 linhas `Proof:` casadas). R7-F1: cópias exatas de outra pasta
+  apagadas e junção removida na limpeza da sobra, artefatos gravados fora do alvo e link promovido a
+  pasta do plugin com 0. R7-F2: diretório vazio do usuário tomado com 0 (POSIX nativo; Windows por
+  emulação declarada no io da prova) e, só no Windows nativo, **arquivo** do usuário no destino
+  substituído pelo `rename` (bytes perdidos) — comunicado no retorno, fechado pela mesma conferência.
+  R7-F3: configuração do Claude/Codex reescrita ou apagada na pasta movida para fora da raiz real,
+  temporário próprio apagado através da troca, `.skill-me`/`plugins` criadas fora da raiz. Checks
+  inalterados; Landing +1 linha; regressões `I4-C34i` (13 linhas), `I4-C34j` (7) e `I4-C27d` (20; 3 com
+  link de arquivo só no WSL); nenhuma asserção existente mudou. Evidência em
+  `.checks/issue-4-integracoes.build.md`, "Correção da verificação independente round 7". Nenhuma
+  verificação independente nem revisão formal pedida ou executada; contadores e histórico intactos; a
+  sonda bloqueada da rodada 6 não foi executada nem substituída e não houve sonda ad hoc; estas provas
+  são do autor e não aprovam a entrega.
+- **Nota do coordenador (`coordinator-formal3-residuals.md`):** staging trocado na limpeza — confirmado e
+  fechado; staging virando link depois de criado/gravado e destino vazio depois do plano — confirmados
+  e fechados; ressalva autoral da raiz/ancestral da configuração — confirmada como defeito do AC6 e
+  fechada (a formulação anterior "fora dos ancestrais compartilhados dos achados" fica como histórico);
+  `stat` no `catch` do rename e passos parciais de `artifacts` — mantidos como limites, como julgou o
+  Verifier7. Nota encerrada.
+- **Decidido durante o build:** nada novo do proprietário. Staging só como diretório real pelo `lstat`
+  (link para dentro do alvo também é alheio); destino da promoção recusado com `foreign_artifact` e
+  staging próprio mantido no lugar; raiz pela mesma regra de `.skill-me`/`plugins`, conflito em `.`;
+  contenção do próprio arquivo antes das leituras e da exclusão da configuração sob o lock — tudo na
+  linha de Landing de `851c3bd`.
+- **Abandonado:** conferir só `plugins`; tipo do staging só no início da limpeza; referência no caminho
+  real do staging; conferir o conteúdo do staging antes da promoção; só o `catch` do `rename`; `rename`
+  sem substituição/CAS; limpar o staging ao recusar o destino; diretório vazio como "nada a preservar";
+  só guardas da pasta de estado; só a contenção do arquivo em todo efeito; referência no caminho real
+  do arquivo; sondar ancestrais até a raiz do sistema, inode, montagem; rollback da configuração.
+- **Limites registrados, não corrigidos (fora dos achados):** janela entre conferência e syscall; outro
+  diretório real no mesmo caminho e bytes idênticos; raiz trocada por arquivo (por leitura, lock pode
+  terminar em 5 no POSIX; não testado); prévia sem reconferência entre as próprias leituras; `rmdir` de
+  `.skill-me`/`plugins` logo depois da última conferência; `mkdir` do staging com `EEXIST` continua 5;
+  `stat` no `catch`, passos parciais de `artifacts` e os demais já registrados.
+- **Próxima ação (orquestrador):** verificação independente 8 pelos testes versionados e leitura
+  permitida; revisão formal 4 só depois de PASS e relatório commitado.
