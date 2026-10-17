@@ -208,6 +208,174 @@ test("I4-C25 instalação altera só o alvo e preserva confiança, política, sa
   assert.deepEqual(snapshotTree(path.join(hermes, "plugins", "other-plugin")), other);
 });
 
+// Chave JSON `__proto__` é dado do usuário como qualquer outra. As configurações
+// abaixo são texto JSON (um literal JS já a perderia antes da entrada):
+// `JSON.parse` a cria como propriedade própria, e a reescrita precisa mantê-la
+// com o valor e a forma serializada, na raiz e aninhada. Edições posteriores à
+// instalação usam definição própria, como um editor que grava o texto.
+const PROTO = "__proto__";
+const defineOwn = (object, key, value) => Object.defineProperty(object, key, { value, enumerable: true, writable: true, configurable: true });
+const CLAUDE_PROTO_TEXT = `{
+    "env": { "__proto__": "valor-do-usuario", "FOO": "bar" },
+    "bigNumber": 12345678901234567890,
+    "ratio": 1.50,
+    "hooks": {
+        "PreToolUse": [
+            { "matcher": "Bash", "__proto__": { "nota": "grupo de terceiro" }, "hooks": [ { "type": "command", "command": "guard.sh", "__proto__": "texto do usuário" } ] }
+        ]
+    }
+}
+`;
+// Objeto `__proto__` na raiz com uma chave `hooks` dentro e sem `hooks` próprio:
+// numa cópia por atribuição ele vira o protótipo e os grupos próprios iriam
+// parar nele, fora do arquivo gravado.
+const CLAUDE_PROTO_ROOT_TEXT = `{
+    "__proto__": { "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "proto-notify.sh" } ] } ] }, "nota": "objeto do usuário" },
+    "env": { "FOO": "bar" }
+}
+`;
+const CODEX_PROTO_TEXT = `{
+  "description": "team hooks",
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "__proto__": "texto do usuário", "hooks": [ { "type": "command", "command": "python3 policy.py", "timeout": 30, "__proto__": { "x": 1 } } ] }
+    ]
+  }
+}
+`;
+const nodeAt = (doc, at) => at.reduce((node, key) => node[key], doc);
+// Cada lugar: propriedade própria `__proto__` com o valor esperado, protótipo
+// do objeto intacto.
+function protoPlaces(doc, places) {
+  return places.map(({ at }) => {
+    const node = nodeAt(doc, at);
+    return {
+      at: at.join("."),
+      own: Object.hasOwn(node, PROTO),
+      value: Object.hasOwn(node, PROTO) ? node[PROTO] : "<ausente>",
+      prototypeIntact: Object.getPrototypeOf(node) === Object.prototype,
+    };
+  });
+}
+const expectedPlaces = (places) => places.map(({ at, value }) => ({ at: at.join("."), own: true, value, prototypeIntact: true }));
+
+test("I4-C25d chaves JSON __proto__ alheias continuam próprias na instalação e na remoção (Claude e Codex)", () => {
+  const cases = [
+    {
+      label: "Claude: env (achado formal), grupo e handler de terceiro, tokens numéricos",
+      agent: "claude",
+      file: "settings.json",
+      text: CLAUDE_PROTO_TEXT,
+      places: [
+        { at: ["env"], value: "valor-do-usuario" },
+        { at: ["hooks", "PreToolUse", 0], value: { nota: "grupo de terceiro" } },
+        { at: ["hooks", "PreToolUse", 0, "hooks", 0], value: "texto do usuário" },
+      ],
+      serialized: ['"__proto__": "valor-do-usuario"', '"__proto__": "texto do usuário"', "12345678901234567890", "1.50"],
+    },
+    {
+      label: "Claude: objeto __proto__ na raiz com chave hooks, sem hooks próprio",
+      agent: "claude",
+      file: "settings.json",
+      text: CLAUDE_PROTO_ROOT_TEXT,
+      places: [{ at: [], value: { hooks: { Stop: [{ hooks: [{ type: "command", command: "proto-notify.sh" }] }] }, nota: "objeto do usuário" } }],
+      serialized: ['"__proto__": {'],
+    },
+    {
+      label: "Codex: grupo e handler de terceiro (a raiz do hooks.json só aceita description e hooks)",
+      agent: "codex",
+      file: "hooks.json",
+      text: CODEX_PROTO_TEXT,
+      places: [
+        { at: ["hooks", "PreToolUse", 0], value: "texto do usuário" },
+        { at: ["hooks", "PreToolUse", 0, "hooks", 0], value: { x: 1 } },
+      ],
+      serialized: ['"__proto__": "texto do usuário"'],
+    },
+  ];
+  // Chave acrescentada pelo usuário depois da instalação: a remoção a mantém.
+  cases.push(
+    {
+      label: "Claude: env e objeto na raiz acrescentados depois da instalação",
+      agent: "claude",
+      file: "settings.json",
+      text: CLAUDE_SETTINGS_TEXT,
+      edit: (doc) => {
+        defineOwn(doc.env, PROTO, "valor-do-usuario");
+        defineOwn(doc, PROTO, { nota: "objeto do usuário" });
+      },
+      places: [
+        { at: ["env"], value: "valor-do-usuario" },
+        { at: [], value: { nota: "objeto do usuário" } },
+      ],
+      serialized: ['"__proto__": "valor-do-usuario"', "12345678901234567890", "1.50"],
+    },
+    {
+      label: "Codex: grupo de terceiro editado depois da instalação",
+      agent: "codex",
+      file: "hooks.json",
+      text: CODEX_HOOKS_TEXT,
+      edit: (doc) => defineOwn(doc.hooks.PreToolUse[0], PROTO, "texto do usuário"),
+      places: [{ at: ["hooks", "PreToolUse", 0], value: "texto do usuário" }],
+      serialized: ['"__proto__": "texto do usuário"'],
+    },
+  );
+  const observed = [];
+  const expected = [];
+  for (const { label, agent, file, text, edit, places, serialized } of cases) {
+    const target = path.join(scratch(`proto-${agent}`), `.${agent}`);
+    mkdirSync(target);
+    const config = path.join(target, file);
+    writeFileSync(config, text);
+    const original = JSON.parse(text);
+    // Antes da remoção, o documento esperado é o original com as chaves
+    // acrescentadas pelo usuário (definição própria, também aqui).
+    const beforeRemoval = JSON.parse(text);
+    edit?.(beforeRemoval);
+    const fixturePlaces = protoPlaces(edit ? beforeRemoval : original, places);
+
+    const installed = cli(["install", "--agent", agent, "--target", target, "--apply"]);
+    const afterText = readFileSync(config, "utf8");
+    const after = JSON.parse(afterText);
+    const handlers = agent === "claude" ? readClaudeHandlers(target) : readCodexHandlers(target);
+    const events = agent === "claude" ? CLAUDE_EVENTS : CODEX_EVENTS;
+    if (edit) editConfig(config, edit);
+
+    const removed = cli(["uninstall", "--agent", agent, "--target", target, "--apply"]);
+    const restoredText = readFileSync(config, "utf8");
+    const restored = JSON.parse(restoredText);
+    observed.push({
+      label,
+      fixturePlaces,
+      install: `${installed.status} ${installed.report.status}`,
+      installPlaces: edit ? "n/a" : protoPlaces(after, places),
+      installMissing: edit ? [] : serialized.filter((fragment) => !afterText.includes(fragment)),
+      installKeepsOtherValues: isDeepStrictEqual(withoutHooks(after), withoutHooks(original)),
+      ownHooksObject: Object.hasOwn(after, "hooks"),
+      ownGroupPerEvent: events.filter((event) => handlers[event]?.count === 1).length,
+      uninstall: `${removed.status} ${removed.report.status}`,
+      uninstallPlaces: protoPlaces(restored, places),
+      uninstallMissing: serialized.filter((fragment) => !restoredText.includes(fragment)),
+      restoresValues: isDeepStrictEqual(restored, beforeRemoval),
+    });
+    expected.push({
+      label,
+      fixturePlaces: expectedPlaces(places),
+      install: "0 applied",
+      installPlaces: edit ? "n/a" : expectedPlaces(places),
+      installMissing: [],
+      installKeepsOtherValues: true,
+      ownHooksObject: true,
+      ownGroupPerEvent: events.length,
+      uninstall: "0 applied",
+      uninstallPlaces: expectedPlaces(places),
+      uninstallMissing: [],
+      restoresValues: true,
+    });
+  }
+  assert.deepEqual(observed, expected);
+});
+
 test("I4-C26 configuração inválida ou grande demais não é substituída", () => {
   const cases = [
     ["claude", "settings.json", "{ not json"],

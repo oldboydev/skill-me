@@ -99,13 +99,14 @@ function parseLossless(text) {
 
 // Cópia profunda que mantém os valores `JSON.rawJSON` (imutáveis) por
 // referência; `structuredClone` os transformaria em objetos `{rawJSON: …}`.
+// Cada chave entra como propriedade própria (`Object.fromEntries`, como o
+// `JSON.parse` faz): atribuir `copy["__proto__"]` acionaria o setter herdado —
+// a chave do usuário sumiria e, com valor objeto, viraria o protótipo da cópia.
 function cloneDoc(value) {
   if (JSON.isRawJSON(value)) return value;
   if (Array.isArray(value)) return value.map(cloneDoc);
   if (value !== null && typeof value === "object") {
-    const copy = {};
-    for (const key of Object.keys(value)) copy[key] = cloneDoc(value[key]);
-    return copy;
+    return Object.fromEntries(Object.keys(value).map((key) => [key, cloneDoc(value[key])]));
   }
   return value;
 }

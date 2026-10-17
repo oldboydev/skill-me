@@ -4,6 +4,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import { replacementMode } from "../../src/integrations/install/io.mjs";
+import { parseConfig, planJsonInstall, planJsonUninstall } from "../../src/integrations/install/json-hooks.mjs";
 import { widenedRecipients } from "./helpers/posix-access.mjs";
 import { createNodeIo, runIntegrationCommand } from "../../src/integrations/install/run.mjs";
 import { makeScratch } from "./helpers/cli.mjs";
@@ -261,5 +262,55 @@ test("I4-C25c regra pura: o arquivo que substitui a configuração não amplia o
     const regrouped = replacementMode({ mode }, false);
     assert.equal(regrouped & 0o700, mode & 0o700, `0${mode.toString(8)}: dono intacto`);
     assert.deepEqual(widenedRecipients({ mode, gid: 1 }, { mode: regrouped, gid: 2 }), [], `0${mode.toString(8)} → 0${regrouped.toString(8)}`);
+  }
+});
+
+test("I4-C25e plano puro: chaves JSON __proto__ ficam próprias nos textos planejados de instalação e remoção", () => {
+  // Decisão na própria camada, sem sistema de arquivos: o texto que os planos
+  // mandam gravar mantém cada `__proto__` do usuário como propriedade própria
+  // (raiz e aninhada; string e objeto) e o protótipo dos objetos intacto. A raiz
+  // do Claude traz um objeto `__proto__` com chave `hooks` e nenhum `hooks`
+  // próprio: os grupos próprios precisam ir para um `hooks` próprio.
+  const ctx = { nodePath: "/usr/bin/node", cliPath: "/opt/skill-me/cli.mjs", platform: "linux" };
+  const cases = [
+    {
+      agent: "claude",
+      text: '{\n  "__proto__": { "hooks": { "Stop": [] }, "nota": "objeto do usuário" },\n  "env": { "__proto__": "valor-do-usuario", "FOO": "bar" },\n  "ratio": 1.50\n}\n',
+      places: [
+        [[], { hooks: { Stop: [] }, nota: "objeto do usuário" }],
+        [["env"], "valor-do-usuario"],
+      ],
+      events: 8,
+    },
+    {
+      agent: "codex",
+      text: '{\n  "hooks": {\n    "PreToolUse": [ { "matcher": "Bash", "__proto__": "texto do usuário", "hooks": [ { "type": "command", "command": "policy", "__proto__": { "x": 1 } } ] } ]\n  }\n}\n',
+      places: [
+        [["hooks", "PreToolUse", 0], "texto do usuário"],
+        [["hooks", "PreToolUse", 0, "hooks", 0], { x: 1 }],
+      ],
+      events: 6,
+    },
+  ];
+  const describe = (doc, places) =>
+    places.map(([at]) => {
+      const node = at.reduce((value, key) => value[key], doc);
+      return [at.join("."), Object.hasOwn(node, "__proto__") ? node["__proto__"] : "<ausente>", Object.getPrototypeOf(node) === Object.prototype];
+    });
+  for (const { agent, text, places, events } of cases) {
+    const want = places.map(([at, value]) => [at.join("."), value, true]);
+    const install = planJsonInstall({ agent, parsed: parseConfig(agent, text, "linux"), manifest: null, ctx });
+    const installed = JSON.parse(install.newText);
+    assert.deepEqual(describe(installed, places), want, `${agent}: texto planejado da instalação`);
+    assert.ok(Object.hasOwn(installed, "hooks"), `${agent}: hooks próprio`);
+    const ownEvents = Object.keys(installed.hooks).filter((event) => installed.hooks[event].some((group) => JSON.stringify(group).includes(ctx.cliPath)));
+    assert.equal(ownEvents.length, events, `${agent}: grupos próprios no texto planejado`);
+
+    const manifest = { entries: install.manifestBody.entries, created: install.manifestBody.created };
+    const uninstall = planJsonUninstall({ agent, parsed: parseConfig(agent, install.newText, "linux"), manifest, ctx });
+    const restored = JSON.parse(uninstall.newText);
+    assert.deepEqual(describe(restored, places), want, `${agent}: texto planejado da remoção`);
+    assert.deepEqual(restored, JSON.parse(text), `${agent}: remoção planeja os valores originais`);
+    if (agent === "claude") assert.ok(uninstall.newText.includes('"ratio": 1.50'), "token numérico preservado");
   }
 });
