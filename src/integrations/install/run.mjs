@@ -1,4 +1,5 @@
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { CliUsageError } from "../../doctor/cli-args.mjs";
 import { ARTIFACT_NAMES, PLUGIN_NAME, PLUGIN_REL_DIR, isOwnCache, loadArtifacts, sha256 } from "./hermes-artifacts.mjs";
@@ -188,11 +189,18 @@ async function isOwnTemp(io, tmp, bytes) {
   }
 }
 
+// Substituição negada enquanto outro processo mantém o destino aberto (no
+// Windows: o agente, um editor, antivírus, a prévia de outro skill-me): novas
+// tentativas curtas. No POSIX esses códigos são permissão real e só atrasam o 5.
+const RENAME_DENIED = new Set(["EPERM", "EACCES", "EBUSY"]);
+const RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80, 160, 320];
+
 // Grava `text` num temporário novo e o renomeia sobre `file`. `wx` só cria com
 // o caminho livre: ocupado depois da leitura, ele é alheio, como na prévia.
-// Antes do rename, o temporário precisa continuar nosso (senão seria promovido
-// conteúdo que não gravamos) e as conferências do chamador precisam passar. Em
-// qualquer falha sai só o temporário que continua nosso.
+// Antes de cada tentativa de rename, o temporário precisa continuar nosso
+// (senão seria promovido conteúdo que não gravamos) e as conferências do
+// chamador precisam passar — também depois de uma espera. Em qualquer falha
+// sai só o temporário que continua nosso.
 async function writeViaTemp(io, root, file, text, { like = null, beforeRename = async () => {} } = {}) {
   const tmp = file + TMP_SUFFIX;
   const bytes = Buffer.from(text, "utf8");
@@ -203,9 +211,17 @@ async function writeViaTemp(io, root, file, text, { like = null, beforeRename = 
     throw error;
   }
   try {
-    if (!(await isOwnTemp(io, tmp, bytes))) throw new ConflictError("config_changed_during_apply", rel(root, tmp));
-    await beforeRename();
-    await io.rename(tmp, file);
+    for (let retry = 0; ; retry += 1) {
+      if (!(await isOwnTemp(io, tmp, bytes))) throw new ConflictError("config_changed_during_apply", rel(root, tmp));
+      await beforeRename();
+      try {
+        await io.rename(tmp, file);
+        return;
+      } catch (error) {
+        if (!RENAME_DENIED.has(error.code) || retry === RENAME_RETRY_DELAYS_MS.length) throw error;
+      }
+      await sleep(RENAME_RETRY_DELAYS_MS[retry]);
+    }
   } catch (error) {
     if (await isOwnTemp(io, tmp, bytes).catch(() => false)) await io.unlink(tmp).catch(() => {});
     throw error;

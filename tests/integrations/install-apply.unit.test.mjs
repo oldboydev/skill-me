@@ -455,3 +455,124 @@ test("I4-C25e plano puro: chaves JSON __proto__ ficam próprias nos textos plane
     if (agent === "claude") assert.ok(uninstall.newText.includes('"ratio": 1.50'), "token numérico preservado");
   }
 });
+
+// Windows: substituir um arquivo que outro processo mantém aberto falha com
+// EPERM/EACCES/EBUSY enquanto o handle existe (6 aplicações paralelas de
+// I4-C29 bastam). Simulado aqui pelo `rename` instrumentado, nas duas
+// plataformas: novas tentativas curtas, cada uma depois de refazer as
+// conferências do temporário e da configuração.
+test("I4-C29b substituição negada por handle aberto é repetida, refazendo as conferências antes de cada tentativa", async () => {
+  const deny = (code) => Object.assign(new Error(`${code} simulado`), { code });
+  const scenarios = [
+    { label: "EPERM duas vezes, depois passa", temp: "config", denials: ["EPERM", "EPERM"] },
+    { label: "EACCES uma vez, depois passa", temp: "config", denials: ["EACCES"] },
+    { label: "EBUSY uma vez, depois passa", temp: "config", denials: ["EBUSY"] },
+    { label: "registro: EPERM uma vez, depois passa", temp: "manifest", denials: ["EPERM"] },
+    { label: "negado e temporário trocado antes da nova tentativa", temp: "config", denials: ["EPERM"], during: "swap" },
+    { label: "negado e configuração editada antes da nova tentativa", temp: "config", denials: ["EPERM"], during: "edit" },
+    { label: "sempre negado", temp: "config", denials: Array(20).fill("EPERM") },
+    { label: "EIO não é repetido", temp: "config", denials: ["EIO"] },
+  ];
+  const observed = [];
+  for (const { label, temp, denials, during } of scenarios) {
+    const dir = target(`rename-denied-${temp}`);
+    const settings = path.join(dir, "settings.json");
+    const tmp = temp === "config" ? `${settings}.skill-me-tmp` : path.join(dir, ".skill-me", "claude-install.json.skill-me-tmp");
+    const io = createNodeIo();
+    let attempts = 0;
+    const instrumented = {
+      ...io,
+      async rename(from, to) {
+        if (from !== tmp) return io.rename(from, to);
+        attempts += 1;
+        if (attempts > denials.length) return io.rename(from, to);
+        if (during === "swap") {
+          renameSync(tmp, path.join(path.dirname(dir), "temporário próprio movido"));
+          writeFileSync(tmp, USER_TEMP);
+        }
+        if (during === "edit") writeFileSync(settings, JSON.stringify({ env: { A: "editado durante a espera" } }, null, 2));
+        throw deny(denials[attempts - 1]);
+      },
+    };
+    const started = Date.now();
+    const result = await runIntegrationCommand({ command: "install", agent: "claude", target: dir, apply: true, io: instrumented });
+    const settingsText = readFileSync(settings, "utf8");
+    observed.push({
+      label,
+      attempts,
+      exitCode: result.exitCode,
+      status: result.status,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps.map((s) => `${s.step}:${s.state}`),
+      atTemp: existsSync(tmp) ? (readFileSync(tmp, "utf8") === USER_TEMP ? "arquivo do usuário intacto" : "outro conteúdo") : "nada",
+      settings: settingsText === ORIGINAL ? "original" : settingsText.includes("editado durante a espera") ? "edição externa preservada" : Object.keys(JSON.parse(settingsText).hooks ?? {}).length === 9 ? "instalada" : "outro",
+      waitedUnderOneSecond: Date.now() - started < 1000 + 500,
+    });
+  }
+  const done = ["config:done", "manifest:done"];
+  assert.deepEqual(observed, [
+    { label: "EPERM duas vezes, depois passa", attempts: 3, exitCode: 0, status: "applied", conflicts: [], errors: [], steps: done, atTemp: "nada", settings: "instalada", waitedUnderOneSecond: true },
+    { label: "EACCES uma vez, depois passa", attempts: 2, exitCode: 0, status: "applied", conflicts: [], errors: [], steps: done, atTemp: "nada", settings: "instalada", waitedUnderOneSecond: true },
+    { label: "EBUSY uma vez, depois passa", attempts: 2, exitCode: 0, status: "applied", conflicts: [], errors: [], steps: done, atTemp: "nada", settings: "instalada", waitedUnderOneSecond: true },
+    { label: "registro: EPERM uma vez, depois passa", attempts: 2, exitCode: 0, status: "applied", conflicts: [], errors: [], steps: done, atTemp: "nada", settings: "instalada", waitedUnderOneSecond: true },
+    {
+      label: "negado e temporário trocado antes da nova tentativa",
+      attempts: 1,
+      exitCode: 4,
+      status: "conflict",
+      conflicts: [{ code: "config_changed_during_apply", file: "settings.json.skill-me-tmp" }],
+      errors: [],
+      steps: [],
+      atTemp: "arquivo do usuário intacto",
+      settings: "original",
+      waitedUnderOneSecond: true,
+    },
+    {
+      label: "negado e configuração editada antes da nova tentativa",
+      attempts: 1,
+      exitCode: 4,
+      status: "conflict",
+      conflicts: [{ code: "config_changed_during_apply", file: "settings.json" }],
+      errors: [],
+      steps: [],
+      atTemp: "nada",
+      settings: "edição externa preservada",
+      waitedUnderOneSecond: true,
+    },
+    { label: "sempre negado", attempts: 7, exitCode: 5, status: "incomplete", conflicts: [], errors: [{ code: "EPERM" }], steps: ["config:failed"], atTemp: "nada", settings: "original", waitedUnderOneSecond: true },
+    { label: "EIO não é repetido", attempts: 1, exitCode: 5, status: "incomplete", conflicts: [], errors: [{ code: "EIO" }], steps: ["config:failed"], atTemp: "nada", settings: "original", waitedUnderOneSecond: true },
+  ]);
+});
+
+// A contenção roda fora do lock: o temporário transitório de outro processo do
+// skill-me pode existir no `lstat` e já ter sido renomeado no `realpath`. A
+// entrada que sumiu é sondada de novo (agora ausente), em vez de virar falha de
+// E/S; a aplicação segue.
+test("I4-C29c entrada que some entre o lstat e o realpath da contenção é sondada de novo", async () => {
+  const observed = [];
+  for (const rel of ["settings.json.skill-me-tmp", ".skill-me/claude-install.json.skill-me-tmp"]) {
+    const dir = target("vanishing-temp");
+    const transient = path.join(dir, ...rel.split("/"));
+    mkdirSync(path.dirname(transient), { recursive: true });
+    writeFileSync(transient, "temporário transitório de outro processo\n");
+    const io = createNodeIo();
+    let vanished = false;
+    const instrumented = {
+      ...io,
+      async realpath(file) {
+        if (file === transient && !vanished) {
+          vanished = true;
+          rmSync(transient);
+        }
+        return io.realpath(file);
+      },
+    };
+    const result = await runIntegrationCommand({ command: "install", agent: "claude", target: dir, apply: true, io: instrumented });
+    observed.push({ rel, vanished, exitCode: result.exitCode, status: result.status, errors: result.errors, conflicts: result.conflicts, events: Object.keys(readClaudeHandlers(dir)).length });
+  }
+  assert.deepEqual(
+    observed,
+    ["settings.json.skill-me-tmp", ".skill-me/claude-install.json.skill-me-tmp"].map((rel) => ({ rel, vanished: true, exitCode: 0, status: "applied", errors: [], conflicts: [], events: 8 })),
+  );
+});

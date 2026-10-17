@@ -121,7 +121,11 @@ simulação de caminho.
   `%`, `!` ou quebra de linha são recusados na instalação (código 2).
 - Escrita da configuração: lock exclusivo, releitura e comparação de SHA-256 antes do
   `rename`. A janela entre essa comparação e o `rename` não é atômica contra editores
-  arbitrários (não há CAS no sistema de arquivos).
+  arbitrários (não há CAS no sistema de arquivos). No Windows o `rename` é negado
+  (`EPERM`/`EACCES`/`EBUSY`) enquanto outro processo — o agente, um editor, antivírus —
+  mantém o arquivo aberto: até 6 novas tentativas em no máximo 630 ms, refazendo
+  antes de cada uma a conferência do temporário e da configuração; persistindo, a
+  operação sai com 5 e a configuração fica como estava.
 - Temporários de nome fixo: a reescrita usa `<settings.json|hooks.json>.skill-me-tmp`
   e `.skill-me/<agente>-install.json.skill-me-tmp`. Se a operação precisa de um deles
   e o caminho já tem qualquer coisa — arquivo (inclusive sobra de uma execução
