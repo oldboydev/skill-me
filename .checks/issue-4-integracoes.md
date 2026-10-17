@@ -503,3 +503,28 @@ Correções da revisão formal round 2 (17/10/2026):
   com os bytes do texto novo; nome de temporário aleatório; inode além do conteúdo; `EPERM` no
   rename como conflito 4; repetir o rename sem refazer as conferências; espera longa como a do graceful-fs;
   sondagem repetida sem limite (`c914e5d`); `target_escape` ao esgotar a sondagem.
+
+### Verificação independente round 5 — metadados durante apply (17/10/2026)
+
+FAIL 45/48 em `a6c656bab954663b86a2f2fe99f4e6a8a727dc32`: C27/C30/C31 e AC6
+não atendidos. Relatório completo preservado em `.checks/issue-4-integracoes.verified.md`,
+SHA-256 `0b6d60c6a8c98b655bdad1b1640a4d0ce2e56701b30cd6078f1d8d49f4ed22ec`.
+Correções da formal2 confirmadas nos casos definidos, mas três novos achados concretos
+bloqueiam entrega: R5-F1 registro substituído depois da leitura é apagado/sobrescrito;
+R5-F2 cleanup apaga lock substituído; R5-F3 troca de `.skill-me` por junção/link depois
+da escrita da configuração permite apagar ou sobrescrever registro/lock fora do alvo.
+Reproduzidos no produto intacto em cópias próprias Windows e Linux, somente dados sintéticos;
+perda e quebra de isolamento comunicadas imediatamente ao proprietário. Não são explicadas
+pela janela final não atômica: faltam reconferências desses destinos e ancestrais.
+
+Os lotes finais de 92 testes terminaram sem falhas: Windows 90 pass/2 skips, WSL 84 pass/8
+skips, exit 0 ambos, incluindo 16 do motor. O relatório distingue a tentativa ambiental
+Windows interrompida e repetida com capacidade de encerrar seus processos de teste.
+O verde não comprova os estados novos reproduzidos. Sondas/resultados preservados em
+`.checks/code-review/issue-4/verifier-residual-*` e no scratch independente citado no relatório.
+A sonda staging Hermes preservou bytes na remoção; não é declarada perda nem novo escopo.
+
+Continuidade autorizada dentro do AC6 e das rodadas necessárias já aprovadas. Claude
+corrigirá/provará os caminhos de registro, lock e ancestral; depois, nova verificação
+independente antes da formal3. Checks e histórico intactos, duas tentativas formais
+consumidas do teto dez. Codex não implementou produto/testes; nenhum PR/merge antes de ready.
