@@ -22,8 +22,10 @@ export function baseEnv(extra = {}) {
   return { ...env, ...extra };
 }
 
-export function runIntegrations(args, { env = baseEnv(), cwd, input, timeout = 30_000 } = {}) {
-  const result = spawnSync(process.execPath, [INTEGRATIONS_CLI, ...args], {
+// `nodeArgs`: opções do node antes do CLI (ex.: `--import` do instrumento de
+// teste `fs-probe.mjs`).
+export function runIntegrations(args, { env = baseEnv(), cwd, input, timeout = 30_000, nodeArgs = [] } = {}) {
+  const result = spawnSync(process.execPath, [...nodeArgs, INTEGRATIONS_CLI, ...args], {
     encoding: "utf8",
     env,
     cwd,

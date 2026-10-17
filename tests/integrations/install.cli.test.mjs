@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
+import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { baseEnv, INTEGRATIONS_CLI, makeScratch, REPO_ROOT, runIntegrations, runIntegrationsAsync, runIntegrationsJson } from "./helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers } from "./helpers/installed-hooks.mjs";
@@ -22,6 +23,7 @@ const CODEX_EVENTS = ["PreToolUse", "PostToolUse", "SessionStart", "SessionEnd",
 const HERMES_ARTIFACTS = ["plugins/skill-me-observer/__init__.py", "plugins/skill-me-observer/kwargs.json", "plugins/skill-me-observer/plugin.yaml"];
 const HERMES_STAGING = "plugins/.skill-me-observer.skill-me-tmp";
 const HERMES_PLUGIN_SOURCE = path.join(REPO_ROOT, "src", "integrations", "hermes", "plugin");
+const FS_PROBE = pathToFileURL(path.join(import.meta.dirname, "helpers", "fs-probe.mjs")).href;
 
 // Texto com um inteiro que um double não representa: a reescrita precisa
 // preservar o token exato (valor alheio), não só valores "parecidos".
@@ -638,6 +640,131 @@ test("I4-C29 concorrência: lock, aplicações paralelas e edição entre prévi
   assert.deepEqual(merged.hooks.Notification, doc.hooks.Notification);
 });
 
+// Temporário de nome fixo que a aplicação precisaria criar, já ocupado pelo
+// usuário (conteúdo recuperado/editado, diretório, junção/link): nome e lock não
+// provam que seja sobra nossa. Prévia e aplicação recusam igual com 4, sem
+// mudança listada; nada é apagado, seguido ou escrito no alvo.
+const USER_TEMP_TEXT = '{ "recuperado": "cópia sintética editada pelo usuário" }\n';
+function occupyTemp(target, rel, kind) {
+  const file = path.join(target, ...rel.split("/"));
+  mkdirSync(path.dirname(file), { recursive: true });
+  if (kind === "file") {
+    writeFileSync(file, USER_TEMP_TEXT);
+    return { file };
+  }
+  if (kind === "dir") {
+    mkdirSync(file);
+    writeFileSync(path.join(file, "nota do usuário.txt"), "arquivo sintético do usuário\n");
+    return { file };
+  }
+  // `dir-link`/`file-link`: o chamador cria a junção (Windows) / symlink de
+  // diretório (POSIX) ou o link de arquivo para dados de terceiro no alvo.
+  const victim = path.join(target, "pasta de terceiro");
+  mkdirSync(victim);
+  writeFileSync(path.join(victim, "dados.txt"), "arquivo sintético de terceiro\n");
+  return { file, linkTo: kind === "dir-link" ? victim : path.join(victim, "dados.txt") };
+}
+const editPreToolUseTimeout = (agent) => (target) =>
+  editConfig(path.join(target, agent === "claude" ? "settings.json" : "hooks.json"), (doc) => {
+    ownGroupOf(agent, doc.hooks.PreToolUse).hooks[0].timeout = 99;
+  });
+
+test("I4-C30b temporário de nome fixo já ocupado não é apagado nem seguido: prévia e aplicação recusam com 4", (t) => {
+  const cases = [
+    { label: "remoção Claude, temporário da configuração com arquivo do usuário (achado formal)", agent: "claude", op: "uninstall", rel: "settings.json.skill-me-tmp", kind: "file" },
+    { label: "instalação Claude, temporário da configuração", agent: "claude", op: "install", rel: "settings.json.skill-me-tmp", kind: "file" },
+    { label: "instalação Claude, temporário do registro", agent: "claude", op: "install", rel: ".skill-me/claude-install.json.skill-me-tmp", kind: "file" },
+    { label: "instalação Codex, temporário da configuração", agent: "codex", op: "install", rel: "hooks.json.skill-me-tmp", kind: "file" },
+    { label: "instalação Codex, temporário do registro", agent: "codex", op: "install", rel: ".skill-me/codex-install.json.skill-me-tmp", kind: "file" },
+    { label: "remoção Codex, temporário da configuração", agent: "codex", op: "uninstall", rel: "hooks.json.skill-me-tmp", kind: "file" },
+    {
+      label: "remoção parcial Claude (grupo editado), temporário do registro",
+      agent: "claude",
+      op: "uninstall",
+      rel: ".skill-me/claude-install.json.skill-me-tmp",
+      kind: "file",
+      prepare: editPreToolUseTimeout("claude"),
+      before: [{ code: "owned_entry_modified", file: "settings.json", event: "PreToolUse" }],
+    },
+    { label: "instalação Hermes, temporário do registro", agent: "hermes", op: "install", rel: ".skill-me/hermes-install.json.skill-me-tmp", kind: "file" },
+    {
+      label: "remoção parcial Hermes (artefato editado), temporário do registro",
+      agent: "hermes",
+      op: "uninstall",
+      rel: ".skill-me/hermes-install.json.skill-me-tmp",
+      kind: "file",
+      prepare: (target) => writeFileSync(path.join(target, "plugins", "skill-me-observer", "kwargs.json"), '{ "editado": "pelo usuário" }\n'),
+      before: [{ code: "owned_entry_modified", file: "plugins/skill-me-observer/kwargs.json" }],
+    },
+    { label: "instalação Claude, diretório no temporário do registro (setup anterior de I4-C33)", agent: "claude", op: "install", rel: ".skill-me/claude-install.json.skill-me-tmp", kind: "dir" },
+    { label: "instalação Codex, junção/link de diretório no temporário da configuração", agent: "codex", op: "install", rel: "hooks.json.skill-me-tmp", kind: "dir-link" },
+    { label: "remoção Claude, link de arquivo no temporário da configuração", agent: "claude", op: "uninstall", rel: "settings.json.skill-me-tmp", kind: "file-link" },
+  ];
+  const makeTarget = { claude: claudeTarget, codex: codexTarget, hermes: hermesTarget };
+  const observed = [];
+  const expected = [];
+  for (const { label, agent, op, rel, kind, prepare, before = [] } of cases) {
+    const target = makeTarget[agent](`tmp-occupied-${agent}-${op}`);
+    if (op === "uninstall") assert.equal(cli(["install", "--agent", agent, "--target", target, "--apply"]).status, 0, label);
+    prepare?.(target);
+    const occupant = occupyTemp(target, rel, kind);
+    if (kind === "dir-link") symlinkSync(occupant.linkTo, occupant.file, "junction");
+    if (kind === "file-link" && !linkFileOrDiagnose(t, occupant.linkTo, occupant.file, label)) continue;
+    const tree = snapshotTree(target);
+    const runs = [false, true].map((apply) => {
+      const { status, report } = cli([op, "--agent", agent, "--target", target, ...(apply ? ["--apply"] : [])]);
+      return { status, result: report.status, applied: report.applied, changes: report.changes, conflicts: report.conflicts };
+    });
+    observed.push({
+      label,
+      preview: runs[0],
+      apply: runs[1],
+      treeIntact: isDeepStrictEqual(snapshotTree(target), tree),
+      occupant: occupant.linkTo
+        ? lstatSync(occupant.file).isSymbolicLink() && realpathSync(occupant.file) === realpathSync(occupant.linkTo)
+        : kind === "file"
+          ? readFileSync(occupant.file, "utf8") === USER_TEMP_TEXT
+          : lstatSync(occupant.file).isDirectory(),
+    });
+    const refused = { status: 4, result: "conflict", applied: false, changes: [], conflicts: [...before, { code: "foreign_artifact", file: rel }] };
+    expected.push({ label, preview: refused, apply: refused, treeIntact: true, occupant: true });
+  }
+  assert.deepEqual(observed, expected);
+
+  // O temporário só conta quando a aplicação precisaria dele: a remoção que
+  // apaga o arquivo criado pela instalação (e o registro) não usa temporário,
+  // conclui e deixa o arquivo do usuário.
+  const created = claudeTarget("tmp-not-needed", null);
+  assert.equal(cli(["install", "--agent", "claude", "--target", created, "--apply"]).status, 0);
+  occupyTemp(created, "settings.json.skill-me-tmp", "file");
+  const unneeded = cli(["uninstall", "--agent", "claude", "--target", created, "--apply"]);
+  assert.equal(unneeded.status, 0, unneeded.stdout);
+  assert.equal(unneeded.report.status, "applied");
+  assert.deepEqual(unneeded.report.conflicts, []);
+  assert.deepEqual(readdirSync(created), ["settings.json.skill-me-tmp"], "configuração e registro removidos; só o arquivo do usuário fica");
+  assert.equal(readFileSync(path.join(created, "settings.json.skill-me-tmp"), "utf8"), USER_TEMP_TEXT);
+
+  // Depois que o usuário tira o arquivo dali (movido, não apagado), a mesma
+  // operação conclui: remoção do achado formal e instalação do setup anterior.
+  for (const [agent, op, rel, kind, makeTarget, file, original] of [
+    ["claude", "uninstall", "settings.json.skill-me-tmp", "file", claudeTarget, "settings.json", CLAUDE_SETTINGS_TEXT],
+    ["claude", "install", ".skill-me/claude-install.json.skill-me-tmp", "dir", claudeTarget, "settings.json", null],
+  ]) {
+    const target = makeTarget(`tmp-moved-${op}`);
+    if (op === "uninstall") assert.equal(cli(["install", "--agent", agent, "--target", target, "--apply"]).status, 0);
+    const { file: occupied } = occupyTemp(target, rel, kind);
+    assert.equal(cli([op, "--agent", agent, "--target", target, "--apply"]).status, 4, `${op}: ocupado`);
+    const moved = path.join(path.dirname(target), "movido pelo usuário");
+    renameSync(occupied, moved);
+    const done = cli([op, "--agent", agent, "--target", target, "--apply"]);
+    assert.equal(done.status, 0, `${op} depois de mover: ${done.stdout}`);
+    assert.equal(done.report.status, "applied", op);
+    if (original !== null) assert.deepEqual(json(path.join(target, file)), JSON.parse(original), `${op}: valores originais`);
+    else for (const event of CLAUDE_EVENTS) assert.equal(readClaudeHandlers(target)[event].count, 1, `${op} ${event}`);
+    assert.ok(kind === "file" ? readFileSync(moved, "utf8") === USER_TEMP_TEXT : lstatSync(moved).isDirectory(), `${op}: arquivo do usuário preservado onde ele o pôs`);
+  }
+});
+
 test("I4-C31 remoção retira só o que confere com o registro e restaura os valores", () => {
   // Arquivo preexistente: valores voltam a ser os originais, inclusive tokens numéricos.
   const target = claudeTarget("remove");
@@ -806,16 +933,24 @@ test("I4-C32b reinstalar sobre entrada própria editada não duplica nem perde o
 
 test("I4-C33 falha depois da primeira mutação é reportada como incompleta e se reconcilia", () => {
   const target = claudeTarget("partial");
-  // Um diretório no caminho temporário do registro impede gravá-lo depois
-  // que a configuração já foi escrita.
-  mkdirSync(path.join(target, ".skill-me", "claude-install.json.skill-me-tmp"), { recursive: true });
-  const failed = cli(["install", "--agent", "claude", "--target", target, "--apply"]);
+  // A gravação do registro falha com E/S (EIO no rename, injetado pelo
+  // instrumento de teste no processo real do CLI) depois que a configuração
+  // já foi escrita. O setup anterior — um diretório no caminho temporário do
+  // registro — agora é recusado antes de qualquer escrita (I4-C30b) e não
+  // produz mais uma falha posterior à primeira mutação.
+  const failed = runIntegrationsJson(["install", "--agent", "claude", "--target", target, "--apply"], {
+    env: baseEnv({ SKILL_ME_TEST_FS_PROBE_FAIL_RENAME_TO: "claude-install.json" }),
+    nodeArgs: [`--import=${FS_PROBE}`],
+  });
   assert.equal(failed.status, 5, failed.stdout);
   assert.equal(failed.report.status, "incomplete");
   assert.deepEqual(failed.report.steps.map((s) => [s.step, s.state]), [["config", "done"], ["manifest", "failed"]]);
   assert.equal(Object.keys(readClaudeHandlers(target)).length, 8, "configuração escrita antes da falha");
+  const manifest = path.join(target, ".skill-me", "claude-install.json");
+  assert.equal(existsSync(manifest), false, "registro não gravado");
+  assert.equal(existsSync(manifest + ".skill-me-tmp"), false, "o temporário nosso, intacto, sai com a falha");
 
-  rmSync(path.join(target, ".skill-me", "claude-install.json.skill-me-tmp"), { recursive: true });
+  // Corrigido: sem a falha de E/S.
   const retried = cli(["install", "--agent", "claude", "--target", target, "--apply"]);
   assert.equal(retried.status, 0, retried.stdout);
   assert.equal(retried.report.changes.filter((c) => c.action === "adopt_group").length, 8);

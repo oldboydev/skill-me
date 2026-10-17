@@ -122,6 +122,16 @@ simulação de caminho.
 - Escrita da configuração: lock exclusivo, releitura e comparação de SHA-256 antes do
   `rename`. A janela entre essa comparação e o `rename` não é atômica contra editores
   arbitrários (não há CAS no sistema de arquivos).
+- Temporários de nome fixo: a reescrita usa `<settings.json|hooks.json>.skill-me-tmp`
+  e `.skill-me/<agente>-install.json.skill-me-tmp`. Se a operação precisa de um deles
+  e o caminho já tem qualquer coisa — arquivo (inclusive sobra de uma execução
+  interrompida), diretório ou junção/link —, prévia e aplicação recusam com 4
+  (`foreign_artifact` com o caminho do temporário), sem escrever, apagar nem seguir
+  nada; mova ou remova esse arquivo e repita. Durante a aplicação, um temporário
+  editado ou trocado por outro programa não é renomeado sobre a configuração nem
+  apagado (4, `config_changed_during_apply`); numa falha de E/S só sai o temporário
+  que ainda tem exatamente os bytes gravados. Um arquivo posto no lugar com bytes
+  idênticos não é distinguível, como nos artefatos.
 - Remoção Hermes apaga também o bytecode que o próprio Hermes grava para o nosso
   `__init__.py` (`__pycache__/__init__.cpython-*.pyc`), só quando é arquivo regular
   num `__pycache__` real dentro do alvo; qualquer outro arquivo na pasta do plugin é

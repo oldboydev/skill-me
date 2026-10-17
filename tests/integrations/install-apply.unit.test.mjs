@@ -8,6 +8,7 @@ import { parseConfig, planJsonInstall, planJsonUninstall } from "../../src/integ
 import { widenedRecipients } from "./helpers/posix-access.mjs";
 import { createNodeIo, runIntegrationCommand } from "../../src/integrations/install/run.mjs";
 import { makeScratch } from "./helpers/cli.mjs";
+import { readClaudeHandlers } from "./helpers/installed-hooks.mjs";
 import { sha256File, snapshotTree } from "./helpers/tree.mjs";
 
 const scratches = [];
@@ -46,6 +47,146 @@ test("I4-C30 edição externa entre a leitura e o rename vira conflito sem escri
   assert.deepEqual(result.conflicts.map((c) => c.code), ["config_changed_during_apply"]);
   assert.equal(readFileSync(settings, "utf8"), external, "conteúdo externo preservado, nada sobrescrito");
   assert.deepEqual(readdirSync(dir).sort(), ["settings.json"], "sem temporário, sem registro, sem lock");
+});
+
+// Mudança no temporário de nome fixo depois da leitura feita sob o lock: posto
+// por outro antes da criação exclusiva, editado ou trocado depois dela, ou
+// trocado com o rename falhando. O arquivo do usuário nunca é apagado nem
+// promovido a configuração/registro; na falha de E/S só sai o temporário que
+// continua nosso (controle). Configuração e registro: Claude, Codex, Hermes.
+const USER_TEMP = '{ "recuperado": "cópia sintética do usuário" }\n';
+const CODEX_ORIGINAL = JSON.stringify({ description: "team hooks", hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "python3 policy.py" }] }] } }, null, 2) + "\n";
+const failEio = () => Object.assign(new Error("falha de E/S simulada"), { code: "EIO" });
+
+test("I4-C30c temporário posto, editado ou trocado durante a aplicação não é apagado nem promovido", async () => {
+  let codexInstalled = null;
+  const temps = [
+    {
+      label: "Claude, instalação, temporário da configuração",
+      agent: "claude",
+      op: "install",
+      rel: "settings.json.skill-me-tmp",
+      step: "config",
+      stepsBefore: [],
+      prepare: () => target("tmp-race-claude-config"),
+      state: (dir) => (readFileSync(path.join(dir, "settings.json"), "utf8") === ORIGINAL && !existsSync(path.join(dir, ".skill-me", "claude-install.json")) ? "configuração original, sem registro" : "alterado"),
+      expectedState: "configuração original, sem registro",
+    },
+    {
+      label: "Claude, instalação, temporário do registro",
+      agent: "claude",
+      op: "install",
+      rel: ".skill-me/claude-install.json.skill-me-tmp",
+      step: "manifest",
+      stepsBefore: [{ step: "config", state: "done" }],
+      prepare: () => target("tmp-race-claude-manifest"),
+      state: (dir) =>
+        Object.keys(readClaudeHandlers(dir)).length === 8 && !existsSync(path.join(dir, ".skill-me", "claude-install.json")) ? "configuração gravada, sem registro" : "outro estado",
+      expectedState: "configuração gravada, sem registro",
+    },
+    {
+      label: "Codex, remoção, temporário da configuração",
+      agent: "codex",
+      op: "uninstall",
+      rel: "hooks.json.skill-me-tmp",
+      step: "config",
+      stepsBefore: [],
+      prepare: async () => {
+        const dir = path.join(makeScratch("tmp-race-codex"), ".codex");
+        scratches.push(path.dirname(dir));
+        mkdirSync(dir);
+        writeFileSync(path.join(dir, "hooks.json"), CODEX_ORIGINAL);
+        assert.equal((await runIntegrationCommand({ command: "install", agent: "codex", target: dir, apply: true, io: createNodeIo() })).exitCode, 0);
+        codexInstalled = { hooks: readFileSync(path.join(dir, "hooks.json")), manifest: readFileSync(path.join(dir, ".skill-me", "codex-install.json")) };
+        return dir;
+      },
+      state: (dir) =>
+        readFileSync(path.join(dir, "hooks.json")).equals(codexInstalled.hooks) && readFileSync(path.join(dir, ".skill-me", "codex-install.json")).equals(codexInstalled.manifest)
+          ? "hooks.json e registro da instalação intactos"
+          : "alterado",
+      expectedState: "hooks.json e registro da instalação intactos",
+    },
+    {
+      label: "Hermes, instalação, temporário do registro",
+      agent: "hermes",
+      op: "install",
+      rel: ".skill-me/hermes-install.json.skill-me-tmp",
+      step: "manifest",
+      stepsBefore: [{ step: "artifacts", state: "done" }],
+      prepare: () => {
+        const dir = path.join(makeScratch("tmp-race-hermes"), "hermes home");
+        scratches.push(path.dirname(dir));
+        mkdirSync(dir);
+        return dir;
+      },
+      state: (dir) =>
+        existsSync(path.join(dir, "plugins", "skill-me-observer", "__init__.py")) && !existsSync(path.join(dir, ".skill-me", "hermes-install.json")) ? "artefatos gravados, sem registro" : "outro estado",
+      expectedState: "artefatos gravados, sem registro",
+    },
+  ];
+  const mutations = ["posto antes da criação", "editado depois da criação", "trocado depois da criação", "trocado e o rename falha", "controle: rename falha com o temporário nosso"];
+  const observed = [];
+  const expected = [];
+  for (const temp of temps) {
+    for (const mutation of mutations) {
+      const dir = await temp.prepare();
+      const tmp = path.join(dir, ...temp.rel.split("/"));
+      const moved = path.join(path.dirname(dir), "temporário próprio movido");
+      const io = createNodeIo();
+      let mutated = false;
+      const putUserTemp = () => {
+        writeFileSync(tmp, USER_TEMP);
+        mutated = true;
+      };
+      const instrumented = {
+        ...io,
+        async writeExclusive(file, data, options) {
+          if (file === tmp && mutation === "posto antes da criação") putUserTemp();
+          await io.writeExclusive(file, data, options);
+          if (file === tmp && mutation === "editado depois da criação") putUserTemp();
+          if (file === tmp && mutation === "trocado depois da criação") {
+            renameSync(tmp, moved);
+            putUserTemp();
+          }
+        },
+        async rename(from, to) {
+          if (from === tmp && mutation === "trocado e o rename falha") {
+            renameSync(tmp, moved);
+            putUserTemp();
+            throw failEio();
+          }
+          if (from === tmp && mutation.startsWith("controle")) {
+            mutated = true;
+            throw failEio();
+          }
+          return io.rename(from, to);
+        },
+      };
+      const result = await runIntegrationCommand({ command: temp.op, agent: temp.agent, target: dir, apply: true, io: instrumented });
+      observed.push({
+        case: `${temp.label} — ${mutation}`,
+        mutated,
+        exitCode: result.exitCode,
+        status: result.status,
+        conflicts: result.conflicts,
+        errors: result.errors,
+        steps: result.steps,
+        atTemp: existsSync(tmp) ? (readFileSync(tmp, "utf8") === USER_TEMP ? "arquivo do usuário intacto" : "outro conteúdo") : "nada",
+        state: temp.state(dir),
+        lockReleased: !existsSync(path.join(dir, ".skill-me", `${temp.agent}.lock`)),
+      });
+      const failedStep = [...temp.stepsBefore, { step: temp.step, state: "failed" }];
+      const outcome = {
+        "posto antes da criação": { exitCode: 4, status: "conflict", conflicts: [{ code: "foreign_artifact", file: temp.rel }], errors: [], steps: temp.stepsBefore, atTemp: "arquivo do usuário intacto" },
+        "editado depois da criação": { exitCode: 4, status: "conflict", conflicts: [{ code: "config_changed_during_apply", file: temp.rel }], errors: [], steps: temp.stepsBefore, atTemp: "arquivo do usuário intacto" },
+        "trocado depois da criação": { exitCode: 4, status: "conflict", conflicts: [{ code: "config_changed_during_apply", file: temp.rel }], errors: [], steps: temp.stepsBefore, atTemp: "arquivo do usuário intacto" },
+        "trocado e o rename falha": { exitCode: 5, status: "incomplete", conflicts: [], errors: [{ code: "EIO" }], steps: failedStep, atTemp: "arquivo do usuário intacto" },
+        "controle: rename falha com o temporário nosso": { exitCode: 5, status: "incomplete", conflicts: [], errors: [{ code: "EIO" }], steps: failedStep, atTemp: "nada" },
+      }[mutation];
+      expected.push({ case: `${temp.label} — ${mutation}`, mutated: true, ...outcome, state: temp.expectedState, lockReleased: true });
+    }
+  }
+  assert.deepEqual(observed, expected);
 });
 
 test("I4-C33b falha ao gravar o registro depois da configuração não é declarada sucesso", async () => {

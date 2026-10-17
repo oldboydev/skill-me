@@ -19,9 +19,11 @@ export const CLI_PATH = fileURLToPath(new URL("../cli.mjs", import.meta.url));
 
 const AGENTS = ["claude", "codex", "hermes"];
 const COMMANDS = ["plan", "install", "uninstall"];
-// Nome fixo: só um processo do skill-me escreve por alvo/agente (lock), então
-// um temporário que já exista é sobra de execução anterior — se for arquivo
-// regular, é removido; qualquer outra coisa é falha de E/S, nunca apagada.
+// Nome fixo, ao lado do arquivo que o temporário substitui. O lock só exclui
+// outros processos do skill-me: nem ele nem o nome provam que algo já presente
+// nesse caminho (arquivo regular, diretório ou link) seja sobra nossa — fica, e
+// prévia e aplicação recusam com 4. O temporário que criamos só é renomeado ou
+// apagado enquanto continuar com os bytes que gravamos.
 const TMP_SUFFIX = ".skill-me-tmp";
 const STAGING_REL_DIR = `plugins/.${PLUGIN_NAME}${TMP_SUFFIX}`;
 // Marca de artefato que não é arquivo regular: nunca é igual a um SHA-256.
@@ -68,22 +70,6 @@ async function readOptional(io, root, file) {
   return read.text;
 }
 
-async function clearStaleTemp(io, tmp) {
-  let stats;
-  try {
-    stats = await io.lstat(tmp);
-  } catch (error) {
-    if (error.code === "ENOENT") return;
-    throw error;
-  }
-  if (!stats.isFile()) {
-    const error = new Error("temporário ocupado por algo que não é arquivo");
-    error.code = "tmp_path_occupied";
-    throw error;
-  }
-  await io.unlink(tmp);
-}
-
 // Só diretório real: um link posto pelo usuário no lugar de um diretório que a
 // instalação criou (`plugins`, `.skill-me`) fica — no Windows `rmdir` numa
 // junção a remove quando o destino está vazio.
@@ -106,6 +92,54 @@ async function entryKind(io, file) {
     throw error;
   }
   return stats.isDirectory() ? "dir" : "other";
+}
+
+// Temporários de `files` cujo caminho já tem alguma entrada, sem seguir link;
+// caminhos relativos ao alvo.
+async function occupiedTemps(io, root, files) {
+  const occupied = [];
+  for (const file of files) {
+    if ((await entryKind(io, file + TMP_SUFFIX)) !== "absent") occupied.push(rel(root, file + TMP_SUFFIX));
+  }
+  return occupied;
+}
+
+// Temporários de que o plano precisa: o da configuração quando ela é
+// reescrita (não apagada) e o do registro quando ele é gravado.
+function neededTemps(plan, configRel, manifestRel) {
+  const needed = [];
+  if (configRel !== null && plan.configChanged && !plan.deleteFile) needed.push(configRel + TMP_SUFFIX);
+  if (plan.manifestAction === "write") needed.push(manifestRel + TMP_SUFFIX);
+  return needed;
+}
+
+// Temporário necessário já ocupado: o plano inteiro vira conflito, sem
+// mudança listada nem passo de escrita (campos dos planos JSON e Hermes) —
+// prévia e aplicação recusam igual, antes da primeira mutação, e nada no
+// caminho ocupado é apagado ou seguido.
+function refuseOccupiedTemps(plan, needed, occupied) {
+  const blocked = needed.filter((tmp) => occupied.includes(tmp));
+  if (blocked.length === 0) return plan;
+  return {
+    ...plan,
+    changes: [],
+    conflicts: [...plan.conflicts, ...blocked.map((file) => ({ code: "foreign_artifact", file }))],
+    configChanged: false,
+    deleteFile: false,
+    writeArtifacts: false,
+    removals: [],
+    caches: [],
+    removeCacheDir: false,
+    manifestAction: null,
+  };
+}
+
+// Arquivo regular (não link) com exatamente estes bytes: a identidade por
+// caminho, tipo e hash que comprova como nosso um arquivo de nome conhecido.
+async function holdsExactly(io, file, content, hash) {
+  const stats = await io.lstat(file);
+  if (!stats.isFile() || stats.size !== content.length) return false;
+  return sha256(await io.readBytes(file)) === hash;
 }
 
 async function withLock(io, root, agent, fn) {
@@ -143,26 +177,57 @@ async function accessBeforeReplace(io, root, file) {
   }
 }
 
+// O temporário que criamos continua nosso enquanto for o arquivo regular com
+// os bytes gravados; editado, trocado ou removido por outro, não é nosso.
+async function isOwnTemp(io, tmp, bytes) {
+  try {
+    return await holdsExactly(io, tmp, bytes, sha256(bytes));
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+// Grava `text` num temporário novo e o renomeia sobre `file`. `wx` só cria com
+// o caminho livre: ocupado depois da leitura, ele é alheio, como na prévia.
+// Antes do rename, o temporário precisa continuar nosso (senão seria promovido
+// conteúdo que não gravamos) e as conferências do chamador precisam passar. Em
+// qualquer falha sai só o temporário que continua nosso.
+async function writeViaTemp(io, root, file, text, { like = null, beforeRename = async () => {} } = {}) {
+  const tmp = file + TMP_SUFFIX;
+  const bytes = Buffer.from(text, "utf8");
+  try {
+    await io.writeExclusive(tmp, text, { like });
+  } catch (error) {
+    if (error.code === "EEXIST") throw new ConflictError("foreign_artifact", rel(root, tmp));
+    throw error;
+  }
+  try {
+    if (!(await isOwnTemp(io, tmp, bytes))) throw new ConflictError("config_changed_during_apply", rel(root, tmp));
+    await beforeRename();
+    await io.rename(tmp, file);
+  } catch (error) {
+    if (await isOwnTemp(io, tmp, bytes).catch(() => false)) await io.unlink(tmp).catch(() => {});
+    throw error;
+  }
+}
+
 // Troca o arquivo só se o conteúdo atual ainda for o que foi lido sob o lock.
 // O temporário herda o acesso do original sem nunca ampliá-lo (ver io.mjs);
 // uma mudança de modo/dono/grupo durante a aplicação também é conflito.
 // Limite registrado no plano: entre esta última comparação e o rename não há
 // atomicidade contra editores arbitrários (o sistema de arquivos não tem CAS).
 async function replaceChecked(io, root, file, text, expectedHash) {
-  const tmp = file + TMP_SUFFIX;
   const like = expectedHash === null ? null : await accessBeforeReplace(io, root, file);
-  await clearStaleTemp(io, tmp);
-  await io.writeExclusive(tmp, text, { like });
-  try {
-    const current = await readOptional(io, root, file);
-    const currentHash = current === null ? null : sha256(Buffer.from(current, "utf8"));
-    if (currentHash !== expectedHash) throw new ConflictError("config_changed_during_apply", rel(root, file));
-    if (like !== null && !sameAccess(await io.accessOf(file), like)) throw new ConflictError("config_changed_during_apply", rel(root, file));
-    await io.rename(tmp, file);
-  } catch (error) {
-    await io.unlink(tmp).catch(() => {});
-    throw error;
-  }
+  await writeViaTemp(io, root, file, text, {
+    like,
+    beforeRename: async () => {
+      const current = await readOptional(io, root, file);
+      const currentHash = current === null ? null : sha256(Buffer.from(current, "utf8"));
+      if (currentHash !== expectedHash) throw new ConflictError("config_changed_during_apply", rel(root, file));
+      if (like !== null && !sameAccess(await io.accessOf(file), like)) throw new ConflictError("config_changed_during_apply", rel(root, file));
+    },
+  });
 }
 
 async function deleteChecked(io, root, file, expectedHash) {
@@ -173,16 +238,7 @@ async function deleteChecked(io, root, file, expectedHash) {
 }
 
 async function writeManifest(io, root, agent, body) {
-  const file = manifestPath(root, agent);
-  const tmp = file + TMP_SUFFIX;
-  await clearStaleTemp(io, tmp);
-  await io.writeExclusive(tmp, serializeManifest(agent, body));
-  try {
-    await io.rename(tmp, file);
-  } catch (error) {
-    await io.unlink(tmp).catch(() => {});
-    throw error;
-  }
+  await writeViaTemp(io, root, manifestPath(root, agent), serializeManifest(agent, body));
 }
 
 async function deleteManifest(io, root, agent) {
@@ -205,17 +261,24 @@ async function step(result, name, fn) {
 }
 
 async function readJsonState(io, root, agent, platform) {
-  const configText = await readOptional(io, root, path.join(root, CONFIG_FILE[agent]));
+  const configFile = path.join(root, CONFIG_FILE[agent]);
+  const configText = await readOptional(io, root, configFile);
   const manifestText = await readOptional(io, root, manifestPath(root, agent));
   return {
     parsed: configText === null ? null : parseConfig(agent, configText, platform),
     configHash: configText === null ? null : sha256(Buffer.from(configText, "utf8")),
     manifestText,
     manifest: manifestText === null ? null : parseManifest(agent, manifestText),
+    occupiedTemps: await occupiedTemps(io, root, [configFile, manifestPath(root, agent)]),
   };
 }
 
 function planJson(op, agent, state, ctx) {
+  const plan = planJsonChanges(op, agent, state, ctx);
+  return refuseOccupiedTemps(plan, neededTemps(plan, CONFIG_FILE[agent], manifestRelPath(agent)), state.occupiedTemps);
+}
+
+function planJsonChanges(op, agent, state, ctx) {
   const manifestFile = manifestRelPath(agent);
   if (op === "install") {
     const plan = planJsonInstall({ agent, parsed: state.parsed, manifest: state.manifest, ctx });
@@ -307,9 +370,7 @@ async function isOwnStagedFile(io, root, file, name, artifacts, platform) {
   const artifact = artifacts.find((a) => a.name === name);
   if (!artifact) return false;
   await assertContained(root, file, io, platform);
-  const stats = await io.lstat(file);
-  if (!stats.isFile() || stats.size !== artifact.content.length) return false;
-  return sha256(await io.readBytes(file)) === artifact.sha256;
+  return holdsExactly(io, file, artifact.content, artifact.sha256);
 }
 
 // O staging tem nome fixo, mas nem esse nome nem os nomes dos artefatos provam
@@ -360,6 +421,7 @@ async function readHermesState(io, root, platform, { op, artifacts }) {
     cacheDirReal: false,
     foreign: [],
     staging: null,
+    occupiedTemps: await occupiedTemps(io, root, [manifestPath(root, "hermes")]),
   };
   if (!state.pluginDirExists) {
     // Só a instalação dos artefatos usa o staging.
@@ -382,6 +444,11 @@ async function readHermesState(io, root, platform, { op, artifacts }) {
 }
 
 function planHermes(op, state, artifacts) {
+  const plan = planHermesChanges(op, state, artifacts);
+  return refuseOccupiedTemps(plan, neededTemps(plan, null, manifestRelPath("hermes")), state.occupiedTemps);
+}
+
+function planHermesChanges(op, state, artifacts) {
   const changes = [];
   const conflicts = [];
   const manifestFile = manifestRelPath("hermes");

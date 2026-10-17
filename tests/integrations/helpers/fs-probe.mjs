@@ -8,7 +8,10 @@
 // node:fs/promises e publica os wrappers nos imports ESM com
 // `syncBuiltinESMExports`. Com SKILL_ME_TEST_FS_PROBE_FAIL_CHOWN=1, `chown`
 // no handle do temporário falha com EPERM, como para um grupo do qual o
-// usuário não é membro.
+// usuário não é membro. Com SKILL_ME_TEST_FS_PROBE_FAIL_RENAME_TO=<nome>, o
+// rename cujo destino tem esse nome de arquivo falha com EIO (falha real de
+// E/S no processo do CLI, sem depender de um obstáculo no caminho), com ou
+// sem o registro de observações.
 import { appendFileSync, lstatSync, readFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
@@ -18,6 +21,7 @@ const fsp = require("node:fs/promises");
 const log = process.env.SKILL_ME_TEST_FS_PROBE_LOG;
 const canary = process.env.SKILL_ME_TEST_FS_PROBE_CANARY ?? "";
 const failChown = process.env.SKILL_ME_TEST_FS_PROBE_FAIL_CHOWN === "1";
+const failRenameTo = process.env.SKILL_ME_TEST_FS_PROBE_FAIL_RENAME_TO ?? "";
 const isTemp = (file) => typeof file === "string" && file.endsWith(".skill-me-tmp");
 
 function record(moment, file) {
@@ -29,7 +33,6 @@ function record(moment, file) {
 
 if (log) {
   const realOpen = fsp.open;
-  const realRename = fsp.rename;
   fsp.open = async function probedOpen(file, flags, mode) {
     const handle = await realOpen(file, flags, mode);
     if (!isTemp(file) || typeof flags !== "string" || !flags.includes("x")) return handle;
@@ -55,9 +58,15 @@ if (log) {
       },
     });
   };
+}
+if (log || failRenameTo !== "") {
+  const realRename = fsp.rename;
   fsp.rename = async function probedRename(from, to) {
-    if (isTemp(from)) record("before_rename", from);
+    if (log && isTemp(from)) record("before_rename", from);
+    if (failRenameTo !== "" && typeof to === "string" && path.basename(to) === failRenameTo) {
+      throw Object.assign(new Error("EIO injetado pelo teste"), { code: "EIO" });
+    }
     return realRename(from, to);
   };
-  syncBuiltinESMExports();
 }
+syncBuiltinESMExports();
