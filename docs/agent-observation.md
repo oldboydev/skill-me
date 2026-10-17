@@ -155,11 +155,34 @@ simulação de caminho.
   `config_changed_during_apply` em `.skill-me`); junção/link para dentro do alvo já
   presente antes do comando continua aceito. Mesmo limite não atômico da escrita da
   configuração; bytes idênticos não se distinguem.
+- Raiz do alvo: o caminho real resolvido no início é a referência da aplicação. Antes
+  de cada efeito que passa só por ela — temporário da configuração do Claude/Codex, cada
+  tentativa de `rename` dele, limpeza dele numa falha, exclusão da configuração e criação
+  de `.skill-me` e de `plugins` — ela precisa continuar resolvendo para o mesmo caminho
+  real. Trocada a raiz, ou uma pasta acima dela, por junção/link durante a aplicação, o
+  comando sai com 4 (`target_escape` em `.`) sem ler, gravar nem apagar nada através da
+  troca; o temporário e o lock já criados ficam na pasta movida (confira e remova à mão).
+  Antes de cada leitura da configuração sob o lock e da exclusão, o próprio arquivo
+  também precisa continuar dentro do alvo: link posto durante a aplicação que leve para
+  fora → 4 (`target_escape` no arquivo), sem ler nem apagar através dele. A prévia confere
+  a contenção uma vez, antes das leituras. Outro diretório real posto no mesmo caminho
+  da raiz não se distingue; mesmo limite não atômico da escrita da configuração.
 - Hermes: um artefato alterado por outro programa na pasta temporária
   `plugins/.skill-me-observer.skill-me-tmp` depois de gravado e antes de ela virar a
   pasta do plugin é promovido (instalação 0). O registro guarda o hash do pacote, então
   a remoção seguinte preserva o arquivo como alteração (4); a instalação não garante
   fonte byte a byte igual à do pacote diante de um editor arbitrário nesse intervalo.
+  A pasta temporária em si só é nossa como diretório real: trocada durante a instalação
+  — depois de criada, de um artefato gravado ou de uma exclusão da sobra própria,
+  inclusive na limpeza depois de um `rename` falho — por junção/link (para dentro ou
+  para fora do alvo) ou por um arquivo, nada mais é gravado, apagado nem promovido
+  através dela (4, `config_changed_during_apply` na pasta temporária); o link fica e o
+  que já foi gravado fica onde estiver. Uma entrada que apareça em
+  `plugins/skill-me-observer` depois da prévia — mesmo um diretório vazio, que o
+  `rename` do POSIX substituiria — é alheia: a instalação sai com 4 (`foreign_artifact`)
+  sem renomear nada sobre ela, a pasta temporária completa fica e a instalação seguinte,
+  com o caminho livre, a limpa como sobra própria. Outro diretório real posto no lugar da
+  pasta temporária não se distingue.
 - Remoção Hermes apaga também o bytecode que o próprio Hermes grava para o nosso
   `__init__.py` (`__pycache__/__init__.cpython-*.pyc`), só quando é arquivo regular
   num `__pycache__` real dentro do alvo; qualquer outro arquivo na pasta do plugin é

@@ -181,6 +181,23 @@ function dirUnchangedGuard(io, root, rel, real, platform) {
   };
 }
 
+// A própria raiz, pela mesma regra: o caminho real resolvido no início é a
+// referência da execução. Trocada ela — ou um ancestral — por junção/link para
+// a pasta movida, o mesmo nome alcançaria arquivos fora da raiz; a conferência
+// vem antes de cada efeito que passa só por ela (configuração do Claude/Codex
+// e o temporário dela, `mkdir` de `.skill-me` e de `plugins`). Conflito em `.`.
+function rootUnchangedGuard(io, root, platform) {
+  return dirUnchangedGuard(io, root, ".", root, platform);
+}
+
+// Filho que só é nosso como diretório real (pasta do plugin, `__pycache__`,
+// staging), com o ancestral já conferido: trocado por junção/link — mesmo para
+// dentro do alvo —, arquivo ou ausente, nada é lido, gravado, apagado ou
+// promovido através dele.
+async function assertStillRealDir(io, dir, rel) {
+  if ((await entryKind(io, dir)) !== "dir") throw new ConflictError("config_changed_during_apply", rel);
+}
+
 // Só sai o lock que esta execução criou: pela mesma pasta de estado e enquanto
 // for o arquivo regular com os bytes gravados. Ausente, editado, trocado ou
 // com a pasta trocada, ele não é comprovadamente nosso e fica.
@@ -226,11 +243,14 @@ function withLockKept(result, failure, error) {
 // conferido antes de criar o lock, vira a referência da execução: `fn` recebe
 // a conferência e a usa antes de ler o registro e de cada efeito nele. Trocada
 // depois por junção/link (para fora ou para outra pasta do alvo), o mesmo nome
-// alcançaria arquivos de outro lugar.
+// alcançaria arquivos de outro lugar. `fn` recebe também a conferência da
+// raiz, já usada antes do `mkdir` da pasta de estado.
 async function withLock(io, root, agent, platform, result, fn) {
   const stateDir = path.join(root, STATE_DIR);
   const lockPath = path.join(stateDir, `${agent}.lock`);
   const lockText = `${process.pid}\n`;
+  const rootUnchanged = rootUnchangedGuard(io, root, platform);
+  await rootUnchanged();
   try {
     await io.mkdir(stateDir);
   } catch (error) {
@@ -245,7 +265,7 @@ async function withLock(io, root, agent, platform, result, fn) {
   }
   let failure = null;
   try {
-    await fn(stateDirUnchanged);
+    await fn(stateDirUnchanged, rootUnchanged);
   } catch (error) {
     failure = error;
   }
@@ -321,13 +341,18 @@ async function writeViaTemp(io, root, file, text, { like = null, dirUnchanged = 
 // Troca o arquivo só se o conteúdo atual ainda for o que foi lido sob o lock.
 // O temporário herda o acesso do original sem nunca ampliá-lo (ver io.mjs);
 // uma mudança de modo/dono/grupo durante a aplicação também é conflito.
+// `rootUnchanged` guarda a pasta do temporário (a raiz) na criação, em cada
+// tentativa e na limpeza; `configContained`, cada releitura da configuração —
+// só o arquivo virar link para fora não impede apagar o temporário próprio.
 // Limite registrado no plano: entre esta última comparação e o rename não há
 // atomicidade contra editores arbitrários (o sistema de arquivos não tem CAS).
-async function replaceChecked(io, root, file, text, expectedHash) {
+async function replaceChecked(io, root, file, text, expectedHash, { rootUnchanged, configContained }) {
   const like = expectedHash === null ? null : await accessBeforeReplace(io, root, file);
   await writeViaTemp(io, root, file, text, {
     like,
+    dirUnchanged: rootUnchanged,
     beforeRename: async () => {
+      await configContained();
       const current = await readOptional(io, root, file);
       const currentHash = current === null ? null : sha256(Buffer.from(current, "utf8"));
       if (currentHash !== expectedHash) throw new ConflictError("config_changed_during_apply", rel(root, file));
@@ -336,10 +361,12 @@ async function replaceChecked(io, root, file, text, expectedHash) {
   });
 }
 
-async function deleteChecked(io, root, file, expectedHash) {
+async function deleteChecked(io, root, file, expectedHash, { configContained }) {
+  await configContained();
   const current = await readOptional(io, root, file);
   const currentHash = current === null ? null : sha256(Buffer.from(current, "utf8"));
   if (currentHash !== expectedHash) throw new ConflictError("config_changed_during_apply", rel(root, file));
+  await configContained();
   await io.unlink(file);
 }
 
@@ -400,9 +427,11 @@ async function step(result, name, fn) {
   }
 }
 
-// `beforeManifestRead`: sob o lock, a conferência da pasta de estado.
-async function readJsonState(io, root, agent, platform, beforeManifestRead = async () => {}) {
+// Sob o lock, `beforeConfigRead` confere a raiz e a contenção da configuração
+// e `beforeManifestRead`, a pasta de estado.
+async function readJsonState(io, root, agent, platform, { beforeConfigRead = async () => {}, beforeManifestRead = async () => {} } = {}) {
   const configFile = path.join(root, CONFIG_FILE[agent]);
+  await beforeConfigRead();
   const configText = await readOptional(io, root, configFile);
   await beforeManifestRead();
   const manifestText = await readManifestText(io, root, agent);
@@ -464,15 +493,23 @@ async function runJsonAgent({ op, agent, root, apply, io, ctx, platform, result 
   result.conflicts = plan.conflicts;
   const needsWrite = (p) => p.configChanged || p.manifestAction !== null;
   if (!apply || !needsWrite(plan)) return { wrote: false };
-  await withLock(io, root, agent, platform, result, async (stateDirUnchanged) => {
-    state = await readJsonState(io, root, agent, platform, stateDirUnchanged);
+  await withLock(io, root, agent, platform, result, async (stateDirUnchanged, rootUnchanged) => {
+    // A configuração só é lida, regravada ou apagada com a raiz no caminho real
+    // de referência e o próprio arquivo contido nela: um link posto durante a
+    // aplicação que leve para fora não é lido nem apagado.
+    const configContained = async () => {
+      await rootUnchanged();
+      await assertContained(root, file, io, platform);
+    };
+    state = await readJsonState(io, root, agent, platform, { beforeConfigRead: configContained, beforeManifestRead: stateDirUnchanged });
     plan = planJson(op, agent, state, ctx);
     result.changes = plan.changes;
     result.conflicts = plan.conflicts;
     if (!needsWrite(plan)) return;
     if (plan.configChanged) {
+      const guards = { rootUnchanged, configContained };
       await step(result, "config", () =>
-        plan.deleteFile ? deleteChecked(io, root, file, state.configHash) : replaceChecked(io, root, file, plan.newText, state.configHash),
+        plan.deleteFile ? deleteChecked(io, root, file, state.configHash, guards) : replaceChecked(io, root, file, plan.newText, state.configHash, guards),
       );
     }
     if (plan.manifestAction) {
@@ -688,54 +725,66 @@ function planHermesChanges(op, state, artifacts) {
   };
 }
 
-// Remove o staging só enquanto ele continuar comprovadamente nosso: diretório
-// real e, imediatamente antes de cada exclusão, arquivo próprio (mesma
-// reconferência dos artefatos na remoção), com `plugins` no caminho real de
-// referência antes de cada leitura e exclusão. Uma troca feita depois da
-// leitura vira conflito e nada além dos arquivos já conferidos é apagado;
-// `rmdir` só alcança o diretório real inspecionado (no Windows removeria uma junção).
-async function removeOwnedStaging(io, root, artifacts, platform, pluginsUnchanged) {
+// Remove o staging só enquanto ele continuar comprovadamente nosso: antes do
+// `readdir`, de cada arquivo e do `rmdir`, `stagingStillOwn` confere `plugins`
+// no caminho real de referência e o staging como diretório real; imediatamente
+// antes de cada exclusão, o arquivo próprio (mesma reconferência dos artefatos
+// na remoção). Uma troca feita depois da leitura vira conflito e nada além dos
+// arquivos já conferidos é apagado; `rmdir` só alcança o diretório real
+// conferido (no Windows removeria uma junção).
+async function removeOwnedStaging(io, root, artifacts, platform, stagingStillOwn) {
   const dir = path.join(root, STAGING_REL_DIR);
-  await pluginsUnchanged();
-  await assertContained(root, dir, io, platform);
-  if (!(await io.lstat(dir)).isDirectory()) throw new ConflictError("foreign_artifact", STAGING_REL_DIR);
+  await stagingStillOwn();
   for (const name of await io.readdir(dir)) {
     const file = path.join(dir, name);
-    await pluginsUnchanged();
+    await stagingStillOwn();
     if (!(await isOwnStagedFile(io, root, file, name, artifacts, platform))) throw new ConflictError("foreign_artifact", STAGING_REL_DIR);
     await io.unlink(file);
   }
-  await pluginsUnchanged();
+  await stagingStillOwn();
   await io.rmdir(dir);
 }
 
-// Staging e pasta do plugin ficam em `plugins`: trocada durante a aplicação,
-// nada mais é criado, gravado ou renomeado através dela, e o staging já
-// gravado fica onde estiver.
-async function installHermesArtifacts(io, root, artifacts, state, platform) {
+// Staging e pasta do plugin ficam em `plugins`, criada na raiz quando falta:
+// trocada uma delas durante a aplicação, nada mais é criado, gravado ou
+// renomeado através dela, e o staging já gravado fica onde estiver. O staging
+// em si só é nosso como diretório real nessa `plugins` — trocado depois de
+// criado ou de um artefato gravado por junção/link (mesmo para dentro do alvo)
+// ou arquivo, nada mais é gravado, apagado ou promovido através dele.
+async function installHermesArtifacts(io, root, artifacts, state, platform, rootUnchanged) {
   const pluginsDir = path.join(root, "plugins");
   const pluginDir = path.join(root, PLUGIN_REL_DIR);
   const tmpDir = path.join(root, STAGING_REL_DIR);
   let pluginsDirReal = state.pluginsDirReal;
   if (!state.pluginsDirExists) {
+    await rootUnchanged();
     await io.mkdir(pluginsDir);
     // Criada agora: a referência vem logo depois do `mkdir`, como na pasta de estado.
     pluginsDirReal = await dirRealPath(io, root, "plugins", platform);
   }
   const pluginsUnchanged = dirUnchangedGuard(io, root, "plugins", pluginsDirReal, platform);
+  const stagingStillOwn = async () => {
+    await pluginsUnchanged();
+    await assertStillRealDir(io, tmpDir, STAGING_REL_DIR);
+  };
   // Sobra própria de uma instalação interrompida; alheia já virou conflito no plano.
-  if (state.staging) await removeOwnedStaging(io, root, artifacts, platform, pluginsUnchanged);
+  if (state.staging) await removeOwnedStaging(io, root, artifacts, platform, stagingStillOwn);
   await pluginsUnchanged();
   await io.mkdir(tmpDir);
   for (const a of artifacts) {
-    await pluginsUnchanged();
+    await stagingStillOwn();
     await io.writeExclusive(path.join(tmpDir, a.name), a.content);
   }
-  await pluginsUnchanged();
+  await stagingStillOwn();
+  // O plano só grava artefatos com a pasta do plugin ausente: uma entrada surgida
+  // depois é alheia, mesmo vazia — no POSIX o rename substituiria um diretório
+  // vazio com sucesso. Nada é promovido sobre ela e o staging próprio completo
+  // fica onde está (a instalação seguinte o limpa como sobra própria).
+  if ((await entryKind(io, pluginDir)) !== "absent") throw new ConflictError("foreign_artifact", PLUGIN_REL_DIR);
   try {
     await io.rename(tmpDir, pluginDir);
   } catch (error) {
-    await removeOwnedStaging(io, root, artifacts, platform, pluginsUnchanged).catch(() => {});
+    await removeOwnedStaging(io, root, artifacts, platform, stagingStillOwn).catch(() => {});
     if (await io.stat(pluginDir).then(() => true, () => false)) throw new ConflictError("foreign_artifact", PLUGIN_REL_DIR);
     throw error;
   }
@@ -751,17 +800,14 @@ async function removeHermesArtifacts(io, root, plan, state, platform) {
   const pluginDir = path.join(root, PLUGIN_REL_DIR);
   const cacheDir = path.join(pluginDir, "__pycache__");
   const cacheRel = `${PLUGIN_REL_DIR}/__pycache__`;
-  const stillRealDir = async (dir, rel) => {
-    if ((await entryKind(io, dir)) !== "dir") throw new ConflictError("config_changed_during_apply", rel);
-  };
   const pluginsUnchanged = dirUnchangedGuard(io, root, "plugins", state.pluginsDirReal, platform);
   const pluginDirStillOwn = async () => {
     await pluginsUnchanged();
-    await stillRealDir(pluginDir, PLUGIN_REL_DIR);
+    await assertStillRealDir(io, pluginDir, PLUGIN_REL_DIR);
   };
   const cacheDirStillOwn = async () => {
     await pluginDirStillOwn();
-    await stillRealDir(cacheDir, cacheRel);
+    await assertStillRealDir(io, cacheDir, cacheRel);
   };
   // O bytecode e o `__pycache__` só saem com a fonte ausente — removida acima
   // como nossa ou já ausente na leitura. Uma fonte posta depois é de outra
@@ -825,13 +871,13 @@ async function runHermesAgent({ op, root, apply, io, platform, result }) {
   // O plano é a fonte do que a aplicação apaga: o que a prévia não lista não sai.
   const needsWrite = (p) => p.writeArtifacts || (p.removals?.length ?? 0) > 0 || (p.caches?.length ?? 0) > 0 || p.manifestAction !== null;
   if (!apply || !needsWrite(plan)) return;
-  await withLock(io, root, "hermes", platform, result, async (stateDirUnchanged) => {
+  await withLock(io, root, "hermes", platform, result, async (stateDirUnchanged, rootUnchanged) => {
     state = await readHermesState(io, root, platform, { op, artifacts, beforeManifestRead: stateDirUnchanged });
     plan = planHermes(op, state, artifacts);
     result.changes = plan.changes;
     result.conflicts = plan.conflicts;
     if (!needsWrite(plan)) return;
-    if (op === "install" && plan.writeArtifacts) await step(result, "artifacts", () => installHermesArtifacts(io, root, artifacts, state, platform));
+    if (op === "install" && plan.writeArtifacts) await step(result, "artifacts", () => installHermesArtifacts(io, root, artifacts, state, platform, rootUnchanged));
     if (op === "uninstall") await step(result, "artifacts", () => removeHermesArtifacts(io, root, plan, state, platform));
     if (plan.manifestAction) {
       await step(result, "manifest", () =>

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
@@ -7,7 +7,7 @@ import { replacementMode } from "../../src/integrations/install/io.mjs";
 import { parseConfig, planJsonInstall, planJsonUninstall } from "../../src/integrations/install/json-hooks.mjs";
 import { widenedRecipients } from "./helpers/posix-access.mjs";
 import { createNodeIo, runIntegrationCommand } from "../../src/integrations/install/run.mjs";
-import { makeScratch, REPO_ROOT } from "./helpers/cli.mjs";
+import { INTEGRATIONS_CLI, makeScratch, REPO_ROOT } from "./helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers } from "./helpers/installed-hooks.mjs";
 import { sha256File, snapshotTree } from "./helpers/tree.mjs";
 
@@ -1565,5 +1565,595 @@ test("I4-C27c alias de --target para o diretório gerenciado do Claude é recusa
     aliasKept: `link → ${path.basename(real)}`,
     manifest: true,
   });
+  assert.deepEqual(observed, expected);
+});
+
+// O que há num caminho, sem seguir link; artefato com os bytes do pacote é
+// reconhecido pelo conteúdo, sem confiar no instalador.
+function packageEntry(file) {
+  if (isSymlink(file)) return existsSync(file) ? `link → ${path.basename(realpathSync(file))}` : "link pendente";
+  if (!existsSync(file)) return "ausente";
+  if (lstatSync(file).isDirectory()) return `diretório real [${readdirSync(file).sort().map((name) => `${name}: ${packageEntry(path.join(file, name))}`).join("; ")}]`;
+  const content = readFileSync(file);
+  const name = path.basename(file);
+  if (OWN_ARTIFACTS.includes(name) && content.equals(readFileSync(path.join(PLUGIN_SOURCE, name)))) return "artefato do pacote";
+  return content.toString("utf8") === USER_FILE ? "arquivo do usuário intacto" : "outro conteúdo";
+}
+const packageDir = (names) => `diretório real [${names.map((name) => `${name}: artefato do pacote`).join("; ")}]`;
+const FS_OPS = ["readdir", "readBytes", "readText", "unlink", "rmdir", "mkdir", "writeExclusive", "rename", "lstat", "stat", "realpath"];
+
+// Staging próprio trocado durante a instalação Hermes — achado R7-F1 da
+// verificação independente round 7. Com `plugins` estável, só o staging é
+// movido e no lugar dele fica junção (Windows) / symlink (POSIX) para outra
+// pasta do alvo ou para fora dele — com cópias exatas dos artefatos, ou vazia
+// — ou um arquivo. A troca acontece logo depois de um efeito real da própria
+// instalação: exclusão de um arquivo da sobra própria (também na limpeza
+// depois de um rename falho), criação do staging ou gravação de um artefato.
+// O io registra toda operação que atravessa o caminho do staging depois da
+// troca — leitura, gravação, exclusão, promoção e metadado de um filho; só o
+// `lstat` do próprio caminho não segue o link — e cada promoção tentada.
+function stagingSwapIo(home, { on, failRename }, swap) {
+  const io = createNodeIo();
+  const staging = path.join(home, "plugins", STAGING_NAME);
+  const pluginDir = path.join(home, "plugins", "skill-me-observer");
+  const probe = { swapped: false, through: [], promotions: 0, trigger: null };
+  const counts = {};
+  const through = (op, file) => file.startsWith(staging + path.sep) || (file === staging && op !== "lstat");
+  const eventOf = (op, file) => {
+    if (op === "unlink" && path.dirname(file) === staging) return "arquivo da sobra própria removido";
+    if (op === "mkdir" && file === staging) return "staging criado";
+    if (op === "writeExclusive" && path.dirname(file) === staging) return "artefato gravado no staging";
+    return null;
+  };
+  const wrapped = { ...io };
+  for (const op of FS_OPS) {
+    wrapped[op] = async (...args) => {
+      const files = args.slice(0, op === "rename" ? 2 : 1);
+      if (probe.swapped && files.some((file) => through(op, file))) {
+        probe.through.push(`${op} ${files.map((file) => path.relative(home, file).split(path.sep).join("/")).join(" → ")}`);
+      }
+      if (op === "rename" && args[0] === staging && args[1] === pluginDir) {
+        probe.promotions += 1;
+        if (failRename) throw simulated("EIO");
+      }
+      const out = await io[op](...args);
+      const event = eventOf(op, args[0]);
+      if (event !== null) counts[event] = (counts[event] ?? 0) + 1;
+      if (on && !probe.swapped && event === on[0] && counts[event] === on[1]) {
+        swap();
+        probe.swapped = true;
+        probe.trigger = path.basename(args[0]);
+      }
+      return out;
+    };
+  }
+  return { io: wrapped, probe };
+}
+
+test("I4-C34i Hermes: staging próprio trocado durante a instalação não leva leitura, gravação, exclusão nem promoção para outro lugar", async () => {
+  const changed = { code: "config_changed_during_apply", file: `plugins/${STAGING_NAME}` };
+  const done = [
+    { step: "artifacts", state: "done" },
+    { step: "manifest", state: "done" },
+  ];
+  // Destino da junção/link e o que ele tem antes da troca; `file`: arquivo do
+  // usuário no lugar do staging.
+  const DESTS = {
+    "outra pasta do alvo com cópias exatas dos artefatos": { outside: false, fill: copyPackageArtifacts },
+    "pasta externa com cópias exatas dos artefatos": { outside: true, fill: copyPackageArtifacts },
+    "outra pasta do alvo vazia": { outside: false, fill: (dir) => mkdirSync(dir) },
+    "pasta externa vazia": { outside: true, fill: (dir) => mkdirSync(dir) },
+    "arquivo do usuário": { file: true },
+  };
+  // O que fica no staging próprio movido: a sobra menos o arquivo cuja
+  // exclusão disparou a troca (ordem do `readdir`), ou o que já foi gravado.
+  const leftoverMinus = (removed) => OWN_ARTIFACTS.filter((name) => name !== removed);
+  const writtenUpTo = (written) => OWN_ARTIFACTS.slice(0, OWN_ARTIFACTS.indexOf(written) + 1);
+  const rows = [
+    { leftover: true, on: ["arquivo da sobra própria removido", 1], dest: "outra pasta do alvo com cópias exatas dos artefatos", ownLeft: leftoverMinus },
+    { leftover: true, on: ["arquivo da sobra própria removido", 1], dest: "pasta externa com cópias exatas dos artefatos", ownLeft: leftoverMinus },
+    // Depois da última exclusão sobra o `rmdir`: no Windows ele removeria a junção.
+    { leftover: true, on: ["arquivo da sobra própria removido", 3], dest: "outra pasta do alvo vazia", ownLeft: () => [] },
+    { on: ["staging criado", 1], dest: "pasta externa vazia", ownLeft: () => [] },
+    { on: ["artefato gravado no staging", 1], dest: "outra pasta do alvo vazia", ownLeft: writtenUpTo },
+    { on: ["artefato gravado no staging", 1], dest: "pasta externa vazia", ownLeft: writtenUpTo },
+    { on: ["artefato gravado no staging", 1], dest: "arquivo do usuário", ownLeft: writtenUpTo },
+    // Completo, antes da promoção: o link não vira a pasta do plugin.
+    { on: ["artefato gravado no staging", 3], dest: "pasta externa com cópias exatas dos artefatos", ownLeft: writtenUpTo },
+    { on: ["artefato gravado no staging", 3], dest: "outra pasta do alvo com cópias exatas dos artefatos", ownLeft: writtenUpTo },
+    // Limpeza depois de um rename falho (EIO): a troca acontece depois da 1ª exclusão dela.
+    { failRename: true, on: ["arquivo da sobra própria removido", 1], dest: "outra pasta do alvo com cópias exatas dos artefatos", ownLeft: leftoverMinus },
+    { control: "instalação sem troca" },
+    { control: "sobra própria limpa sem troca", leftover: true },
+    { control: "rename falho (EIO) sem troca: só a sobra própria sai", failRename: true },
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [index, row] of rows.entries()) {
+    const label = row.control
+      ? `controle: ${row.control}`
+      : `${row.leftover ? "sobra própria, " : ""}${row.on[0]} (${row.on[1]}º)${row.failRename ? " na limpeza do rename falho" : ""} — ${row.dest}`;
+    const dir = makeScratch(`r7 staging ${index}`);
+    scratches.push(dir);
+    const home = path.join(dir, "hermes home");
+    const plugins = path.join(home, "plugins");
+    mkdirSync(plugins, { recursive: true });
+    const staging = path.join(plugins, STAGING_NAME);
+    if (row.leftover) copyPackageArtifacts(staging);
+    const dest = row.dest ? DESTS[row.dest] : null;
+    const destPath = dest && !dest.file ? path.join(dest.outside ? dir : home, dest.outside ? "pasta externa" : "outra pasta") : null;
+    if (destPath) dest.fill(destPath);
+    const destBefore = destPath ? snapshotTree(destPath) : null;
+    const moved = path.join(dir, "staging próprio movido");
+    const { io, probe } = stagingSwapIo(home, row, () => {
+      renameSync(staging, moved);
+      if (dest.file) writeFileSync(staging, USER_FILE);
+      else symlinkSync(destPath, staging, DIR_LINK);
+    });
+    const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io });
+    const manifest = path.join(home, ".skill-me", "hermes-install.json");
+    observed.push({
+      label,
+      swapped: probe.swapped,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      throughStaging: probe.through,
+      promotions: probe.promotions,
+      foreignDest: destBefore === null ? "—" : existsSync(destPath) && isDeepStrictEqual(snapshotTree(destPath), destBefore) ? "intacto" : "alterado",
+      atStaging: packageEntry(staging),
+      ownMoved: existsSync(moved) ? packageEntry(moved) : "—",
+      pluginDir: packageEntry(path.join(plugins, "skill-me-observer")),
+      manifest: existsSync(manifest) ? "gravado" : "ausente",
+      lockReleased: !existsSync(path.join(home, ".skill-me", "hermes.lock")),
+    });
+    if (row.control) {
+      expected.push({
+        label,
+        swapped: false,
+        exitCode: row.failRename ? 5 : 0,
+        status: row.failRename ? "incomplete" : "applied",
+        applied: !row.failRename,
+        conflicts: [],
+        errors: row.failRename ? [{ code: "EIO" }] : [],
+        steps: row.failRename ? [{ step: "artifacts", state: "failed" }] : done,
+        throughStaging: [],
+        promotions: 1,
+        foreignDest: "—",
+        atStaging: "ausente",
+        ownMoved: "—",
+        pluginDir: row.failRename ? "ausente" : packageDir(OWN_ARTIFACTS),
+        manifest: row.failRename ? "ausente" : "gravado",
+        lockReleased: true,
+      });
+      continue;
+    }
+    expected.push({
+      label,
+      swapped: true,
+      exitCode: row.failRename ? 5 : 4,
+      status: row.failRename ? "incomplete" : "conflict",
+      applied: false,
+      conflicts: row.failRename ? [] : [changed],
+      errors: row.failRename ? [{ code: "EIO" }] : [],
+      steps: row.failRename ? [{ step: "artifacts", state: "failed" }] : [],
+      throughStaging: [],
+      promotions: row.failRename ? 1 : 0,
+      foreignDest: dest.file ? "—" : "intacto",
+      atStaging: dest.file ? "arquivo do usuário intacto" : `link → ${path.basename(destPath)}`,
+      ownMoved: packageDir(row.ownLeft(probe.trigger)),
+      pluginDir: "ausente",
+      manifest: "ausente",
+      lockReleased: true,
+    });
+  }
+  assert.deepEqual(observed, expected);
+});
+
+// Tipo, bytes e árvore de uma entrada sem seguir link (do destino de um link:
+// caminho real e árvore).
+function entrySnapshot(file) {
+  const stats = lstatSync(file);
+  if (stats.isSymbolicLink()) return { type: "link", to: realpathSync(file), tree: snapshotTree(realpathSync(file)) };
+  if (stats.isDirectory()) return { type: "dir", mtimeMs: stats.mtimeMs, tree: snapshotTree(file) };
+  return { type: "file", mtimeMs: stats.mtimeMs, sha256: sha256File(file) };
+}
+
+// Entrada posta por outro programa no destino da promoção depois de o plano o
+// ler ausente — achado R7-F2. Logo depois do último artefato gravado no
+// staging aparece em `plugins/skill-me-observer` um diretório real vazio (com
+// `plugins` já presente ou criada pela instalação), um diretório com arquivo
+// do usuário, uma junção/link para uma pasta vazia do alvo ou um arquivo. No
+// POSIX, `rename` de um diretório sobre um diretório vazio o substitui com
+// sucesso (rename(2)); no Windows ele falha. Só no Windows o io da prova emula
+// essa semântica — remove o diretório vazio antes do rename real — para que a
+// falta de conferência apareça nas duas plataformas; o comportamento POSIX
+// nativo é o do Linux/WSL. A prova registra cada promoção tentada e o que
+// havia no destino nela.
+test("I4-C34j Hermes: entrada surgida no destino da promoção depois do plano é alheia e não é tomada pela instalação", async (t) => {
+  const foreign = { code: "foreign_artifact", file: "plugins/skill-me-observer" };
+  const APPEAR = {
+    "diretório real vazio": (pluginDir) => mkdirSync(pluginDir),
+    "diretório real com arquivo do usuário": (pluginDir) => {
+      mkdirSync(pluginDir);
+      writeFileSync(path.join(pluginDir, "notas.txt"), USER_FILE);
+    },
+    "junção/link para uma pasta vazia do alvo": (pluginDir, home) => {
+      const userDir = path.join(home, "pasta vazia do usuário");
+      mkdirSync(userDir);
+      symlinkSync(userDir, pluginDir, DIR_LINK);
+    },
+    "arquivo do usuário": (pluginDir) => writeFileSync(pluginDir, USER_FILE),
+  };
+  const rows = [
+    { appear: "diretório real vazio", atPluginDir: "diretório real []" },
+    { appear: "diretório real vazio", noPlugins: true, atPluginDir: "diretório real []" },
+    { appear: "diretório real com arquivo do usuário", atPluginDir: "diretório real [notas.txt: arquivo do usuário intacto]" },
+    { appear: "junção/link para uma pasta vazia do alvo", atPluginDir: "link → pasta vazia do usuário" },
+    { appear: "arquivo do usuário", atPluginDir: "arquivo do usuário intacto" },
+    { control: "nada surge" },
+    { control: "nada surge, plugins criada pela instalação", noPlugins: true },
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [index, row] of rows.entries()) {
+    const label = row.control ? `controle: ${row.control}` : `${row.appear}${row.noPlugins ? " (plugins criada pela instalação)" : ""}`;
+    const dir = makeScratch(`r7 destino ${index}`);
+    scratches.push(dir);
+    const home = path.join(dir, "hermes home");
+    mkdirSync(home);
+    const plugins = path.join(home, "plugins");
+    if (!row.noPlugins) mkdirSync(plugins);
+    const pluginDir = path.join(plugins, "skill-me-observer");
+    const staging = path.join(plugins, STAGING_NAME);
+    const io = createNodeIo();
+    const probe = { appeared: false, promotions: [] };
+    let written = 0;
+    let destBefore = null;
+    const instrumented = {
+      ...io,
+      async writeExclusive(file, data, options) {
+        await io.writeExclusive(file, data, options);
+        if (row.appear && path.dirname(file) === staging && ++written === OWN_ARTIFACTS.length) {
+          APPEAR[row.appear](pluginDir, home);
+          probe.appeared = true;
+          destBefore = entrySnapshot(pluginDir);
+        }
+      },
+      async rename(from, to) {
+        if (from === staging && to === pluginDir) {
+          probe.promotions.push(packageEntry(to));
+          if (process.platform === "win32" && !isSymlink(to) && existsSync(to) && lstatSync(to).isDirectory() && readdirSync(to).length === 0) {
+            t.diagnostic(`${label}: rename emulado com a semântica POSIX (destino vazio removido antes do rename real) — não é execução POSIX`);
+            rmdirSync(to);
+          }
+        }
+        return io.rename(from, to);
+      },
+    };
+    const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io: instrumented });
+    const manifest = path.join(home, ".skill-me", "hermes-install.json");
+    observed.push({
+      label,
+      appeared: probe.appeared,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      steps: result.steps,
+      promotions: probe.promotions,
+      destination: destBefore === null ? "—" : (existsSync(pluginDir) || isSymlink(pluginDir)) && isDeepStrictEqual(entrySnapshot(pluginDir), destBefore) ? "intacto" : "alterado",
+      atPluginDir: packageEntry(pluginDir),
+      ownStaging: packageEntry(staging),
+      manifest: existsSync(manifest) ? "gravado" : "ausente",
+      lockReleased: !existsSync(path.join(home, ".skill-me", "hermes.lock")),
+    });
+    if (row.control) {
+      expected.push({
+        label,
+        appeared: false,
+        exitCode: 0,
+        status: "applied",
+        applied: true,
+        conflicts: [],
+        steps: [
+          { step: "artifacts", state: "done" },
+          { step: "manifest", state: "done" },
+        ],
+        promotions: ["ausente"],
+        destination: "—",
+        atPluginDir: packageDir(OWN_ARTIFACTS),
+        ownStaging: "ausente",
+        manifest: "gravado",
+        lockReleased: true,
+      });
+      continue;
+    }
+    // Nada é promovido sobre a entrada alheia: ela fica com tipo, bytes e
+    // árvore, e o staging próprio completo fica onde está.
+    expected.push({
+      label,
+      appeared: true,
+      exitCode: 4,
+      status: "conflict",
+      applied: false,
+      conflicts: [foreign],
+      steps: [],
+      promotions: [],
+      destination: "intacto",
+      atPluginDir: row.atPluginDir,
+      ownStaging: packageDir(OWN_ARTIFACTS),
+      manifest: "ausente",
+      lockReleased: true,
+    });
+  }
+  assert.deepEqual(observed, expected);
+});
+
+// O que há num caminho da configuração, sem seguir link; reconhecido pelo
+// conteúdo, sem confiar no instalador.
+function configEntry(file) {
+  if (isSymlink(file)) return existsSync(file) ? `link → ${path.basename(realpathSync(file))}` : "link pendente";
+  if (!existsSync(file)) return "ausente";
+  if (lstatSync(file).isDirectory()) return `diretório [${readdirSync(file).sort().map((name) => `${name}: ${configEntry(path.join(file, name))}`).join("; ")}]`;
+  const text = readFileSync(file, "utf8");
+  if (text === OWN_LOCK) return "lock próprio";
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return text === USER_FILE ? "arquivo do usuário intacto" : "outro conteúdo";
+  }
+  if (body.tool === "skill-me") return `registro próprio (${(body.entries ?? body.artifacts).length})`;
+  const own = (handler) => (Array.isArray(handler.args) && handler.args.includes(INTEGRATIONS_CLI)) || (typeof handler.command === "string" && handler.command.includes(INTEGRATIONS_CLI));
+  const events = Object.values(body.hooks ?? {}).filter((groups) => groups.some((group) => (group.hooks ?? []).some(own)));
+  return `configuração (${events.length} eventos próprios)`;
+}
+const dirOf = (entries) => `diretório [${Object.keys(entries).sort().map((name) => `${name}: ${entries[name]}`).join("; ")}]`;
+const CONTENT_OPS = ["readdir", "readBytes", "readText", "unlink", "rmdir", "mkdir", "writeExclusive", "rename"];
+
+// io real que troca uma vez o caminho `swapped` — logo depois do evento `on`
+// ou na primeira tentativa de rename do temporário da configuração, que então
+// falha com `renameFails` — e registra leitura de conteúdo, gravação e
+// exclusão através dele depois da troca.
+function rootSwapIo(scratch, swapped, files, { on, renameFails }, swap) {
+  const io = createNodeIo();
+  const probe = { swapped: false, through: [], renameAttempts: 0 };
+  const counts = {};
+  const fire = () => {
+    if (probe.swapped || !swap) return;
+    swap();
+    probe.swapped = true;
+  };
+  const passes = (file) => file === swapped || file.startsWith(swapped + path.sep);
+  const configTemp = files.config && `${files.config}.skill-me-tmp`;
+  const eventOf = (op, file) => {
+    if (op === "readText" && file === files.config) return "leitura da configuração";
+    if (op === "readText" && file === files.manifest) return "leitura do registro";
+    if (op === "writeExclusive" && file === configTemp) return "temporário da configuração criado";
+    if (op === "writeExclusive" && file === files.lock) return "lock criado";
+    return null;
+  };
+  const wrapped = { ...io };
+  for (const op of CONTENT_OPS) {
+    wrapped[op] = async (...args) => {
+      const paths = args.slice(0, op === "rename" ? 2 : 1);
+      if (op === "rename" && args[0] === configTemp && ++probe.renameAttempts === 1 && renameFails) {
+        fire();
+        throw simulated(renameFails);
+      }
+      if (probe.swapped && paths.some(passes)) probe.through.push(`${op} ${paths.map((file) => path.relative(scratch, file).split(path.sep).join("/")).join(" → ")}`);
+      const out = await io[op](...args);
+      const event = eventOf(op, args[0]);
+      if (event !== null) counts[event] = (counts[event] ?? 0) + 1;
+      if (on && event === on[0] && counts[event] === on[1]) fire();
+      return out;
+    };
+  }
+  return { io: wrapped, probe };
+}
+
+// Raiz do alvo, ou um ancestral dela, trocada durante a aplicação — achado
+// R7-F3. A pasta é movida para outro lugar do scratch e no nome antigo fica
+// junção (Windows) / symlink (POSIX) para a pasta movida: os mesmos arquivos,
+// com os mesmos bytes e acesso, passam a ser alcançados fora da raiz real
+// resolvida no início. A troca acontece logo depois de um passo real: última
+// leitura da prévia, lock criado, leitura do registro sob o lock, criação do
+// temporário da configuração, leitura da configuração na exclusão, ou na
+// primeira tentativa de rename do temporário (negada com EPERM ou com falha de
+// E/S). Também só o arquivo da configuração trocado por link de arquivo para
+// ele mesmo movido para fora do alvo. Controles: nada muda, rename negado uma
+// vez, alvo por alias e configuração já como link de arquivo contido (julgado
+// na rodada 6: o link vira arquivo regular).
+test("I4-C27d raiz ou ancestral trocados durante a aplicação não levam leitura, gravação nem exclusão da configuração para fora da raiz real", async (t) => {
+  const C = (n) => `configuração (${n} eventos próprios)`;
+  const LOCK = "lock próprio";
+  const REG = (n) => `registro próprio (${n})`;
+  const rootEscape = { code: "target_escape", file: "." };
+  const lockKept = (agent) => ({ code: "config_changed_during_apply", file: `.skill-me/${agent}.lock` });
+  const fileEscape = { code: "target_escape", file: "settings.json" };
+  const claudeInstallTemp = dirOf({ ".skill-me": dirOf({ "claude.lock": LOCK }), "settings.json": C(0), "settings.json.skill-me-tmp": C(8) });
+  const claudeDeleteKept = dirOf({ ".skill-me": dirOf({ "claude-install.json": REG(8), "claude.lock": LOCK }), "settings.json": C(8) });
+  const codexInstallTemp = dirOf({ ".skill-me": dirOf({ "codex.lock": LOCK }), "hooks.json": C(0), "hooks.json.skill-me-tmp": C(6) });
+  // `op`: "uninstall delete" parte de um alvo sem configuração (a instalação
+  // cria o arquivo; a remoção o apaga). `tree`: o que fica na pasta real — a
+  // movida, nas trocas da raiz e do ancestral.
+  const rows = [
+    { agent: "claude", op: "install", swap: "raiz", on: ["leitura do registro", 1], conflicts: [rootEscape], tree: dirOf({ "settings.json": C(0) }) },
+    { agent: "claude", op: "install", swap: "raiz", on: ["lock criado", 1], conflicts: [rootEscape, lockKept("claude")], tree: dirOf({ ".skill-me": dirOf({ "claude.lock": LOCK }), "settings.json": C(0) }) },
+    { agent: "claude", op: "install", swap: "raiz", on: ["leitura do registro", 2], conflicts: [rootEscape, lockKept("claude")], tree: dirOf({ ".skill-me": dirOf({ "claude.lock": LOCK }), "settings.json": C(0) }) },
+    { agent: "claude", op: "install", swap: "raiz", on: ["temporário da configuração criado", 1], conflicts: [rootEscape, lockKept("claude")], tree: claudeInstallTemp },
+    { agent: "claude", op: "install", swap: "ancestral", on: ["temporário da configuração criado", 1], conflicts: [rootEscape, lockKept("claude")], tree: dirOf({ ".claude": claudeInstallTemp }) },
+    {
+      agent: "claude",
+      op: "uninstall",
+      swap: "raiz",
+      on: ["temporário da configuração criado", 1],
+      conflicts: [rootEscape, lockKept("claude")],
+      tree: dirOf({ ".skill-me": dirOf({ "claude-install.json": REG(8), "claude.lock": LOCK }), "settings.json": C(8), "settings.json.skill-me-tmp": C(0) }),
+    },
+    { agent: "claude", op: "uninstall delete", swap: "raiz", on: ["leitura do registro", 2], conflicts: [rootEscape, lockKept("claude")], tree: claudeDeleteKept },
+    { agent: "claude", op: "uninstall delete", swap: "raiz", on: ["leitura da configuração", 3], conflicts: [rootEscape, lockKept("claude")], tree: claudeDeleteKept },
+    { agent: "claude", op: "uninstall delete", swap: "ancestral", on: ["leitura da configuração", 3], conflicts: [rootEscape, lockKept("claude")], tree: dirOf({ ".claude": claudeDeleteKept }) },
+    { agent: "codex", op: "install", swap: "raiz", renameFails: "EPERM", renameAttempts: 1, conflicts: [rootEscape, lockKept("codex")], tree: codexInstallTemp },
+    {
+      agent: "codex",
+      op: "install",
+      swap: "raiz",
+      renameFails: "EIO",
+      renameAttempts: 1,
+      exitCode: 5,
+      conflicts: [lockKept("codex")],
+      errors: [{ code: "EIO" }],
+      steps: [{ step: "config", state: "failed" }],
+      tree: codexInstallTemp,
+    },
+    {
+      agent: "codex",
+      op: "uninstall",
+      swap: "raiz",
+      on: ["temporário da configuração criado", 1],
+      conflicts: [rootEscape, lockKept("codex")],
+      tree: dirOf({ ".skill-me": dirOf({ "codex-install.json": REG(6), "codex.lock": LOCK }), "hooks.json": C(6), "hooks.json.skill-me-tmp": C(0) }),
+    },
+    { agent: "hermes", op: "install", swap: "raiz", on: ["leitura do registro", 2], conflicts: [rootEscape, lockKept("hermes")], tree: dirOf({ ".skill-me": dirOf({ "hermes.lock": LOCK }) }) },
+    { agent: "claude", op: "install", swap: "arquivo", on: ["temporário da configuração criado", 1], conflicts: [fileEscape], tree: dirOf({ "settings.json": "link → configuração movida.json" }), outside: C(0) },
+    {
+      agent: "claude",
+      op: "uninstall delete",
+      swap: "arquivo",
+      on: ["leitura do registro", 2],
+      conflicts: [fileEscape],
+      tree: dirOf({ ".skill-me": dirOf({ "claude-install.json": REG(8) }), "settings.json": "link → configuração movida.json" }),
+      outside: C(8),
+    },
+    { agent: "claude", op: "install", control: "nada muda", renameAttempts: 1, tree: dirOf({ ".skill-me": dirOf({ "claude-install.json": REG(8) }), "settings.json": C(8) }) },
+    { agent: "claude", op: "uninstall delete", control: "nada muda", tree: dirOf({}) },
+    { agent: "codex", op: "install", control: "rename negado uma vez, nada muda", renameFails: "EPERM", renameAttempts: 2, tree: dirOf({ ".skill-me": dirOf({ "codex-install.json": REG(6) }), "hooks.json": C(6) }) },
+    { agent: "claude", op: "install", control: "alvo por alias já antes do comando", renameAttempts: 1, tree: dirOf({ ".skill-me": dirOf({ "claude-install.json": REG(8) }), "settings.json": C(8) }) },
+    {
+      agent: "claude",
+      op: "install",
+      control: "configuração já como link de arquivo contido",
+      renameAttempts: 1,
+      tree: dirOf({ ".skill-me": dirOf({ "claude-install.json": REG(8) }), "configuração real.json": C(0), "settings.json": C(8) }),
+    },
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [index, row] of rows.entries()) {
+    const label = `${row.agent} ${row.op} — ${row.control ? `controle: ${row.control}` : `${row.swap}, ${row.on ? `${row.on[0]} (${row.on[1]}ª)` : `rename ${row.renameFails}`}`}`;
+    const fileLink = row.swap === "arquivo" || row.control?.includes("link de arquivo");
+    if (fileLink && !fileLinksAllowed()) {
+      t.diagnostic(`${label}: não executado — symlink de arquivo exige privilégio neste Windows (EPERM); coberto no Linux/WSL`);
+      continue;
+    }
+    const dir = makeScratch(`r7 raiz ${index}`);
+    scratches.push(dir);
+    const perfil = path.join(dir, "perfil");
+    const home = path.join(perfil, { claude: ".claude", codex: ".codex", hermes: "hermes home" }[row.agent]);
+    mkdirSync(home, { recursive: true });
+    const config = row.agent === "hermes" ? null : path.join(home, CONFIG_OF[row.agent]);
+    if (row.control === "configuração já como link de arquivo contido") {
+      writeFileSync(path.join(home, "configuração real.json"), ORIGINAL);
+      symlinkSync(path.join(home, "configuração real.json"), config, "file");
+    } else if (row.agent === "claude" && row.op !== "uninstall delete") {
+      writeFileSync(config, ORIGINAL);
+    } else if (row.agent === "codex") {
+      writeFileSync(config, CODEX_ORIGINAL);
+    }
+    const op = row.op === "install" ? "install" : "uninstall";
+    if (op === "uninstall") assert.equal((await runIntegrationCommand({ command: "install", agent: row.agent, target: home, apply: true, io: createNodeIo() })).exitCode, 0, label);
+    const configBefore = config !== null && existsSync(config) ? readFileSync(config) : null;
+    const alias = path.join(dir, "perfil por alias");
+    if (row.control === "alvo por alias já antes do comando") symlinkSync(home, alias, DIR_LINK);
+    // Pasta real depois da troca, caminho trocado e configuração própria nela.
+    const swaps = {
+      raiz: { swapped: home, real: path.join(dir, "alvo movido"), from: home },
+      ancestral: { swapped: perfil, real: path.join(dir, "perfil movido"), from: perfil },
+      arquivo: { swapped: config, real: home, from: config, to: path.join(dir, "configuração movida.json") },
+    };
+    const swap = row.swap ? swaps[row.swap] : null;
+    const doSwap =
+      swap &&
+      (() => {
+        if (row.swap === "arquivo") {
+          renameSync(config, swap.to);
+          symlinkSync(swap.to, config, "file");
+          return;
+        }
+        renameSync(swap.from, swap.real);
+        symlinkSync(swap.real, swap.from, DIR_LINK);
+      });
+    const files = { config, manifest: path.join(home, ".skill-me", `${row.agent}-install.json`), lock: path.join(home, ".skill-me", `${row.agent}.lock`) };
+    const { io, probe } = rootSwapIo(dir, swap?.swapped ?? home, files, row, doSwap);
+    const targetArg = row.control === "alvo por alias já antes do comando" ? alias : home;
+    const result = await runIntegrationCommand({ command: op, agent: row.agent, target: targetArg, apply: true, io });
+    const realHome = row.swap === "ancestral" || row.swap === "raiz" ? swap.real : home;
+    const ownConfig = row.swap === "arquivo" ? swap.to : row.swap === "ancestral" ? path.join(swap.real, path.basename(home), CONFIG_OF[row.agent] ?? "") : row.swap === "raiz" && config ? path.join(swap.real, CONFIG_OF[row.agent]) : null;
+    observed.push({
+      label,
+      swapped: probe.swapped,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      renameAttempts: probe.renameAttempts,
+      throughSwapped: probe.through,
+      atSwapped: swap && row.swap !== "arquivo" ? configEntry(swap.from) : "—",
+      tree: configEntry(realHome),
+      ownConfigBytes: ownConfig === null || configBefore === null ? "—" : !existsSync(ownConfig) ? "ausente" : readFileSync(ownConfig).equals(configBefore) ? "iguais" : "diferentes",
+      outside: row.swap === "arquivo" ? configEntry(swap.to) : "—",
+      alias: row.control === "alvo por alias já antes do comando" ? configEntry(alias) : "—",
+    });
+    if (row.control) {
+      expected.push({
+        label,
+        swapped: false,
+        exitCode: 0,
+        status: "applied",
+        applied: true,
+        conflicts: [],
+        errors: [],
+        steps: [
+          { step: "config", state: "done" },
+          { step: "manifest", state: "done" },
+        ],
+        renameAttempts: row.renameAttempts ?? 0,
+        throughSwapped: [],
+        atSwapped: "—",
+        tree: row.tree,
+        ownConfigBytes: "—",
+        outside: "—",
+        alias: row.control === "alvo por alias já antes do comando" ? `link → ${path.basename(home)}` : "—",
+      });
+      continue;
+    }
+    // Nada da configuração é lido, gravado nem apagado através do caminho
+    // trocado: o que estava na pasta movida fica — inclusive o temporário e o
+    // lock próprios criados antes da troca — e o código não mascara o efeito.
+    expected.push({
+      label,
+      swapped: true,
+      exitCode: row.exitCode ?? 4,
+      status: row.exitCode === 5 ? "incomplete" : "conflict",
+      applied: false,
+      conflicts: row.conflicts,
+      errors: row.errors ?? [],
+      steps: row.steps ?? [],
+      renameAttempts: row.renameAttempts ?? 0,
+      throughSwapped: [],
+      atSwapped: row.swap === "arquivo" ? "—" : `link → ${path.basename(swap.real)}`,
+      tree: row.tree,
+      ownConfigBytes: row.agent === "hermes" ? "—" : "iguais",
+      outside: row.outside ?? "—",
+      alias: "—",
+    });
+  }
   assert.deepEqual(observed, expected);
 });

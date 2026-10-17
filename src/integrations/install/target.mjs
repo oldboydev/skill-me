@@ -61,8 +61,10 @@ const VANISHED_REPROBES = 3;
 // no próprio caminho ou em qualquer ancestral que leve para fora é conflito.
 // Link pendente também é recusado — escrever nele criaria o alvo fora.
 // Devolve o caminho real conferido: o da própria entrada, se existe, ou o do
-// ancestral existente mais próximo.
+// ancestral existente mais próximo. O conflito nomeia o caminho relativo à
+// raiz; a própria raiz é `.`.
 export async function assertContained(root, candidate, io, platform = process.platform) {
+  const reported = path.relative(root, candidate) || ".";
   let probe = candidate;
   let reprobes = 0;
   for (;;) {
@@ -72,7 +74,7 @@ export async function assertContained(root, candidate, io, platform = process.pl
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       const parent = path.dirname(probe);
-      if (parent === probe) throw new ConflictError("target_escape", path.relative(root, candidate));
+      if (parent === probe) throw new ConflictError("target_escape", reported);
       probe = parent;
       continue;
     }
@@ -80,17 +82,17 @@ export async function assertContained(root, candidate, io, platform = process.pl
     try {
       real = await io.realpath(probe);
     } catch (error) {
-      if (stats.isSymbolicLink() && error.code === "ENOENT") throw new ConflictError("target_escape", path.relative(root, candidate));
+      if (stats.isSymbolicLink() && error.code === "ENOENT") throw new ConflictError("target_escape", reported);
       if (error.code !== "ENOENT") throw error;
       // Entrada que sumiu entre o lstat e o realpath (ex.: temporário de outro
       // processo do skill-me renomeado nesse intervalo): o mesmo caminho é
       // sondado de novo, poucas vezes — oscilando além disso, nada se comprova
       // e a operação para em conflito, sem laço sem progresso.
       reprobes += 1;
-      if (reprobes > VANISHED_REPROBES) throw new ConflictError("config_changed_during_read", path.relative(root, candidate));
+      if (reprobes > VANISHED_REPROBES) throw new ConflictError("config_changed_during_read", reported);
       continue;
     }
-    if (!isInside(root, real, platform)) throw new ConflictError("target_escape", path.relative(root, candidate));
+    if (!isInside(root, real, platform)) throw new ConflictError("target_escape", reported);
     return real;
   }
 }
