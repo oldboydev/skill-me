@@ -325,3 +325,29 @@ Correções da revisão formal round 1 (17/10/2026):
 - **Fronteira:** F1–F4 fechados em `bdc1969`..`bb05bcc` (F2 em `4f2932a` + `38bc660`), evidência em `.checks/issue-4-integracoes.build.md`, "Correções da revisão formal — round 1"; Checks inalterados; Landing +4 linhas (F2, regra de grupo corrigida, F3, F4). Achado irmão de F1 (pasta própria do plugin como junção → remoção apaga bytecode de outro plugin) só reportado: aguarda decisão.
 - **Decidido durante o build:** nada novo do proprietário; o coordenador apontou o contraexemplo 0604 da regra de grupo (nota acima, encerrada em `38bc660`).
 - **Abandonado:** limpar o staging pelos nomes de `ARTIFACT_NAMES` (era o defeito F1); `chmod` depois do conteúdo (janela legível; mutação detectada); limitar só o grupo novo aos bits de "outros" (contraexemplo 0604); adotar grupo editado pela assinatura (apagaria a edição na remoção); medir caracteres em vez de bytes UTF-8 e conferir o tamanho só na instalação (mutações detectadas).
+
+### Conferência de coordenação — container `plugins`
+
+Antes de fechar a remoção, conferir também o cleanup do container: instalar sem
+`plugins`, mover o container para `plugin-store`, ligar `plugins` por junction e
+remover o observer. `created.pluginsDir` descreve o passado; `removeDirIfEmpty`
+não deve apagar o link posterior do usuário quando o destino fica vazio. A
+observação ainda é por leitura, sem prova executada pelo coordenador. Cenário e
+esperado em `.checks/code-review/issue-4/coordinator-container-link-feedback.md`;
+fechar se confirmado dentro de AC6/C34, preservando a barra existente.
+
+Encerramento pelo builder (17/10/2026): confirmado no Windows — com `created.pluginsDir`
+true e `plugins` trocado por junção para `plugin-store`, a remoção saía `0 applied` e o
+`rmdir` final apagava a junção quando o destino ficava vazio; o mesmo helper apagava uma
+junção posta no lugar de `.skill-me` (irmão, comum aos três agentes). No POSIX o `rmdir` em
+symlink já falhava (`ENOTDIR`) e o link ficava: lá a regressão é guarda. Corrigido em
+`043f287` (`removeDirIfEmpty` só remove diretório real); `I4-C34d` confere o link mantido, o
+destino vazio, as mudanças exatas e, como controle, a saída do diretório real criado pela
+instalação. A barra dos checks não mudou. Evidência em `.checks/issue-4-integracoes.build.md`,
+"Continuidade AC6 — pasta própria do plugin Hermes".
+
+Continuidade AC6 — pasta própria do plugin Hermes (17/10/2026):
+
+- **Fronteira:** o achado irmão de F1 acima ("só reportado: aguarda decisão") foi classificado pelo orquestrador como continuidade do AC6 já aprovado e da fronteira de propriedade de F1 — não é nova feature, issue nem decisão de produto; nenhuma autorização humana nova foi pedida ou presumida, e a formulação anterior fica como histórico. Fechado em `42516ad`: pasta própria como junção/link (dentro ou fora do alvo) ou arquivo → 4 na prévia e na aplicação de install e uninstall, nada lido nem apagado através dela, reconferência antes de cada exclusão. Defeitos adjacentes do mesmo AC6/C34, encontrados durante a correção e tratados pelo builder dentro do escopo (sujeitos à conferência do orquestrador/Verifier): `01faaac` (remoção sem registro apagava bytecode), `043f287` (nota do coordenador e irmão `.skill-me`), `6df4d4c` (artefato trocado por link de arquivo; bytecode ao lado de fonte preservada). Checks e Landing inalterados; regressões `I4-C34b`..`I4-C34e`; evidência em `.checks/issue-4-integracoes.build.md`, "Continuidade AC6 — pasta própria do plugin Hermes".
+- **Decidido durante o build:** nada novo do proprietário. A classificação de continuidade é do orquestrador; a nota do coordenador (container `plugins`) foi confirmada e encerrada acima.
+- **Abandonado:** tratar `ENOTDIR` como ausente em `assertContained` (mudaria Claude/Codex com `.skill-me` arquivo; a pasta do plugin passou a ser conferida antes dos caminhos dos artefatos); recusar só `isSymbolicLink` (o arquivo regular no lugar da pasta continuaria substituído pelo rename do staging no Windows); reconferir só no início da remoção (troca entre exclusões passa — M-PDb); manter o cache pela lista lida do estado (aplicação apagava o que a prévia não listava — M-PDc); reter também o bytecode com o `__init__.py` já ausente (deixaria cache órfão da nossa fonte e mudaria o código de saída sem necessidade demonstrada).

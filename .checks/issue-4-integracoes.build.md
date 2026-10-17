@@ -535,3 +535,276 @@ Saídas brutas (locais, ignoradas) em `.checks/code-review/issue-4/`: `red-forma
 - Privacidade: nenhum valor de ambiente, token ou credencial impresso; as sondas imprimiram só
   códigos, modos, contagens e tamanhos; conteúdo sintético. Nenhuma instalação em perfil
   pessoal; todos os `--target` em temporários.
+
+## Continuidade AC6 — pasta própria do plugin Hermes (17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega. Partida em `9184d65` com checkout
+limpo; base integral `236e999`. Esta seção é evidência do autor, **não é verificação
+independente** nem revisão formal: nenhum `review:run`/`review:check`/`pr:create`/push/PR/
+Verifier foi executado; o estado do motor (1 de 2 tentativas) e o `.verified.md` não foram
+tocados. A barra (Checks, inclusive o texto de C27 e C34) e o Landing não mudaram: não há porta
+técnica nova — `foreign_artifact`, `owned_entry_modified`, `owned_entry_unrecorded`,
+`config_changed_during_apply` e o código 4 já existiam. `git diff --name-only 9184d65..6df4d4c`:
+só `src/integrations/install/run.mjs`, `tests/integrations/install.cli.test.mjs`,
+`tests/integrations/install-apply.unit.test.mjs` e `docs/agent-observation.md` (doctor, motor
+vendorizado, `code-review.config.json`, `AGENTS.md`, `package.json`/lock e outras issues
+inalterados). A correção F2 de permissões (`38bc660`, contraexemplo 0604) não foi tocada.
+
+**Classificação.** A pendência registrada acima, em "Pendências e limites desta rodada" (pasta
+própria trocada por junção/link → `uninstall --apply` sai 4 e apaga o bytecode de outro
+plugin), foi classificada pelo orquestrador como continuidade do AC6 já aprovado — remover
+somente artefatos próprios e preservar alterações/terceiros — e da mesma fronteira de
+propriedade de F1. Não é nova feature, issue ou decisão de produto e não amplia o recorte da
+fronteira mínima/receptor em memória. Nenhuma autorização humana nova foi pedida, recebida ou
+presumida; a formulação anterior ("aguarda decisão do orquestrador/proprietário") permanece
+acima como histórico e fica encerrada por esta seção. Durante a correção apareceram defeitos
+adjacentes no mesmo instalador e no mesmo AC6/C34; o builder os tratou como defeitos dentro do
+escopo (AGENTS.md: "Trate defeitos dentro do escopo e teste a correção"), comunicados aqui e no
+retorno ao orquestrador, cada um com RED/GREEN próprio — essa extensão é julgamento do builder,
+sujeita à conferência do orquestrador e do Verifier.
+
+| Commit | Achado | Conteúdo |
+| --- | --- | --- |
+| `42516ad` | caso do orquestrador: pasta própria como junção/link/arquivo | `run.mjs`: `entryKind`/`ownPluginDirExists` (lstat) antes dos caminhos dos artefatos e na releitura sob o lock; reconferência de diretório real antes de cada `unlink`/`rmdir`; `I4-C34b`, `I4-C34c`; guia |
+| `01faaac` | novo — remoção sem registro apagava bytecode | o plano é a fonte dos caches removidos (vazia sem registro); linha "diretório real de mesmo nome, sem registro" em `I4-C34b`; guia |
+| `043f287` | nota do coordenador (container `plugins`) + irmão `.skill-me` | `removeDirIfEmpty` só remove diretório real; `I4-C34d`; guia |
+| `6df4d4c` | novos — artefato trocado por link de arquivo; bytecode ao lado de fonte preservada | `lstat` do artefato na leitura e antes do `unlink`; cache acompanha o `__init__.py`; `I4-C34e`; variante de link de arquivo durante a aplicação em `I4-C34c`; guia |
+
+### Caso do orquestrador — pasta própria trocada por junção/link (`42516ad`)
+
+- **Causa no HEAD `9184d65`:** `readHermesState` decidia a existência da pasta com `stat` (segue
+  junção/link) e listava através dela. O `lstat` de `skill-me-observer/__pycache__` não vê a
+  junção no ancestral, então o `__pycache__` real do outro plugin entrava em `state.caches` e
+  era apagado. A reconferência antes do `unlink` só olhava contenção e tipo do arquivo, não se a
+  pasta e o `__pycache__` continuavam diretórios reais.
+- **Correção:** a pasta do plugin só é nossa como diretório real (`lstat`, mesmo contrato do
+  staging de F1). Junção/link para dentro do alvo ou arquivo no lugar dela → `foreign_artifact`
+  em `plugins/skill-me-observer`, código 4, na prévia e na aplicação de install e uninstall,
+  **antes** de conferir os caminhos dos artefatos e sem ler, apagar ou registrar nada através
+  dela (repetido na releitura sob o lock). Para fora do alvo continua `target_escape`
+  (`assertContained` existente). Imediatamente antes de cada `unlink` e `rmdir` da remoção, a
+  pasta e o `__pycache__` são reconferidos como diretórios reais; troca depois da leitura →
+  `config_changed_during_apply` (4), nada além do já conferido é apagado.
+- **Asserções `I4-C34b` (CLI):** seis variantes — junção (Windows)/symlink real (POSIX) para
+  outro plugin no alvo com `__init__.py` diferente; para cópias exatas dos três artefatos no
+  alvo; para cópias exatas fora do alvo; link de arquivo para o `__init__.py` de outro plugin
+  no alvo; link de arquivo para fora; arquivo regular — cada uma depois de instalar (registro
+  presente, pasta instalada movida para fora do alvo sem exclusão) e sem instalação. Do outro
+  lado há sempre `__pycache__/__init__.cpython-311.pyc` sintético. Cada linha roda `install`,
+  `install --apply`, `uninstall`, `uninstall --apply` e compara numa única tabela: código,
+  status, `applied`, número de mudanças e conflitos (`código:arquivo`); estado do bytecode por
+  SHA-256 (`intacto`/`alterado`/`apagado`); `snapshotTree` (tipo, SHA-256, bytes, mtime) da
+  árvore do outro plugin e do alvo inteiro (link, `config.yaml`, registro); link ainda link e
+  com o mesmo `realpath`. Esperado em todos os comandos: `4 conflict applied=false changes=0`,
+  `foreign_artifact:plugins/skill-me-observer` (dentro do alvo, inclusive arquivo regular) ou
+  `target_escape` (fora); bytecode intacto; árvores iguais; link mantido. Controle: pasta
+  própria real com cache normal ao lado de outro plugin com bytecode de mesmo nome →
+  `0 applied`, um `remove_cache` exato, alvo de volta à árvore anterior e outro plugin com mtime
+  igual.
+- **Asserções `I4-C34c` (io instrumentado, troca durante a aplicação):** depois da remoção do
+  último artefato próprio, a pasta ou o `__pycache__` vira junção/symlink para outro plugin com
+  bytecode de mesmo nome → 4, `[{code: "config_changed_during_apply", file: <caminho
+  trocado>}]`, bytecode e árvore do outro plugin intactos, link mantido, registro byte a byte
+  igual, lock liberado.
+
+**RED no HEAD `9184d65`** (`red-plugindir-{windows,wsl}-9184d65.txt`; produto conferido por
+`git diff --quiet 9184d65 -- src` e, no WSL, pelo SHA-256 da cópia):
+
+| Variante `I4-C34b` | Registro | Windows | WSL | Outro lado |
+| --- | --- | --- | --- | --- |
+| junção/link → outro plugin no alvo (**o caso relatado**) | sim | `uninstall --apply → 4 conflict applied=true` (`owned_entry_modified`) | idem | **bytecode apagado** |
+| idem | não | `uninstall --apply → 5 incomplete` | idem | **bytecode apagado** |
+| junção/link → cópias exatas no alvo | sim | `install → 0 unchanged`; `uninstall --apply → 0 applied`, junção removida | idem; symlink fica | **bytecode e cópias apagados** |
+| idem | não | `install --apply → 0 applied` (adota através da junção); `uninstall --apply → 0` | idem | **bytecode e cópias apagados** |
+| junção/link → cópias fora do alvo | sim/não | `4 target_escape` nos quatro comandos | idem | intacto (guarda) |
+| link de arquivo → `__init__.py` no alvo | sim/não | não executado (EPERM) | `5 incomplete` nos quatro (ENOTDIR) | intacto |
+| link de arquivo → fora do alvo | sim/não | não executado (EPERM) | `4 target_escape` | intacto (guarda) |
+| arquivo regular no lugar da pasta | sim/não | `install --apply → 0 applied`: **o rename do staging substitui o arquivo do usuário** | `5 incomplete` (ENOTDIR) | outro plugin intacto |
+| diretório real de mesmo nome (`01faaac`) | não | `uninstall --apply → 5 incomplete` | idem | **bytecode apagado** |
+
+`I4-C34c` no HEAD: as duas trocas terminaram `0 applied` com o bytecode do outro plugin apagado
+e o registro removido; no Windows a junção do `__pycache__` também foi removida. A substituição
+do arquivo regular no Windows foi confirmada à parte por sonda sem exclusões
+(`observation-plugin-path-file-windows-9184d65.json`: `install 0 applied`, nenhum arquivo com o
+conteúdo do usuário restou no alvo; `…-043f287.json`: `4 foreign_artifact`, arquivo intacto).
+
+**Prova pedida — bytecode alheio preservado:** na linha do caso relatado, o produto anterior saía
+4 **e** apagava `victim-plugin/__pycache__/__init__.cpython-311.pyc` (Windows e WSL;
+`observation-plugin-dir-link-*-fe213e9.json` da rodada anterior e o RED acima). Com a correção,
+os quatro comandos saem `4 conflict applied=false changes=0
+foreign_artifact:plugins/skill-me-observer`; o SHA-256 do bytecode é igual ao anterior; a árvore
+do outro plugin e a do alvo são iguais com mtime; a junção/symlink continua apontando para o
+mesmo destino — Windows (junção) e WSL (symlink).
+
+**Mudanças colaterais de comportamento, provadas:** arquivo regular ou link de arquivo no lugar
+da pasta saía 0 (Windows, arquivo substituído) ou 5 (POSIX, `ENOTDIR`) e agora sai 4
+`foreign_artifact`; remoção sem registro de pasta real com cache saía 5 e agora sai 4
+`owned_entry_unrecorded` sem exclusão. Derivada e não testada à parte: a pasta que some entre a
+leitura e a remoção passa de 5 (`ENOENT`) a 4 `config_changed_during_apply`.
+
+### Achado novo — remoção sem registro (`01faaac`)
+
+Encontrado pelo RED da variante "sem instalação" e confirmado sem link: um diretório real
+`plugins/skill-me-observer` que o skill-me nunca instalou, com `__pycache__/__init__.cpython-311.pyc`.
+`uninstall` (prévia) listava só `owned_entry_unrecorded`, mas `uninstall --apply` decidia
+escrever pelos caches do estado, apagava o bytecode e depois falhava em `state.manifest.created`
+(5). Agora o plano é a única fonte dos caches removidos — vazia sem registro — e a aplicação
+não apaga o que a prévia não lista: 4 `owned_entry_unrecorded`, árvore igual. RED: linha
+correspondente acima (Windows e WSL); mutação M-PDc.
+
+### Nota do coordenador — container `plugins` — e irmão `.skill-me` (`043f287`)
+
+A nota de coordenação acrescentada ao checklist (preservada sem edição) pedia para provar ou
+refutar: instalar sem `plugins` (`created.pluginsDir: true`), mover `plugins` para
+`plugin-store`, ligar `plugins` por junção e remover. **Confirmado no Windows:** a remoção
+saía `0 applied` com as mudanças próprias corretas, mas `removeDirIfEmpty` fazia `rmdir` na
+junção do usuário quando `plugin-store` ficava vazio. O mesmo helper limpa `.skill-me` no
+`withLock` dos três agentes; o caso irmão (`.skill-me` movido para `state-store` e ligado por
+junção, Claude) perdia a junção do mesmo modo. No POSIX, `rmdir` em symlink já falhava com
+`ENOTDIR` (absorvido) e o link ficava: a regressão passa antes e depois (guarda), RED só no
+Windows (`red-container-{windows,wsl}-01faaac.txt`).
+
+- **Correção:** `removeDirIfEmpty` só remove diretório real (`lstat`); a remoção conclui o que
+  é nosso e o link do usuário fica.
+- **Asserções `I4-C34d`:** controle — alvo Hermes sem `plugins` → install registra
+  `created.pluginsDir: true` e a remoção devolve a árvore anterior (`plugins` e `.skill-me` reais
+  saem). Trocas — Hermes `plugins → plugin-store` e Claude `.skill-me → state-store`:
+  `0 applied` sem conflito, mudanças exatas (Hermes: 3 `remove_artifact` + `delete_manifest`;
+  Claude: 8 `remove_group`, 7 `remove_event_key` — `PreToolUse` já existia —,
+  `delete_manifest`), destino vazio e diretório real, link mantido com o mesmo `realpath`.
+
+### Achados novos — artefato trocado por link de arquivo e bytecode de fonte preservada (`6df4d4c`)
+
+Verificados por sonda sem exclusões no produto `043f287` (`observation-residual-wsl-043f287.json`):
+
+- **Artefato trocado por link de arquivo** (o `__init__.py` da pasta própria real vira symlink
+  para cópia idêntica em outro plugin): a remoção seguia o link pelo hash e saía `0 applied`
+  apagando o **link do usuário** (o destino ficava). Agora só arquivo regular pode ser o
+  artefato gravado (mesma regra do staging e das entradas do cache): link é alteração
+  preservada como uma edição (`owned_entry_modified`), na leitura e na reconferência antes do
+  `unlink`.
+- **Bytecode ao lado de fonte preservada** (com registro, a pasta própria real recebe os três
+  artefatos de outro plugin de mesmo nome, ou o usuário edita o `__init__.py`, e o Hermes grava
+  o bytecode desse arquivo): a remoção saía 4 (`owned_entry_modified` ×3) **e** executava
+  `remove_cache`, apagando o bytecode ao lado do `__init__.py` preservado. Agora o bytecode
+  acompanha a fonte: com o `__init__.py` preservado, o cache dele fica; sem ele (já ausente) ou
+  com ele removido como nosso, o cache próprio sai como antes.
+- **Asserções `I4-C34e`:** pasta substituída — os quatro comandos `4 conflict applied=false
+  changes=0` com os três `owned_entry_modified`, bytecode intacto, alvo igual com mtime; link de
+  arquivo (WSL; Windows EPERM por diagnóstico) — install/prévia `4 … changes=0` só com
+  `owned_entry_modified:…/__init__.py`, `uninstall --apply → 4 conflict applied=true changes=3`,
+  link mantido para o mesmo destino, cópia do outro plugin intacta, bytecode intacto, pasta
+  final exatamente `{__init__.py: link, __pycache__/__init__.cpython-311.pyc}` e registro só com
+  `__init__.py`. `I4-C34c` ganhou a variante `plugin.yaml` trocado por link de arquivo para
+  cópia idêntica depois da remoção do primeiro artefato → 4 `config_changed_during_apply` em
+  `plugin.yaml`, link e registro mantidos.
+- **RED:** `I4-C34e` em `043f287`, Windows e WSL — pasta substituída: `uninstall --apply → 4
+  conflict applied=true changes=1`, bytecode apagado (`red-ownentries-*-043f287.txt`); a parte
+  do link fica depois no mesmo teste: RED pela sonda acima (`0 applied`, link apagado) e pela
+  mutação M-PDf. Variante de link em `I4-C34c` no WSL em `043f287`: `0 applied`, link apagado,
+  registro removido (`red-artifact-swap-wsl-043f287.txt`). Sonda no produto final
+  (`observation-residual-wsl-6df4d4c.json`): link `4`, link e cópia mantidos; pasta substituída
+  `4`, `changes: []`, bytecode mantido.
+
+### Discriminação (mutações só em cópias WSL; worktree conferido pelo SHA-256 depois)
+
+| Mutação | O que desfaz | Falha | Passam |
+| --- | --- | --- | --- |
+| M-PDa | pasta trocada deixa de ser recusada na leitura | `I4-C34b`: a junção para cópias exatas é **adotada** (`install --apply → 0 applied`); a reconferência ainda barra a exclusão (`config_changed_during_apply`) | os outros 16 do instalador |
+| M-PDb | sem reconferência de diretório real antes de cada exclusão | `I4-C34c`: as duas trocas `0 applied`, bytecode apagado | os outros 16 |
+| M-PDc | caches vêm do estado, não do plano | `I4-C34b` linha sem registro: bytecode apagado, `5 incomplete` | os outros 16 |
+| M-PDd | `removeDirIfEmpty` nunca remove | `I4-C34d` (controle), `I4-C30`, `I4-C31`, `I4-C34`, `I4-C34b` | 13 |
+| M-PDf | artefato lido pelo hash mesmo sendo link | `I4-C34e`, parte do link | os outros 18 |
+| M-PDg | cache sai mesmo com o `__init__.py` preservado | `I4-C34e`, pasta substituída | os outros 18 |
+| M-PDh | sem `lstat` do artefato antes do `unlink` | `I4-C34c`, variante `plugin.yaml` | os outros 18 |
+
+M-PDa..M-PDc rodaram sobre o produto de `01faaac` e M-PDd sobre `043f287` (testes de então);
+M-PDf..M-PDh sobre `6df4d4c`. As duas camadas do caso relatado são necessárias: sem a recusa na
+leitura há adoção através do link; sem a reconferência, a troca depois da leitura apaga o
+bytecode alheio com 0. Commit intermediário `42516ad` também passou isolado (Windows 17/17,
+`green-plugindir-commit1-windows.txt`).
+
+### Contagens reais em `6df4d4c`
+
+Um batch por plataforma: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs`. Windows: worktree com código igual a `6df4d4c`
+(`git diff --quiet HEAD -- src tests docs scripts package.json`), Hermes nativo pelo helper
+(`python -I -B`, HERMES_HOME e HOME/APPDATA/TEMP temporários, sem modelo). WSL: Ubuntu, Node
+24.13.0, cópia `git archive` de `6df4d4c` no ext4, `env -i` só com `PATH`; exit do próprio
+`wsl.exe`.
+
+| Execução | tests | pass | fail | cancelled | skipped | todo | exit |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 62 + governança 6 | 68 | 66 | 0 | 0 | 2 | 0 | 0 |
+| WSL — integrações 62 + governança 6 | 68 | 60 | 0 | 0 | 8 | 0 | 0 |
+
+Os 68 nomes executados estão nos TAP (`batch-{windows,wsl}-6df4d4c.tap`), na mesma ordem nas
+duas plataformas. Cruzamento das 54 linhas `Proof:` (cada padrão casou exatamente um teste):
+Windows 53 PASS + `I4-C15` SKIP; WSL 46 PASS + 8 SKIP. Extras fora das linhas `Proof:` (14, todos
+executados): 5 de governança, `I4-C16c`, `I4-C25b`, `I4-C25c`, `I4-C26b`, `I4-C32b`, `I4-C34b`,
+`I4-C34c`, `I4-C34d`, `I4-C34e`. Novos desta rodada: `I4-C34b`..`I4-C34e` (+4 em relação aos 64
+de `bb05bcc`). Skips e motivos:
+
+- Windows (2): `I4-C15` `posix-signals` e `I4-C25b` `posix-modes` (passam no WSL). Subcasos de
+  link de arquivo registrados por `t.diagnostic` (EPERM sem privilégio): 2 em `I4-C27`, 1 em
+  `I4-C34`, 4 em `I4-C34b`, 1 em `I4-C34c`, 1 em `I4-C34e` — todos executados no WSL, sem
+  diagnóstico.
+- WSL (8): `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente` (sem runtime Hermes
+  declarado no WSL): prova nativa do Hermes só no Windows (executada nesse batch); Linux
+  **pendente**. `I4-C35` registrou a observação Hermes pendente.
+- Doctor (417) e motor de revisão (16) não foram reexecutados: nenhum arquivo deles, nem dos
+  módulos do doctor reutilizados, mudou desde `9184d65`.
+- Batches intermediários (`batch-{windows,wsl}-01faaac.tap`: 66 testes, 64/58 pass;
+  `…-043f287.tap`: 67, 65/59 pass; todos exit 0, mesmos skips) foram superados pelo de
+  `6df4d4c`; o executor de 54 processos não foi rodado (os nomes saíram do batch).
+
+### Limites e resíduos
+
+- Janela não atômica entre a reconferência e cada `unlink`/`rmdir`, como na escrita da
+  configuração; a reconferência estreita, não elimina, a corrida com quem troca diretórios.
+- Ponto de montagem de volume (Windows) e bind mount (POSIX) aparecem como diretório real e não
+  são distinguidos; criá-los exige privilégio.
+- Identidade por caminho, tipo e hash: uma pasta real de mesmo nome com cópias byte a byte dos
+  artefatos, alcançada depois que o usuário troca o container `plugins` por junção, é
+  indistinguível da instalada (troca do container dentro do alvo é layout aceito do usuário).
+- Bytecode de nome próprio com o `__init__.py` já ausente continua saindo como cache órfão da
+  nossa fonte (comportamento anterior mantido).
+- Hermes nativo só no Windows; Linux pendente; macOS só pela CI; E2E real dos três agentes
+  pendente.
+
+### Sobras próprias desta rodada (preservadas; nenhuma exclusão por shell)
+
+Avaliação de limpeza com o orquestrador. Windows `%TEMP%`: em `skill-me-formal-probes/` os
+arquivos novos `plugindir-mutants.mjs`, `run.mutation-pd-{a,b,c,d,f,g,h}.mjs`, `run.final.mjs`,
+`install.cli.test.final.mjs`, `agent-observation.final.md` (cópias usadas para separar os
+commits), `plugin-path-file-probe.mjs`, `residual-probe.mjs` e a cópia `head-9184d65/`
+(`git archive` + `node_modules`); fora dela `skill-me i4 lstat-check ação-vLpB5O` e
+`skill-me plugin-path-file probe-{Bq7ppi,yR9mrm}`. WSL `/tmp`: `skillme-formal2-plugindir-{red,
+green,mut}`, `skillme-formal2-{01faaac,043f287,6df4d4c}`,
+`skillme-formal2-container-{red,green}`, `skillme-formal2-ownentries-{red,green}` e
+`skill-me residual {A,B} probe-*` (duas execuções). A sonda original
+`plugin-dir-link-probe.mjs` e `observation-plugin-dir-link-*` foram preservadas e não
+reexecutadas (ela termina com `rmSync`; `I4-C34b` reproduz o cenário com o mesmo conteúdo
+sintético). Scratches dos testes: removidos pelo `after()` existente do `node:test`, só
+diretórios de `makeScratch` (caminho absoluto sob o TEMP); todo link criado pelos testes aponta
+para scratch do próprio teste. Scratches dos Verifiers, backups da recuperação e histórico
+formal não foram tocados.
+
+Saídas brutas (locais, ignoradas) em `.checks/code-review/issue-4/`:
+`red-plugindir-{windows,wsl}-9184d65.txt`, `green-plugindir-{windows,wsl}.txt`,
+`green-plugindir-commit1-windows.txt`, `red-container-{windows,wsl}-01faaac.txt`,
+`green-container-{windows,wsl}.txt`, `red-ownentries-{windows,wsl}-043f287.txt`,
+`red-artifact-swap-wsl-043f287.txt`, `green-ownentries-{windows,wsl}.txt`,
+`green-ownentries-unit-windows.txt`, `mutation-plugindir-pd-{a,b,c,d,f,g,h}-wsl.txt`,
+`observation-plugin-path-file-windows-{9184d65,043f287}.json`,
+`observation-residual-wsl-{043f287,6df4d4c}.json`, `batch-{windows,wsl}-{01faaac,043f287,6df4d4c}.tap`,
+`proofs-vs-batch-{windows,wsl}-{043f287,6df4d4c}.txt`, `proofs-vs-batch-windows-01faaac.txt`.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token, credencial ou valor de ambiente impresso; testes e sondas usam
+ambiente mínimo (`PATH` e variáveis de sistema do Windows) e conteúdo sintético; as sondas
+imprimiram só códigos, ações, tipos e caminhos de temporários próprios. Nenhuma instalação em
+perfil pessoal; todos os `--target` em temporários; nenhum agente, modelo ou E2E executado;
+nenhum bypass/confiança concedido. Processos de teste conferidos encerrados ao fim (Windows: 0
+relacionados à entrega; WSL: 0 `node`/`python`).
