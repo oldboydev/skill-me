@@ -864,3 +864,27 @@ Correção da revisão formal round 4 (17/10/2026):
   chamadas do PowerShell por reescrita (lote do Windows 33 s → 116 s); os demais já registrados.
 - **Próxima ação (orquestrador):** verificação independente 10 pelos testes versionados e leitura permitida;
   revisão formal 5 só depois de PASS e relatório commitado.
+Verificação independente round 10 (17/10/2026):
+
+PASS 48/48 e 9/9 em a86853201beae7644eeb491f9ab39acf7729860c, relatório
+integral desta rodada copiado para a entrega. O P1 da revisão formal4 em AC6/C25 foi
+julgado corrigido: DACL conferida é aplicada na criação exclusiva do temporário, antes
+de qualquer conteúdo, e comparada nas conferências compartilhadas. Provas C25g/h/i
+exercitam a fronteira Windows com dados sintéticos. As partes fora do diff carregam
+origens explícitas dos pareceres anteriores; não se atribui execução ao autorrelato.
+
+Lotes independentes atuais: 105 testes, Windows 103 pass/2 skips e Ubuntu
+94 pass/11 skips, zero falhas/cancelamentos, exit 0. As 54 provas nomeadas e os
+51 extras foram contabilizados, identidade de 175 blobs e archive nas duas cópias.
+C25f e C29b passaram; o ajuste de C29b conserva o limite de espera e subtrai o tempo
+real medido das operações de acesso/escrita, sem ampliar a tolerância. Doctor 417 é
+carry, sem reexecução local. Hermes Linux, macOS/CI remota e E2E permanecem pendentes.
+
+Limites de acesso, herança, dono/SACL/rótulo, prazo não exercitado, API de link e
+diagnósticos nativos continuam explícitos no relatório. O método foi leitura normal
+e testes já versionados em cópia nova, sem sonda adicional ou repetição da ação
+bloqueada da preparação6. Nenhum produto/teste foi alterado pelo Verifier/Codex.
+
+Próxima etapa automática: revisão formal5 no commit limpo. Quatro tentativas de dez
+consumidas; critérios, histórico e autorização do proprietário para continuar e fazer
+o merge após aprovação permanecem preservados. PR e merge aguardam ready válido.
