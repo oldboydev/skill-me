@@ -645,3 +645,36 @@ Correção da revisão formal round 3 (17/10/2026):
   raiz; diretório gerenciado que seja ele mesmo link não é seguido.
 - **Próxima ação (orquestrador):** verificação independente 7 pelos testes versionados e leitura
   permitida; revisão formal 4 só depois de PASS.
+
+### Verificação independente round 7 — propriedade do staging e raiz da configuração (17/10/2026)
+
+FAIL 45/48 em `6053d2cce11d0f42f2a788a0383e02a0becdc27f`: C25/C27/C34 e AC6
+bloqueados. Relatório completo em `.checks/issue-4-integracoes.verified.md`, SHA-256
+`1177ec412a95ee7ee92cd2312f2694aa0ea387b3227ad74af65c8a3580658ecd`.
+Os dois achados da formal3 foram corrigidos nos cenários nomeados, mas três estados
+residuais foram estabelecidos por leitura, sem reprodução adicional pelo Verifier:
+
+- R7-F1: o próprio staging pode virar link depois de conferido; a guarda de `plugins`
+  não impede limpeza, gravação ou promoção através desse filho substituído.
+- R7-F2: diretório alheio vazio surgido no destino pode ser substituído pelo rename POSIX,
+  pois a colisão é verificada apenas no catch e a operação pode ter sucesso.
+- R7-F3: os efeitos da configuração não guardam a raiz/ancestral durante apply; conteúdo
+  e acesso iguais não impedem escrita/exclusão fora da raiz canônica após redirecionamento.
+
+Possível perda e quebra de isolamento comunicadas imediatamente ao proprietário como
+achados de leitura. A nota de coordenação e ressalvas autorais foram julgadas contra o
+contrato, sem virarem autorização para perda nem prova de execução. stat no catch e
+informação limitada de passos de conflito foram registrados como limites, sem impor
+rollback ou erro 5 a todo conflito 4.
+
+Lotes independentes de 98 testes: Windows 96 pass/2 skips e WSL 90 pass/8 skips,
+nenhuma falha/cancelamento, exit 0; 54 provas nomeadas, 22 regressões e 16 testes do motor
+contabilizados. Original somente leitura e limpo, 172 blobs iguais em ambas cópias.
+O método permaneceu leitura normal e testes já versionados: nenhuma sonda adicional,
+nenhum teste novo do Verifier nem repetição/reformulação da ação bloqueada da rodada 6.
+
+Continuidade em AC6 já autorizada: Claude reproduz com regressões seguras versionadas em
+fixtures próprias, corrige e prova; depois haverá nova verificação independente pelo
+método permitido. Nenhuma formal4, PR ou merge antes do parecer válido. Três tentativas
+formais consumidas, teto exclusivo dez, critérios/histórico/core intactos. Codex não
+implementou produto/testes.
