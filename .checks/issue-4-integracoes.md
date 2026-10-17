@@ -722,3 +722,28 @@ Correção da verificação independente round 7 (17/10/2026):
   `stat` no `catch`, passos parciais de `artifacts` e os demais já registrados.
 - **Próxima ação (orquestrador):** verificação independente 8 pelos testes versionados e leitura
   permitida; revisão formal 4 só depois de PASS e relatório commitado.
+
+Verificação independente round 8, concluída após retomada do desligamento (17/10/2026):
+
+FAIL 47/48 em ef341c6b1f84fe342b2b0e58ff987fb3d7f004de: C25 e AC6 permanecem
+pendentes por R8-F1. Por leitura, replaceChecked deriva o acesso do arquivo atual antes de
+validar que ele ainda corresponde à configuração lida: se for substituído por outro
+documento de permissões mais amplas, o temporário recebe o texto anterior sob o novo
+acesso; hash/contenção são conferidos somente depois da gravação. A detecção posterior
+do conflito não satisfaz C25b, que proíbe ampliar acesso em qualquer instante.
+Achado comunicado ao proprietário como análise estática; nenhuma reprodução ou leitura
+de conteúdo privado real pelo Verifier/coordenador foi realizada.
+
+Os três achados da rodada 7 foram julgados corrigidos. A retomada preservou os TAPs
+anteriores e repetiu apenas os testes já versionados em cópia isolada: 101 testes,
+Windows 99 pass/2 skips e Ubuntu 93 pass/8 skips, zero falhas/cancelamentos, exit 0.
+A autoria das fases, identidades, 54 provas, carries, limites e interrupção técnica
+constam integralmente no relatório independente. Nenhuma sonda adicional ou repetição
+da ação bloqueada da rodada 6; Codex não implementou produto nem testes.
+
+Continuidade já autorizada no mesmo AC6: Claude corrige a ordem das verificações antes
+da primeira gravação de conteúdo e prova a regressão com fixtures seguras versionadas;
+depois, nova verificação independente. A revisão formal 4 aguarda PASS e commit limpo.
+Três tentativas formais de dez consumidas; critérios e histórico preservados. A autorização
+do proprietário para as rodadas necessárias, merge da #4 após aprovação e uma nova
+sessão depois da conclusão permanece vigente após “pc desligou pode continar”.
