@@ -555,3 +555,32 @@ Correção da verificação independente round 5 (17/10/2026):
   `81b9888`, sem perda de bytes, mas o link do usuário não é preservado (por leitura, também
   `hooks.json`); seguir, recusar ou manter é decisão de produto. Hermes staging alterado antes do
   rename: sem perda, limite registrado no guia.
+
+### Fechamento independente round 6 — 17/10/2026
+
+PASS 48/48 em `9aff57735c822dc4a3af3b515a5de7d527b4f9e3`. Relatório completo em
+`.checks/issue-4-integracoes.verified.md`, SHA-256
+`5533856331ffd224be0e4d113e3e756f1482ccfeaf4d360502cef729efd5cf2a`.
+C27/C30/C31 foram reavaliados pelas guardas e quatro regressões versionadas executadas,
+com asserções de conteúdo, tipo, ancestral, conflitos e passos. Nenhum critério omitido.
+Lotes independentes: 96 testes por plataforma, Windows 94 pass/2 skips, WSL 88 pass/8
+skips, nenhuma falha/cancelamento, exit 0; 54 provas nomeadas contabilizadas, 16 testes do
+motor separados. Original limpo e somente leitura, 172 blobs conferidos nos dois ambientes.
+
+A plataforma interrompeu a primeira execução do agente por classificação automática de risco
+cibernético. Não houve tentativa de repetir ou reformular a ação bloqueada. A continuação
+limitou-se à leitura normal do diff/regressões já versionadas e aos lotes previamente iniciados,
+que concluíram normalmente. A sonda adicional própria do Verifier NÃO foi executada neste HEAD;
+o relatório distingue esse limite das regressões efetivamente executadas, suficientes para
+as claims sob o perfil light. Resultados anteriores não são apresentados como nova execução.
+
+A nota autoral sobre o symlink inicial de configuração foi julgada pelo contrato aprovado:
+S4:8/C27 recusam escape; S4:9/C25 preservam valores; o Landing escolhe temp+rename. Não há promessa
+explícita de conservar o tipo de um symlink inicialmente contido. Por leitura, a ligação é
+substituída por arquivo regular, preservando valores lidos e bytes do arquivo apontado; sem
+nova sonda específica nem promessa de sincronização futura pela ligação. Limite registrado,
+sem decisão funcional nova nem correção fora dos achados. A formulação anterior "pendente
+para decisão" fica como histórico, não um bloqueio contratual comprovado nesta entrega.
+
+Este PASS encerra a etapa independente, sem declarar revisão formal aprovada. Próxima ação:
+revisão formal obrigatória do commit limpo, terceira tentativa no histórico preservado da #4.
