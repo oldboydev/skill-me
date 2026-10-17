@@ -66,9 +66,14 @@ Reescrita de `settings.json`/`hooks.json` no POSIX: o arquivo novo mantém os bi
 modo e o grupo do original e nunca concede mais acesso do que ele — o temporário nasce
 só com os bits de dono e recebe grupo e modo antes do conteúdo; se o grupo original não
 puder ser atribuído, grupo e "outros" recebem só o que os dois já concediam no original
-(quem pertencia só ao grupo antigo passa a "outros" e não ganha acesso). O dono passa a
-ser quem executa o comando; ACL (POSIX ou Windows), atributos estendidos e bits
-especiais não são preservados nem detectados. No Windows nada disso é aplicado.
+(quem pertencia só ao grupo antigo passa a "outros" e não ganha acesso). Esse acesso é
+o do arquivo conferido antes de o temporário ser criado — contido no alvo e com o
+conteúdo lido sob o lock: trocada a configuração depois da leitura (outro arquivo ou
+link), nada é gravado no temporário e o comando sai com 4; mudança de modo, dono ou
+grupo depois da conferência também é 4. O dono passa a ser quem executa o comando; ACL
+(POSIX ou Windows), atributos estendidos e bits especiais não são preservados nem
+detectados. No Windows modo e grupo não são aplicados; a conferência antes de criar o
+temporário é a mesma.
 
 ### Confiança continua manual
 

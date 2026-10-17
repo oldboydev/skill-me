@@ -338,27 +338,39 @@ async function writeViaTemp(io, root, file, text, { like = null, dirUnchanged = 
   }
 }
 
-// Troca o arquivo só se o conteúdo atual ainda for o que foi lido sob o lock.
-// O temporário herda o acesso do original sem nunca ampliá-lo (ver io.mjs);
-// uma mudança de modo/dono/grupo durante a aplicação também é conflito.
-// `rootUnchanged` guarda a pasta do temporário (a raiz) na criação, em cada
-// tentativa e na limpeza; `configContained`, cada releitura da configuração —
-// só o arquivo virar link para fora não impede apagar o temporário próprio.
-// Limite registrado no plano: entre esta última comparação e o rename não há
-// atomicidade contra editores arbitrários (o sistema de arquivos não tem CAS).
+// Troca o arquivo só se ele ainda for o lido sob o lock — contido e com o
+// mesmo conteúdo — e tiver o acesso que o temporário recebe. A mesma
+// conferência vem antes de criar o temporário e antes de cada tentativa de
+// rename: um documento posto no lugar depois da leitura (outro arquivo, link)
+// não fornece o acesso com que o texto calculado da leitura é gravado. Antes,
+// o temporário recebia esse texto com o modo do substituto e o conflito só
+// vinha depois da gravação — apagar o temporário não revoga quem já o abriu.
+// O acesso é lido antes da conferência para que ela o confirme no documento
+// com o conteúdo lido; lido depois dela, viria de um documento não conferido.
+// O temporário herda esse acesso sem nunca ampliá-lo (ver io.mjs); uma mudança
+// de modo/dono/grupo também é conflito. `rootUnchanged` guarda a pasta do
+// temporário (a raiz) na criação, em cada tentativa e na limpeza;
+// `configContained`, cada leitura da configuração — só o arquivo virar link
+// para fora não impede apagar o temporário próprio.
+// Limite registrado no plano: entre a última conferência e a criação ou o
+// rename não há atomicidade contra editores arbitrários (o sistema de arquivos
+// não tem CAS); a troca nesse intervalo encontra o temporário com o acesso
+// conferido e é recusada antes do rename.
 async function replaceChecked(io, root, file, text, expectedHash, { rootUnchanged, configContained }) {
-  const like = expectedHash === null ? null : await accessBeforeReplace(io, root, file);
-  await writeViaTemp(io, root, file, text, {
-    like,
-    dirUnchanged: rootUnchanged,
-    beforeRename: async () => {
-      await configContained();
-      const current = await readOptional(io, root, file);
-      const currentHash = current === null ? null : sha256(Buffer.from(current, "utf8"));
-      if (currentHash !== expectedHash) throw new ConflictError("config_changed_during_apply", rel(root, file));
-      if (like !== null && !sameAccess(await io.accessOf(file), like)) throw new ConflictError("config_changed_during_apply", rel(root, file));
-    },
-  });
+  let like = null;
+  if (expectedHash !== null) {
+    await configContained();
+    like = await accessBeforeReplace(io, root, file);
+  }
+  const stillAsRead = async () => {
+    await configContained();
+    const current = await readOptional(io, root, file);
+    const currentHash = current === null ? null : sha256(Buffer.from(current, "utf8"));
+    if (currentHash !== expectedHash) throw new ConflictError("config_changed_during_apply", rel(root, file));
+    if (like !== null && !sameAccess(await accessBeforeReplace(io, root, file), like)) throw new ConflictError("config_changed_during_apply", rel(root, file));
+  };
+  await stillAsRead();
+  await writeViaTemp(io, root, file, text, { like, dirUnchanged: rootUnchanged, beforeRename: stillAsRead });
 }
 
 async function deleteChecked(io, root, file, expectedHash, { configContained }) {
@@ -496,7 +508,8 @@ async function runJsonAgent({ op, agent, root, apply, io, ctx, platform, result 
   await withLock(io, root, agent, platform, result, async (stateDirUnchanged, rootUnchanged) => {
     // A configuração só é lida, regravada ou apagada com a raiz no caminho real
     // de referência e o próprio arquivo contido nela: um link posto durante a
-    // aplicação que leve para fora não é lido nem apagado.
+    // aplicação que leve para fora não é lido nem apagado, nem fornece o
+    // acesso do temporário.
     const configContained = async () => {
       await rootUnchanged();
       await assertContained(root, file, io, platform);

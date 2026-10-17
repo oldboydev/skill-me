@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
@@ -2153,6 +2153,254 @@ test("I4-C27d raiz ou ancestral trocados durante a aplicação não levam leitur
       ownConfigBytes: row.agent === "hermes" ? "—" : "iguais",
       outside: row.outside ?? "—",
       alias: "—",
+    });
+  }
+  assert.deepEqual(observed, expected);
+});
+
+// Configuração trocada por outro documento depois da leitura sob o lock —
+// achado R8-F1 da verificação independente round 8. O texto a gravar vem da
+// configuração lida (0600, com um canário sintético no lugar de um segredo);
+// outro processo põe no caminho um arquivo regular diferente 0644, contido no
+// alvo, ou um link para um documento 0644 fora do alvo (no mesmo scratch), e a
+// configuração lida vai para fora do alvo. A troca acontece logo depois da
+// leitura do registro sob o lock, imediatamente antes de o instalador obter o
+// acesso do original (`accessOf`) ou — janela residual, depois da última
+// conferência — imediatamente antes de criar o temporário. O io registra o
+// acesso pedido para o temporário e, depois da gravação e antes de cada
+// tentativa de rename, o modo dele, quem ganhou acesso sobre o original e se o
+// canário está nele. O modo depois da gravação é o mais amplo que o temporário
+// teve: ele nasce só com os bits de dono e recebe grupo e modo antes do
+// conteúdo (os quatro instantes de `I4-C25b`). Controles: troca na nova
+// tentativa de um rename negado, acesso do próprio arquivo ampliado depois da
+// conferência, configuração ausente na leitura e nada muda. No Windows o
+// acesso é ACL (o modo POSIX não se aplica): as colunas de acesso ficam "ACL",
+// e as linhas de link de arquivo e de modo rodam no Linux/WSL.
+const POSIX_ACCESS = process.platform !== "win32";
+const octal = (mode) => `0${mode.toString(8)}`;
+const R8_CANARY = "sintetico-r8-canario-nao-e-segredo";
+const R8_READ = {
+  claude: JSON.stringify({ env: { API_TOKEN: R8_CANARY }, permissions: { allow: ["Bash(npm test)"] } }, null, 2) + "\n",
+  codex: JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: `notify --token ${R8_CANARY}`, timeout: 30 }] }] } }, null, 2) + "\n",
+};
+const R8_SUBSTITUTE = JSON.stringify({ env: { OUTRO: "documento substituto sintético" } }, null, 2) + "\n";
+const R8_EXTERNAL = JSON.stringify({ nota: "documento externo sintético" }, null, 2) + "\n";
+
+// io real que troca uma vez a configuração — logo depois do evento `on` ou na
+// primeira tentativa de rename do temporário, que então falha com
+// `renameFails` — e observa o temporário da configuração.
+function accessSwapIo(files, { on, renameFails }, swap) {
+  const io = createNodeIo();
+  const probe = { swapped: false, requested: [], temp: [], renameAttempts: 0 };
+  const counts = {};
+  const configTemp = `${files.config}.skill-me-tmp`;
+  const fire = () => {
+    if (probe.swapped || !swap) return;
+    swap();
+    probe.swapped = true;
+  };
+  const due = (event) => {
+    counts[event] = (counts[event] ?? 0) + 1;
+    return on !== undefined && on[0] === event && counts[event] === on[1];
+  };
+  const observeTemp = (moment) => {
+    const stats = lstatSync(configTemp);
+    probe.temp.push({ moment, mode: stats.mode & 0o7777, gid: stats.gid, canary: readFileSync(configTemp).includes(R8_CANARY) });
+  };
+  return {
+    probe,
+    io: {
+      ...io,
+      async readText(file) {
+        const out = await io.readText(file);
+        if (file === files.manifest && due("leitura do registro")) fire();
+        return out;
+      },
+      async accessOf(file) {
+        if (file === files.config && due("acesso do original")) fire();
+        return io.accessOf(file);
+      },
+      async writeExclusive(file, data, options) {
+        if (file !== configTemp) return io.writeExclusive(file, data, options);
+        if (due("criação do temporário")) fire();
+        probe.requested.push(options?.like ? options.like.mode : null);
+        await io.writeExclusive(file, data, options);
+        observeTemp("conteúdo gravado");
+      },
+      async rename(from, to) {
+        if (from !== configTemp) return io.rename(from, to);
+        observeTemp("antes do rename");
+        if (++probe.renameAttempts === 1 && renameFails) {
+          fire();
+          throw simulated(renameFails);
+        }
+        return io.rename(from, to);
+      },
+    },
+  };
+}
+
+// O que está num caminho, sem seguir link, reconhecido pelos bytes conhecidos
+// (ou pela configuração, sem confiar no instalador); no POSIX, com o modo.
+function accessEntry(file, known, withMode) {
+  let stats;
+  try {
+    stats = lstatSync(file);
+  } catch (error) {
+    if (error.code === "ENOENT") return "ausente";
+    throw error;
+  }
+  if (stats.isSymbolicLink()) return `link → ${path.basename(realpathSync(file))}`;
+  const bytes = readFileSync(file);
+  const name = known.find(([, content]) => content !== null && bytes.equals(Buffer.from(content)))?.[0] ?? configEntry(file);
+  return POSIX_ACCESS && withMode ? `${name} · ${octal(stats.mode & 0o7777)}` : name;
+}
+
+test("I4-C25f configuração trocada depois da leitura sob o lock: o conteúdo lido não vai para um temporário com o acesso de outro documento", async (t) => {
+  if (!POSIX_ACCESS) t.diagnostic('Windows: acesso por ACL — as colunas de acesso POSIX não se aplicam e ficam "ACL"; código, conflito, temporário e arquivos são afirmados');
+  const READ = "configuração lida sob o lock";
+  const REGULAR = "arquivo regular diferente 0644";
+  const LINK = "link para documento externo 0644";
+  const WIDENED = "acesso do próprio arquivo ampliado para 0644";
+  const POSTED = "arquivo do usuário posto";
+  const m = (name, mode) => (POSIX_ACCESS ? `${name} · ${mode}` : name);
+  const changed = (agent) => ({ code: "config_changed_during_apply", file: CONFIG_OF[agent] });
+  const escape = (agent) => ({ code: "target_escape", file: CONFIG_OF[agent] });
+  const swapped = { aside: m(READ, "0600") };
+  const linked = { ...swapped, atConfig: "link → documento externo.json", external: m("documento externo", "0644") };
+  const replaced = { ...swapped, atConfig: m("documento substituto", "0644") };
+  // `temp`: instantes em que o temporário existe com conteúdo; ausente = nenhum.
+  const rows = [
+    { agent: "claude", op: "install", swap: REGULAR, on: ["leitura do registro", 2], conflict: changed("claude"), ...replaced },
+    { agent: "claude", op: "install", swap: REGULAR, on: ["acesso do original", 1], conflict: changed("claude"), ...replaced },
+    { agent: "claude", op: "install", swap: LINK, on: ["leitura do registro", 2], conflict: escape("claude"), ...linked },
+    { agent: "claude", op: "install", swap: LINK, on: ["acesso do original", 1], conflict: escape("claude"), ...linked },
+    { agent: "codex", op: "uninstall", swap: REGULAR, on: ["acesso do original", 1], conflict: changed("codex"), ...replaced, manifest: "registro próprio (6)" },
+    { agent: "claude", op: "install", absent: true, swap: POSTED, on: ["leitura do registro", 2], conflict: changed("claude"), atConfig: "arquivo do usuário" },
+    { agent: "claude", op: "install", swap: REGULAR, on: ["criação do temporário", 1], conflict: changed("claude"), temp: ["conteúdo gravado"], ...replaced },
+    { agent: "claude", op: "install", swap: LINK, on: ["criação do temporário", 1], conflict: escape("claude"), temp: ["conteúdo gravado"], ...linked },
+    { agent: "claude", op: "install", swap: WIDENED, on: ["criação do temporário", 1], conflict: changed("claude"), temp: ["conteúdo gravado"], atConfig: m(READ, "0644") },
+    { agent: "claude", op: "install", swap: REGULAR, renameFails: "EPERM", conflict: changed("claude"), temp: ["conteúdo gravado", "antes do rename"], ...replaced },
+    { agent: "claude", op: "install", control: true, atConfig: m("configuração (8 eventos próprios)", "0600"), manifest: "registro próprio (8)" },
+    { agent: "codex", op: "uninstall", control: true, atConfig: m("configuração original", "0600") },
+    { agent: "claude", op: "install", absent: true, control: true, atConfig: "configuração (8 eventos próprios)", manifest: "registro próprio (8)" },
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [index, row] of rows.entries()) {
+    const moment = { "leitura do registro": "logo depois da leitura do registro", "acesso do original": "imediatamente antes de obter o acesso do original", "criação do temporário": "imediatamente antes de criar o temporário" };
+    const trigger = row.on ? `${moment[row.on[0]]} (${row.on[1]}ª)` : `rename negado (${row.renameFails}) e nova tentativa`;
+    const label = `${row.agent} ${row.op}${row.absent ? " sem configuração" : ""} — ${row.control ? "controle: nada muda" : `${row.swap}, ${trigger}`}`;
+    if (row.swap === LINK && !fileLinksAllowed()) {
+      t.diagnostic(`${label}: não executado — symlink de arquivo exige privilégio neste Windows (EPERM); coberto no Linux/WSL`);
+      continue;
+    }
+    if (row.swap === WIDENED && !POSIX_ACCESS) {
+      t.diagnostic(`${label}: não executado — modo POSIX não se aplica no Windows (ACL); coberto no Linux/WSL`);
+      continue;
+    }
+    const dir = makeScratch(`r8 acesso ${index}`);
+    scratches.push(dir);
+    const home = path.join(dir, "perfil", row.agent === "claude" ? ".claude" : ".codex");
+    mkdirSync(home, { recursive: true });
+    const config = path.join(home, CONFIG_OF[row.agent]);
+    const aside = path.join(dir, "configuração lida movida.json");
+    const external = path.join(dir, "documento externo.json");
+    if (!row.absent) {
+      writeFileSync(config, R8_READ[row.agent]);
+      chmodSync(config, 0o600);
+    }
+    if (row.swap === LINK) {
+      writeFileSync(external, R8_EXTERNAL);
+      chmodSync(external, 0o644);
+    }
+    if (row.op === "uninstall") assert.equal((await runIntegrationCommand({ command: "install", agent: row.agent, target: home, apply: true, io: createNodeIo() })).exitCode, 0, label);
+    const readBefore = row.absent ? null : readFileSync(config);
+    const original = POSIX_ACCESS && !row.absent ? { mode: lstatSync(config).mode & 0o7777, gid: lstatSync(config).gid } : null;
+    if (original !== null) assert.equal(original.mode, 0o600, `${label}: configuração lida 0600`);
+    const known = [
+      [READ, readBefore],
+      ["configuração original", row.absent ? null : R8_READ[row.agent]],
+      ["documento substituto", R8_SUBSTITUTE],
+      ["documento externo", R8_EXTERNAL],
+      ["arquivo do usuário", USER_FILE],
+    ];
+    const swaps = {
+      [REGULAR]: () => {
+        renameSync(config, aside);
+        writeFileSync(config, R8_SUBSTITUTE);
+        chmodSync(config, 0o644);
+      },
+      [LINK]: () => {
+        renameSync(config, aside);
+        symlinkSync(external, config, "file");
+      },
+      [WIDENED]: () => chmodSync(config, 0o644),
+      [POSTED]: () => {
+        writeFileSync(config, USER_FILE);
+        chmodSync(config, 0o644);
+      },
+    };
+    const files = { config, manifest: path.join(home, ".skill-me", `${row.agent}-install.json`) };
+    const { io, probe } = accessSwapIo(files, row, row.control ? null : swaps[row.swap]);
+    const result = await runIntegrationCommand({ command: row.op, agent: row.agent, target: home, apply: true, io });
+    observed.push({
+      label,
+      swapped: probe.swapped,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      renameAttempts: probe.renameAttempts,
+      requested: probe.requested.map((mode) => (mode === null ? "nenhum" : octal(mode))),
+      temp: probe.temp.map((o) => ({
+        moment: o.moment,
+        mode: !POSIX_ACCESS ? "ACL" : original === null ? "sem original" : octal(o.mode),
+        widened: !POSIX_ACCESS ? "ACL" : original === null ? "sem original" : widenedRecipients(original, o),
+        canary: o.canary,
+      })),
+      atConfig: accessEntry(config, known, !row.absent),
+      aside: accessEntry(aside, known, true),
+      external: accessEntry(external, known, true),
+      tempLeft: accessEntry(`${config}.skill-me-tmp`, known, true),
+      manifest: describeEntry(files.manifest),
+      lockReleased: !existsSync(path.join(home, ".skill-me", `${row.agent}.lock`)),
+    });
+    // Com a troca antes da conferência, nada é gravado no temporário; depois
+    // dela, o temporário tem o acesso conferido (0600 — nenhum destinatário
+    // ganha acesso) e não é promovido. O documento posto, o externo e a
+    // configuração lida ficam com bytes e modo; só sai o temporário próprio.
+    const moments = row.temp ?? (row.control ? ["conteúdo gravado", "antes do rename"] : []);
+    expected.push({
+      label,
+      swapped: !row.control,
+      exitCode: row.control ? 0 : 4,
+      status: row.control ? "applied" : "conflict",
+      applied: Boolean(row.control),
+      conflicts: row.control ? [] : [row.conflict],
+      errors: [],
+      steps: row.control
+        ? [
+            { step: "config", state: "done" },
+            { step: "manifest", state: "done" },
+          ]
+        : [],
+      renameAttempts: row.control || row.renameFails ? 1 : 0,
+      requested: moments.length > 0 ? [POSIX_ACCESS && !row.absent ? "0600" : "nenhum"] : [],
+      temp: moments.map((moment) => ({
+        moment,
+        mode: !POSIX_ACCESS ? "ACL" : row.absent ? "sem original" : "0600",
+        widened: !POSIX_ACCESS ? "ACL" : row.absent ? "sem original" : [],
+        canary: !row.absent,
+      })),
+      atConfig: row.atConfig,
+      aside: row.aside ?? "ausente",
+      external: row.external ?? "ausente",
+      tempLeft: "ausente",
+      manifest: row.manifest ?? "ausente",
+      lockReleased: true,
     });
   }
   assert.deepEqual(observed, expected);

@@ -62,9 +62,11 @@ export function createNodeIo() {
     },
     // `wx`: falha se o caminho já existe — serve de lock e impede que um
     // temporário sobrescreva algo que não seja nosso. Com `like` (de
-    // `accessOf`), o temporário que vai substituir uma configuração nasce só
-    // com os bits de dono do original e recebe grupo e bits finais antes do
-    // conteúdo: em nenhum instante concede mais do que o original concedia.
+    // `accessOf`, conferido pelo chamador no documento com o conteúdo lido
+    // antes da gravação), o temporário que vai substituir uma configuração
+    // nasce só com os bits de dono do original e recebe grupo e bits finais
+    // antes do conteúdo: em nenhum instante concede mais do que o original
+    // concedia.
     async writeExclusive(file, data, { like = null } = {}) {
       const handle = await open(file, "wx", like ? like.mode & 0o700 : 0o666);
       try {
