@@ -371,3 +371,44 @@ exceção humana específica para round4: preparar primeiro correção/provas/co
 e então solicitar uma rodada independente adicional. Nenhum contador/histórico
 foi alterado. O motor formal segue em uma tentativa consumida de duas e não deve
 iniciar a segunda antes de nova verificação independente válida.
+
+### Conferência de coordenação — cache vazio no registro parcial
+
+Durante a correção, a leitura do coordenador apontou que `cacheDirOwned` ainda
+descreve apenas um `__pycache__` real. Conferir o cleanup do diretório vazio
+criado pelo usuário depois da remoção parcial: com `kwargs.json` restaurado e
+fonte alheia presente, a aplicação pode conservar fonte/bytecode mas remover
+esse diretório. Ainda não reproduzido pelo coordenador; cenário/esperado em
+`.checks/code-review/issue-4/coordinator-partial-cache-directory.md`. Confirmar
+ou refutar dentro de AC6/C34, sem alterar os Checks nem limites; registrar o
+resultado aditivamente. O coordenador não editou produto/testes.
+
+Encerramento pelo builder (17/10/2026): confirmado em `7083702` e em `c066a5f` (primeiro
+commit desta correção) — o `__pycache__` vazio do usuário saía com fonte alheia ou sem fonte
+no registro parcial (sem fonte, a pasta inteira e `0 applied`) e ao lado da fonte registrada
+editada. Corrigido em `6f1740d`: o plano decide a remoção do `__pycache__` pela mesma regra do
+bytecode, o diretório sem fonte registrada é reportado e a fonte é reconferida antes do
+`rmdir`; linhas novas em `I4-C34f`/`I4-C34g` com controle normal. A barra dos checks não mudou.
+Evidência em `.checks/issue-4-integracoes.build.md`, "Correção pós-verificação round 3 —
+registro parcial Hermes".
+
+Correção pós-verificação round 3 — registro parcial (17/10/2026):
+
+- **Fronteira:** achado do Verifier (bytecode de fonte nova apagado com 4 após registro parcial)
+  fechado em `c066a5f`..`6f1740d`, com RED no produto `7083702` em cópias isoladas (Windows e
+  WSL) e GREEN nos dois batches de 70 testes. Defeitos da mesma raiz no mesmo AC6/C34,
+  encontrados pela sonda RED e tratados no escopo, comunicados no retorno: remoção com
+  `kwargs.json` restaurado (`0 applied` apagando bytecode alheio), bytecode sem fonte,
+  reinstalação sobre a sobra registrando os três artefatos, fonte posta durante a remoção, e a
+  nota do coordenador acima. Checks e Landing inalterados; regressões `I4-C34f`, `I4-C34g`.
+  Correção aditiva explícita das duas afirmações anteriores sobre o cache órfão na evidência build.
+  Nenhuma rodada independente nova foi pedida ou executada; limite de três rodadas e estado
+  formal intactos.
+- **Decidido durante o build:** nada novo do proprietário. A classificação de continuidade é do
+  orquestrador; a nota do coordenador foi confirmada e encerrada acima.
+- **Abandonado:** decidir pelo conteúdo atual do `__init__.py` (cópia exata do pacote posta pelo
+  usuário seria tomada por nossa, como as cópias de `I4-C34b`); confiar no código 4 (o conflito
+  não impedia a exclusão); recusar toda reinstalação sobre registro parcial (perderia a
+  reconciliação por conteúdo exato); reconferir a fonte antes da pasta e do `__pycache__` (através
+  de uma pasta trocada por junção leria a fonte de outro plugin e apontaria o arquivo errado,
+  contra `I4-C34c`); ler o cabeçalho do `.pyc` (não comprova origem; a decisão vem do registro).

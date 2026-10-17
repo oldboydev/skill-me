@@ -808,3 +808,210 @@ imprimiram só códigos, ações, tipos e caminhos de temporários próprios. Ne
 perfil pessoal; todos os `--target` em temporários; nenhum agente, modelo ou E2E executado;
 nenhum bypass/confiança concedido. Processos de teste conferidos encerrados ao fim (Windows: 0
 relacionados à entrega; WSL: 0 `node`/`python`).
+
+## Correção pós-verificação round 3 — registro parcial Hermes (17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega. Partida em `bdba7c4` (só relatório FAIL
+e Handoff; código e testes = `7083702`), checkout limpo. Esta seção é evidência do autor, **não é
+verificação independente** nem revisão formal: nenhum `review:run`/`review:check`/`pr:create`/
+push/PR/Verifier foi executado; `.verified.md`, contadores, estado do motor (1 de 2 tentativas) e
+o limite de três rodadas independentes não foram tocados. Não existe aprovação humana nova; a
+exceção para uma rodada adicional fica com o orquestrador. Commits: `c066a5f` e `6f1740d`;
+`git diff --name-only bdba7c4..6f1740d`: só `src/integrations/install/run.mjs`,
+`tests/integrations/install.cli.test.mjs`, `tests/integrations/install-apply.unit.test.mjs` e
+`docs/agent-observation.md`. Checks e Landing inalterados: não há porta técnica nova —
+`foreign_files_preserved`, `foreign_artifact`, `config_changed_during_apply`, `adopt_artifact` e o
+código 4 já existiam; a regra cabe em "Remoção só apaga grupos/artefatos cujo hash confere com o
+registro; … arquivo alheio na pasta do plugin → preservado e 4" e em "Reinstalar reconcilia".
+
+**Classificação.** O achado do Verifier é continuidade da correção de propriedade da remoção
+(AC6/C34), encaminhada pelo orquestrador. A sonda RED própria encontrou mais quatro estados com a
+mesma raiz — registro parcial (ou ausência de registro de um artefato) tomado como autorização —,
+tratados como defeitos do mesmo AC6, comunicados aqui e no retorno: B, C, D e E/E2 abaixo. A nota
+do coordenador acrescentada ao Handoff durante a correção (`__pycache__` vazio) foi confirmada e
+corrigida em `6f1740d`; a nota fica preservada sem edição e é encerrada no Handoff.
+
+### Reprodução RED no produto `7083702` (cópias isoladas próprias)
+
+Cópia Windows por `git archive 7083702` (SHA-256 do archive `207858f0…a5d589a8`, igual ao
+`head.tar` do Verifier) + `node_modules`; blobs de `run.mjs` e dos testes conferidos por
+`git hash-object`. Cópia WSL do mesmo archive no ext4 (`/tmp/skillme-round4-red-7083702`),
+`run.mjs` normalizado igual ao blob. A sonda do Verifier foi lida e não executada nem alterada;
+a sonda própria (`partial-registry-probe.mjs`, fora da cópia, caminho do produto por argumento)
+usa só dados sintéticos e imprime códigos, ações e estados. Resultados **iguais nas duas
+plataformas** (`red-partial-probe-{windows,wsl}-7083702.json`):
+
+| Cenário (depois de instalar, editar só `kwargs.json` e remover → 4, registro só `kwargs.json`) | `7083702` | `6f1740d` |
+| --- | --- | --- |
+| A — o do Verifier: `__init__.py` novo do usuário + `__pycache__/__init__.cpython-311.pyc`; prévia, aplicação e repetição | prévia **e** aplicação `4 conflict` com `remove_cache` 1; **bytecode de 41 bytes apagado apesar do 4**; fonte, `kwargs.json` editado e registro intactos; terceira `4` sem mudança | as três `4 conflict changes=[]`, `owned_entry_modified:…/kwargs.json` + `foreign_files_preserved:plugins/skill-me-observer`; `remove_cache` 0 na prévia e na aplicação; bytecode intacto (41 bytes), fonte, `kwargs.json` e registro intactos |
+| B — `kwargs.json` restaurado aos bytes instalados, fonte e bytecode do usuário | prévia `0 planned`, aplicação **`0 applied`**: bytecode apagado, fonte alheia deixada sem aviso | `4 conflict`: sai só `kwargs.json` e o registro; fonte e bytecode intactos; repetição `4 owned_entry_unrecorded` |
+| C — só bytecode novo, sem fonte | `4`, bytecode apagado | `4`, intacto |
+| D — reinstalar sobre a sobra de B (fonte do usuário, `plugin.yaml` ausente); depois o usuário tira a fonte da pasta | `install --apply` **`0 applied`** registrando os três artefatos; remoção seguinte `0 applied` apaga o bytecode do usuário como "órfão da nossa fonte" | `install` e `install --apply` `4 foreign_artifact`, nada registrado; remoção `4`, bytecode intacto |
+| E — corrida: logo após a exclusão do nosso `__init__.py`, fonte e bytecode do usuário aparecem | `0 applied`, bytecode do usuário apagado | `4 config_changed_during_apply:…/__init__.py`, bytecode intacto, registro mantido |
+| E2 — idem com a fonte registrada já ausente (órfão), após a exclusão de `kwargs.json` | `0 applied`, apagado | `4`, intacto |
+| Controles: remoção normal com bytecode próprio; fonte registrada já ausente (órfão) | `0 applied`, `remove_cache` 1, pasta removida | iguais |
+
+Nota do coordenador (`cache-dir-probe.mjs`, `observation-cache-dir-windows-{7083702,c066a5f}.json`,
+`observation-cache-dir-windows-fix.json`), confirmada em `7083702` **e** em `c066a5f`: P1 (sobra de
+B com `__pycache__` vazio em vez do bytecode) e P2 (fonte registrada editada, preservada, com
+`__pycache__` vazio) apagavam o diretório do usuário; P3 (só `__pycache__` vazio, `kwargs.json`
+restaurado) apagava o diretório e a pasta inteira com `0 applied`; P4 (só `__pycache__` vazio,
+`kwargs.json` editado) não escrevia, mas não reportava o diretório. Em `6f1740d` os quatro mantêm o
+diretório (P3/P4 com `foreign_files_preserved`, 4); controles com `__pycache__` vazio ou com
+bytecode ao lado da nossa fonte continuam `0 applied` com a pasta removida.
+
+### Correção (`run.mjs`)
+
+- **Remoção:** o bytecode e o `__pycache__` só saem com a fonte comprovada pelo registro —
+  `__init__.py` registrado e removido agora como nosso, ou registrado e já ausente (órfão da nossa
+  fonte). Preservado ou fora do registro, ficam. Arquivo com nome de artefato fora do registro e
+  `__pycache__` real sem fonte registrada são alheios → `foreign_files_preserved` (4). O plano
+  decide `removeCacheDir`; o estado passou a dizer só que o diretório é real (`cacheDirReal`,
+  antes `cacheDirOwned`, nome que afirmava a propriedade que a decisão não tinha).
+- **Reinstalação sobre registro parcial:** artefato fora do registro só volta a ele com o conteúdo
+  exato do pacote (`adopt_artifact`, como a adoção sem registro); ausente ou diferente →
+  `foreign_artifact` em `plugins/skill-me-observer`, nada registrado.
+- **Reconferência na aplicação:** imediatamente antes de cada exclusão de bytecode e do `rmdir` do
+  `__pycache__`, depois das reconferências de diretório real existentes, a fonte precisa continuar
+  ausente; presente → `config_changed_during_apply` em `…/__init__.py`, nada além do já conferido é
+  apagado e o registro não é reescrito.
+
+### Regressões e RED/GREEN dos testes
+
+- **`I4-C34f`** (CLI, `install.cli.test.mjs`), transição real produzida pela própria remoção
+  parcial (helper `partialHermesRegistry` afirma a primeira remoção exata e o registro só com
+  `kwargs.json`), tabela única `observed`/`expected`: fonte de outra origem, cópia exata do pacote
+  e sem fonte, cada uma com bytecode, em prévia/aplicação/repetição (`4 … changes=[]`, bytecode
+  intacto, alvo inteiro igual com mtime); `kwargs.json` restaurado com fonte e bytecode (saídas
+  exatas e pasta final só com os arquivos do usuário); `__pycache__` vazio com e sem fonte; fonte
+  registrada editada com `__pycache__` vazio em duas remoções; reinstalação sobre a sobra e remoção
+  depois de tirar a fonte. Controles: reinstalação com cópias exatas adota e remove de volta à
+  árvore anterior; registro parcial que ainda guarda a fonte (fonte restaurada + bytecode próprio
+  → `0 applied` com `remove_cache`); `__pycache__` vazio ao lado da nossa fonte; fonte registrada
+  já ausente com bytecode órfão (`0 applied`, `remove_cache`). Nenhum registro montado à mão.
+- **`I4-C34g`** (`install-apply.unit.test.mjs`, io instrumentado): fonte (e bytecode) do usuário
+  postos logo após a exclusão do nosso `__init__.py`, ou após a de `kwargs.json` com a fonte
+  registrada já ausente, e só a fonte com `__pycache__` próprio vazio → `4`
+  `config_changed_during_apply:plugins/skill-me-observer/__init__.py`, fonte e bytecode (ou
+  diretório vazio) do usuário intactos, registro byte a byte igual, lock liberado.
+- **RED:** versão inicial dos dois testes sobre `7083702` — Windows e WSL `2 tests, 0 pass, 2 fail`
+  (`red-partial-tests-{windows,wsl}-7083702.tap`; bytecode `apagado`, `remove_cache` listado,
+  `0 applied`). Versão final sobre `7083702` (Windows e WSL) e sobre `c066a5f` (Windows): `2 fail`
+  (`red-partial-tests2-*`); em `c066a5f` divergem só as linhas do `__pycache__` vazio de `I4-C34f`
+  e a variante do `__pycache__` próprio vazio de `I4-C34g`. Nas cópias RED só os dois arquivos de
+  teste foram sobrepostos; produto conferido pelo blob.
+- **GREEN:** `2 pass` no worktree (`green-partial-tests-windows.tap`) e nos batches abaixo. Sonda no
+  produto corrigido: `green-partial-probe-{windows,wsl}-6f1740d.json`, iguais entre si.
+
+### Discriminação (mutações só em cópias WSL do `/tmp`)
+
+| Mutação | O que desfaz | Falha | Passam |
+| --- | --- | --- | --- |
+| a | cache volta à regra anterior (só fonte registrada preservada barra) | `I4-C34f` (com fonte presente a reconferência ainda barra com 4; **sem fonte o bytecode é apagado**) | as outras 20 do instalador |
+| b | arquivo fora do registro e `__pycache__` sem fonte registrada não são reportados | `I4-C34f` (sobra de B volta a `0 applied`) | 20 |
+| c | reinstalação sobre registro parcial sem conferir os artefatos fora dele | `I4-C34f` (registra os três; bytecode apagado depois) | 20 |
+| d | sem reconferir a fonte antes de apagar o bytecode | `I4-C34g` | 20 |
+| e | `__pycache__` real sai sem a decisão de propriedade | `I4-C34f`, `I4-C34e` | 19 |
+| f | sem reconferir a fonte antes do `rmdir` do `__pycache__` | `I4-C34g` | 20 |
+| g | `__pycache__` vazio sem fonte registrada não é reportado | `I4-C34f` | 20 |
+
+a–d rodaram sobre o código de `c066a5f` (`mutation-partial-{a,b,c,d}-wsl.tap`) e a–g sobre
+`6f1740d` (`mutation-partial2-{a..g}-wsl.tap`), com `install.cli` + `install-apply.unit` (21
+testes, nenhum skip; as cópias de a–d foram tiradas do worktree com `run.mjs` e testes iguais aos
+de `c066a5f`).
+
+### Mudanças colaterais de comportamento, provadas
+
+- Remoção com registro parcial e fonte/bytecode/`__pycache__` do usuário: antes `4` ou `0` com
+  exclusão; agora `4` sem exclusão (`I4-C34f`).
+- Arquivo com nome de artefato fora do registro deixado na pasta: antes silencioso (podia sair
+  `0`); agora `4 foreign_files_preserved` (`I4-C34f`, sobra de B).
+- Reinstalação sobre registro parcial: antes `0 applied` registrando os três; agora `4
+  foreign_artifact`, ou `0 applied` com `adopt_artifact` explícito quando os artefatos fora do
+  registro são cópias exatas (`I4-C34f`, controle).
+- Fonte posta durante a remoção antes da exclusão do bytecode ou do `__pycache__`: antes `0` com
+  exclusão; agora `4 config_changed_during_apply` (`I4-C34g`).
+
+**Correção aditiva de afirmações anteriores (o texto acima fica como histórico).** Em "Achados
+novos — artefato trocado por link de arquivo e bytecode de fonte preservada (`6df4d4c`)": "sem ele
+(já ausente) ou com ele removido como nosso, o cache próprio sai como antes"; em "Limites e
+resíduos" da mesma rodada: "Bytecode de nome próprio com o `__init__.py` já ausente continua saindo
+como cache órfão da nossa fonte". Ambas valiam só enquanto o registro guardava o `__init__.py`:
+depois de uma remoção com conflito, a ausência da fonte não comprovava propriedade e o bytecode (e
+o `__pycache__`) do usuário eram apagados (RED C, D, P3). A regra vigente é a desta seção.
+
+### Contagens reais em `6f1740d`
+
+Um batch por plataforma: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs`. Windows: worktree com `git diff --quiet 6f1740d -- src tests docs
+scripts package.json`, Hermes nativo pelo helper (`python -I -B`, HERMES_HOME e HOME/APPDATA/TEMP
+temporários, sem modelo). WSL: Ubuntu, Node 24.13.0, `git archive 6f1740d` (SHA-256 do archive
+`c8187168…afa64a2d8`) no ext4 (`/tmp/skillme-round4-batch-6f1740d`), 139 arquivos de `src`,
+`tests`, `scripts`, `docs` e `package.json` iguais aos blobs (CRLF normalizado), `env -i` só com
+`PATH`; exit do próprio `wsl.exe`. Nenhum spawn lendo o checkout por `/mnt/c`.
+
+| Execução | tests | pass | fail | cancelled | skipped | todo | exit | duração |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 64 + governança 6 | 70 | 68 | 0 | 0 | 2 | 0 | 0 | 23 s |
+| WSL — integrações 64 + governança 6 | 70 | 62 | 0 | 0 | 8 | 0 | 0 | 15 s |
+
+Cruzamento das 54 linhas `Proof:` com os TAPs (`proofs-vs-batch-{windows,wsl}-6f1740d.txt`; cada
+padrão casou exatamente um teste executado): Windows 53 PASS + `I4-C15` SKIP; WSL 46 PASS + 8 SKIP.
+Extras fora das linhas `Proof:` (16, todos executados): 5 de governança, `I4-C16c`, `I4-C25b`,
+`I4-C25c`, `I4-C26b`, `I4-C32b`, `I4-C34b`, `I4-C34c`, `I4-C34d`, `I4-C34e` e os novos `I4-C34f`,
+`I4-C34g` (+2 em relação aos 68 de `6df4d4c`/`7083702`). Skips e motivos:
+
+- Windows (2): `I4-C15` `posix-signals` e `I4-C25b` `posix-modes` (passam no WSL). Subcasos de link
+  de arquivo por `t.diagnostic` (EPERM sem privilégio): 2 em `I4-C27`, 1 em `I4-C34`, 4 em
+  `I4-C34b`, 1 em `I4-C34c`, 1 em `I4-C34e` — executados no WSL, sem diagnóstico. Os novos testes
+  não usam link de arquivo.
+- WSL (8): `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente`: prova nativa do Hermes só no
+  Windows (executada nesse batch); Linux **pendente**. `I4-C35` registrou a observação Hermes pendente.
+- Medição C38: Windows 831 ms depois do filho, 65536 bytes no pipe; WSL 808 ms, 146176 bytes.
+- Doctor (417) e motor de revisão (16) não reexecutados: nenhum arquivo deles, dos módulos do
+  doctor reutilizados, de `scripts/code-review`, `code-review.config.json`, `package.json`/lock ou
+  `AGENTS.md` mudou desde `9184d65`.
+
+### Limites e resíduos
+
+- Janela não atômica entre cada reconferência e o `unlink`/`rmdir`, como na escrita da
+  configuração: estreita, não elimina, a corrida com quem põe uma fonte ou troca diretórios.
+- Bytecode da nossa fonte que o Hermes grave depois da leitura feita por uma remoção não está no
+  plano e fica; sem a fonte no registro, as remoções seguintes não o tomam por nosso (limpeza
+  manual, declarada no guia). Conservador: nenhuma exclusão sem prova.
+- A ligação bytecode→fonte vem do registro e do nome; o cabeçalho do `.pyc` (mtime/tamanho da
+  fonte) não é lido — não comprovaria origem e não é necessário para a decisão.
+- Identidade por caminho, tipo e hash, como antes; ponto de montagem/bind mount não distinguido.
+- Hermes nativo só no Windows; Linux pendente; macOS só pela CI; E2E real dos três agentes pendente.
+
+### Sobras próprias desta rodada (preservadas; nenhuma exclusão por shell)
+
+Nenhum `rm` nem equivalente foi emitido. Windows `%TEMP%\skill-me-round4\`: `probes/`
+(`partial-registry-probe.mjs`, `cache-dir-probe.mjs`, `partial-mutants.mjs` — versão final; a
+inicial, usada em a–d sobre `c066a5f`, foi substituída pela própria sonda —, `wsl-copy.sh`,
+`wsl-run.sh`, `hash-files.sh`, listas de hashes, dois TAPs das suítes do instalador e a observação
+do cache vazio no worktree), `head-7083702/` e `head-7083702.tar`, `head-6f1740d.tar`,
+`redtests-7083702/`, `redtests2-7083702/`, `redtests2-c066a5f/`; e 34 alvos sintéticos
+`%TEMP%\skill-me round4 <cenário> probe-*` das sondas (A–F, P1–P4, controles). WSL `/tmp`:
+`skillme-round4-{probes,red-7083702,redtests-7083702,batch-6f1740d}`, `skillme-round4-mut-{a,b,c,d}`,
+`skillme-round4-mut2-{a..g}` e 16 alvos `/tmp/skill-me round4 <cenário> probe-*`. Scratches dos
+testes: removidos pelo `after()` existente do `node:test` (só diretórios de `makeScratch`, caminho
+absoluto sob o TEMP; os novos testes não criam links). Scratch do Verifier
+(`verify-issue4-7083702`), sobras das rodadas anteriores, backups da queda e histórico formal não
+foram tocados.
+
+Saídas brutas (locais, ignoradas) em `.checks/code-review/issue-4/`:
+`red-partial-probe-{windows,wsl}-7083702.json`, `red-partial-tests-{windows,wsl}-7083702.tap`,
+`red-partial-tests2-{windows-7083702,windows-c066a5f,wsl-7083702}.tap`,
+`observation-cache-dir-windows-{7083702,c066a5f,fix}.json`, `green-partial-tests-windows.tap`,
+`green-partial-probe-{windows,wsl}-6f1740d.json`, `mutation-partial-{a,b,c,d}-wsl.tap`,
+`mutation-partial2-{a,b,c,d,e,f,g}-wsl.tap`, `batch-{windows,wsl}-6f1740d.tap`,
+`proofs-vs-batch-{windows,wsl}-6f1740d.txt`.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token, credencial ou valor de ambiente impresso; nenhuma sonda de ambiente
+repetida. Testes e sondas usam ambiente mínimo e conteúdo sintético; as sondas imprimiram só
+códigos, ações, conflitos, estados e caminhos de temporários próprios. Nenhuma instalação em perfil
+pessoal; todos os `--target` em temporários; nenhum agente, modelo, download ou E2E; nenhum
+bypass/confiança concedido; nenhum subagente.
