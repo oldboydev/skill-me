@@ -1497,3 +1497,208 @@ Nenhum `process.env`, token, credencial ou valor de ambiente impresso. Testes e 
 mínimo e conteúdo sintético; as sondas imprimiram só códigos, conflitos, passos, tipos e o destino de
 arquivos sintéticos. Nenhuma instalação em perfil pessoal; todos os `--target` em temporários; nenhum
 agente, modelo, download ou E2E; nenhum bypass/confiança concedido; nenhum subagente.
+
+## Correção da revisão formal round 3 — ancestral `plugins` e alvo gerenciado real (17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega. Partida em `4088045` (só evidência e Handoff
+desde `81b9888`; produto e testes de `af60759` = `81b9888`, `git diff --name-only af60759 81b9888 --
+src tests` vazio), checkout limpo, HEAD do despacho conferido. Esta seção é evidência do autor, **não é
+verificação independente** nem revisão formal: nenhum `review:run`/`review:check`/`pr:create`/push/
+PR/merge/Verifier foi executado; `.verified.md`, contadores, override, estado do motor (3 de 10
+tentativas formais) e histórico não foram tocados; scratches de Verifier e recovery não foram lidos nem
+mexidos. A sonda adicional do Verifier interrompida na rodada 6 (`verifier-residual-probe.mjs`) **não**
+foi executada, recriada nem substituída: as provas desta seção são as regressões versionadas, sem
+sonda própria à parte. Commits: `d3a728f` (Landing, antes do código), `8ef51d8` (correção, regressões
+e guia) e o desta evidência. `git diff --name-only 4088045..8ef51d8`: `.checks/issue-4-integracoes.md`
+(uma linha de Landing), `docs/agent-observation.md`, `src/integrations/install/{run,target}.mjs` e
+`tests/integrations/install-apply.unit.test.mjs`; nada em doctor, `scripts/`, configuração do motor,
+dependências, `AGENTS.md`, task, helpers de teste ou `.verified.md`.
+
+**Classificação.** F1 (P1) e F2 (P2) são os achados bloqueantes da revisão formal round 3 (AC6/C27/
+C34), lidos pelo revisor e agora **reproduzidos** pelas regressões no produto intacto, nas duas
+plataformas, só com dados sintéticos dentro do scratch de cada linha. A mesma falta de guarda aparece
+na **instalação** Hermes — `plugins` trocado durante a aplicação levava staging, artefatos e `rename`
+para fora do alvo, com 0 e registro gravado — e na limpeza da sobra própria do staging — cópias exatas
+apagadas em outra pasta do alvo, depois 5. Comunicados no retorno como reproduzidos; tratados pela mesma
+guarda, como o despacho previu ("instalação/cleanup/staging se a mesma guarda for usada e se houver
+defeito concreto em AC6"). Nenhum é escopo novo.
+
+### Reprodução RED no produto `af60759` (cópias isoladas próprias)
+
+- Windows: `git archive af60759` (CRLF pelo `core.autocrlf`; SHA-256 do tar `4e32a530…cfe36`) extraído
+  em `%TEMP%\skill-me-f3\head-af60759` + `node_modules`; 49 arquivos (`src/integrations/install`,
+  `src/integrations/*.mjs`, `src/doctor`, plugin Hermes, helpers de teste, `install.cli.test.mjs`) iguais
+  aos blobs com CRLF normalizado.
+- WSL (`Ubuntu` 24.04, Node 24.13.0, `env -i` só com `PATH`): `git -c core.autocrlf=false archive
+  af60759` (LF; `0660f0e5…f723d`) no ext4 (`/tmp/skillme-f3-red-af60759`); 61 arquivos de `src` e dos
+  helpers iguais aos blobs **sem** normalização.
+- Teste novo sobreposto nas duas cópias: blob `68ce4fd4…` (SHA-256 LF `81401c41…3f45`), o mesmo
+  commitado em `8ef51d8`.
+- Resultado igual nas duas: `install-apply.unit` **15 tests, 13 pass, 2 fail** — falham exatamente
+  `I4-C34h` e `I4-C27c`, ambas por diff de asserção (`ERR_ASSERTION`), sem exceção; as 13 anteriores
+  passam (`formal3-red-tests-{windows,wsl}-af60759.tap`). Valores observados no produto antigo,
+  iguais nas duas plataformas:
+
+| Linha (`I4-C34h`, depois da troca de `plugins`) | `af60759` | `8ef51d8` |
+| --- | --- | --- |
+| remoção, depois do 1º artefato, pasta externa com cópias exatas (cenário F1) | `0 applied`; `readBytes`+`unlink` de `kwargs.json` e `plugin.yaml` **externos**, destino alterado, **registro apagado** | `4 target_escape:plugins`, nada lido/apagado através dele, destino intacto, registro intacto |
+| remoção, 1º artefato, outra pasta do alvo com cópias exatas | `0`, cópias internas **apagadas**, registro apagado | `4 config_changed_during_apply:plugins`, intactos |
+| remoção, 1º artefato, a própria `plugins` movida para fora | `0`, artefatos próprios apagados fora do alvo e pasta removida | `4 target_escape`, `kwargs.json`/`plugin.yaml` ficam na pasta movida |
+| remoção com cache, 3º artefato, outra pasta com bytecode de mesmo nome | `0`, bytecode alheio **apagado**, `__pycache__` e pasta alheios removidos | `4 config_changed_during_apply`, intactos |
+| remoção, 3º artefato, pasta externa com `skill-me-observer` vazio | `0`, diretório externo **removido** | `4 target_escape`, intacto |
+| remoção, logo depois de criar o lock, pasta externa com cópias exatas | `0`, externos **lidos** sob o lock e **apagados** | `4 target_escape` antes de qualquer leitura da pasta do plugin |
+| instalação, logo depois de criar `plugins`, pasta externa vazia | `0`, staging, 3 artefatos e `rename` **fora do alvo**, registro gravado | `4 target_escape`, nada criado, sem registro |
+| instalação, 1º / 3º artefato no staging, a própria `plugins` movida para fora | `0`, restante gravado e renomeado fora do alvo, registro gravado | `4 target_escape`; staging com 1 / 3 artefatos fica na pasta movida |
+| instalação, 1º artefato no staging, `plugins` movida para outra pasta do alvo | `0`, plugin instalado na outra pasta | `4 config_changed_during_apply` |
+| instalação, 1ª exclusão da sobra do staging, outra pasta com staging de cópias exatas | `5` (`rmdir` falha), 2 cópias alheias **apagadas** | `4 config_changed_during_apply`, intactas |
+| `I4-C27c`, alias → diretório gerenciado ou descendente (install/uninstall `--apply`, `plan`, `uninstall` prévia) | sem `managed_policy_target`; `target` = caminho gerenciado; próximo acesso `lstat <gerenciado>/settings.json` (recusado pelo io da prova) → `5 EACCES` | `4 managed_policy_target`; acessos só `stat` e `realpath` do alias; `target` = argumento |
+
+Controles iguais nos dois produtos: remoção e instalação sem troca (`0 applied`), `plugins` como
+junção/link para outra pasta do alvo já antes do comando (`0`, link fica — contrato de `I4-C34d`),
+recusa textual do diretório gerenciado e do descendente (4, nenhum acesso), irmão com o mesmo prefixo
+(`ClaudeCode-irmão` / `claude-code-irmão`: segue, `5 EACCES` no primeiro `lstat`) e alias legítimo
+num scratch real (`0 applied` no diretório real, alias mantido).
+
+**Segurança da prova F2.** Nenhum diretório gerenciado real foi acessado, criado ou editado: o io da
+prova responde só ao `stat`/`realpath` do alias sintético (no scratch) e registra e recusa (`EACCES`)
+qualquer outra chamada, sem delegar nada ao sistema de arquivos; o produto antigo mostra que segue para
+um acesso dentro do diretório gerenciado, e esse acesso é recusado pela prova. A recusa textual de
+`I4-C27` continua sem nenhum acesso, e a conferência nova é pura (comparação do caminho que o
+`realpath` devolveu).
+
+### Correção (`run.mjs`, `target.mjs`; linha de Landing de `d3a728f`)
+
+- `stateDirRealPath` passou a receber a pasta (`dirRealPath(io, root, rel, platform)`, `run.mjs:161`)
+  e a comparação com a referência virou `dirUnchangedGuard` (`:178`); `.skill-me` usa os dois como antes
+  (`withLock`, `:239`) — mesma regra, sem cópia.
+- `readHermesState` (`:554`): com `plugins` presente, o caminho real dele é lido logo depois do `stat`
+  e antes da pasta do plugin e do staging (`pluginsDirReal`); sob o lock é a referência. Fora do alvo →
+  `target_escape` antes de ler a pasta do plugin.
+- Remoção (`removeHermesArtifacts`, `:750`): `pluginDirStillOwn` confere primeiro `plugins` e depois a
+  pasta do plugin como diretório real; usada antes de cada leitura+exclusão de artefato, de cada
+  bytecode (por `cacheDirStillOwn`), do `rmdir` do `__pycache__` e da pasta do plugin.
+- Instalação (`installHermesArtifacts`, `:715`): referência da leitura, ou logo depois do `mkdir` de
+  `plugins` quando a instalação a cria; conferida antes do `mkdir` do staging, de cada artefato gravado
+  e do `rename`. `removeOwnedStaging` (`:697`) recebe a conferência e a usa antes do `readdir`, de cada
+  exclusão e do `rmdir`.
+- Claude (`runIntegrationCommand`, `:883`): depois de `resolveTarget`, `isManagedPolicyTarget(root)`
+  → 4 `managed_policy_target`, antes de `result.target` e de qualquer leitura no alvo; a recusa textual
+  anterior continua antes de tudo. Comentário de `isManagedPolicyTarget` (`target.mjs:22`) atualizado.
+
+### Regressões (`tests/integrations/install-apply.unit.test.mjs`)
+
+Pela API pública `runIntegrationCommand`; tabela `observed`/`expected` comparada por inteiro.
+
+- **`I4-C34h`** — 14 linhas (11 trocas + 3 controles), io real instrumentado que dispara a troca
+  dentro do comando (exclusão real do 1º/3º artefato próprio, lock criado, `plugins` criada, 1º/3º
+  artefato no staging, 1ª exclusão da sobra) e registra toda leitura de conteúdo, gravação e exclusão
+  (`readdir`, `readBytes`, `readText`, `unlink`, `rmdir`, `mkdir`, `writeExclusive`, `rename`) através de
+  `<alvo>/plugins` depois da troca. Cada linha num scratch próprio; destino "fora do alvo" é uma pasta
+  irmã do alvo no mesmo scratch. Afirma: troca ocorrida, código, `status`, `applied`, conflito exato,
+  passos, **nenhuma operação através do caminho trocado**, destino alheio igual ao snapshot anterior
+  (bytes, mtime e tipo), o que está em `plugins` (link → destino), o conteúdo exato da `plugins` própria
+  movida (o que já saiu não volta; o restante fica), registro intacto/ausente/gravado e lock liberado.
+  A linha da sobra do staging deriva a listagem esperada do arquivo que disparou a troca (ordem do
+  `readdir`: NTFS ordena por maiúsculas, o ext4 não ordena).
+- **`I4-C27c`** — 9 linhas: alias → diretório gerenciado (install `--apply`, uninstall `--apply`,
+  `plan`), alias → descendente (install `--apply`, uninstall prévia), texto do próprio diretório e do
+  descendente (nenhum acesso), controle irmão com o mesmo prefixo e controle de alias legítimo
+  (junção/symlink de diretório num scratch, io real). Afirma código, `status`, `applied`, conflitos,
+  erros, `changes: []`, `target` (argumento na recusa) e a **lista exata de acessos** (`stat` e
+  `realpath` do alias; nenhum na recusa textual); no controle legítimo, 8 eventos próprios no
+  diretório real, hook `Stop` de terceiro intacto, alias mantido e registro criado.
+- RED/GREEN acima; os controles passam nos dois produtos. Nenhuma asserção existente mudou.
+
+### Mudanças colaterais de comportamento, provadas
+
+- Hermes com `plugins` trocado durante a remoção ou a instalação: antes 0 (ou 5 na sobra) com
+  leitura, gravação ou exclusão através da troca; agora 4 com `plugins`, nada através dele (`I4-C34h`).
+- O conflito no meio do passo `artifacts` segue a semântica já existente de `I4-C34c`/`I4-C34g`: o passo
+  não é listado e `applied` fica `false`, embora o que saiu antes da troca tenha saído (sem rollback);
+  `changes` continua sendo o plano. Não alterado (ver limites).
+- Prévia Hermes com `plugins` presente: uma conferência de contenção a mais (`lstat`/`realpath`/`stat`),
+  sem leitura de conteúdo; sem mudança de resultado nos testes existentes.
+- Claude com alias para o diretório gerenciado: antes seguia para dentro dele; agora 4 antes de
+  qualquer leitura (`I4-C27c`). Alias legítimo inalterado (controle).
+
+### Contagens reais em `8ef51d8`
+
+Um batch por plataforma: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs scripts/code-review/review.test.mjs`. Windows: worktree com
+`git diff --quiet 8ef51d8 -- src tests docs scripts package.json package-lock.json`, executado fora do
+sandbox pelos testes de timeout/taskkill do motor (só processos dos próprios testes), Hermes nativo pelo
+helper (`python -I -B`, HERMES_HOME e HOME/APPDATA/TEMP temporários, sem modelo). WSL: distro `Ubuntu`
+explícita, Node 24.13.0, `git -c core.autocrlf=false archive 8ef51d8` (SHA-256 `34439095…ac77c811`) no
+ext4 (`/tmp/skillme-f3-batch-8ef51d8`), 140 arquivos de `src`, `tests`, `scripts`, `docs`,
+`package.json` e `package-lock.json` iguais aos blobs sem normalização, `env -i` só com `PATH`; exit do
+próprio `wsl.exe`. Nenhum spawn lendo por `/mnt/c`.
+
+| Execução | tests | pass | fail | cancelled | skipped | todo | exit | duração |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 76 + governança 6 + motor 16 | 98 | 96 | 0 | 0 | 2 | 0 | 0 | 34 s |
+| WSL — integrações 76 + governança 6 + motor 16 | 98 | 90 | 0 | 0 | 8 | 0 | 0 | 17 s |
+
+Cruzamento das 54 linhas `Proof:` com os TAPs (`formal3-proofs-vs-batch-{windows,wsl}-8ef51d8.txt`,
+mesmo script da rodada anterior; cada padrão casou exatamente um teste executado, declarado no arquivo
+da prova): Windows 53 PASS + `I4-C15` SKIP; WSL 46 PASS + 8 SKIP. Fora das linhas `Proof:` (44, todos
+executados): 16 do motor, 5 de governança e 23 de integração — os 21 anteriores e os novos `I4-C34h`,
+`I4-C27c` (+2 em relação aos 96 de `81b9888`). Skips e motivos:
+
+- Windows (2): `I4-C15` `posix-signals` e `I4-C25b` `posix-modes` (passam no WSL). Diagnósticos de link
+  de arquivo (EPERM sem privilégio): os mesmos 15 anteriores, executados no WSL; as linhas novas não
+  usam link de arquivo.
+- WSL (8): `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente`: prova nativa do Hermes só no
+  Windows (executada nesse batch, 8 PASS); Linux **pendente**.
+- Medição C38: Windows 818 ms depois do filho, 65536 bytes no pipe; WSL 808 ms, 146176 bytes.
+- `I4-C29` não foi repetido em laço: a mudança no caminho Claude/Codex é a conferência pura depois de
+  `resolveTarget` e a troca de `stateDirRealPath` por `dirRealPath` com a mesma regra; passou nos dois
+  lotes. Sem mutações adicionais (não exigidas no `light`): cada linha nova falhou no produto antigo.
+- Doctor (417) não reexecutado: nenhum arquivo do doctor, dos módulos reutilizados, de `scripts/`,
+  `code-review.config.json`, `package.json`/lock ou `AGENTS.md` mudou desde `4088045` (`I4-C45`, no
+  lote, confere a interface do doctor com as integrações instaladas).
+
+### Examinado e não alterado (limites e resíduos)
+
+- **Conflito no meio do passo `artifacts`** (remoção ou instalação Hermes): o resultado não lista o passo
+  e mantém `applied: false`, embora artefatos já possam ter saído ou estar no staging — mesma semântica
+  anterior de `I4-C34c`/`I4-C34g`; o registro fica, e a remoção seguinte reporta `already_absent` para o
+  que saiu. Mudar o relatório de passos parciais ficaria fora dos achados.
+- **`rename` do staging falho com `plugins` trocado:** a limpeza é conferida, mas o `stat` da pasta do
+  plugin que escolhe entre `foreign_artifact` e o erro de E/S pode atravessar a troca — só metadado,
+  nada lido nem apagado. Sem teste dedicado (dupla falha).
+- `removeDirIfEmpty(plugins)` no fim da remoção (quando a instalação criou `plugins`): inalterado — só
+  remove diretório real vazio; link fica (`I4-C34d`); outro diretório real vazio no mesmo caminho não se
+  distingue.
+- **Ancestrais do próprio alvo:** a raiz é o caminho real resolvido no início; as conferências de
+  `.skill-me` e de `plugins` comparam caminhos reais e percebem a troca de qualquer ancestral nos efeitos
+  delas. `settings.json`/`hooks.json`, filhos diretos da raiz, não têm essa referência contra a troca de
+  um ancestral da própria raiz durante a aplicação — fora dos ancestrais compartilhados dos achados; não
+  sondado (sem sondagem ilimitada do sistema de arquivos).
+- **F2:** o diretório gerenciado é a constante do doctor, não resolvida — se ele próprio for link, o
+  destino não é reconhecido (o produto nunca o acessa). Por leitura, não testado: no Windows um nome
+  curto 8.3 no argumento escapa da comparação textual, mas o `realpath` devolve o nome longo e a
+  conferência nova o recusa. Codex/Hermes não têm política gerenciada (inalterado).
+- Janela não atômica entre cada conferência e o syscall; bytes idênticos e outro diretório real no
+  mesmo caminho não se distinguem.
+- Inalterados e já registrados: `settings.json` como symlink dentro do alvo (julgado na rodada 6),
+  staging Hermes alterado antes do `rename`, remoções concorrentes de `.skill-me`, Hermes nativo só no
+  Windows (Linux pendente), macOS só pela CI, E2E real dos três agentes pendente.
+
+### Sobras próprias desta rodada (preservadas)
+
+Nenhum `rm` nem limpeza opaca. Windows `%TEMP%\skill-me-f3\`: `probes/` (`wsl-copy.sh`, `wsl-run.sh`,
+`verify-blobs.sh` e `proofs-vs-batch.mjs` copiado da rodada anterior), `head-af60759/` (cópia RED),
+`af60759.tar`, `af60759-lf.tar`, `8ef51d8-lf.tar` e `results/`. WSL `/tmp`: `skillme-f3-red-af60759` e
+`skillme-f3-batch-8ef51d8`. Scratches dos testes: removidos pelo `after()` existente (só diretórios de
+`makeScratch`, caminho absoluto sob o TEMP; as junções/symlinks que os testes criam apontam para
+dentro do próprio scratch da linha); nenhum `skill-me i4 f1`/`f2` restou nas duas plataformas. Cópias
+locais (ignoradas) em `.checks/code-review/issue-4/formal3-*`. Scratches de Verifiers, recovery e
+histórico formal não foram tocados.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token, credencial ou valor de ambiente impresso. Testes com conteúdo sintético;
+os TAPs registram códigos, conflitos, passos, tipos e caminhos sintéticos, nunca conteúdo de
+configuração. Nenhuma instalação em perfil pessoal; nenhum diretório gerenciado real acessado; todos os
+`--target` em temporários; nenhum agente, modelo, download ou E2E; nenhum bypass/confiança concedido;
+nenhum subagente; nenhuma operação recusada pela plataforma nesta rodada.

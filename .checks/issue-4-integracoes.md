@@ -611,3 +611,37 @@ perfis pessoais/diretórios gerenciados reais para reproduzir o alias. Não repe
 adicional bloqueada da rodada 6. Depois das correções, nova verificação independente pelos
 testes versionados e revisão formal do conteúdo novo. Três tentativas formais consumidas
 do teto exclusivo dez; nenhum PR, push ou merge antes de aprovação válida.
+
+Correção da revisão formal round 3 (17/10/2026):
+
+- **Fronteira:** F1 e F2 fechados em `8ef51d8`, com a linha de Landing antes do código em `d3a728f`;
+  **reproduzidos** (não só lidos) pelas regressões novas no produto intacto `af60759` em cópias
+  isoladas (Windows e WSL, saídas iguais: 15 tests, 13 pass, 2 fail — só `I4-C34h` e `I4-C27c`, por
+  diff de asserção) e GREEN nos dois lotes de 98 testes em `8ef51d8` (Windows 96 pass/2 skips, WSL 90
+  pass/8 skips, exit 0; 54 linhas `Proof:` casadas). F1: a remoção Hermes saía 0 apagando cópias
+  externas e o registro; a mesma raiz na instalação (staging e artefatos gravados fora do alvo, 0) e na
+  limpeza da sobra do staging (cópias de outra pasta apagadas, 5) foi tratada pela mesma guarda e
+  comunicada. F2: provado com io determinístico que nunca toca um diretório gerenciado real; controle de
+  alias legítimo em scratch real. Checks inalterados; Landing +1 linha; regressões `I4-C34h` (14 linhas)
+  e `I4-C27c` (9 linhas); nenhuma asserção existente mudou. Evidência em
+  `.checks/issue-4-integracoes.build.md`, "Correção da revisão formal round 3". Nenhuma verificação
+  independente nem revisão formal pedida ou executada; contadores e histórico intactos; a sonda
+  bloqueada da rodada 6 não foi executada nem substituída; estas provas são do autor e não aprovam a
+  entrega.
+- **Decidido durante o build:** nada novo do proprietário. Referência no caminho real de `plugins` (o
+  ancestral comum da pasta do plugin e do staging), lida sob o lock ou logo depois de a instalação
+  criá-la; fora do alvo → `target_escape`, outro caminho → `config_changed_during_apply`, ambos em
+  `plugins`; junção para dentro do alvo já presente continua aceita (`I4-C34d`). Alvo Claude: mesma
+  `isManagedPolicyTarget` sobre o caminho real, depois da recusa textual; diretório gerenciado não
+  resolvido — tudo na linha de Landing de `d3a728f`.
+- **Abandonado:** conferir só o `lstat` do filho; só a contenção; referência na pasta do plugin; exigir
+  `plugins` diretório real; sondar ancestrais até a raiz do sistema; rollback do que já saiu; copiar
+  `stateDirRealPath`; só a comparação textual do alvo; `realpath` do diretório gerenciado; recusar todo
+  alias; conferir só antes de escrever.
+- **Limites registrados, não corrigidos (fora dos achados):** conflito no meio do passo `artifacts`
+  não lista o passo e mantém `applied: false` embora algo já tenha saído (semântica anterior de
+  `I4-C34c`/`I4-C34g`); `stat` da pasta do plugin depois de um `rename` falho com `plugins` trocado
+  (só metadado); `settings.json`/`hooks.json` sem referência contra a troca de um ancestral da própria
+  raiz; diretório gerenciado que seja ele mesmo link não é seguido.
+- **Próxima ação (orquestrador):** verificação independente 7 pelos testes versionados e leitura
+  permitida; revisão formal 4 só depois de PASS.
