@@ -1260,3 +1260,240 @@ Nenhum `process.env`, token, credencial ou valor de ambiente impresso. Testes e 
 mínimo e conteúdo sintético; as sondas imprimiram só códigos, ações, conflitos, estados e caminhos de
 temporários próprios. Nenhuma instalação em perfil pessoal; todos os `--target` em temporários;
 nenhum agente, modelo, download ou E2E; nenhum bypass/confiança concedido; nenhum subagente.
+
+## Correção da verificação independente round 5 — registro, lock e pasta de estado (17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega. Partida em `6083af8` (só o relatório
+independente 5 e o Handoff; produto e testes = `a6c656b`), checkout limpo, HEAD do despacho
+conferido. Esta seção é evidência do autor, **não é verificação independente** nem revisão formal:
+nenhum `review:run`/`review:check`/`pr:create`/push/PR/merge/Verifier foi executado; `.verified.md`,
+contadores, override, estado do motor (2 de 10 tentativas formais) e histórico não foram tocados; o
+scratch do Verifier (`verify-issue4-a6c656b/`) foi só lido. Commits: `9cf73f1` (Landing), `81b9888`
+(correção, provas e guia) e o desta evidência. `git diff --name-only 6083af8..81b9888`:
+`.checks/issue-4-integracoes.md` (uma linha de Landing), `src/integrations/install/{run,target}.mjs`,
+`tests/integrations/install-apply.unit.test.mjs` e `docs/agent-observation.md`; nada em doctor,
+`scripts/`, configuração do motor, dependências, `AGENTS.md`, task, helpers de teste ou `.verified.md`.
+
+**Classificação.** R5-F1/F2/F3 são os achados bloqueantes do Verifier (perda e quebra de isolamento,
+AC6/C27/C30/C31), já comunicados ao proprietário pelo orquestrador. A sonda RED própria mostrou a
+mesma raiz em operações que o Verifier não exercitou — registro posto por outro durante a primeira
+instalação (sobrescrito, 0), lock trocado na instalação (apagado, 0), pasta trocada na instalação
+(registro externo sobrescrito e lock externo apagado, 0), pasta trocada logo depois de criar o lock
+(registro externo lido sob o lock, 3, e lock externo apagado), remoção Hermes (registro novo apagado,
+0) e falha real ao apagar o lock (engolida: 0 com o lock bloqueando as execuções seguintes) —
+corrigidas pela mesma mudança e comunicadas no retorno; nenhuma é escopo novo.
+
+### Reprodução RED no produto `a6c656b` (cópias isoladas próprias)
+
+Cópia Windows por `git archive a6c656b` (SHA-256 do archive `0fafbdbe…3fe035`) + `node_modules`, os 6
+módulos do instalador iguais aos blobs (`git hash-object`); cópia WSL do mesmo archive no ext4
+(`/tmp/skillme-r5-red-a6c656b`), 7 módulos iguais aos blobs com CRLF normalizado. Sonda própria fora
+das cópias, produto por argumento, só dados sintéticos, imprimindo códigos, conflitos, passos e o
+destino de cada arquivo sintético (`round5-probes/r5-metadata-probe.mjs`; mutação logo depois do passo
+anterior real, como na sonda do Verifier). Saídas **iguais nas duas plataformas**
+(`round5-red-probe-{windows,wsl}-a6c656b.json`); GREEN em `81b9888` também igual entre plataformas
+(`round5-green-probe-{windows,wsl}-81b9888.json`).
+
+| Variante | `a6c656b` | `81b9888` |
+| --- | --- | --- |
+| manifest-delete (Verifier): remoção, registro trocado por arquivo novo | `0 applied`, arquivo **apagado** | `4`, `config_changed_during_apply:.skill-me/claude-install.json`, arquivo intacto |
+| manifest-replace (Verifier): remoção parcial | `4` só por `owned_entry_modified`, arquivo **sobrescrito** | `4` com os dois conflitos, intacto |
+| manifest-delete no Codex | `0`, **apagado** | `4`, intacto |
+| registro posto durante a primeira instalação | `0`, **sobrescrito** | `4`, intacto |
+| lock-delete (Verifier): remoção, lock trocado | `0`, **apagado** | `4`, `config_changed_during_apply:.skill-me/claude.lock`, intacto, passos `done` |
+| lock trocado na instalação | `0`, **apagado** | `4`, intacto |
+| state-dir-link-delete (Verifier) | `0`, registro e lock externos **apagados**, link mantido | `4`, `target_escape:.skill-me` + conflito do lock, externos intactos, link mantido |
+| state-dir-link-replace (Verifier) | `4` só pelo hook, registro externo **sobrescrito**, lock externo **apagado** | `4` com os três conflitos, externos intactos |
+| pasta trocada na instalação | `0`, registro externo **sobrescrito**, lock externo **apagado** | `4`, externos intactos |
+| pasta trocada logo depois de criar o lock | `3 manifest_invalid` (registro externo **lido**), lock externo **apagado** | `4`, nada lido através dela, externos intactos |
+| Hermes, remoção, registro trocado | `0`, **apagado** | `4`, intacto |
+| `unlink` do lock negado (`EACCES`) | `0 applied`, lock fica | `5 incomplete`, passo `lock: failed`, lock fica |
+| Hermes staging alterado antes do rename da pasta (observação do Verifier) | instalação 0 promove o arquivo; remoção 4 o preserva | igual — não alterado; limite no guia |
+
+### Correção (`run.mjs`, `target.mjs`; linha de Landing de `9cf73f1`)
+
+- `assertContained` devolve o caminho real que já calculava (`target.mjs:61`); a decisão não muda.
+- Pasta de estado (`run.mjs:160` `stateDirRealPath`, `:219` `withLock`): depois do `mkdir`, o caminho
+  real de `.skill-me` (contido; diretório pelo `stat`, então junção/link já presente para dentro do
+  alvo continua aceito) vira a referência. `stateDirUnchanged` exige o mesmo caminho real antes de ler
+  o registro sob o lock (`beforeManifestRead` em `readJsonState`/`readHermesState`), antes de criar o
+  temporário do registro, de cada tentativa de rename e da limpeza (`writeViaTemp`, opção nova
+  `dirUnchanged`), antes de apagar o registro e de liberar o lock.
+- Registro (`:342`–`:380`): `readManifestText` recusa com 4 `foreign_artifact` o que não é arquivo
+  regular (prévia e aplicação); `assertManifestUnchanged` confere o texto lido sob o lock — ausente
+  continua sem entrada; presente continua arquivo regular com os mesmos bytes — como `beforeRename` (cada
+  tentativa) e antes do `unlink`; `ENOENT` no `unlink` logo depois da conferência também é conflito.
+  `stillHolds` (`:149`) é o antigo `isOwnTemp` generalizado (`holdsExactly` + `ENOENT` → falso), agora
+  usado pelo temporário, pelo registro e pelo lock — sem cópia da implementação.
+- Lock (`:176` `releaseLock`, `:196` `withLockKept`): liberado só pela mesma pasta e com os bytes
+  `<pid>\n` gravados pela execução; senão fica, e o conflito se soma sem esconder o resultado
+  (conflito principal primeiro; 5 continua 5); E/S falha → passo `lock: failed` e 5. A pasta vazia só
+  sai depois de liberado o lock.
+- `replaceChecked`/`deleteChecked` da configuração ficaram como estavam (alternativa rejeitada no Landing).
+
+### Regressões e RED/GREEN dos testes (`tests/integrations/install-apply.unit.test.mjs`)
+
+Todos pela API pública `runIntegrationCommand` com io real instrumentado — a mutação acontece dentro do
+próprio comando: depois do rename real da configuração ou da pasta do plugin, depois da última exclusão
+de artefato, logo depois de criado o lock ou na primeira tentativa negada do rename —, dados sintéticos
+e uma tabela `observed`/`expected` comparada por inteiro em cada teste:
+
+- **`I4-C30d`** (asserção em `:904`) — 21 linhas: Claude instalação (posto arquivo, posto diretório,
+  posto durante a nova tentativa), remoção (editado no lugar, trocado por arquivo, removido, diretório,
+  junção/link de diretório, link de arquivo), remoção parcial (trocado; trocado durante a nova
+  tentativa), Codex instalação/remoção, Hermes instalação/remoção/remoção parcial e 5 controles (nada
+  muda; rename negado uma vez). Afirma código, `status`, `applied`, conflitos exatos, passos, tentativas
+  de rename, o que ficou no caminho do registro (tipo e bytes), o registro próprio movido intacto, o
+  destino externo do link, o estado próprio da configuração/pasta do plugin, nenhum temporário sobrando
+  e lock liberado.
+- **`I4-C31b`** (`:1025`) — 24 linhas: lock removido, editado, trocado por arquivo, diretório,
+  junção/link de diretório, link de arquivo e controle × comando em sucesso, conflito (edição externa da
+  configuração) e erro (`EIO` no rename do registro); `unlink` do lock negado (`EACCES`); Codex e Hermes.
+  Afirma código, `status`, `applied`, conflitos (o principal antes do lock), erros, passos, o que ficou
+  no caminho do lock, o lock próprio movido, destino externo, configuração e se a pasta de estado ficou.
+- **`I4-C27b`** (`:1169`) — 15 linhas: `.skill-me` trocada por junção/link para fora do alvo, para
+  outra pasta do alvo, para a própria pasta movida para fora, ou por outro diretório real com arquivos
+  de mesmo nome; depois da configuração/artefatos, logo depois de criar o lock e durante a nova
+  tentativa do rename; Claude instalação/remoção/remoção parcial, Codex, Hermes instalação/remoção e
+  controle (junção dentro do alvo posta antes do comando: `0 applied`, como `I4-C34d`). Afirma código,
+  conflitos, passos, arquivos do usuário intactos, o que está em `.skill-me`, o conteúdo da pasta
+  própria movida (registro, temporário e lock próprios lá deixados, nada apagado através da troca) e o
+  estado próprio.
+- **`I4-C30e`** (`:1239`) — 6 linhas × prévia/aplicação: diretório, junção/link de diretório e link de
+  arquivo para cópia exata do registro no caminho do registro (links para dentro do alvo), Claude,
+  Codex e Hermes, instalação e remoção. Afirma 4 `foreign_artifact`, `changes: []`, o caminho intacto e
+  a árvore inteira do alvo igual (com mtime).
+- Windows sem privilégio de symlink de arquivo: 5 linhas por `t.diagnostic` (1 em `I4-C30d`, 3 em
+  `I4-C31b`, 1 em `I4-C30e`), executadas no WSL.
+- **RED** (versão final do teste, `git hash-object` `ccca0f72…`, SHA-256 com LF `374ceebc…`, sobre o
+  produto `a6c656b` intacto, blobs conferidos): Windows `13 tests, 9 pass, 4 fail` e WSL `13, 9, 4` —
+  falham exatamente `I4-C30d`, `I4-C31b`, `I4-C27b`, `I4-C30e`, todas por diff de asserção
+  (`ERR_ASSERTION`), sem exceção (`round5-red-tests-{windows,wsl}-a6c656b.tap`).
+- **Tentativas preservadas.** (1) Primeira execução no Windows: os rótulos das linhas viraram nome de
+  scratch com `/` e `:` (inválidos) e as quatro falharam no `mkdtemp`, antes de qualquer comando; o
+  scratch passou a usar um rótulo sanitizado. (2) Primeiro RED Windows: `I4-C27b` terminou com
+  exceção do próprio teste (`lstat` de `.skill-me`, que o produto antigo apagou junto com os arquivos
+  do usuário na variante "outro diretório real") em vez de diff; a observação passou a registrar
+  "ausente", sem afrouxar asserção, e o RED foi refeito (`…-tentativa1-c27b-excecao.tap`). (3) Erro do
+  teste corrigido antes do commit: `??` trocava o `null` de uma linha nova de `I4-C27b` pelo valor
+  padrão (o observado já estava certo). (4) RED/GREEN anteriores às linhas de discriminação ficam como
+  `…-antes-das-linhas-de-discriminacao.tap`.
+- **GREEN:** `install-apply.unit` 13/13 no WSL, sem diagnóstico, e as quatro novas no Windows; lotes abaixo.
+
+### Discriminação (mutações só em cópias WSL do `/tmp`, sobre o worktree de `81b9888`)
+
+Cada mutação roda `install-apply.unit` + `install.cli` (31 testes) numa cópia nova, com o trecho achado
+exatamente uma vez (`round5-probes/mutants.mjs`). Primeira passada (`round5-mutations-wsl-passada1.json`):
+15/18 detectadas; sobreviveram m1 e m3 (a troca acontecia antes de criar o temporário, e a conferência
+anterior à criação já parava) e m16 (Hermes). Acrescentadas a `I4-C27b` as linhas "durante a nova
+tentativa do rename" com link para a própria pasta movida e "Hermes logo depois de criar o lock";
+segunda passada (`…passada2.json`): **18/18 detectadas**, sempre só pelas provas novas — as 27
+anteriores seguem verdes em todos os mutantes (não cobriam esses estados).
+
+| Mutação | Falha |
+| --- | --- |
+| m1 sem conferência da pasta antes de cada tentativa · m2 antes de criar o temporário · m3 limpeza do temporário sem conferir a pasta · m6 registro apagado sem conferir a pasta · m8 lock apagado sem conferir a pasta · m14 só contenção, sem a referência · m15/m16 leitura sob o lock sem conferir a pasta (Claude/Codex; Hermes) | `I4-C27b` |
+| m4 registro gravado sem conferir o destino · m5 apagado sem conferir o conteúdo · m13 registro lido ausente não conferido | `I4-C30d`, `I4-C27b` |
+| m7 lock apagado sem conferir os bytes · m18 conflito do lock no lugar do principal | `I4-C31b`, `I4-C27b` |
+| m9 falha de E/S do lock engolida · m10 lock ausente tratado como liberado · m17 pasta vazia removida com o lock mantido | `I4-C31b` |
+| m11 registro ausente na exclusão tratado como apagado | `I4-C30d` |
+| m12 registro não regular lido como antes | `I4-C30e` |
+
+### Mudanças colaterais de comportamento, provadas
+
+- Registro, lock ou pasta de estado mexidos durante a aplicação: antes apagados ou sobrescritos com 0
+  ou com 4 sem conflito próprio; agora 4 com o caminho, preservados, passos anteriores `done`
+  (`I4-C30d`, `I4-C31b`, `I4-C27b`).
+- Registro ou lock ausente na hora do efeito: antes tolerado (0); agora 4 — escolha não idempotente
+  justificada no Landing (`I4-C30d` e `I4-C31b`, linhas "removido").
+- Diretório posto no caminho do registro durante a primeira instalação: antes 5 (o rename falhava,
+  com novas tentativas no Windows); agora 4.
+- Falha de E/S ao liberar o lock: antes 0; agora 5 com passo `lock: failed` (`I4-C31b`).
+- Registro já presente como diretório: antes 3 `config_unreadable`; como link: antes seguido (a
+  remoção apagava o link); agora 4 `foreign_artifact` na prévia e na aplicação (`I4-C30e`).
+- `.skill-me` trocada por arquivo entre a conferência inicial e o lock: antes 5 (`ENOTDIR` no `wx`);
+  agora 4, pelo mesmo `stateDirRealPath` — por leitura; essa janela não tem teste dedicado.
+- Lock que fica: a pasta de estado vazia também fica (antes saía; `I4-C31b`).
+
+### Contagens reais em `81b9888`
+
+Um batch por plataforma: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs scripts/code-review/review.test.mjs`. Windows: worktree com
+`git diff --quiet 81b9888 -- src tests docs scripts package.json package-lock.json`, executado fora do
+sandbox pelos testes de timeout/taskkill do motor (só processos dos próprios testes), Hermes nativo pelo
+helper (`python -I -B`, HERMES_HOME e HOME/APPDATA/TEMP temporários, sem modelo). WSL: distro `Ubuntu`
+explícita, Node 24.13.0, `git archive 81b9888` (SHA-256 `d041a65f…3adae2`) no ext4
+(`/tmp/skillme-r5-batch-81b9888`), 140 arquivos de `src`, `tests`, `scripts`, `docs`, `package.json` e
+`package-lock.json` iguais aos blobs (CRLF normalizado), `env -i` só com `PATH`; exit do próprio
+`wsl.exe`. Nenhum spawn lendo por `/mnt/c`.
+
+| Execução | tests | pass | fail | cancelled | skipped | todo | exit | duração |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 74 + governança 6 + motor 16 | 96 | 94 | 0 | 0 | 2 | 0 | 0 | 33 s |
+| WSL — integrações 74 + governança 6 + motor 16 | 96 | 88 | 0 | 0 | 8 | 0 | 0 | 17 s |
+
+Cruzamento das 54 linhas `Proof:` com os TAPs (`round5-proofs-vs-batch-{windows,wsl}-81b9888.txt`;
+cada padrão casou exatamente um teste executado, declarado no arquivo da prova): Windows 53 PASS +
+`I4-C15` SKIP; WSL 46 PASS + 8 SKIP. Fora das linhas `Proof:` (42, todos executados): 16 do motor, 5 de
+governança e 21 de integração — os 17 anteriores e os novos `I4-C27b`, `I4-C30d`, `I4-C30e`, `I4-C31b`
+(+4 em relação aos 92 de `01c78bd`/`a6c656b`). Skips e motivos:
+
+- Windows (2): `I4-C15` `posix-signals` e `I4-C25b` `posix-modes` (passam no WSL). Diagnósticos de link
+  de arquivo (EPERM sem privilégio): os 10 anteriores e os 5 novos acima — executados no WSL, sem
+  diagnóstico.
+- WSL (8): `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente`: prova nativa do Hermes só no
+  Windows (executada nesse batch, 8 PASS); Linux **pendente**.
+- Medição C38: Windows 821 ms depois do filho, 65536 bytes no pipe; WSL 809 ms, 146176 bytes.
+- `I4-C29` isolado (`round5-c29-81b9888.txt`, `round5-probes/c29-loop.sh`): Windows 0/100, WSL 0/40 —
+  amostras nos ambientes declarados, não garantia contra carga arbitrária.
+- Doctor (417) não reexecutado: nenhum arquivo do doctor, dos módulos reutilizados, de `scripts/`,
+  `code-review.config.json`, `package.json`/lock ou `AGENTS.md` mudou desde `6083af8` (`I4-C45`, no
+  lote, confere a interface do doctor com as integrações instaladas).
+
+### Examinado e não alterado (limites e resíduos)
+
+- **`settings.json` como symlink dentro do alvo** (comportamento anterior, fora dos achados R5;
+  sonda `round5-probes/config-link-probe.mjs`, WSL, igual em `a6c656b` e `81b9888`,
+  `round5-config-link-probe-wsl-*.json`): a instalação substitui o link por um arquivo regular com o
+  conteúdo lido mais os grupos próprios; o arquivo apontado fica sem mudança e o link do usuário some;
+  a remoção deixa arquivo regular. Sem perda de bytes, mas a estrutura do link não é preservada. Por
+  leitura, o mesmo vale para `hooks.json` do Codex (mesmo `replaceChecked`); não executado. Seguir o
+  link, recusar ou manter é decisão de produto — comunicada, não corrigida. Link que resolve fora do
+  alvo continua `target_escape` (`I4-C27`).
+- Hermes staging: artefato alterado na pasta temporária antes do rename dela é promovido (instalação
+  0); o registro guarda o hash do pacote e a remoção o preserva (4) — sem perda; limite no guia.
+- Remoções concorrentes: o `removeDirIfEmpty(.skill-me)` de um processo pode fazer o `wx` do lock de
+  outro falhar com `ENOENT` (5, nada mudado); a remoção da pasta entre o `mkdir` e a referência agora é
+  4. Não testado nem alterado; C29 continua limitado a seis instalações paralelas.
+- Janela não atômica entre cada conferência nova (pasta, registro, lock) e o syscall; identidade por
+  caminho, tipo, tamanho e hash — bytes idênticos não se distinguem (inclusive um lock com o mesmo pid
+  de outro sistema sobre o mesmo alvo). Um diretório real novo no mesmo caminho de `.skill-me` só é
+  percebido pelo conteúdo do registro e do lock: vazio, numa primeira instalação, recebe o registro.
+- Temporário do registro criado antes de a pasta ser trocada fica na pasta movida (nada é apagado
+  através da troca; remoção manual), como mostra `I4-C27b`.
+- Hermes nativo só no Windows; Linux pendente; macOS só pela CI; E2E real dos três agentes pendente.
+
+### Sobras próprias desta rodada (preservadas)
+
+Nenhum `rm` de diretório nem limpeza opaca. Windows `%TEMP%\skill-me-r5\`: `probes/`
+(`r5-metadata-probe.mjs`, `config-link-probe.mjs`, `mutants.mjs`, `c29-loop.sh`, `proofs-vs-batch.mjs`
+copiado da rodada formal 2, `wsl-copy.sh`, `wsl-run.sh`, `hash-lf.sh`, `hash-list-lf.sh`),
+`head-a6c656b/` (a primeira extração falhou depois de criar a pasta e copiar `node_modules`, porque o
+`tar` do Git Bash leu `C:` como host; a segunda extraiu no mesmo diretório e os blobs foram
+conferidos depois), `redtests-a6c656b/`, os `.tar` de `a6c656b` e `81b9888`, `results/` e os alvos
+sintéticos `alvos red-a6c656b`, `alvos wip`, `alvos green-81b9888`. Única exclusão: `c29-loop.sh`
+apaga o TAP da própria execução que passou (arquivo recém-criado por ele, caminho absoluto no
+`results/`); os das falhas ficariam — não houve. WSL `/tmp`: `skillme-r5-{probes,red-a6c656b,
+redtests-a6c656b,redtests2-a6c656b,wip,mutbase,mutbase2,batch-81b9888,c29-wsl-81b9888}`,
+`skillme-r5-mut-m1..m18`, `skillme-r5-mut2-m1..m18` e os alvos `skillme-r5-alvos …`. Scratches dos
+testes: removidos pelo `after()` existente (só diretórios de `makeScratch`, caminho absoluto sob o
+TEMP; as junções criadas pelos testes que apontam para fora do alvo apontam para dentro do próprio
+scratch). Scratches de Verifiers, recovery e histórico formal não foram tocados. Cópias locais
+(ignoradas) em `.checks/code-review/issue-4/round5-*`.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token, credencial ou valor de ambiente impresso. Testes e sondas usam ambiente
+mínimo e conteúdo sintético; as sondas imprimiram só códigos, conflitos, passos, tipos e o destino de
+arquivos sintéticos. Nenhuma instalação em perfil pessoal; todos os `--target` em temporários; nenhum
+agente, modelo, download ou E2E; nenhum bypass/confiança concedido; nenhum subagente.

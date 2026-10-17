@@ -529,3 +529,29 @@ Continuidade autorizada dentro do AC6 e das rodadas necessárias já aprovadas. 
 corrigirá/provará os caminhos de registro, lock e ancestral; depois, nova verificação
 independente antes da formal3. Checks e histórico intactos, duas tentativas formais
 consumidas do teto dez. Codex não implementou produto/testes; nenhum PR/merge antes de ready.
+
+Correção da verificação independente round 5 (17/10/2026):
+
+- **Fronteira:** R5-F1/F2/F3 fechados em `81b9888`, com a linha de Landing antes do código em
+  `9cf73f1`; RED no produto `a6c656b` em cópias isoladas (Windows e WSL, saídas iguais) e GREEN nos
+  dois lotes de 96 testes em `81b9888` (Windows 94 pass/2 skips, WSL 88 pass/8 skips, exit 0; 54
+  linhas `Proof:` casadas). A sonda RED mostrou a mesma raiz em operações que o Verifier não
+  exercitou, tratadas pela mesma mudança e comunicadas no retorno: registro posto durante a primeira
+  instalação, lock e pasta de estado trocados na instalação, registro lido através da pasta trocada
+  sob o lock, remoção Hermes e falha de E/S do lock engolida (0). Checks inalterados; Landing +1 linha;
+  regressões `I4-C27b`, `I4-C30d`, `I4-C30e`, `I4-C31b` (18/18 mutações detectadas); `I4-C29` 0/100
+  Windows e 0/40 WSL. Evidência em `.checks/issue-4-integracoes.build.md`, "Correção da verificação
+  independente round 5". Nenhuma verificação independente nem revisão formal pedida ou executada;
+  contadores e histórico intactos; estas provas são do autor e não aprovam a entrega.
+- **Decidido durante o build:** nada novo do proprietário. Registro ou lock ausente na hora do efeito
+  → 4 (não idempotente); registro que não é arquivo regular na leitura → 4; junção de `.skill-me` para
+  dentro do alvo posta antes do comando continua aceita (`I4-C34d`); `replaceChecked`/`deleteChecked`
+  da configuração não mudaram — tudo na linha de Landing de `9cf73f1`.
+- **Abandonado:** reusar `replaceChecked`/`deleteChecked` como estão; conferir só a contenção; exigir
+  `.skill-me` diretório real desde a leitura; ausência idempotente; desfazer a configuração já gravada;
+  inode, conteúdo aleatório no lock, journal ou CAS; engolir a falha do `unlink` do lock.
+- **Pendente para decisão (comunicado, não corrigido):** `settings.json` como symlink dentro do alvo
+  é substituído por arquivo regular na instalação — comportamento anterior, igual em `a6c656b` e
+  `81b9888`, sem perda de bytes, mas o link do usuário não é preservado (por leitura, também
+  `hooks.json`); seguir, recusar ou manter é decisão de produto. Hermes staging alterado antes do
+  rename: sem perda, limite registrado no guia.
