@@ -125,7 +125,9 @@ simulação de caminho.
 - Remoção Hermes apaga também o bytecode que o próprio Hermes grava para o nosso
   `__init__.py` (`__pycache__/__init__.cpython-*.pyc`), só quando é arquivo regular
   num `__pycache__` real dentro do alvo; qualquer outro arquivo na pasta do plugin é
-  preservado e reportado. `__pycache__` ou bytecode que é junção/link para fora do
+  preservado e reportado. Se o `__init__.py` é preservado — editado, trocado por link
+  ou de outro plugin de mesmo nome —, o bytecode dele também fica; artefato que não
+  é arquivo regular (link de arquivo) é tratado como alteração preservada. `__pycache__` ou bytecode que é junção/link para fora do
   alvo faz a remoção inteira ser recusada (código 4), sem seguir o link; link que
   fica dentro do alvo é tratado como alheio e preservado. A própria pasta
   `plugins/skill-me-observer` só é nossa como diretório real: trocada por

@@ -898,6 +898,81 @@ test("I4-C34b Hermes: pasta própria trocada por junção/link ou arquivo não �
   assert.deepEqual(snapshotTree(controlOther), controlOtherBefore, "outro plugin intacto, inclusive mtime");
 });
 
+test("I4-C34e Hermes: na pasta própria, artefato trocado por link de arquivo e bytecode de fonte preservada ficam", (t) => {
+  const ownFiles = (home) => path.join(home, "plugins", "skill-me-observer");
+  const writeOwnNamedBytecode = (dir) => {
+    mkdirSync(path.join(dir, "__pycache__"));
+    const bytecode = path.join(dir, "__pycache__", "__init__.cpython-311.pyc");
+    writeFileSync(bytecode, "bytecode sintético do __init__.py presente\n");
+    return bytecode;
+  };
+  const modified = (names) => names.map((name) => `owned_entry_modified:plugins/skill-me-observer/${name}`).join(",");
+
+  // Com registro, os três artefatos da pasta própria real foram substituídos
+  // (edição do usuário ou outro plugin de mesmo nome) e o Hermes gravou o
+  // bytecode desse `__init__.py`: o cache acompanha a fonte preservada.
+  const replaced = hermesTarget("own-dir-replaced");
+  assert.equal(cli(["install", "--agent", "hermes", "--target", replaced, "--apply"]).status, 0);
+  for (const name of ["__init__.py", "kwargs.json", "plugin.yaml"]) writeFileSync(path.join(ownFiles(replaced), name), `# outro plugin de mesmo nome: ${name}\n`);
+  const replacedBytecode = writeOwnNamedBytecode(ownFiles(replaced));
+  const replacedHash = sha256File(replacedBytecode);
+  const replacedBefore = snapshotTree(replaced);
+  const allModified = modified(["__init__.py", "kwargs.json", "plugin.yaml"]);
+  assert.deepEqual(
+    { results: runPluginDirCommands(replaced), bytecode: bytecodeState(replacedBytecode, replacedHash), targetIntact: isDeepStrictEqual(snapshotTree(replaced), replacedBefore) },
+    {
+      results: PLUGIN_DIR_COMMANDS.map((args) => `${args.join(" ")} → 4 conflict applied=false changes=0 conflicts=${allModified}`),
+      bytecode: "intacto",
+      targetIntact: true,
+    },
+    "artefatos substituídos com bytecode ao lado",
+  );
+
+  // `__init__.py` da pasta própria trocado por symlink de arquivo para uma cópia
+  // idêntica em outro plugin do alvo: conteúdo igual não torna o link nosso. Ele
+  // fica como alteração preservada (com o bytecode ao lado); o resto sai.
+  const linked = hermesTarget("own-artifact-link");
+  assert.equal(cli(["install", "--agent", "hermes", "--target", linked, "--apply"]).status, 0);
+  const fork = path.join(linked, "plugins", "fork-plugin");
+  mkdirSync(fork);
+  const ownInit = path.join(ownFiles(linked), "__init__.py");
+  copyFileSync(ownInit, path.join(fork, "__init__.py"));
+  renameSync(ownInit, path.join(path.dirname(linked), "__init__ próprio movido.py"));
+  if (!linkFileOrDiagnose(t, path.join(fork, "__init__.py"), ownInit, "artefato __init__.py trocado por link de arquivo")) return;
+  const linkedBytecode = writeOwnNamedBytecode(ownFiles(linked));
+  const linkedHash = sha256File(linkedBytecode);
+  const forkBefore = snapshotTree(fork);
+  const results = runPluginDirCommands(linked);
+  assert.deepEqual(
+    {
+      results,
+      linkKept: linkPointsTo(ownInit, path.join(fork, "__init__.py")),
+      forkIntact: isDeepStrictEqual(snapshotTree(fork), forkBefore),
+      bytecode: bytecodeState(linkedBytecode, linkedHash),
+      ownDirLeft: snapshotTree(ownFiles(linked), { withMtime: false }),
+      manifest: json(path.join(linked, ".skill-me", "hermes-install.json")).artifacts.map((a) => a.path),
+    },
+    {
+      results: [
+        `install → 4 conflict applied=false changes=0 conflicts=${modified(["__init__.py"])}`,
+        `install --apply → 4 conflict applied=false changes=0 conflicts=${modified(["__init__.py"])}`,
+        `uninstall → 4 conflict applied=false changes=3 conflicts=${modified(["__init__.py"])}`,
+        `uninstall --apply → 4 conflict applied=true changes=3 conflicts=${modified(["__init__.py"])}`,
+      ],
+      linkKept: true,
+      forkIntact: true,
+      bytecode: "intacto",
+      ownDirLeft: {
+        "__init__.py": { type: "link" },
+        __pycache__: { type: "dir" },
+        "__pycache__/__init__.cpython-311.pyc": { type: "file", sha256: linkedHash, bytes: statSync(linkedBytecode).size },
+      },
+      manifest: ["plugins/skill-me-observer/__init__.py"],
+    },
+    "artefato trocado por link de arquivo",
+  );
+});
+
 function linkPointsTo(link, target) {
   try {
     return lstatSync(link).isSymbolicLink() && realpathSync(link) === realpathSync(target);

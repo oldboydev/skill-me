@@ -24,6 +24,8 @@ const COMMANDS = ["plan", "install", "uninstall"];
 // regular, é removido; qualquer outra coisa é falha de E/S, nunca apagada.
 const TMP_SUFFIX = ".skill-me-tmp";
 const STAGING_REL_DIR = `plugins/.${PLUGIN_NAME}${TMP_SUFFIX}`;
+// Marca de artefato que não é arquivo regular: nunca é igual a um SHA-256.
+const NOT_REGULAR_FILE = "not_a_regular_file";
 
 const MANUAL_STEPS = {
   claude: [
@@ -366,7 +368,9 @@ async function readHermesState(io, root, platform, { op, artifacts }) {
   for (const name of await io.readdir(pluginDir)) {
     const full = path.join(pluginDir, name);
     if (ARTIFACT_NAMES.includes(name)) {
-      state.files[name] = sha256(await io.readBytes(full));
+      // Gravamos arquivos regulares: link (mesmo para conteúdo idêntico) ou
+      // outro tipo no lugar do artefato é alteração preservada, como uma edição.
+      state.files[name] = (await io.lstat(full)).isFile() ? sha256(await io.readBytes(full)) : NOT_REGULAR_FILE;
     } else if (name === "__pycache__") {
       await readPluginCache(io, root, full, state, platform);
     } else {
@@ -424,7 +428,11 @@ function planHermes(op, state, artifacts) {
       remaining.push(recorded);
     }
   }
-  for (const cached of state.caches) changes.push({ file: `${PLUGIN_REL_DIR}/__pycache__/${cached}`, action: "remove_cache" });
+  // O bytecode acompanha a fonte: com o `__init__.py` preservado (editado,
+  // trocado por link ou de outro plugin de mesmo nome), o cache dele também fica.
+  const sourcePreserved = remaining.some((a) => path.posix.basename(a.path) === "__init__.py");
+  const caches = sourcePreserved ? [] : state.caches;
+  for (const cached of caches) changes.push({ file: `${PLUGIN_REL_DIR}/__pycache__/${cached}`, action: "remove_cache" });
   if (state.foreign.length > 0) conflicts.push({ code: "foreign_files_preserved", file: PLUGIN_REL_DIR });
   let manifestAction = null;
   if (remaining.length === 0) manifestAction = "delete";
@@ -434,7 +442,7 @@ function planHermes(op, state, artifacts) {
     changes,
     conflicts,
     removals,
-    caches: state.caches,
+    caches,
     manifestAction,
     manifestBody: { artifacts: remaining, created: state.manifest.created },
   };
@@ -496,8 +504,10 @@ async function removeHermesArtifacts(io, root, plan, state, platform) {
     for (const removal of plan.removals) {
       const file = path.join(pluginDir, removal.name);
       await pluginDirStillOwn();
-      // Confere de novo antes de apagar: uma edição feita depois da leitura fica.
-      if (sha256(await io.readBytes(file)) !== removal.sha256) throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/${removal.name}`);
+      // Confere de novo antes de apagar: uma edição ou um link postos depois da leitura ficam.
+      if (!(await io.lstat(file)).isFile() || sha256(await io.readBytes(file)) !== removal.sha256) {
+        throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/${removal.name}`);
+      }
       await io.unlink(file);
     }
     for (const cached of plan.caches) {
