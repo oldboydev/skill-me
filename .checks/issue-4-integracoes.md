@@ -1036,3 +1036,34 @@ Correção da CI inicial do PR #16 — Windows (17/10/2026):
 - **Próxima ação (orquestrador):** verificação independente 12 pelos testes versionados e leitura permitida; revisão
   formal 7 só depois de PASS e relatório commitado; push no PR #16 só depois dos gates, e nova CI depois do push.
   Seis tentativas formais de dez consumidas.
+
+
+Verificação independente round 12 (17/10/2026):
+
+PASS 48/48 e 9/9 em d53aa6f5cd4861dd63e869eb666a3e3b20469dbb.
+Relatório integral incorporado; carry explícito da rodada11 e reavaliação do diff
+real dos três arquivos de teste/helper e dos 13 nonPASS da CI Windows anterior.
+Produto permanece igual a 550007f; testes finais em 835a723. Canonicalização nativa
+do scratch permite que as intervenções atuem; C29c remove por unlink e C32b
+remove o registro e afirma sua ausência. Asserções anteriores preservadas.
+C30f comprova os aliases e as intervenções com contagens exatas.
+
+Lotes completos próprios: 110 testes por plataforma, Windows 104 pass/6 skips e
+Ubuntu 98 pass/12 skips, zero falhas/cancelamentos, exit 0. As 54 provas nomeadas
+e os 56 extras foram contabilizados; 179 blobs e archive conferidos antes/depois.
+A tentativa Windows inicial, sem capacidade para Git nas fixtures e para encerrar
+filho do teste de timeout do motor, ficou parcial e foi interrompida apenas na
+própria árvore, com autorização e evidência preservada. Uma repetição necessária
+pela aprovação normal concluiu; não houve terceira repetição nem intervenção
+para fazer o teste passar. Ubuntu só executou uma vez, após resolver capacidade
+WSL pela via normal. Isso não foi rejeição de política ou auto-review.
+
+Método independente: leitura e testes já versionados em cópia nova, sem cenários,
+sondas ou mutantes próprios, sem recriar a antiga ação bloqueada. Sem alteração
+no produto, testes ou Git original. Doctor417 carrega a CI identificada, sem
+reexecução local. C25m macOS carrega a prova remota b5eaa21; nova CI no conteúdo
+atual ainda pendente. Hermes nativo Linux e E2E real continuam pendentes.
+
+Seis tentativas formais de dez consumidas. Próxima etapa automática: formal7
+no commit limpo. Depois de ready válido, atualizar a mesma branch/PR16 e
+conferir a nova CI antes do merge autorizado. Histórico e critérios preservados.
