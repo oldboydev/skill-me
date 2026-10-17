@@ -205,7 +205,6 @@ function planJson(op, agent, state, ctx) {
     const manifestAction = manifestText === state.manifestText ? null : "write";
     return {
       ...plan,
-      conflicts: [],
       manifestAction,
       changes: manifestAction ? [...plan.changes, { file: manifestFile, action: "write_manifest" }] : plan.changes,
     };

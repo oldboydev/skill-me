@@ -152,12 +152,16 @@ const DEFAULT_FORMAT = Object.freeze({ indent: "  ", newline: "\n", trailing: tr
 // Grupo idêntico ao canônico já presente: registrado (`adopt_group`) se o
 // registro não o conhecia — reconcilia uma falha anterior entre configuração
 // e registro. Grupo registrado com outro hash (ex.: node atualizado) conta como
-// instalado: nunca há dois grupos próprios no mesmo evento.
+// instalado: nunca há dois grupos próprios no mesmo evento. Grupo com a
+// assinatura própria que não é o registrado nem o canônico foi editado pelo
+// usuário: conflito, sem acrescentar outro grupo ao lado nem adotá-lo pela
+// assinatura; a entrada registrada continua no registro.
 export function planJsonInstall({ agent, parsed, manifest, ctx }) {
   const file = CONFIG_FILE[agent];
   const doc = parsed ? cloneDoc(parsed.doc) : {};
   const created = manifest?.created ?? { file: parsed === null, hooksObject: false, eventKeys: [] };
   const changes = [];
+  const conflicts = [];
   const entries = [];
   if (parsed === null) changes.push({ file, action: "create_file" });
   if (doc.hooks === undefined) {
@@ -175,6 +179,9 @@ export function planJsonInstall({ agent, parsed, manifest, ctx }) {
     } else if (hashes.includes(hash)) {
       entries.push({ event, sha256: hash, adopted: true });
       changes.push({ file, action: "adopt_group", event });
+    } else if (groups.some((group) => looksOwned(agent, group, ctx.cliPath))) {
+      conflicts.push({ code: recorded ? "owned_entry_modified" : "owned_entry_unrecorded", file, event });
+      if (recorded) entries.push(recorded);
     } else {
       if (doc.hooks[event] === undefined && !manifest) created.eventKeys.push(event);
       doc.hooks[event] = [...groups, canonical];
@@ -185,6 +192,7 @@ export function planJsonInstall({ agent, parsed, manifest, ctx }) {
   const configChanged = changes.some((change) => change.action === "add_group");
   return {
     changes,
+    conflicts,
     configChanged,
     newText: configChanged ? serializeConfig(doc, parsed?.format ?? DEFAULT_FORMAT) : null,
     manifestBody: { file, entries, created },
@@ -192,9 +200,11 @@ export function planJsonInstall({ agent, parsed, manifest, ctx }) {
 }
 
 // Plano puro de remoção: só sai o grupo cujo hash confere com o registro. Grupo
-// próprio editado fica e vira conflito (permanece no registro). Chave de evento
-// vazia sai só se a instalação a criou ou adotou o grupo; o objeto `hooks` e o
-// arquivo, só se criados pela instalação e vazios.
+// próprio editado fica e vira conflito (permanece no registro). Grupo com a
+// assinatura própria que resta sem registro (cópia editada pelo usuário) também
+// fica e é reportado: a remoção não declara sucesso com um observer próprio
+// ativo. Chave de evento vazia sai só se a instalação a criou ou adotou o
+// grupo; o objeto `hooks` e o arquivo, só se criados pela instalação e vazios.
 export function planJsonUninstall({ agent, parsed, manifest, ctx }) {
   const file = CONFIG_FILE[agent];
   const changes = [];
@@ -219,6 +229,12 @@ export function planJsonUninstall({ agent, parsed, manifest, ctx }) {
       remaining.push(entry);
     } else {
       changes.push({ file, action: "already_absent", event: entry.event });
+    }
+  }
+  const reported = new Set(conflicts.map((conflict) => conflict.event));
+  for (const event of EVENTS[agent]) {
+    if (!reported.has(event) && (doc.hooks?.[event] ?? []).some((group) => looksOwned(agent, group, ctx.cliPath))) {
+      conflicts.push({ code: "owned_entry_unrecorded", file, event });
     }
   }
   if (manifest.created.hooksObject && doc.hooks && Object.keys(doc.hooks).length === 0) {

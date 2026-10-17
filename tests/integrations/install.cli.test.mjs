@@ -427,6 +427,110 @@ test("I4-C32 entrada própria editada é preservada como conflito, também na se
   assert.deepEqual(readFileSync(path.join(target, "settings.json")), bytes, "segunda remoção não apaga nada");
 });
 
+// Edição do usuário na configuração por um editor que preserva o texto exato
+// dos números (inteiro > 2^53 alheio), como em I4-C31.
+function editConfig(file, mutate) {
+  const doc = JSON.parse(readFileSync(file, "utf8"), (key, value, context) =>
+    typeof value === "number" && String(value) !== context.source ? JSON.rawJSON(context.source) : value,
+  );
+  mutate(doc);
+  writeFileSync(file, JSON.stringify(doc, null, 4) + "\n");
+}
+const isOwnHandler = (agent) => (handler) =>
+  agent === "claude" ? Array.isArray(handler.args) && handler.args.includes(INTEGRATIONS_CLI) : typeof handler.command === "string" && handler.command.includes(INTEGRATIONS_CLI);
+const ownGroupOf = (agent, groups) => groups.find((group) => group.hooks.some(isOwnHandler(agent)));
+
+test("I4-C32b reinstalar sobre entrada própria editada não duplica nem perde o registro; a remoção não declara sucesso", () => {
+  for (const [agent, makeTarget, file, read] of [
+    ["claude", claudeTarget, "settings.json", readClaudeHandlers],
+    ["codex", codexTarget, "hooks.json", readCodexHandlers],
+  ]) {
+    const target = makeTarget(`edit-reinstall-${agent}`);
+    const config = path.join(target, file);
+    const manifest = path.join(target, ".skill-me", `${agent}-install.json`);
+    assert.equal(cli(["install", "--agent", agent, "--target", target, "--apply"]).status, 0);
+    const recorded = json(manifest).entries.find((entry) => entry.event === "PreToolUse");
+    editConfig(config, (doc) => {
+      ownGroupOf(agent, doc.hooks.PreToolUse).hooks[0].timeout = 99;
+    });
+    const editedBytes = readFileSync(config);
+    const manifestBytes = readFileSync(manifest);
+    const conflict = [{ code: "owned_entry_modified", file, event: "PreToolUse" }];
+
+    // Reinstalar (prévia e aplicação): conflito reconhecido; nada acrescentado,
+    // adotado ou regravado — a edição continua sendo o único grupo próprio.
+    for (const apply of [false, true]) {
+      const again = cli(["install", "--agent", agent, "--target", target, ...(apply ? ["--apply"] : [])]);
+      assert.equal(again.status, 4, `${agent} reinstall apply=${apply}: ${again.stdout}`);
+      assert.equal(again.report.status, "conflict", agent);
+      assert.deepEqual(again.report.conflicts, conflict, agent);
+      assert.deepEqual(again.report.changes, [], `${agent} apply=${apply}: nenhuma mudança`);
+    }
+    assert.deepEqual(readFileSync(config), editedBytes, `${agent}: configuração intocada`);
+    assert.deepEqual(readFileSync(manifest), manifestBytes, `${agent}: registro intocado`);
+    assert.equal(read(target).PreToolUse.count, 1, `${agent}: um único grupo próprio no evento`);
+    assert.equal(read(target).PreToolUse.handler.timeout, 99);
+
+    // Remover: os grupos intactos saem; o editado fica ativo, é reportado e
+    // continua no registro.
+    const removed = cli(["uninstall", "--agent", agent, "--target", target, "--apply"]);
+    assert.equal(removed.status, 4, `${agent} uninstall: ${removed.stdout}`);
+    assert.equal(removed.report.status, "conflict", agent);
+    assert.deepEqual(removed.report.conflicts, conflict, agent);
+    assert.deepEqual(Object.keys(read(target)), ["PreToolUse"], `${agent}: só o grupo editado resta`);
+    assert.equal(read(target).PreToolUse.handler.timeout, 99);
+    assert.deepEqual(json(manifest).entries, [recorded], `${agent}: registro do grupo editado mantido`);
+
+    // Remover de novo: nenhum byte muda e o conflito continua.
+    const configAfter = readFileSync(config);
+    const manifestAfter = readFileSync(manifest);
+    const second = cli(["uninstall", "--agent", agent, "--target", target, "--apply"]);
+    assert.equal(second.status, 4, agent);
+    assert.deepEqual(second.report.conflicts, conflict, agent);
+    assert.deepEqual(readFileSync(config), configAfter, agent);
+    assert.deepEqual(readFileSync(manifest), manifestAfter, agent);
+
+    // Sem registro (perdido depois da instalação) e com o grupo próprio editado:
+    // a assinatura não basta para adotar nem para acrescentar outro grupo no
+    // evento; os grupos intactos são adotados e a remoção continua reportando.
+    const unrecorded = makeTarget(`edit-unrecorded-${agent}`);
+    assert.equal(cli(["install", "--agent", agent, "--target", unrecorded, "--apply"]).status, 0);
+    editConfig(path.join(unrecorded, file), (doc) => {
+      ownGroupOf(agent, doc.hooks.PreToolUse).hooks[0].timeout = 99;
+    });
+    rmSync(path.join(unrecorded, ".skill-me"), { recursive: true });
+    const unrecordedConflict = [{ code: "owned_entry_unrecorded", file, event: "PreToolUse" }];
+    const adopted = cli(["install", "--agent", agent, "--target", unrecorded, "--apply"]);
+    assert.equal(adopted.status, 4, `${agent} sem registro: ${adopted.stdout}`);
+    assert.deepEqual(adopted.report.conflicts, unrecordedConflict, agent);
+    assert.ok(!adopted.report.changes.some((c) => c.event === "PreToolUse"), agent);
+    assert.equal(read(unrecorded).PreToolUse.count, 1, agent);
+    assert.ok(!json(path.join(unrecorded, ".skill-me", `${agent}-install.json`)).entries.some((e) => e.event === "PreToolUse"), agent);
+    for (let round = 0; round < 2; round += 1) {
+      const result = cli(["uninstall", "--agent", agent, "--target", unrecorded, "--apply"]);
+      assert.equal(result.status, 4, `${agent} sem registro, remoção ${round + 1}: ${result.stdout}`);
+      assert.deepEqual(result.report.conflicts, unrecordedConflict, agent);
+      assert.deepEqual(Object.keys(read(unrecorded)), ["PreToolUse"], agent);
+      assert.equal(read(unrecorded).PreToolUse.handler.timeout, 99);
+    }
+  }
+
+  // Cópia editada de um grupo próprio ao lado do grupo registrado intacto: a
+  // remoção tira o registrado e não declara sucesso com a cópia ativa.
+  const copied = claudeTarget("edit-copy");
+  assert.equal(cli(["install", "--agent", "claude", "--target", copied, "--apply"]).status, 0);
+  editConfig(path.join(copied, "settings.json"), (doc) => {
+    const copy = JSON.parse(JSON.stringify(ownGroupOf("claude", doc.hooks.SessionStart)));
+    copy.hooks[0].timeout = 99;
+    doc.hooks.SessionStart.push(copy);
+  });
+  const copyRemoved = cli(["uninstall", "--agent", "claude", "--target", copied, "--apply"]);
+  assert.equal(copyRemoved.status, 4, copyRemoved.stdout);
+  assert.deepEqual(copyRemoved.report.conflicts, [{ code: "owned_entry_unrecorded", file: "settings.json", event: "SessionStart" }]);
+  assert.deepEqual(Object.keys(readClaudeHandlers(copied)), ["SessionStart"]);
+  assert.equal(readClaudeHandlers(copied).SessionStart.handler.timeout, 99);
+});
+
 test("I4-C33 falha depois da primeira mutação é reportada como incompleta e se reconcilia", () => {
   const target = claudeTarget("partial");
   // Um diretório no caminho temporário do registro impede gravá-lo depois
