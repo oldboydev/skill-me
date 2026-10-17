@@ -90,6 +90,19 @@ async function removeDirIfEmpty(io, dir) {
   }
 }
 
+// Tipo da entrada sem seguir link: "absent", "dir" (diretório real) ou "other"
+// (junção/link, arquivo…).
+async function entryKind(io, file) {
+  let stats;
+  try {
+    stats = await io.lstat(file);
+  } catch (error) {
+    if (error.code === "ENOENT") return "absent";
+    throw error;
+  }
+  return stats.isDirectory() ? "dir" : "other";
+}
+
 async function withLock(io, root, agent, fn) {
   const stateDir = path.join(root, STATE_DIR);
   const lockPath = path.join(stateDir, `${agent}.lock`);
@@ -315,6 +328,17 @@ async function readStaging(io, root, artifacts, platform) {
   return { owned: true };
 }
 
+// A pasta do plugin só é nossa como diretório real: junção/link — mesmo para
+// dentro do alvo — ou arquivo no lugar dela é alheio, e nada é lido nem
+// apagado através dela (o bytecode e os arquivos de outro plugin pareceriam
+// nossos pelo nome, e até cópias exatas dos artefatos pertencem a outra pasta).
+// `false`: pasta ausente.
+async function ownPluginDirExists(io, root) {
+  const kind = await entryKind(io, path.join(root, PLUGIN_REL_DIR));
+  if (kind === "other") throw new ConflictError("foreign_artifact", PLUGIN_REL_DIR);
+  return kind === "dir";
+}
+
 async function readHermesState(io, root, platform, { op, artifacts }) {
   const manifestText = await readOptional(io, root, manifestPath(root, "hermes"));
   const pluginsDir = path.join(root, "plugins");
@@ -324,7 +348,7 @@ async function readHermesState(io, root, platform, { op, artifacts }) {
     manifestText,
     manifest: manifestText === null ? null : parseManifest("hermes", manifestText),
     pluginsDirExists: await exists(pluginsDir),
-    pluginDirExists: await exists(pluginDir),
+    pluginDirExists: await ownPluginDirExists(io, root),
     files: {},
     caches: [],
     cacheDirOwned: false,
@@ -446,35 +470,59 @@ async function installHermesArtifacts(io, root, artifacts, state, platform) {
   }
 }
 
+// A pasta do plugin e o `__pycache__` foram lidos como diretórios reais;
+// imediatamente antes de cada exclusão isso é reconferido. Trocados depois da
+// leitura por junção/link, o mesmo nome apagaria o arquivo de outro plugin, e
+// `rmdir` removeria a junção (Windows). A troca vira conflito e nada além do já
+// conferido é apagado — mesmo limite não atômico do `rename` da configuração.
 async function removeHermesArtifacts(io, root, plan, state, platform) {
   const pluginDir = path.join(root, PLUGIN_REL_DIR);
-  for (const removal of plan.removals) {
-    const file = path.join(pluginDir, removal.name);
-    // Confere de novo antes de apagar: uma edição feita depois da leitura fica.
-    if (sha256(await io.readBytes(file)) !== removal.sha256) throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/${removal.name}`);
-    await io.unlink(file);
-  }
   const cacheDir = path.join(pluginDir, "__pycache__");
-  for (const cached of state.caches) {
-    const file = path.join(cacheDir, cached);
-    // Mesma conferência para o cache: link posto depois da leitura não é seguido.
-    await assertContained(root, file, io, platform);
-    if (!(await io.lstat(file)).isFile()) throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/__pycache__/${cached}`);
-    await io.unlink(file);
+  const cacheRel = `${PLUGIN_REL_DIR}/__pycache__`;
+  const stillRealDir = async (dir, rel) => {
+    if ((await entryKind(io, dir)) !== "dir") throw new ConflictError("config_changed_during_apply", rel);
+  };
+  const pluginDirStillOwn = () => stillRealDir(pluginDir, PLUGIN_REL_DIR);
+  const cacheDirStillOwn = async () => {
+    await pluginDirStillOwn();
+    await stillRealDir(cacheDir, cacheRel);
+  };
+  if (state.pluginDirExists) {
+    for (const removal of plan.removals) {
+      const file = path.join(pluginDir, removal.name);
+      await pluginDirStillOwn();
+      // Confere de novo antes de apagar: uma edição feita depois da leitura fica.
+      if (sha256(await io.readBytes(file)) !== removal.sha256) throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/${removal.name}`);
+      await io.unlink(file);
+    }
+    for (const cached of state.caches) {
+      const file = path.join(cacheDir, cached);
+      await cacheDirStillOwn();
+      // Mesma conferência para o cache: link posto depois da leitura não é seguido.
+      await assertContained(root, file, io, platform);
+      if (!(await io.lstat(file)).isFile()) throw new ConflictError("config_changed_during_apply", `${cacheRel}/${cached}`);
+      await io.unlink(file);
+    }
+    // Só o diretório real que foi inspecionado.
+    if (state.cacheDirOwned) {
+      await cacheDirStillOwn();
+      await removeDirIfEmpty(io, cacheDir);
+    }
+    await pluginDirStillOwn();
+    await removeDirIfEmpty(io, pluginDir);
   }
-  // Só o diretório real que foi inspecionado; uma junção alheia vazia seria
-  // removida por rmdir no Windows.
-  if (state.cacheDirOwned) await removeDirIfEmpty(io, cacheDir);
-  await removeDirIfEmpty(io, pluginDir);
   if (state.manifest.created.pluginsDir) await removeDirIfEmpty(io, path.join(root, "plugins"));
 }
 
 async function runHermesAgent({ op, root, apply, io, platform, result }) {
   const artifacts = loadArtifacts();
+  for (const candidate of [path.join(root, "plugins"), path.join(root, PLUGIN_REL_DIR), path.join(root, STAGING_REL_DIR)]) {
+    await assertContained(root, candidate, io, platform);
+  }
+  // Os caminhos dos artefatos só são conferidos dentro de uma pasta do plugin
+  // nossa ou ausente: através de uma pasta alheia nada é seguido.
+  await ownPluginDirExists(io, root);
   const candidates = [
-    path.join(root, "plugins"),
-    path.join(root, PLUGIN_REL_DIR),
-    path.join(root, "plugins", `.${PLUGIN_NAME}${TMP_SUFFIX}`),
     ...artifacts.map((a) => path.join(root, a.rel)),
     path.join(root, STATE_DIR),
     manifestPath(root, "hermes"),

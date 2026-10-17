@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { baseEnv, INTEGRATIONS_CLI, makeScratch, REPO_ROOT, runIntegrations, runIntegrationsAsync, runIntegrationsJson } from "./helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers } from "./helpers/installed-hooks.mjs";
 import { sha256File, snapshotTree } from "./helpers/tree.mjs";
@@ -764,4 +765,109 @@ test("I4-C34 Hermes: artefatos com hash, habilitação manual, pasta alheia e ed
   for (const artifact of leftoverManifest.artifacts) assert.equal(artifact.sha256, sha256File(path.join(leftover.home, artifact.path)));
   assert.equal(cli(["uninstall", "--agent", "hermes", "--target", leftover.home, "--apply"]).status, 0);
   assert.deepEqual(snapshotTree(leftover.home, { withMtime: false }), leftoverBefore, "árvore volta à anterior, outro plugin intacto");
+});
+
+// Outro plugin com bytecode de nome igual ao do cache próprio
+// (`__pycache__/__init__.cpython-311.pyc`), com `__init__.py` diferente ou com
+// cópias exatas dos nossos artefatos: conteúdo igual não torna a pasta nossa.
+const OTHER_PLUGIN_FILES = { "__init__.py": "# plugin sintético de terceiro\n", "plugin.yaml": "name: victim-plugin\n" };
+const ownArtifactCopies = () => Object.fromEntries(["__init__.py", "kwargs.json", "plugin.yaml"].map((name) => [name, readFileSync(path.join(HERMES_PLUGIN_SOURCE, name))]));
+function writeOtherPlugin(dir, files) {
+  mkdirSync(path.join(dir, "__pycache__"), { recursive: true });
+  for (const [name, content] of Object.entries(files)) writeFileSync(path.join(dir, name), content);
+  const bytecode = path.join(dir, "__pycache__", "__init__.cpython-311.pyc");
+  writeFileSync(bytecode, "bytecode sintético de terceiro\n");
+  return bytecode;
+}
+const snapshotIfPresent = (dir) => (existsSync(dir) ? snapshotTree(dir) : null);
+const conflictText = (c) => (c.code === "target_escape" ? c.code : `${c.code}:${c.file}`);
+const bytecodeState = (file, hash) => (existsSync(file) ? (sha256File(file) === hash ? "intacto" : "alterado") : "apagado");
+
+// Junção no Windows, symlink real no POSIX; link de arquivo exige privilégio no Windows.
+const PLUGIN_DIR_SWAPS = [
+  { label: "junção/link para outro plugin no alvo", outside: false, link: "dir", files: () => OTHER_PLUGIN_FILES },
+  { label: "junção/link para cópia exata dos artefatos no alvo", outside: false, link: "dir", files: ownArtifactCopies },
+  { label: "junção/link para cópia exata fora do alvo", outside: true, link: "dir", files: ownArtifactCopies },
+  { label: "link de arquivo para o __init__.py de outro plugin no alvo", outside: false, link: "file", files: () => OTHER_PLUGIN_FILES },
+  { label: "link de arquivo para fora do alvo", outside: true, link: "file", files: () => OTHER_PLUGIN_FILES },
+  { label: "arquivo regular", outside: false, link: null, files: () => OTHER_PLUGIN_FILES },
+];
+const PLUGIN_DIR_COMMANDS = [["install"], ["install", "--apply"], ["uninstall"], ["uninstall", "--apply"]];
+function runPluginDirCommands(home) {
+  return PLUGIN_DIR_COMMANDS.map(([command, ...flags]) => {
+    const { status, report } = cli([command, "--agent", "hermes", "--target", home, ...flags]);
+    return `${[command, ...flags].join(" ")} → ${status} ${report.status} applied=${report.applied} changes=${report.changes.length} conflicts=${report.conflicts.map(conflictText).join(",")}`;
+  });
+}
+
+test("I4-C34b Hermes: pasta própria trocada por junção/link ou arquivo não é lida nem limpa como nossa", (t) => {
+  // A troca acontece depois da instalação (registro presente) ou num alvo nunca
+  // instalado. Prévia e aplicação de install e uninstall recusam com 4 sem
+  // mudança listada; o bytecode e a árvore do outro plugin, o link, a
+  // configuração e o registro ficam byte a byte (e mtime) iguais.
+  const observed = [];
+  const expected = [];
+  for (const [index, swap] of PLUGIN_DIR_SWAPS.entries()) {
+    for (const installed of [true, false]) {
+      const label = `${swap.label}, ${installed ? "depois de instalar" : "sem instalação"}`;
+      const home = hermesTarget(`plugin-dir-${index}-${installed ? "installed" : "fresh"}`);
+      const own = path.join(home, "plugins", "skill-me-observer");
+      if (installed) {
+        assert.equal(cli(["install", "--agent", "hermes", "--target", home, "--apply"]).status, 0, label);
+        // A pasta instalada sai do alvo sem ser apagada; a troca ocupa o lugar dela.
+        renameSync(own, path.join(path.dirname(home), "pasta própria movida"));
+      }
+      const otherDir = path.join(swap.outside ? scratch(`plugin-dir-${index}-outside`) : path.join(home, "plugins"), "victim-plugin");
+      const bytecode = writeOtherPlugin(otherDir, swap.files());
+      if (swap.link === "dir") symlinkSync(otherDir, own, "junction");
+      else if (swap.link === "file") {
+        if (!linkFileOrDiagnose(t, path.join(otherDir, "__init__.py"), own, label)) continue;
+      } else writeFileSync(own, "arquivo do usuário\n");
+      const linkTarget = swap.link ? realpathSync(own) : null;
+      const bytecodeHash = sha256File(bytecode);
+      const otherBefore = snapshotTree(otherDir);
+      const homeBefore = snapshotTree(home);
+
+      const results = runPluginDirCommands(home);
+      let linkKept = null;
+      if (swap.link) linkKept = existsSync(own) && lstatSync(own).isSymbolicLink() && realpathSync(own) === linkTarget;
+      observed.push({
+        label,
+        results,
+        bytecode: bytecodeState(bytecode, bytecodeHash),
+        otherPluginIntact: isDeepStrictEqual(snapshotIfPresent(otherDir), otherBefore),
+        targetIntact: isDeepStrictEqual(snapshotTree(home), homeBefore),
+        linkKept,
+      });
+      const conflict = swap.outside ? "target_escape" : "foreign_artifact:plugins/skill-me-observer";
+      expected.push({
+        label,
+        results: PLUGIN_DIR_COMMANDS.map((args) => `${args.join(" ")} → 4 conflict applied=false changes=0 conflicts=${conflict}`),
+        bytecode: "intacto",
+        otherPluginIntact: true,
+        targetIntact: true,
+        linkKept: swap.link ? true : null,
+      });
+    }
+  }
+  assert.deepEqual(observed, expected);
+
+  // Controle: pasta própria real com o cache normal, ao lado de outro plugin com
+  // bytecode de mesmo nome — o nosso sai e a árvore volta à anterior; o outro fica.
+  const control = hermesTarget("plugin-dir-real");
+  const controlOther = path.join(control, "plugins", "victim-plugin");
+  writeOtherPlugin(controlOther, OTHER_PLUGIN_FILES);
+  const controlBefore = snapshotTree(control, { withMtime: false });
+  const controlOtherBefore = snapshotTree(controlOther);
+  assert.equal(cli(["install", "--agent", "hermes", "--target", control, "--apply"]).status, 0);
+  const ownCache = path.join(control, "plugins", "skill-me-observer", "__pycache__");
+  mkdirSync(ownCache);
+  writeFileSync(path.join(ownCache, "__init__.cpython-311.pyc"), "bytecode sintético próprio\n");
+  const cleaned = cli(["uninstall", "--agent", "hermes", "--target", control, "--apply"]);
+  assert.equal(cleaned.status, 0, cleaned.stdout);
+  assert.equal(cleaned.report.status, "applied");
+  assert.deepEqual(cleaned.report.conflicts, []);
+  assert.deepEqual(cleaned.report.changes.filter((c) => c.action === "remove_cache").map((c) => c.file), ["plugins/skill-me-observer/__pycache__/__init__.cpython-311.pyc"]);
+  assert.deepEqual(snapshotTree(control, { withMtime: false }), controlBefore, "árvore volta à anterior");
+  assert.deepEqual(snapshotTree(controlOther), controlOtherBefore, "outro plugin intacto, inclusive mtime");
 });

@@ -127,6 +127,13 @@ simulação de caminho.
   num `__pycache__` real dentro do alvo; qualquer outro arquivo na pasta do plugin é
   preservado e reportado. `__pycache__` ou bytecode que é junção/link para fora do
   alvo faz a remoção inteira ser recusada (código 4), sem seguir o link; link que
-  fica dentro do alvo é tratado como alheio e preservado.
+  fica dentro do alvo é tratado como alheio e preservado. A própria pasta
+  `plugins/skill-me-observer` só é nossa como diretório real: trocada por
+  junção/link (para dentro ou para fora do alvo) ou por um arquivo, instalação e
+  remoção recusam com 4, também na prévia, sem ler, apagar ou registrar nada através
+  dela. Antes de cada exclusão a remoção reconfere que a pasta e o `__pycache__` continuam
+  diretórios reais (janela não atômica, como na escrita da configuração). Ponto de
+  montagem de volume (Windows) ou bind mount (POSIX) aparece como diretório real e
+  não é distinguido; criá-lo exige privilégio.
 - Os comandos instalados apontam para o node e para este checkout por caminho
   absoluto: mover o repositório exige reinstalar.

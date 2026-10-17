@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { replacementMode } from "../../src/integrations/install/io.mjs";
 import { widenedRecipients } from "./helpers/posix-access.mjs";
 import { createNodeIo, runIntegrationCommand } from "../../src/integrations/install/run.mjs";
 import { makeScratch } from "./helpers/cli.mjs";
+import { sha256File, snapshotTree } from "./helpers/tree.mjs";
 
 const scratches = [];
 after(() => {
@@ -70,6 +72,74 @@ test("I4-C33b falha ao gravar o registro depois da configuração não é declar
   assert.equal(Object.keys(written.hooks).length, 9, "Stop de terceiro + 8 eventos próprios");
   assert.equal(existsSync(path.join(dir, ".skill-me", "claude-install.json")), false);
   assert.equal(existsSync(path.join(dir, ".skill-me", "claude.lock")), false, "lock liberado mesmo com falha");
+});
+
+test("I4-C34c Hermes: pasta própria ou __pycache__ trocados durante a remoção não levam o bytecode de outro plugin", async () => {
+  // A troca acontece depois da leitura feita sob o lock, logo após a remoção do
+  // último artefato próprio: a pasta do plugin, ou o `__pycache__` dela, vira
+  // junção (Windows) / symlink (POSIX) para outro plugin no alvo cujo bytecode
+  // tem o nome do cache próprio. Antes de cada exclusão a remoção reconfere.
+  const ownArtifacts = ["__init__.py", "kwargs.json", "plugin.yaml"];
+  const observed = [];
+  const expected = [];
+  for (const swapped of ["plugins/skill-me-observer", "plugins/skill-me-observer/__pycache__"]) {
+    const dir = makeScratch("swap-during-uninstall");
+    scratches.push(dir);
+    const home = path.join(dir, "hermes home");
+    const other = path.join(home, "plugins", "victim-plugin");
+    mkdirSync(path.join(other, "__pycache__"), { recursive: true });
+    writeFileSync(path.join(other, "__init__.py"), "# plugin sintético de terceiro\n");
+    const otherBytecode = path.join(other, "__pycache__", "__init__.cpython-311.pyc");
+    writeFileSync(otherBytecode, "bytecode sintético de terceiro\n");
+    const io = createNodeIo();
+    assert.equal((await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io })).exitCode, 0);
+    const own = path.join(home, "plugins", "skill-me-observer");
+    mkdirSync(path.join(own, "__pycache__"));
+    writeFileSync(path.join(own, "__pycache__", "__init__.cpython-311.pyc"), "bytecode sintético próprio\n");
+    const manifest = path.join(home, ".skill-me", "hermes-install.json");
+    const manifestBefore = readFileSync(manifest);
+    const otherBefore = snapshotTree(other);
+    const bytecodeHash = sha256File(otherBytecode);
+    const swapPath = path.join(home, ...swapped.split("/"));
+    const linkTo = swapped.endsWith("__pycache__") ? path.join(other, "__pycache__") : other;
+    let artifactsRemoved = 0;
+    const instrumented = {
+      ...io,
+      async unlink(file) {
+        await io.unlink(file);
+        const ownArtifact = path.basename(path.dirname(file)) === "skill-me-observer" && ownArtifacts.includes(path.basename(file));
+        if (ownArtifact && ++artifactsRemoved === ownArtifacts.length) {
+          renameSync(swapPath, path.join(dir, "movido"));
+          symlinkSync(linkTo, swapPath, "junction");
+        }
+      },
+    };
+    const result = await runIntegrationCommand({ command: "uninstall", agent: "hermes", target: home, apply: true, io: instrumented });
+    assert.equal(artifactsRemoved, ownArtifacts.length, `${swapped}: a troca aconteceu`);
+    observed.push({
+      swapped,
+      exitCode: result.exitCode,
+      status: result.status,
+      conflicts: result.conflicts,
+      otherBytecode: existsSync(otherBytecode) ? (sha256File(otherBytecode) === bytecodeHash ? "intacto" : "alterado") : "apagado",
+      otherPluginIntact: existsSync(other) && isDeepStrictEqual(snapshotTree(other), otherBefore),
+      linkKept: existsSync(swapPath) && lstatSync(swapPath).isSymbolicLink() && realpathSync(swapPath) === realpathSync(linkTo),
+      manifestKept: existsSync(manifest) && readFileSync(manifest).equals(manifestBefore),
+      lockReleased: !existsSync(path.join(home, ".skill-me", "hermes.lock")),
+    });
+    expected.push({
+      swapped,
+      exitCode: 4,
+      status: "conflict",
+      conflicts: [{ code: "config_changed_during_apply", file: swapped }],
+      otherBytecode: "intacto",
+      otherPluginIntact: true,
+      linkKept: true,
+      manifestKept: true,
+      lockReleased: true,
+    });
+  }
+  assert.deepEqual(observed, expected);
 });
 
 test("I4-C25c regra pura: o arquivo que substitui a configuração não amplia o acesso de nenhum destinatário", () => {
