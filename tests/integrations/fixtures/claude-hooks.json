@@ -1,0 +1,267 @@
+{
+  "origin": "synthetic",
+  "contract": "claude-code-hooks@docs-2026-10-16",
+  "source": "https://code.claude.com/docs/en/hooks (campos comuns e de cada evento, consulta 16/10/2026); https://code.claude.com/docs/en/permissions#match-by-input-parameter (Skill(skill:<name>) => tool_input.skill)",
+  "note": "Payloads construídos à mão a partir da documentação; nenhum trace real. Valores SKILLME-CANARY-* marcam conteúdo que nunca pode sair do debugger.",
+  "cases": [
+    {
+      "name": "pre_tool_bash",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "prompt_id": "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-01",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "permission_mode": "default",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "cat SKILLME-CANARY-args", "description": "SKILLME-CANARY-args" },
+        "tool_use_id": "toolu_01ClaudeFixtureBash"
+      }
+    },
+    {
+      "name": "post_tool_bash",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "prompt_id": "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-01",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "permission_mode": "default",
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "cat SKILLME-CANARY-args" },
+        "tool_response": { "stdout": "SKILLME-CANARY-result", "stderr": "" },
+        "tool_use_id": "toolu_01ClaudeFixtureBash",
+        "duration_ms": 42
+      }
+    },
+    {
+      "name": "post_tool_failure_bash",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "prompt_id": "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-01",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "permission_mode": "default",
+        "hook_event_name": "PostToolUseFailure",
+        "tool_name": "Bash",
+        "tool_input": { "command": "false SKILLME-CANARY-args" },
+        "tool_use_id": "toolu_01ClaudeFixtureFail",
+        "error": "Exit code 1\nSKILLME-CANARY-error",
+        "is_interrupt": false,
+        "duration_ms": 7
+      }
+    },
+    {
+      "name": "post_tool_failure_minimal",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "hook_event_name": "PostToolUseFailure",
+        "tool_name": "Read",
+        "tool_input": { "file_path": "C:\\fixture\\SKILLME-CANARY-path\\a.txt" },
+        "tool_use_id": "toolu_01ClaudeFixtureFailMin",
+        "error": "SKILLME-CANARY-error"
+      }
+    },
+    {
+      "name": "pre_tool_skill",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "prompt_id": "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-02",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "permission_mode": "default",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Skill",
+        "tool_input": { "skill": "third-party-skill", "args": "SKILLME-CANARY-args" },
+        "tool_use_id": "toolu_01ClaudeFixtureSkill"
+      }
+    },
+    {
+      "name": "post_tool_skill",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "prompt_id": "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-02",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "permission_mode": "default",
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Skill",
+        "tool_input": { "skill": "third-party-skill", "args": "SKILLME-CANARY-args" },
+        "tool_response": { "content": "SKILLME-CANARY-result" },
+        "tool_use_id": "toolu_01ClaudeFixtureSkill",
+        "duration_ms": 15
+      }
+    },
+    {
+      "name": "expansion_slash_command",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-02",
+        "prompt_id": "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-03",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptExpansion",
+        "expansion_type": "slash_command",
+        "command_name": "third-party-skill",
+        "command_args": "SKILLME-CANARY-args",
+        "command_source": "plugin",
+        "prompt": "/third-party-skill SKILLME-CANARY-prompt"
+      }
+    },
+    {
+      "name": "expansion_mcp_prompt",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-02",
+        "prompt_id": "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-04",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "hook_event_name": "UserPromptExpansion",
+        "expansion_type": "mcp_prompt",
+        "command_name": "docs-server:summarize",
+        "command_args": "SKILLME-CANARY-args",
+        "command_source": "mcp",
+        "prompt": "/docs-server:summarize SKILLME-CANARY-prompt"
+      }
+    },
+    {
+      "name": "session_start",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+        "model": "fixture-model"
+      }
+    },
+    {
+      "name": "session_end",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "hook_event_name": "SessionEnd",
+        "reason": "prompt_input_exit"
+      }
+    },
+    {
+      "name": "subagent_start",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "hook_event_name": "SubagentStart",
+        "agent_id": "agent-claude-fixture-01",
+        "agent_type": "Explore"
+      }
+    },
+    {
+      "name": "subagent_stop",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "hook_event_name": "SubagentStop",
+        "stop_hook_active": false,
+        "agent_id": "agent-claude-fixture-01",
+        "agent_type": "Explore",
+        "agent_transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\subagents\\a.jsonl",
+        "last_assistant_message": "SKILLME-CANARY-reasoning"
+      }
+    },
+    {
+      "name": "subagent_pre_tool",
+      "valid": true,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "prompt_id": "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-01",
+        "transcript_path": "C:\\fixture\\SKILLME-CANARY-path\\transcript.jsonl",
+        "cwd": "C:\\fixture\\SKILLME-CANARY-path",
+        "hook_event_name": "PreToolUse",
+        "agent_id": "agent-claude-fixture-01",
+        "agent_type": "Explore",
+        "tool_name": "Grep",
+        "tool_input": { "pattern": "SKILLME-CANARY-args", "path": "C:\\fixture\\SKILLME-CANARY-path" },
+        "tool_use_id": "toolu_01ClaudeFixtureSubagent"
+      }
+    },
+    {
+      "name": "invalid_types",
+      "valid": false,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "hook_event_name": "PostToolUseFailure",
+        "tool_name": "Bash",
+        "tool_input": { "command": "SKILLME-CANARY-args" },
+        "tool_use_id": "toolu_01ClaudeFixtureTypes",
+        "error": "SKILLME-CANARY-error",
+        "is_interrupt": "yes",
+        "duration_ms": -5
+      }
+    },
+    {
+      "name": "unrecognized_source",
+      "valid": false,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "hook_event_name": "SessionStart",
+        "source": "teleport"
+      }
+    },
+    {
+      "name": "skill_name_not_identifier",
+      "valid": false,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Skill",
+        "tool_input": { "skill": "SKILLME-CANARY-args; rm -rf /", "args": "" },
+        "tool_use_id": "toolu_01ClaudeFixtureBadName"
+      }
+    },
+    {
+      "name": "tool_use_id_too_long",
+      "valid": false,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "SKILLME-CANARY-args" },
+        "tool_use_id": "toolu_LONG_ID_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "name": "unknown_event",
+      "valid": false,
+      "payload": {
+        "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
+        "hook_event_name": "Notification",
+        "message": "SKILLME-CANARY-error"
+      }
+    },
+    {
+      "name": "missing_event_name",
+      "valid": false,
+      "payload": { "session_id": "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01", "tool_name": "Bash" }
+    },
+    {
+      "name": "not_an_object",
+      "valid": false,
+      "payload": ["PreToolUse", "SKILLME-CANARY-args"]
+    }
+  ]
+}

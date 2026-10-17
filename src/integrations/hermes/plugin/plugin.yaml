@@ -1,0 +1,12 @@
+name: skill-me-observer
+version: 0.1.0
+description: "skill-me (issue 4): observa ferramentas, skills, sessão e subagentes sem alterar decisões. Inativo sem entrega configurada; não grava nem envia dados por conta própria."
+author: skill-me
+provides_hooks:
+  - pre_tool_call
+  - post_tool_call
+  - on_skill_lifecycle
+  - on_session_start
+  - on_session_end
+  - subagent_start
+  - subagent_stop

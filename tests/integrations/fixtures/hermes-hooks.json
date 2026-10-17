@@ -1,0 +1,74 @@
+{
+  "origin": "synthetic",
+  "contract": "hermes-plugin-hooks@0.21.4",
+  "source": "Hermes 0.21.4 local, lido como texto: model_tools.py:679-701 (post_tool_call), model_tools.py:765-785 e hermes_cli/plugins.py:1972-1980 (pre_tool_call), tools/skill_usage.py:467-479 (on_skill_lifecycle), agent/conversation_loop.py:770-777 (on_session_start), agent/turn_finalizer.py:707-719 (on_session_end), tools/delegate_tool.py:289-296 (subagent_start), tools/delegate_tool_results.py:364-372 (subagent_stop), hermes_cli/hooks.py:106-182 (payloads sintéticos do próprio Hermes)",
+  "note": "kwargs construídos à mão com os nomes dos locais de disparo; nenhum trace real. pre/post_tool_call no teste nativo são disparados pelo handle_function_call real; estes kwargs servem aos demais hooks e aos testes determinísticos. telemetry_schema_version é acrescentado pelo invoke_hook real.",
+  "cases": [
+    {
+      "name": "pre_tool_call",
+      "valid": true,
+      "hook": "pre_tool_call",
+      "kwargs": { "tool_name": "skillme_fixture_echo", "args": { "value": "SKILLME-CANARY-args" }, "task_id": "hermes-task-01", "session_id": "hermes-sess-01", "tool_call_id": "hermes-call-01", "turn_id": "hermes-turn-01", "api_request_id": "req-01", "middleware_trace": [], "telemetry_schema_version": 1 }
+    },
+    {
+      "name": "post_tool_call",
+      "valid": true,
+      "hook": "post_tool_call",
+      "kwargs": { "tool_name": "skillme_fixture_echo", "args": { "value": "SKILLME-CANARY-args" }, "result": "{\"echo\": \"SKILLME-CANARY-result\"}", "task_id": "hermes-task-01", "session_id": "hermes-sess-01", "tool_call_id": "hermes-call-01", "turn_id": "hermes-turn-01", "api_request_id": "req-01", "duration_ms": 3, "status": "ok", "error_type": null, "error_message": null, "middleware_trace": [], "telemetry_schema_version": 1 }
+    },
+    {
+      "name": "post_tool_call_error",
+      "valid": true,
+      "hook": "post_tool_call",
+      "kwargs": { "tool_name": "skillme_fixture_echo", "args": { "value": "SKILLME-CANARY-args" }, "result": "{\"error\": \"SKILLME-CANARY-error\"}", "task_id": "hermes-task-01", "session_id": "hermes-sess-01", "tool_call_id": "hermes-call-02", "turn_id": "hermes-turn-01", "duration_ms": 1, "status": "error", "error_type": "ValueError", "error_message": "SKILLME-CANARY-error" }
+    },
+    {
+      "name": "on_skill_lifecycle",
+      "valid": true,
+      "hook": "on_skill_lifecycle",
+      "kwargs": { "action": "loaded", "skill_name": "third-party-skill", "provenance": "local", "task_id": "hermes-task-01", "session_id": "hermes-sess-01", "use_count": 3, "reused": true, "reuse_after_patch": false, "telemetry_schema_version": 1 }
+    },
+    {
+      "name": "on_session_start",
+      "valid": true,
+      "hook": "on_session_start",
+      "kwargs": { "session_id": "hermes-sess-01", "model": "fixture-model", "platform": "cli" }
+    },
+    {
+      "name": "on_session_end",
+      "valid": true,
+      "hook": "on_session_end",
+      "kwargs": { "session_id": "hermes-sess-01", "task_id": "hermes-task-01", "turn_id": "hermes-turn-01", "completed": true, "failed": false, "interrupted": false, "turn_exit_reason": "text_response(stop)", "model": "fixture-model", "platform": "cli" }
+    },
+    {
+      "name": "subagent_start",
+      "valid": true,
+      "hook": "subagent_start",
+      "kwargs": { "parent_session_id": "hermes-sess-01", "parent_turn_id": "hermes-turn-01", "parent_subagent_id": null, "child_session_id": "hermes-sess-child-01", "child_subagent_id": "hermes-subagent-01", "child_role": "leaf", "child_goal": "SKILLME-CANARY-prompt" }
+    },
+    {
+      "name": "subagent_stop",
+      "valid": true,
+      "hook": "subagent_stop",
+      "kwargs": { "parent_session_id": "hermes-sess-01", "parent_turn_id": "hermes-turn-01", "child_session_id": "hermes-sess-child-01", "child_role": "leaf", "child_summary": "SKILLME-CANARY-result", "child_status": "completed", "tool_call_history": [{ "tool_name": "write_file", "tool_input": { "argument_keys": ["content", "path"], "targets": { "path": "SKILLME-CANARY-path" } }, "status": "ok" }], "duration_ms": 1234 }
+    },
+    {
+      "name": "additive_and_missing_kwargs",
+      "valid": true,
+      "hook": "on_skill_lifecycle",
+      "kwargs": { "action": "loaded", "skill_name": "third-party-skill", "future_field_from_newer_hermes": "SKILLME-CANARY-result" }
+    },
+    {
+      "name": "non_scalar_listed_kwarg",
+      "valid": false,
+      "hook": "pre_tool_call",
+      "kwargs": { "tool_name": { "nested": "SKILLME-CANARY-args" }, "session_id": ["SKILLME-CANARY-args"], "tool_call_id": "hermes-call-03" }
+    },
+    {
+      "name": "unrecognized_status",
+      "valid": false,
+      "hook": "post_tool_call",
+      "kwargs": { "tool_name": "skillme_fixture_echo", "session_id": "hermes-sess-01", "tool_call_id": "hermes-call-04", "status": "exploded", "duration_ms": "fast" }
+    }
+  ]
+}
