@@ -56,6 +56,8 @@ const VANISHED_REPROBES = 3;
 // Todo caminho tocado precisa resolver dentro da raiz: um link (ou junção)
 // no próprio caminho ou em qualquer ancestral que leve para fora é conflito.
 // Link pendente também é recusado — escrever nele criaria o alvo fora.
+// Devolve o caminho real conferido: o da própria entrada, se existe, ou o do
+// ancestral existente mais próximo.
 export async function assertContained(root, candidate, io, platform = process.platform) {
   let probe = candidate;
   let reprobes = 0;
@@ -85,6 +87,6 @@ export async function assertContained(root, candidate, io, platform = process.pl
       continue;
     }
     if (!isInside(root, real, platform)) throw new ConflictError("target_escape", path.relative(root, candidate));
-    return;
+    return real;
   }
 }

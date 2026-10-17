@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
@@ -8,7 +8,7 @@ import { parseConfig, planJsonInstall, planJsonUninstall } from "../../src/integ
 import { widenedRecipients } from "./helpers/posix-access.mjs";
 import { createNodeIo, runIntegrationCommand } from "../../src/integrations/install/run.mjs";
 import { makeScratch } from "./helpers/cli.mjs";
-import { readClaudeHandlers } from "./helpers/installed-hooks.mjs";
+import { readClaudeHandlers, readCodexHandlers } from "./helpers/installed-hooks.mjs";
 import { sha256File, snapshotTree } from "./helpers/tree.mjs";
 
 const scratches = [];
@@ -603,6 +603,637 @@ test("I4-C29c entrada que some entre o lstat e o realpath da contenção é sond
               manifest: false,
             },
       );
+    }
+  }
+  assert.deepEqual(observed, expected);
+});
+
+// Registro, lock e pasta de estado mexidos por outro programa durante a
+// aplicação — achados R5-F1/F2/F3 da verificação independente round 5. A
+// mutação acontece depois do passo anterior real (rename da configuração;
+// pasta do plugin no Hermes), logo depois de criar o lock ou numa nova
+// tentativa do rename. Os arquivos postos são sintéticos; os próprios são
+// movidos para fora do alvo e conferidos depois. Nada que outro programa pôs ou
+// mudou é apagado ou sobrescrito, e o que já foi aplicado continua reportado.
+const USER_FILE = "dados sintéticos novos do usuário\n";
+const USER_EDIT = "\nedição sintética do usuário\n";
+const OWN_LOCK = `${process.pid}\n`;
+const DIR_LINK = process.platform === "win32" ? "junction" : "dir";
+const OWN_ARTIFACTS = ["__init__.py", "kwargs.json", "plugin.yaml"];
+const CONFIG_OF = { claude: "settings.json", codex: "hooks.json" };
+const simulated = (code) => Object.assign(new Error(`${code} simulado`), { code });
+
+// Symlink de arquivo exige privilégio no Windows: as linhas que o usam ficam
+// de fora com diagnóstico e rodam no Linux/WSL.
+let fileLinks;
+function fileLinksAllowed() {
+  if (fileLinks === undefined) {
+    const dir = makeScratch("sonda link de arquivo");
+    scratches.push(dir);
+    try {
+      symlinkSync(path.join(dir, "inexistente"), path.join(dir, "sonda"), "file");
+      fileLinks = true;
+    } catch (error) {
+      if (error.code !== "EPERM") throw error;
+      fileLinks = false;
+    }
+  }
+  return fileLinks;
+}
+
+function isSymlink(file) {
+  try {
+    return lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+// O que está num caminho, sem seguir link.
+function describeEntry(file) {
+  let stats;
+  try {
+    stats = lstatSync(file);
+  } catch (error) {
+    if (error.code === "ENOENT") return "ausente";
+    throw error;
+  }
+  if (stats.isSymbolicLink()) return existsSync(file) ? `link → ${path.basename(realpathSync(file))}` : "link pendente";
+  if (stats.isDirectory()) return `diretório [${readdirSync(file).sort().map((name) => `${name}: ${describeEntry(path.join(file, name))}`).join("; ")}]`;
+  const text = readFileSync(file, "utf8");
+  if (text === USER_FILE) return "arquivo do usuário intacto";
+  if (text.endsWith(USER_EDIT)) return "edição do usuário intacta";
+  if (text === OWN_LOCK) return "lock próprio";
+  try {
+    const body = JSON.parse(text);
+    if (body.tool === "skill-me") return `registro próprio (${(body.entries ?? body.artifacts).length})`;
+  } catch {
+    // Não é registro.
+  }
+  return "outro conteúdo";
+}
+
+// `label` descreve a linha da tabela; o scratch usa só o que é válido em nome de arquivo.
+function freshTarget(agent, label) {
+  const scratchLabel = `r5 ${label}`.replace(/[\\/:*?"<>|,—]+/g, " ").replace(/\s+/g, " ").slice(0, 60).trim();
+  if (agent === "claude") return target(scratchLabel);
+  const dir = path.join(makeScratch(scratchLabel), agent === "codex" ? ".codex" : "hermes home");
+  scratches.push(path.dirname(dir));
+  mkdirSync(dir);
+  if (agent === "codex") writeFileSync(path.join(dir, "hooks.json"), CODEX_ORIGINAL);
+  return dir;
+}
+
+// Instalado; `partial`: uma entrada própria editada, para que a remoção
+// regrave o registro só com ela.
+async function installedTarget(agent, label, { partial = false } = {}) {
+  const dir = freshTarget(agent, label);
+  assert.equal((await runIntegrationCommand({ command: "install", agent, target: dir, apply: true, io: createNodeIo() })).exitCode, 0, label);
+  if (partial && agent === "hermes") {
+    appendFileSync(path.join(dir, "plugins", "skill-me-observer", "kwargs.json"), "\n");
+  } else if (partial) {
+    const file = path.join(dir, CONFIG_OF[agent]);
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    doc.hooks.PreToolUse.at(-1).hooks[0].timeout = 99;
+    writeFileSync(file, JSON.stringify(doc, null, 2));
+  }
+  return dir;
+}
+
+const partialConflict = (agent) =>
+  agent === "hermes"
+    ? { code: "owned_entry_modified", file: "plugins/skill-me-observer/kwargs.json" }
+    : { code: "owned_entry_modified", file: CONFIG_OF[agent], event: "PreToolUse" };
+
+// Estado do que é próprio no alvo, lido sem confiar no instalador.
+function ownState(agent, dir) {
+  if (agent === "hermes") {
+    const plugin = path.join(dir, "plugins", "skill-me-observer");
+    return existsSync(plugin) ? readdirSync(plugin).sort().join(",") : "sem pasta do plugin";
+  }
+  return `${Object.keys(agent === "claude" ? readClaudeHandlers(dir) : readCodexHandlers(dir)).length} eventos próprios`;
+}
+const ownStateAfter = (agent, op, partial) => {
+  if (agent === "hermes") return op === "install" ? OWN_ARTIFACTS.join(",") : partial ? "kwargs.json" : "sem pasta do plugin";
+  if (op === "install") return `${agent === "claude" ? 8 : 6} eventos próprios`;
+  return partial ? "1 eventos próprios" : "0 eventos próprios";
+};
+const previousStep = (agent) => ({ step: agent === "hermes" ? "artifacts" : "config", state: "done" });
+
+// io real com uma mutação disparada uma vez: depois do passo anterior ao
+// registro (`after: "step"`), logo depois de criar `afterCreate`, ou na primeira
+// tentativa de rename de `deny`, que então falha com EPERM e é repetida.
+function mutatingIo(agent, op, dir, { after, afterCreate, deny, failRenameTo, failUnlink, partial = false }, mutate) {
+  const io = createNodeIo();
+  const probe = { mutated: false, attempts: 0 };
+  const fire = () => {
+    if (probe.mutated || !mutate) return;
+    probe.mutated = true;
+    mutate();
+  };
+  const pluginDir = path.join(dir, "plugins", "skill-me-observer");
+  const stepRenamedTo = agent === "hermes" ? pluginDir : path.join(dir, CONFIG_OF[agent] ?? "");
+  // Remoção Hermes: o passo anterior termina com a exclusão do último artefato do plano.
+  const removalsBeforeManifest = partial ? OWN_ARTIFACTS.length - 1 : OWN_ARTIFACTS.length;
+  let artifactsRemoved = 0;
+  return {
+    probe,
+    io: {
+      ...io,
+      async writeExclusive(file, data, options) {
+        await io.writeExclusive(file, data, options);
+        if (file === afterCreate) fire();
+      },
+      async rename(from, to) {
+        if (from === deny && probe.attempts++ === 0) {
+          fire();
+          throw simulated("EPERM");
+        }
+        if (to === failRenameTo) throw simulated("EIO");
+        await io.rename(from, to);
+        if (after === "step" && !(agent === "hermes" && op === "uninstall") && to === stepRenamedTo) fire();
+      },
+      async unlink(file) {
+        if (file === failUnlink) throw simulated("EACCES");
+        await io.unlink(file);
+        const ownArtifact = path.dirname(file) === pluginDir && OWN_ARTIFACTS.includes(path.basename(file));
+        if (after === "step" && agent === "hermes" && op === "uninstall" && ownArtifact && ++artifactsRemoved === removalsBeforeManifest) fire();
+      },
+    },
+  };
+}
+
+test("I4-C30d registro editado, trocado, removido ou posto durante a aplicação fica intacto e vira conflito", async (t) => {
+  // [agente, operação, remoção parcial, mutação do registro]
+  const rows = [
+    ["claude", "install", false, "posto: arquivo"],
+    ["claude", "install", false, "posto: diretório"],
+    ["claude", "install", false, "posto durante a nova tentativa do rename"],
+    ["claude", "uninstall", false, "editado no lugar"],
+    ["claude", "uninstall", false, "trocado por arquivo"],
+    ["claude", "uninstall", false, "removido"],
+    ["claude", "uninstall", false, "trocado por diretório"],
+    ["claude", "uninstall", false, "trocado por junção/link de diretório"],
+    ["claude", "uninstall", false, "trocado por link de arquivo"],
+    ["claude", "uninstall", true, "trocado por arquivo"],
+    ["claude", "uninstall", true, "trocado durante a nova tentativa do rename"],
+    ["codex", "install", false, "posto: arquivo"],
+    ["codex", "uninstall", false, "trocado por arquivo"],
+    ["hermes", "install", false, "posto: arquivo"],
+    ["hermes", "uninstall", false, "trocado por arquivo"],
+    ["hermes", "uninstall", true, "trocado por arquivo"],
+    ["claude", "install", false, "controle: nada muda"],
+    ["claude", "install", false, "controle: rename negado uma vez, nada muda"],
+    ["claude", "uninstall", false, "controle: nada muda"],
+    ["claude", "uninstall", true, "controle: nada muda"],
+    ["hermes", "uninstall", true, "controle: nada muda"],
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [agent, op, partial, mutation] of rows) {
+    const label = `${agent} ${op}${partial ? " parcial" : ""} — ${mutation}`;
+    if (mutation.includes("link de arquivo") && !fileLinksAllowed()) {
+      t.diagnostic(`${label}: não executado — symlink de arquivo exige privilégio neste Windows (EPERM); coberto no Linux/WSL`);
+      continue;
+    }
+    const dir = op === "install" ? freshTarget(agent, label) : await installedTarget(agent, label, { partial });
+    const scratch = path.dirname(dir);
+    const manifestRel = `.skill-me/${agent}-install.json`;
+    const manifest = path.join(dir, ".skill-me", `${agent}-install.json`);
+    const manifestBefore = existsSync(manifest) ? readFileSync(manifest) : null;
+    const moved = path.join(scratch, "registro próprio movido");
+    const outside = path.join(scratch, "pasta externa");
+    const outsideFile = path.join(scratch, "arquivo externo.txt");
+    const moveOwn = () => renameSync(manifest, moved);
+    const mutations = {
+      "posto: arquivo": () => writeFileSync(manifest, USER_FILE),
+      "posto: diretório": () => {
+        mkdirSync(manifest);
+        writeFileSync(path.join(manifest, "nota.txt"), USER_FILE);
+      },
+      "posto durante a nova tentativa do rename": () => writeFileSync(manifest, USER_FILE),
+      "editado no lugar": () => appendFileSync(manifest, USER_EDIT),
+      "trocado por arquivo": () => {
+        moveOwn();
+        writeFileSync(manifest, USER_FILE);
+      },
+      removido: moveOwn,
+      "trocado por diretório": () => {
+        moveOwn();
+        mkdirSync(manifest);
+        writeFileSync(path.join(manifest, "nota.txt"), USER_FILE);
+      },
+      "trocado por junção/link de diretório": () => {
+        moveOwn();
+        mkdirSync(outside);
+        writeFileSync(path.join(outside, "nota.txt"), USER_FILE);
+        symlinkSync(outside, manifest, DIR_LINK);
+      },
+      "trocado por link de arquivo": () => {
+        moveOwn();
+        writeFileSync(outsideFile, USER_FILE);
+        symlinkSync(outsideFile, manifest, "file");
+      },
+      "trocado durante a nova tentativa do rename": () => {
+        moveOwn();
+        writeFileSync(manifest, USER_FILE);
+      },
+    };
+    const control = mutation.startsWith("controle");
+    const duringRetry = mutation.includes("nova tentativa") || mutation.includes("negado uma vez");
+    const { io, probe } = mutatingIo(agent, op, dir, { after: duringRetry ? undefined : "step", deny: duringRetry ? `${manifest}.skill-me-tmp` : undefined, partial }, mutations[mutation]);
+    const result = await runIntegrationCommand({ command: op, agent, target: dir, apply: true, io });
+    observed.push({
+      label,
+      mutated: probe.mutated,
+      renameAttempts: probe.attempts,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      steps: result.steps,
+      atManifest: describeEntry(manifest),
+      ownMoved: existsSync(moved) ? (readFileSync(moved).equals(manifestBefore) ? "registro próprio intacto" : "alterado") : "—",
+      external: existsSync(outside) ? describeEntry(outside) : existsSync(outsideFile) ? describeEntry(outsideFile) : "—",
+      ownState: ownState(agent, dir),
+      tempLeft: existsSync(`${manifest}.skill-me-tmp`),
+      lockReleased: !existsSync(path.join(dir, ".skill-me", `${agent}.lock`)),
+    });
+    const planConflicts = partial ? [partialConflict(agent)] : [];
+    const movedOwn = ["trocado por arquivo", "removido", "trocado por diretório", "trocado por junção/link de diretório", "trocado por link de arquivo", "trocado durante a nova tentativa do rename"].includes(mutation);
+    const common = {
+      label,
+      mutated: !control,
+      renameAttempts: mutation === "controle: rename negado uma vez, nada muda" ? 2 : duringRetry ? 1 : 0,
+      ownMoved: movedOwn ? "registro próprio intacto" : "—",
+      external: { "trocado por junção/link de diretório": "diretório [nota.txt: arquivo do usuário intacto]", "trocado por link de arquivo": "arquivo do usuário intacto" }[mutation] ?? "—",
+      ownState: ownStateAfter(agent, op, partial),
+      tempLeft: false,
+      lockReleased: true,
+    };
+    if (control) {
+      const ownCount = agent === "hermes" ? (partial ? 1 : 3) : partial ? 1 : agent === "claude" ? 8 : 6;
+      expected.push({
+        ...common,
+        exitCode: partial ? 4 : 0,
+        status: partial ? "conflict" : "applied",
+        applied: true,
+        conflicts: planConflicts,
+        steps: [previousStep(agent), { step: "manifest", state: "done" }],
+        atManifest: op === "uninstall" && !partial ? "ausente" : `registro próprio (${ownCount})`,
+      });
+      continue;
+    }
+    expected.push({
+      ...common,
+      exitCode: 4,
+      status: "conflict",
+      applied: false,
+      conflicts: [...planConflicts, { code: "config_changed_during_apply", file: manifestRel }],
+      steps: [previousStep(agent)],
+      atManifest: {
+        "posto: diretório": "diretório [nota.txt: arquivo do usuário intacto]",
+        "trocado por diretório": "diretório [nota.txt: arquivo do usuário intacto]",
+        "editado no lugar": "edição do usuário intacta",
+        removido: "ausente",
+        "trocado por junção/link de diretório": "link → pasta externa",
+        "trocado por link de arquivo": "link → arquivo externo.txt",
+      }[mutation] ?? "arquivo do usuário intacto",
+    });
+  }
+  assert.deepEqual(observed, expected);
+});
+
+test("I4-C31b lock ausente, editado ou trocado durante a aplicação fica e é reportado sem esconder o resultado", async (t) => {
+  // O lock só sai pela mesma pasta de estado e enquanto for o arquivo regular
+  // com os bytes que esta execução gravou — em sucesso, conflito ou erro do
+  // comando. A mutação acontece logo depois de criado o primeiro temporário da
+  // aplicação (configuração; artefato no Hermes).
+  const lockMutations = ["controle: nada muda", "removido", "editado no lugar", "trocado por arquivo", "trocado por diretório", "trocado por junção/link de diretório", "trocado por link de arquivo"];
+  const rows = [
+    ...["sucesso", "conflito", "erro"].flatMap((outcome) => lockMutations.map((mutation) => ["claude", outcome, mutation])),
+    ["claude", "sucesso", "unlink do lock negado (EACCES)"],
+    ["codex", "sucesso", "trocado por arquivo"],
+    ["hermes", "sucesso", "trocado por arquivo"],
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [agent, outcome, mutation] of rows) {
+    const label = `${agent} install, ${outcome} — ${mutation}`;
+    if (mutation.includes("link de arquivo") && !fileLinksAllowed()) {
+      t.diagnostic(`${label}: não executado — symlink de arquivo exige privilégio neste Windows (EPERM); coberto no Linux/WSL`);
+      continue;
+    }
+    const dir = freshTarget(agent, label);
+    const scratch = path.dirname(dir);
+    const lockRel = `.skill-me/${agent}.lock`;
+    const lock = path.join(dir, ".skill-me", `${agent}.lock`);
+    const moved = path.join(scratch, "lock próprio movido");
+    const outside = path.join(scratch, "pasta externa");
+    const outsideFile = path.join(scratch, "arquivo externo.txt");
+    const config = agent === "hermes" ? null : path.join(dir, CONFIG_OF[agent]);
+    const external = JSON.stringify({ env: { A: "editado por outro editor" } }, null, 2);
+    const firstTemp = agent === "hermes" ? path.join(dir, "plugins", ".skill-me-observer.skill-me-tmp", "__init__.py") : `${config}.skill-me-tmp`;
+    const moveOwn = () => renameSync(lock, moved);
+    const mutateLock = {
+      removido: moveOwn,
+      "editado no lugar": () => appendFileSync(lock, USER_EDIT),
+      "trocado por arquivo": () => {
+        moveOwn();
+        writeFileSync(lock, USER_FILE);
+      },
+      "trocado por diretório": () => {
+        moveOwn();
+        mkdirSync(lock);
+        writeFileSync(path.join(lock, "nota.txt"), USER_FILE);
+      },
+      "trocado por junção/link de diretório": () => {
+        moveOwn();
+        mkdirSync(outside);
+        writeFileSync(path.join(outside, "nota.txt"), USER_FILE);
+        symlinkSync(outside, lock, DIR_LINK);
+      },
+      "trocado por link de arquivo": () => {
+        moveOwn();
+        writeFileSync(outsideFile, USER_FILE);
+        symlinkSync(outsideFile, lock, "file");
+      },
+    }[mutation];
+    const { io, probe } = mutatingIo(
+      agent,
+      "install",
+      dir,
+      {
+        afterCreate: firstTemp,
+        failRenameTo: outcome === "erro" ? path.join(dir, ".skill-me", `${agent}-install.json`) : undefined,
+        failUnlink: mutation.includes("EACCES") ? lock : undefined,
+      },
+      () => {
+        mutateLock?.();
+        if (outcome === "conflito") writeFileSync(config, external);
+      },
+    );
+    const result = await runIntegrationCommand({ command: "install", agent, target: dir, apply: true, io });
+    observed.push({
+      label,
+      mutated: probe.mutated,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      atLock: describeEntry(lock),
+      ownLockMoved: existsSync(moved) ? describeEntry(moved) : "—",
+      external: existsSync(outside) ? describeEntry(outside) : existsSync(outsideFile) ? describeEntry(outsideFile) : "—",
+      config: config === null ? ownState(agent, dir) : readFileSync(config, "utf8") === external ? "edição externa preservada" : ownState(agent, dir),
+      // A pasta de estado só sai vazia depois de liberado o nosso lock.
+      stateDirLeft: existsSync(path.join(dir, ".skill-me")),
+    });
+    const control = mutation.startsWith("controle");
+    const kept = control ? [] : [{ code: "config_changed_during_apply", file: lockRel }];
+    const done = [previousStep(agent), { step: "manifest", state: "done" }];
+    const byOutcome = {
+      sucesso: { exitCode: control ? 0 : 4, status: control ? "applied" : "conflict", applied: true, conflicts: kept, errors: [], steps: done },
+      conflito: { exitCode: 4, status: "conflict", applied: false, conflicts: [{ code: "config_changed_during_apply", file: CONFIG_OF[agent] }, ...kept], errors: [], steps: [] },
+      erro: { exitCode: 5, status: "incomplete", applied: false, conflicts: kept, errors: [{ code: "EIO" }], steps: [previousStep(agent), { step: "manifest", state: "failed" }] },
+    }[outcome];
+    const movedOwn = ["removido", "trocado por arquivo", "trocado por diretório", "trocado por junção/link de diretório", "trocado por link de arquivo"].includes(mutation);
+    const deniedUnlink = mutation.includes("EACCES");
+    expected.push({
+      label,
+      mutated: true,
+      ...byOutcome,
+      ...(deniedUnlink ? { exitCode: 5, status: "incomplete", conflicts: [], errors: [{ code: "EACCES" }], steps: [...done, { step: "lock", state: "failed" }] } : {}),
+      atLock: deniedUnlink
+        ? "lock próprio"
+        : {
+            "controle: nada muda": "ausente",
+            removido: "ausente",
+            "editado no lugar": "edição do usuário intacta",
+            "trocado por diretório": "diretório [nota.txt: arquivo do usuário intacto]",
+            "trocado por junção/link de diretório": "link → pasta externa",
+            "trocado por link de arquivo": "link → arquivo externo.txt",
+          }[mutation] ?? "arquivo do usuário intacto",
+      ownLockMoved: movedOwn ? "lock próprio" : "—",
+      external: { "trocado por junção/link de diretório": "diretório [nota.txt: arquivo do usuário intacto]", "trocado por link de arquivo": "arquivo do usuário intacto" }[mutation] ?? "—",
+      config: outcome === "conflito" ? "edição externa preservada" : ownStateAfter(agent, "install", false),
+      // Com o registro gravado (sucesso) a pasta fica; sem ele, sai só vazia e com o lock liberado.
+      stateDirLeft: outcome === "sucesso" || !control,
+    });
+  }
+  assert.deepEqual(observed, expected);
+});
+
+test("I4-C27b pasta de estado trocada durante a aplicação não leva leitura, escrita ou exclusão para outro lugar", async () => {
+  // Depois do passo anterior ao registro, ou logo depois de criado o lock (antes
+  // da leitura sob ele), `.skill-me` é movida para fora do alvo e no lugar fica
+  // junção (Windows) / symlink (POSIX) para fora do alvo, para outra pasta do
+  // alvo, ou outro diretório real — os três com arquivos sintéticos de mesmo
+  // nome que o registro e o lock. Na variante da própria pasta movida, o link
+  // aponta para ela: lá o registro e o lock têm os nossos bytes, e só a
+  // conferência da pasta impede apagá-los (ou criar o temporário) fora do alvo.
+  // Controle: junção para dentro do alvo posta antes do comando continua aceita
+  // (I4-C34d).
+  const rows = [
+    ["claude", "uninstall", false, "depois da configuração", "junção/link para fora do alvo"],
+    ["claude", "uninstall", true, "depois da configuração", "junção/link para fora do alvo"],
+    ["claude", "install", false, "depois da configuração", "junção/link para fora do alvo"],
+    ["claude", "uninstall", false, "depois da configuração", "junção/link para outra pasta do alvo"],
+    ["claude", "uninstall", false, "depois da configuração", "outro diretório real no mesmo caminho"],
+    ["claude", "install", false, "depois da configuração", "outro diretório real no mesmo caminho"],
+    ["claude", "uninstall", false, "logo depois de criar o lock", "junção/link para fora do alvo"],
+    ["claude", "uninstall", false, "depois da configuração", "junção/link para a própria pasta movida para fora do alvo"],
+    ["claude", "install", false, "depois da configuração", "junção/link para a própria pasta movida para fora do alvo"],
+    ["claude", "uninstall", true, "durante a nova tentativa do rename", "junção/link para a própria pasta movida para fora do alvo"],
+    ["codex", "install", false, "depois da configuração", "junção/link para fora do alvo"],
+    ["hermes", "uninstall", false, "depois dos artefatos", "junção/link para fora do alvo"],
+    ["hermes", "install", false, "depois dos artefatos", "junção/link para fora do alvo"],
+    ["hermes", "uninstall", false, "logo depois de criar o lock", "junção/link para fora do alvo"],
+    ["claude", "uninstall", false, "antes do comando", "controle: junção/link para outra pasta do alvo"],
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [agent, op, partial, when, swap] of rows) {
+    const label = `${agent} ${op}${partial ? " parcial" : ""}, ${when} — ${swap}`;
+    const dir = op === "install" ? freshTarget(agent, label) : await installedTarget(agent, label, { partial });
+    const scratch = path.dirname(dir);
+    const stateDir = path.join(dir, ".skill-me");
+    const lock = path.join(stateDir, `${agent}.lock`);
+    const moved = path.join(scratch, "pasta de estado própria movida");
+    // Pasta com os arquivos sintéticos de mesmo nome (`null`: a linha não tem).
+    const userDirs = {
+      "junção/link para fora do alvo": path.join(scratch, "pasta externa"),
+      "outro diretório real no mesmo caminho": stateDir,
+      "junção/link para a própria pasta movida para fora do alvo": null,
+    };
+    const userDir = Object.hasOwn(userDirs, swap) ? userDirs[swap] : path.join(dir, "pasta do usuário");
+    const putUserFiles = (where) => {
+      mkdirSync(where);
+      writeFileSync(path.join(where, `${agent}-install.json`), USER_FILE);
+      writeFileSync(path.join(where, `${agent}.lock`), USER_FILE);
+    };
+    const ownDirLinked = swap === "junção/link para a própria pasta movida para fora do alvo";
+    const doSwap = () => {
+      renameSync(stateDir, moved);
+      if (ownDirLinked) {
+        symlinkSync(moved, stateDir, DIR_LINK);
+        return;
+      }
+      if (swap === "outro diretório real no mesmo caminho") {
+        putUserFiles(stateDir);
+        return;
+      }
+      putUserFiles(userDir);
+      symlinkSync(userDir, stateDir, DIR_LINK);
+    };
+    const control = swap.startsWith("controle");
+    if (control) {
+      // Antes do comando: a pasta própria vira `pasta do usuário` (só com o
+      // registro, sem arquivos alheios) e o caminho fica com uma junção para ela.
+      renameSync(stateDir, userDir);
+      symlinkSync(userDir, stateDir, DIR_LINK);
+    }
+    const beforeRead = when === "logo depois de criar o lock";
+    const duringRetry = when === "durante a nova tentativa do rename";
+    const { io, probe } = mutatingIo(
+      agent,
+      op,
+      dir,
+      {
+        after: beforeRead || duringRetry ? undefined : "step",
+        afterCreate: beforeRead ? lock : undefined,
+        deny: duringRetry ? path.join(stateDir, `${agent}-install.json.skill-me-tmp`) : undefined,
+        partial,
+      },
+      control ? undefined : doSwap,
+    );
+    const result = await runIntegrationCommand({ command: op, agent, target: dir, apply: true, io });
+    const stateDirStats = existsSync(stateDir) || isSymlink(stateDir) ? lstatSync(stateDir) : null;
+    observed.push({
+      label,
+      mutated: probe.mutated,
+      exitCode: result.exitCode,
+      status: result.status,
+      conflicts: result.conflicts,
+      steps: result.steps,
+      userFiles: userDir === null ? "—" : describeEntry(userDir),
+      atStateDir: stateDirStats === null ? "ausente" : stateDirStats.isSymbolicLink() ? describeEntry(stateDir) : stateDirStats.isDirectory() ? "diretório real" : "outro",
+      ownMoved: existsSync(moved) ? describeEntry(moved) : "—",
+      ownState: ownState(agent, dir),
+    });
+    const manifestName = `${agent}-install.json`;
+    const lockName = `${agent}.lock`;
+    if (control) {
+      expected.push({
+        label,
+        mutated: false,
+        exitCode: 0,
+        status: "applied",
+        conflicts: [],
+        steps: [previousStep(agent), { step: "manifest", state: "done" }],
+        userFiles: "diretório []",
+        atStateDir: "link → pasta do usuário",
+        ownMoved: "—",
+        ownState: ownStateAfter(agent, op, partial),
+      });
+      continue;
+    }
+    const swapConflict = {
+      "junção/link para fora do alvo": { code: "target_escape", file: ".skill-me" },
+      "junção/link para a própria pasta movida para fora do alvo": { code: "target_escape", file: ".skill-me" },
+      "junção/link para outra pasta do alvo": { code: "config_changed_during_apply", file: ".skill-me" },
+      "outro diretório real no mesmo caminho": { code: "config_changed_during_apply", file: `.skill-me/${manifestName}` },
+    }[swap];
+    // O que foi movido: o registro (se já existia), o temporário já criado
+    // quando a troca acontece durante a nova tentativa — fica lá, nada é apagado
+    // através da pasta trocada — e o lock desta execução.
+    const ownEntries = [
+      ...(op === "uninstall" ? [`${manifestName}: registro próprio (${agent === "hermes" ? 3 : agent === "claude" ? 8 : 6})`] : []),
+      ...(duringRetry ? [`${manifestName}.skill-me-tmp: registro próprio (1)`] : []),
+      `${lockName}: lock próprio`,
+    ];
+    expected.push({
+      label,
+      mutated: true,
+      exitCode: 4,
+      status: "conflict",
+      conflicts: [...(partial ? [partialConflict(agent)] : []), swapConflict, { code: "config_changed_during_apply", file: `.skill-me/${lockName}` }],
+      steps: beforeRead ? [] : [previousStep(agent)],
+      userFiles: userDir === null ? "—" : `diretório [${manifestName}: arquivo do usuário intacto; ${lockName}: arquivo do usuário intacto]`,
+      atStateDir: swap === "outro diretório real no mesmo caminho" ? "diretório real" : `link → ${path.basename(userDir ?? moved)}`,
+      ownMoved: `diretório [${ownEntries.join("; ")}]`,
+      ownState: beforeRead ? ownStateAfter(agent, "install", false) : ownStateAfter(agent, op, partial),
+    });
+  }
+  assert.deepEqual(observed, expected);
+});
+
+test("I4-C30e registro que não é arquivo regular não é lido nem apagado: prévia e aplicação recusam com 4", async (t) => {
+  // Já presente antes do comando no caminho do registro: diretório, junção/link
+  // de diretório ou link de arquivo para uma cópia exata do registro próprio —
+  // os links apontam para dentro do alvo (para fora já é `target_escape`, I4-C27).
+  const rows = [
+    ["claude", "uninstall", "diretório"],
+    ["claude", "uninstall", "junção/link de diretório"],
+    ["claude", "uninstall", "link de arquivo para cópia do registro"],
+    ["claude", "install", "diretório"],
+    ["codex", "uninstall", "diretório"],
+    ["hermes", "uninstall", "junção/link de diretório"],
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [agent, op, kind] of rows) {
+    const label = `${agent} ${op} — ${kind}`;
+    if (kind.startsWith("link de arquivo") && !fileLinksAllowed()) {
+      t.diagnostic(`${label}: não executado — symlink de arquivo exige privilégio neste Windows (EPERM); coberto no Linux/WSL`);
+      continue;
+    }
+    const dir = op === "install" ? freshTarget(agent, label) : await installedTarget(agent, label);
+    const scratch = path.dirname(dir);
+    const manifest = path.join(dir, ".skill-me", `${agent}-install.json`);
+    const userDir = path.join(dir, "pasta do usuário");
+    mkdirSync(path.dirname(manifest), { recursive: true });
+    if (existsSync(manifest)) renameSync(manifest, path.join(scratch, "registro próprio movido"));
+    if (kind === "diretório") {
+      mkdirSync(manifest);
+      writeFileSync(path.join(manifest, "nota.txt"), USER_FILE);
+    } else if (kind === "junção/link de diretório") {
+      mkdirSync(userDir);
+      writeFileSync(path.join(userDir, "nota.txt"), USER_FILE);
+      symlinkSync(userDir, manifest, DIR_LINK);
+    } else {
+      copyFileSync(path.join(scratch, "registro próprio movido"), path.join(dir, "cópia do registro.json"));
+      symlinkSync(path.join(dir, "cópia do registro.json"), manifest, "file");
+    }
+    // Árvore inteira do alvo, com mtime e sem seguir links: inclui a pasta e a
+    // cópia apontadas pelos links.
+    const before = snapshotTree(dir);
+    for (const apply of [false, true]) {
+      const result = await runIntegrationCommand({ command: op, agent, target: dir, apply, io: createNodeIo() });
+      observed.push({
+        label,
+        apply,
+        exitCode: result.exitCode,
+        status: result.status,
+        conflicts: result.conflicts,
+        changes: result.changes,
+        atManifest: describeEntry(manifest),
+        tree: isDeepStrictEqual(snapshotTree(dir), before) ? "alvo inalterado" : "alterado",
+      });
+      expected.push({
+        label,
+        apply,
+        exitCode: 4,
+        status: "conflict",
+        conflicts: [{ code: "foreign_artifact", file: `.skill-me/${agent}-install.json` }],
+        changes: [],
+        atManifest: {
+          diretório: "diretório [nota.txt: arquivo do usuário intacto]",
+          "junção/link de diretório": "link → pasta do usuário",
+        }[kind] ?? "link → cópia do registro.json",
+        tree: "alvo inalterado",
+      });
     }
   }
   assert.deepEqual(observed, expected);

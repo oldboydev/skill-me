@@ -143,26 +143,111 @@ async function holdsExactly(io, file, content, hash) {
   return sha256(await io.readBytes(file)) === hash;
 }
 
-async function withLock(io, root, agent, fn) {
+// O arquivo que criamos (temporário, lock) ou lemos sob o lock (registro)
+// continua o mesmo enquanto for o arquivo regular com esses bytes; editado,
+// trocado (arquivo, diretório, link) ou removido por outro, não é.
+async function stillHolds(io, file, bytes) {
+  try {
+    return await holdsExactly(io, file, bytes, sha256(bytes));
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+// Caminho real da pasta de estado, contida no alvo, enquanto ela for um
+// diretório (junção/link que resolve dentro do alvo conta, como na leitura).
+async function stateDirRealPath(io, root, platform) {
+  const dir = path.join(root, STATE_DIR);
+  const real = await assertContained(root, dir, io, platform);
+  let stats = null;
+  try {
+    stats = await io.stat(dir);
+  } catch (error) {
+    if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error;
+  }
+  if (!stats?.isDirectory()) throw new ConflictError("config_changed_during_apply", STATE_DIR);
+  return real;
+}
+
+// Só sai o lock que esta execução criou: pela mesma pasta de estado e enquanto
+// for o arquivo regular com os bytes gravados. Ausente, editado, trocado ou
+// com a pasta trocada, ele não é comprovadamente nosso e fica.
+async function releaseLock(io, root, lockPath, lockText, stateDirUnchanged) {
+  const kept = new ConflictError("config_changed_during_apply", rel(root, lockPath));
+  try {
+    await stateDirUnchanged();
+  } catch (error) {
+    throw error instanceof ConflictError ? kept : error;
+  }
+  if (!(await stillHolds(io, lockPath, Buffer.from(lockText, "utf8")))) throw kept;
+  try {
+    await io.unlink(lockPath);
+  } catch (error) {
+    throw error.code === "ENOENT" ? kept : error;
+  }
+}
+
+// O lock que ficou não esconde o resultado do comando: o conflito dele se soma
+// (0 → 4 com passos e `applied` mantidos; conflito → os dois; 5 continua 5) e
+// uma falha de E/S ao conferi-lo ou apagá-lo vira passo `lock` falho e 5 —
+// antes ela era engolida e o comando dizia 0 com o lock bloqueando os próximos.
+// Devolve a falha a propagar.
+function withLockKept(result, failure, error) {
+  if (error instanceof ConflictError) {
+    if (failure instanceof ConflictError) {
+      // Mesmo efeito do `catch` de runIntegrationCommand (4), com o conflito
+      // principal antes do conflito do lock.
+      result.conflicts.push(failure.conflict);
+      failure = null;
+    }
+    result.conflicts.push(error.conflict);
+    return failure;
+  }
+  result.steps.push({ step: "lock", state: "failed" });
+  if (failure instanceof ConflictError) result.conflicts.push(failure.conflict);
+  else if (failure instanceof InvalidConfigError) result.errors.push(failure.error);
+  else if (failure !== null) return failure;
+  return new IncompleteError(error);
+}
+
+// Lock exclusivo do agente no alvo. O caminho real da pasta de estado,
+// conferido antes de criar o lock, vira a referência da execução: `fn` recebe
+// a conferência e a usa antes de ler o registro e de cada efeito nele. Trocada
+// depois por junção/link (para fora ou para outra pasta do alvo), o mesmo nome
+// alcançaria arquivos de outro lugar.
+async function withLock(io, root, agent, platform, result, fn) {
   const stateDir = path.join(root, STATE_DIR);
   const lockPath = path.join(stateDir, `${agent}.lock`);
+  const lockText = `${process.pid}\n`;
   try {
     await io.mkdir(stateDir);
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
   }
+  const stateDirReal = await stateDirRealPath(io, root, platform);
+  const stateDirUnchanged = async () => {
+    if ((await stateDirRealPath(io, root, platform)) !== stateDirReal) throw new ConflictError("config_changed_during_apply", STATE_DIR);
+  };
   try {
-    await io.writeExclusive(lockPath, `${process.pid}\n`);
+    await io.writeExclusive(lockPath, lockText);
   } catch (error) {
     if (error.code === "EEXIST") throw new ConflictError("lock_present", rel(root, lockPath));
     throw error;
   }
+  let failure = null;
   try {
-    return await fn();
-  } finally {
-    await io.unlink(lockPath).catch(() => {});
-    await removeDirIfEmpty(io, stateDir);
+    await fn(stateDirUnchanged);
+  } catch (error) {
+    failure = error;
   }
+  try {
+    await releaseLock(io, root, lockPath, lockText, stateDirUnchanged);
+    await removeDirIfEmpty(io, stateDir);
+  } catch (error) {
+    failure = withLockKept(result, failure, error);
+  }
+  if (failure) throw failure;
 }
 
 const sameAccess = (a, b) => a.mode === b.mode && a.uid === b.uid && a.gid === b.gid;
@@ -178,17 +263,6 @@ async function accessBeforeReplace(io, root, file) {
   }
 }
 
-// O temporário que criamos continua nosso enquanto for o arquivo regular com
-// os bytes gravados; editado, trocado ou removido por outro, não é nosso.
-async function isOwnTemp(io, tmp, bytes) {
-  try {
-    return await holdsExactly(io, tmp, bytes, sha256(bytes));
-  } catch (error) {
-    if (error.code === "ENOENT") return false;
-    throw error;
-  }
-}
-
 // Substituição negada enquanto outro processo mantém o destino aberto (no
 // Windows: o agente, um editor, antivírus, a prévia de outro skill-me): novas
 // tentativas curtas. No POSIX esses códigos são permissão real e só atrasam o 5.
@@ -200,10 +274,13 @@ const RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80, 160, 320];
 // Antes de cada tentativa de rename, o temporário precisa continuar nosso
 // (senão seria promovido conteúdo que não gravamos) e as conferências do
 // chamador precisam passar — também depois de uma espera. Em qualquer falha
-// sai só o temporário que continua nosso.
-async function writeViaTemp(io, root, file, text, { like = null, beforeRename = async () => {} } = {}) {
+// sai só o temporário que continua nosso. `dirUnchanged` confere o diretório
+// do temporário antes de criá-lo, de cada tentativa e da limpeza: através de
+// uma pasta trocada nada é criado, renomeado nem apagado.
+async function writeViaTemp(io, root, file, text, { like = null, dirUnchanged = async () => {}, beforeRename = async () => {} } = {}) {
   const tmp = file + TMP_SUFFIX;
   const bytes = Buffer.from(text, "utf8");
+  await dirUnchanged();
   try {
     await io.writeExclusive(tmp, text, { like });
   } catch (error) {
@@ -212,7 +289,8 @@ async function writeViaTemp(io, root, file, text, { like = null, beforeRename = 
   }
   try {
     for (let retry = 0; ; retry += 1) {
-      if (!(await isOwnTemp(io, tmp, bytes))) throw new ConflictError("config_changed_during_apply", rel(root, tmp));
+      await dirUnchanged();
+      if (!(await stillHolds(io, tmp, bytes))) throw new ConflictError("config_changed_during_apply", rel(root, tmp));
       await beforeRename();
       try {
         await io.rename(tmp, file);
@@ -223,7 +301,11 @@ async function writeViaTemp(io, root, file, text, { like = null, beforeRename = 
       await sleep(RENAME_RETRY_DELAYS_MS[retry]);
     }
   } catch (error) {
-    if (await isOwnTemp(io, tmp, bytes).catch(() => false)) await io.unlink(tmp).catch(() => {});
+    const sameDir = await dirUnchanged().then(
+      () => true,
+      () => false,
+    );
+    if (sameDir && (await stillHolds(io, tmp, bytes).catch(() => false))) await io.unlink(tmp).catch(() => {});
     throw error;
   }
 }
@@ -253,14 +335,48 @@ async function deleteChecked(io, root, file, expectedHash) {
   await io.unlink(file);
 }
 
-async function writeManifest(io, root, agent, body) {
-  await writeViaTemp(io, root, manifestPath(root, agent), serializeManifest(agent, body));
+// O registro é nosso só como arquivo regular: link (mesmo para um registro),
+// junção ou diretório no caminho é alheio, nada é lido através dele e prévia e
+// aplicação recusam antes de qualquer mutação — a aplicação confere o mesmo
+// tipo antes de substituí-lo ou apagá-lo.
+async function readManifestText(io, root, agent) {
+  const file = manifestPath(root, agent);
+  // Sem entrada (ou caminho ilegível), o leitor da configuração decide, como antes.
+  const stats = await io.lstat(file).catch(() => null);
+  if (stats && !stats.isFile()) throw new ConflictError("foreign_artifact", manifestRelPath(agent));
+  return readOptional(io, root, file);
 }
 
-async function deleteManifest(io, root, agent) {
-  await io.unlink(manifestPath(root, agent)).catch((error) => {
-    if (error.code !== "ENOENT") throw error;
+// O registro que decidiu o plano é o que pode ser substituído ou apagado:
+// lido ausente, o caminho continua sem nenhuma entrada; lido presente, continua
+// o arquivo regular com os mesmos bytes. Senão — editado, trocado, removido ou
+// posto por outro depois da leitura — fica, e a operação para em conflito com
+// os passos anteriores já reportados (sem desfazer nada).
+async function assertManifestUnchanged(io, root, file, readText) {
+  const unchanged = readText === null ? (await entryKind(io, file)) === "absent" : await stillHolds(io, file, Buffer.from(readText, "utf8"));
+  if (!unchanged) throw new ConflictError("config_changed_during_apply", rel(root, file));
+}
+
+// Conferido antes de cada tentativa de rename, inclusive as novas tentativas.
+async function writeManifest(io, root, agent, body, readText, stateDirUnchanged) {
+  const file = manifestPath(root, agent);
+  await writeViaTemp(io, root, file, serializeManifest(agent, body), {
+    dirUnchanged: stateDirUnchanged,
+    beforeRename: () => assertManifestUnchanged(io, root, file, readText),
   });
+}
+
+// Ausente na hora de apagar também é conflito: sob o lock só outro programa o
+// tiraria, e o 0 esconderia a mudança na pasta de estado.
+async function deleteManifest(io, root, agent, readText, stateDirUnchanged) {
+  const file = manifestPath(root, agent);
+  await stateDirUnchanged();
+  await assertManifestUnchanged(io, root, file, readText);
+  try {
+    await io.unlink(file);
+  } catch (error) {
+    throw error.code === "ENOENT" ? new ConflictError("config_changed_during_apply", rel(root, file)) : error;
+  }
 }
 
 // Executa um passo de escrita registrando seu estado; falha de E/S vira
@@ -276,10 +392,12 @@ async function step(result, name, fn) {
   }
 }
 
-async function readJsonState(io, root, agent, platform) {
+// `beforeManifestRead`: sob o lock, a conferência da pasta de estado.
+async function readJsonState(io, root, agent, platform, beforeManifestRead = async () => {}) {
   const configFile = path.join(root, CONFIG_FILE[agent]);
   const configText = await readOptional(io, root, configFile);
-  const manifestText = await readOptional(io, root, manifestPath(root, agent));
+  await beforeManifestRead();
+  const manifestText = await readManifestText(io, root, agent);
   return {
     parsed: configText === null ? null : parseConfig(agent, configText, platform),
     configHash: configText === null ? null : sha256(Buffer.from(configText, "utf8")),
@@ -338,8 +456,8 @@ async function runJsonAgent({ op, agent, root, apply, io, ctx, platform, result 
   result.conflicts = plan.conflicts;
   const needsWrite = (p) => p.configChanged || p.manifestAction !== null;
   if (!apply || !needsWrite(plan)) return { wrote: false };
-  await withLock(io, root, agent, async () => {
-    state = await readJsonState(io, root, agent, platform);
+  await withLock(io, root, agent, platform, result, async (stateDirUnchanged) => {
+    state = await readJsonState(io, root, agent, platform, stateDirUnchanged);
     plan = planJson(op, agent, state, ctx);
     result.changes = plan.changes;
     result.conflicts = plan.conflicts;
@@ -351,7 +469,9 @@ async function runJsonAgent({ op, agent, root, apply, io, ctx, platform, result 
     }
     if (plan.manifestAction) {
       await step(result, "manifest", () =>
-        plan.manifestAction === "delete" ? deleteManifest(io, root, agent) : writeManifest(io, root, agent, plan.manifestBody),
+        plan.manifestAction === "delete"
+          ? deleteManifest(io, root, agent, state.manifestText, stateDirUnchanged)
+          : writeManifest(io, root, agent, plan.manifestBody, state.manifestText, stateDirUnchanged),
       );
     }
     result.applied = true;
@@ -422,8 +542,10 @@ async function ownPluginDirExists(io, root) {
   return kind === "dir";
 }
 
-async function readHermesState(io, root, platform, { op, artifacts }) {
-  const manifestText = await readOptional(io, root, manifestPath(root, "hermes"));
+// `beforeManifestRead`: sob o lock, a conferência da pasta de estado.
+async function readHermesState(io, root, platform, { op, artifacts, beforeManifestRead = async () => {} }) {
+  await beforeManifestRead();
+  const manifestText = await readManifestText(io, root, "hermes");
   const pluginsDir = path.join(root, "plugins");
   const pluginDir = path.join(root, PLUGIN_REL_DIR);
   const exists = async (dir) => io.stat(dir).then((s) => s.isDirectory(), () => false);
@@ -668,8 +790,8 @@ async function runHermesAgent({ op, root, apply, io, platform, result }) {
   // O plano é a fonte do que a aplicação apaga: o que a prévia não lista não sai.
   const needsWrite = (p) => p.writeArtifacts || (p.removals?.length ?? 0) > 0 || (p.caches?.length ?? 0) > 0 || p.manifestAction !== null;
   if (!apply || !needsWrite(plan)) return;
-  await withLock(io, root, "hermes", async () => {
-    state = await readHermesState(io, root, platform, { op, artifacts });
+  await withLock(io, root, "hermes", platform, result, async (stateDirUnchanged) => {
+    state = await readHermesState(io, root, platform, { op, artifacts, beforeManifestRead: stateDirUnchanged });
     plan = planHermes(op, state, artifacts);
     result.changes = plan.changes;
     result.conflicts = plan.conflicts;
@@ -678,7 +800,9 @@ async function runHermesAgent({ op, root, apply, io, platform, result }) {
     if (op === "uninstall") await step(result, "artifacts", () => removeHermesArtifacts(io, root, plan, state, platform));
     if (plan.manifestAction) {
       await step(result, "manifest", () =>
-        plan.manifestAction === "delete" ? deleteManifest(io, root, "hermes") : writeManifest(io, root, "hermes", plan.manifestBody),
+        plan.manifestAction === "delete"
+          ? deleteManifest(io, root, "hermes", state.manifestText, stateDirUnchanged)
+          : writeManifest(io, root, "hermes", plan.manifestBody, state.manifestText, stateDirUnchanged),
       );
     }
     result.applied = true;

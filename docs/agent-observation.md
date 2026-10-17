@@ -136,6 +136,30 @@ simulação de caminho.
   apagado (4, `config_changed_during_apply`); numa falha de E/S só sai o temporário
   que ainda tem exatamente os bytes gravados. Um arquivo posto no lugar com bytes
   idênticos não é distinguível, como nos artefatos.
+- Registro e lock em `.skill-me/`: só o registro lido sob o lock é substituído ou
+  apagado — antes de cada tentativa de `rename` e antes da exclusão ele precisa
+  continuar o arquivo regular com os mesmos bytes (ou continuar ausente, numa
+  primeira instalação). Editado, trocado por arquivo, diretório ou link, removido ou
+  posto por outro programa durante a aplicação, ele fica intacto e o comando sai com
+  4 (`config_changed_during_apply` no registro); o que já foi gravado antes (configuração
+  ou artefatos) fica como está, com o passo reportado como `done` — nada é desfeito.
+  Confira o arquivo e repita o comando. Registro presente que não é arquivo regular
+  (link, junção, diretório) é recusado já na prévia (`foreign_artifact`). O lock só é
+  apagado enquanto tiver os bytes que a própria execução gravou; ausente ou trocado,
+  ele fica e o comando acrescenta 4 (`config_changed_during_apply` em
+  `.skill-me/<agente>.lock`) sem esconder o resultado principal — remova-o à mão depois
+  de conferir que nenhuma outra execução está ativa. Falha de E/S ao liberá-lo sai
+  com 5 (passo `lock: failed`). Trocada a pasta `.skill-me` durante a aplicação (por
+  junção/link para fora do alvo ou para outra pasta, ou por arquivo), nada mais é
+  lido, gravado ou apagado através dela (4, `target_escape` ou
+  `config_changed_during_apply` em `.skill-me`); junção/link para dentro do alvo já
+  presente antes do comando continua aceito. Mesmo limite não atômico da escrita da
+  configuração; bytes idênticos não se distinguem.
+- Hermes: um artefato alterado por outro programa na pasta temporária
+  `plugins/.skill-me-observer.skill-me-tmp` depois de gravado e antes de ela virar a
+  pasta do plugin é promovido (instalação 0). O registro guarda o hash do pacote, então
+  a remoção seguinte preserva o arquivo como alteração (4); a instalação não garante
+  fonte byte a byte igual à do pacote diante de um editor arbitrário nesse intervalo.
 - Remoção Hermes apaga também o bytecode que o próprio Hermes grava para o nosso
   `__init__.py` (`__pycache__/__init__.cpython-*.pyc`), só quando é arquivo regular
   num `__pycache__` real dentro do alvo; qualquer outro arquivo na pasta do plugin é
