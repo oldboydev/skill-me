@@ -806,3 +806,22 @@ A queda e a retomada da rodada8 estão preservadas no histórico anterior. O rel
 completo foi copiado sem reduzir critérios ou histórico. Próxima etapa automática:
 revisão formal 4 no commit limpo, com três tentativas já consumidas e teto dez
 exclusivo da #4. Publicação do PR e merge aguardam ready válido, conforme autorização.
+Revisão formal round 4 (17/10/2026):
+
+Changes requested em c68c254d7cfae45d3ebcd8afc9fb8125e4cb2ed0; oito critérios
+atendidos, AC6 unmet e verification insufficient. Achados anteriores reconhecidos
+como corrigidos. Novo P1 bloqueante, análise estática: no Windows, accessOf retorna
+null e o temporário recebe a DACL herdada da pasta; uma configuração com DACL protegida
+mais restritiva pode ter seus valores expostos durante a cópia e após a promoção.
+Omitir a prova POSIX no Windows e declarar ACL não preservada não evita essa ampliação
+de acesso. Nenhuma instalação/reprodução em arquivos pessoais ocorreu; o achado foi
+comunicado imediatamente ao proprietário.
+
+Continuidade autorizada no mesmo AC6, sem ampliar a entrega para a privacidade geral
+da #5: Claude corrige a preservação efetiva de acesso antes de copiar conteúdo ou
+recusa a operação antes da cópia quando não puder garanti-la, e prova a fronteira
+Windows com fixtures sintéticas próprias. Preservar os controles e critérios das
+plataformas suportadas; nenhuma dispensa geral dos testes para obter aprovação.
+Codex segue coordenando e revisando, sem implementar produto/testes. Quatro tentativas
+formais consumidas, teto dez exclusivo da #4; novo parecer independente e revisão
+formal só após correção/provas/commit limpo, sem apagar histórico nem repetir sondas.
