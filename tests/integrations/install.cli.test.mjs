@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
-import { baseEnv, INTEGRATIONS_CLI, makeScratch, runIntegrations, runIntegrationsAsync, runIntegrationsJson } from "./helpers/cli.mjs";
+import { baseEnv, INTEGRATIONS_CLI, makeScratch, REPO_ROOT, runIntegrations, runIntegrationsAsync, runIntegrationsJson } from "./helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers } from "./helpers/installed-hooks.mjs";
 import { sha256File, snapshotTree } from "./helpers/tree.mjs";
 
@@ -19,6 +19,8 @@ function scratch(label) {
 const CLAUDE_EVENTS = ["PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptExpansion", "SessionStart", "SessionEnd", "SubagentStart", "SubagentStop"];
 const CODEX_EVENTS = ["PreToolUse", "PostToolUse", "SessionStart", "SessionEnd", "SubagentStart", "SubagentStop"];
 const HERMES_ARTIFACTS = ["plugins/skill-me-observer/__init__.py", "plugins/skill-me-observer/kwargs.json", "plugins/skill-me-observer/plugin.yaml"];
+const HERMES_STAGING = "plugins/.skill-me-observer.skill-me-tmp";
+const HERMES_PLUGIN_SOURCE = path.join(REPO_ROOT, "src", "integrations", "hermes", "plugin");
 
 // Texto com um inteiro que um double não representa: a reescrita precisa
 // preservar o token exato (valor alheio), não só valores "parecidos".
@@ -95,6 +97,34 @@ function assertHermesUninstallEscapes(target, label) {
     assert.deepEqual(result.report.conflicts.map((c) => c.code), ["target_escape"], label);
   }
   assert.deepEqual(snapshotTree(target), before, `${label}: nada removido dentro do alvo`);
+}
+
+// Instalação Hermes com o staging ocupado por algo cuja propriedade não se
+// comprova: prévia e aplicação recusam com 4 antes de qualquer exclusão, sem
+// mudança listada e sem nada removido ou criado no alvo.
+function assertHermesInstallRefused(target, label, codes) {
+  const before = snapshotTree(target);
+  for (const apply of [false, true]) {
+    const result = cli(["install", "--agent", "hermes", "--target", target, ...(apply ? ["--apply"] : [])]);
+    assert.equal(result.status, 4, `${label} apply=${apply}: ${result.stdout}`);
+    assert.equal(result.report.status, "conflict", label);
+    assert.equal(result.report.applied, false, label);
+    assert.deepEqual(result.report.changes, [], label);
+    assert.deepEqual(result.report.conflicts.map((c) => c.code), codes, label);
+    for (const conflict of result.report.conflicts.filter((c) => c.code === "foreign_artifact")) assert.equal(conflict.file, HERMES_STAGING, label);
+  }
+  assert.deepEqual(snapshotTree(target), before, `${label}: nada removido nem criado no alvo`);
+}
+
+// Alvo Hermes com um segundo plugin de terceiro que contém só `__init__.py` e
+// `plugin.yaml` — os nomes que o staging também usa.
+const VICTIM_FILES = { "__init__.py": "# plugin sintético de terceiro\n", "plugin.yaml": "name: victim-plugin\n" };
+function hermesStagingTarget(label) {
+  const home = hermesTarget(label);
+  const victim = path.join(home, "plugins", "victim-plugin");
+  mkdirSync(victim);
+  for (const [name, text] of Object.entries(VICTIM_FILES)) writeFileSync(path.join(victim, name), text);
+  return { home, victim, staging: path.join(home, ...HERMES_STAGING.split("/")) };
 }
 
 // Agentes-sentinela no PATH: se qualquer comando os iniciar, um arquivo aparece.
@@ -252,6 +282,16 @@ test("I4-C27 alvo fora do diretório, link que escapa e política gerenciada sã
   }
   assert.deepEqual(snapshotTree(cacheOutside), cacheOutsideBefore, "arquivo externo preservado (link de arquivo)");
 
+  // Staging da instalação Hermes como junção/link de diretório para fora do
+  // alvo, com arquivos externos de nomes iguais aos artefatos próprios.
+  const stagingOutside = scratch("staging-outside");
+  for (const [name, text] of Object.entries(VICTIM_FILES)) writeFileSync(path.join(stagingOutside, name), text);
+  const stagingOutsideBefore = snapshotTree(stagingOutside);
+  const stagingEscape = hermesStagingTarget("escape-staging");
+  symlinkSync(stagingOutside, stagingEscape.staging, "junction");
+  assertHermesInstallRefused(stagingEscape.home, "staging junção/link para fora", ["target_escape"]);
+  assert.deepEqual(snapshotTree(stagingOutside), stagingOutsideBefore, "arquivos externos preservados (staging)");
+
   // Diretório de política gerenciada do Claude é recusado antes de qualquer leitura.
   const managed = process.platform === "win32" ? "C:\\Program Files\\ClaudeCode" : process.platform === "darwin" ? "/Library/Application Support/ClaudeCode" : "/etc/claude-code";
   const managedResult = cli(["install", "--agent", "claude", "--target", managed, "--apply"]);
@@ -407,7 +447,7 @@ test("I4-C33 falha depois da primeira mutação é reportada como incompleta e s
   assert.deepEqual(json(path.join(target, "settings.json")), JSON.parse(CLAUDE_SETTINGS_TEXT));
 });
 
-test("I4-C34 Hermes: artefatos com hash, habilitação manual, pasta alheia e edições preservadas", () => {
+test("I4-C34 Hermes: artefatos com hash, habilitação manual, pasta alheia e edições preservadas", (t) => {
   const hermes = hermesTarget("hermes-own");
   const installed = cli(["install", "--agent", "hermes", "--target", hermes, "--apply"]);
   assert.equal(installed.status, 0);
@@ -477,4 +517,43 @@ test("I4-C34 Hermes: artefatos com hash, habilitação manual, pasta alheia e ed
     assert.deepEqual(snapshotTree(path.join(home, "plugins", "other-plugin")), otherBefore, `${variant}: cache do outro plugin preservado`);
     assert.deepEqual(snapshotTree(path.join(home, "plugins", "skill-me-observer")), { __pycache__: entryBefore.__pycache__ }, `${variant}: só a entrada alheia fica`);
   }
+
+  // Staging da instalação: o nome fixo e os nomes dos artefatos não comprovam
+  // propriedade. Junção/link para outro plugin dentro do alvo, diretório real com
+  // arquivos de mesmo nome e conteúdo alheio, arquivo no lugar do diretório e link
+  // de arquivo de nome próprio → 4 antes de qualquer exclusão; o outro plugin fica.
+  const linked = hermesStagingTarget("staging-link");
+  symlinkSync(linked.victim, linked.staging, "junction");
+  assertHermesInstallRefused(linked.home, "staging junção/link para outro plugin", ["foreign_artifact"]);
+
+  const sameNames = hermesStagingTarget("staging-foreign-dir");
+  mkdirSync(sameNames.staging);
+  for (const [name, text] of Object.entries(VICTIM_FILES)) writeFileSync(path.join(sameNames.staging, name), text);
+  assertHermesInstallRefused(sameNames.home, "staging diretório real com conteúdo alheio", ["foreign_artifact"]);
+
+  const asFile = hermesStagingTarget("staging-file");
+  writeFileSync(asFile.staging, "arquivo do usuário\n");
+  assertHermesInstallRefused(asFile.home, "staging como arquivo", ["foreign_artifact"]);
+
+  const fileLink = hermesStagingTarget("staging-file-link");
+  mkdirSync(fileLink.staging);
+  if (linkFileOrDiagnose(t, path.join(fileLink.victim, "__init__.py"), path.join(fileLink.staging, "__init__.py"), "link de arquivo no staging")) {
+    assertHermesInstallRefused(fileLink.home, "staging com link de arquivo de nome próprio", ["foreign_artifact"]);
+  }
+
+  // Sobra própria de uma instalação interrompida (cópias exatas de artefatos do
+  // pacote num diretório real) é limpa e a instalação conclui normalmente.
+  const leftover = hermesStagingTarget("staging-own");
+  const leftoverBefore = snapshotTree(leftover.home, { withMtime: false });
+  mkdirSync(leftover.staging);
+  for (const name of ["__init__.py", "kwargs.json"]) copyFileSync(path.join(HERMES_PLUGIN_SOURCE, name), path.join(leftover.staging, name));
+  const reconciled = cli(["install", "--agent", "hermes", "--target", leftover.home, "--apply"]);
+  assert.equal(reconciled.status, 0, reconciled.stdout);
+  assert.equal(reconciled.report.status, "applied");
+  assert.equal(existsSync(leftover.staging), false, "staging próprio removido");
+  const leftoverManifest = json(path.join(leftover.home, ".skill-me", "hermes-install.json"));
+  assert.deepEqual(leftoverManifest.artifacts.map((a) => a.path).sort(), HERMES_ARTIFACTS);
+  for (const artifact of leftoverManifest.artifacts) assert.equal(artifact.sha256, sha256File(path.join(leftover.home, artifact.path)));
+  assert.equal(cli(["uninstall", "--agent", "hermes", "--target", leftover.home, "--apply"]).status, 0);
+  assert.deepEqual(snapshotTree(leftover.home, { withMtime: false }), leftoverBefore, "árvore volta à anterior, outro plugin intacto");
 });

@@ -23,6 +23,7 @@ const COMMANDS = ["plan", "install", "uninstall"];
 // um temporário que já exista é sobra de execução anterior — se for arquivo
 // regular, é removido; qualquer outra coisa é falha de E/S, nunca apagada.
 const TMP_SUFFIX = ".skill-me-tmp";
+const STAGING_REL_DIR = `plugins/.${PLUGIN_NAME}${TMP_SUFFIX}`;
 
 const MANUAL_STEPS = {
   claude: [
@@ -265,7 +266,40 @@ async function readPluginCache(io, root, dir, state, platform) {
   }
 }
 
-async function readHermesState(io, root, platform) {
+// Arquivo do staging que comprova ser nosso: contido no alvo, arquivo regular
+// (não link) e idêntico, byte a byte, ao artefato do pacote de mesmo nome.
+async function isOwnStagedFile(io, root, file, name, artifacts, platform) {
+  const artifact = artifacts.find((a) => a.name === name);
+  if (!artifact) return false;
+  await assertContained(root, file, io, platform);
+  const stats = await io.lstat(file);
+  if (!stats.isFile() || stats.size !== artifact.content.length) return false;
+  return sha256(await io.readBytes(file)) === artifact.sha256;
+}
+
+// O staging tem nome fixo, mas nem esse nome nem os nomes dos artefatos provam
+// propriedade: só é sobra nossa um diretório real (não junção/link) cujas
+// entradas são todas arquivos próprios. Qualquer outra coisa é alheia e fica,
+// mesmo apontando para dentro do alvo — limpar através dela apagaria arquivos
+// de outro plugin. `null`: staging ausente.
+async function readStaging(io, root, artifacts, platform) {
+  const dir = path.join(root, STAGING_REL_DIR);
+  await assertContained(root, dir, io, platform);
+  let stats;
+  try {
+    stats = await io.lstat(dir);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  if (!stats.isDirectory()) return { owned: false };
+  for (const name of await io.readdir(dir)) {
+    if (!(await isOwnStagedFile(io, root, path.join(dir, name), name, artifacts, platform))) return { owned: false };
+  }
+  return { owned: true };
+}
+
+async function readHermesState(io, root, platform, { op, artifacts }) {
   const manifestText = await readOptional(io, root, manifestPath(root, "hermes"));
   const pluginsDir = path.join(root, "plugins");
   const pluginDir = path.join(root, PLUGIN_REL_DIR);
@@ -279,8 +313,13 @@ async function readHermesState(io, root, platform) {
     caches: [],
     cacheDirOwned: false,
     foreign: [],
+    staging: null,
   };
-  if (!state.pluginDirExists) return state;
+  if (!state.pluginDirExists) {
+    // Só a instalação dos artefatos usa o staging.
+    if (op === "install" && state.pluginsDirExists) state.staging = await readStaging(io, root, artifacts, platform);
+    return state;
+  }
   for (const name of await io.readdir(pluginDir)) {
     const full = path.join(pluginDir, name);
     if (ARTIFACT_NAMES.includes(name)) {
@@ -304,7 +343,9 @@ function planHermes(op, state, artifacts) {
       artifacts: artifacts.map((a) => ({ path: a.rel, sha256: a.sha256 })),
       created: state.manifest?.created ?? { pluginsDir: !state.pluginsDirExists },
     };
-    if (!state.pluginDirExists) {
+    if (!state.pluginDirExists && state.staging?.owned === false) {
+      conflicts.push({ code: "foreign_artifact", file: STAGING_REL_DIR });
+    } else if (!state.pluginDirExists) {
       if (!state.pluginsDirExists) changes.push({ file: "plugins", action: "create_dir" });
       for (const a of artifacts) changes.push({ file: a.rel, action: "write_artifact" });
     } else if (state.manifest) {
@@ -354,29 +395,36 @@ function planHermes(op, state, artifacts) {
   };
 }
 
-async function installHermesArtifacts(io, root, artifacts, state) {
+// Remove o staging só enquanto ele continuar comprovadamente nosso: diretório
+// real e, imediatamente antes de cada exclusão, arquivo próprio (mesma
+// reconferência dos artefatos na remoção). Uma troca feita depois da leitura
+// vira conflito e nada além dos arquivos já conferidos é apagado; `rmdir` só
+// alcança o diretório real inspecionado (no Windows removeria uma junção).
+async function removeOwnedStaging(io, root, artifacts, platform) {
+  const dir = path.join(root, STAGING_REL_DIR);
+  await assertContained(root, dir, io, platform);
+  if (!(await io.lstat(dir)).isDirectory()) throw new ConflictError("foreign_artifact", STAGING_REL_DIR);
+  for (const name of await io.readdir(dir)) {
+    const file = path.join(dir, name);
+    if (!(await isOwnStagedFile(io, root, file, name, artifacts, platform))) throw new ConflictError("foreign_artifact", STAGING_REL_DIR);
+    await io.unlink(file);
+  }
+  await io.rmdir(dir);
+}
+
+async function installHermesArtifacts(io, root, artifacts, state, platform) {
   const pluginsDir = path.join(root, "plugins");
   const pluginDir = path.join(root, PLUGIN_REL_DIR);
-  const tmpDir = path.join(pluginsDir, `.${PLUGIN_NAME}${TMP_SUFFIX}`);
+  const tmpDir = path.join(root, STAGING_REL_DIR);
   if (!state.pluginsDirExists) await io.mkdir(pluginsDir);
-  // Sobra de execução anterior só é limpa se contiver apenas nomes nossos.
-  const leftovers = await io.readdir(tmpDir).catch((error) => (error.code === "ENOENT" ? null : Promise.reject(error)));
-  if (leftovers !== null) {
-    if (!leftovers.every((name) => ARTIFACT_NAMES.includes(name))) {
-      const error = new Error("temporário ocupado");
-      error.code = "tmp_path_occupied";
-      throw error;
-    }
-    for (const name of leftovers) await io.unlink(path.join(tmpDir, name));
-    await io.rmdir(tmpDir);
-  }
+  // Sobra própria de uma instalação interrompida; alheia já virou conflito no plano.
+  if (state.staging) await removeOwnedStaging(io, root, artifacts, platform);
   await io.mkdir(tmpDir);
   for (const a of artifacts) await io.writeExclusive(path.join(tmpDir, a.name), a.content);
   try {
     await io.rename(tmpDir, pluginDir);
   } catch (error) {
-    for (const a of artifacts) await io.unlink(path.join(tmpDir, a.name)).catch(() => {});
-    await io.rmdir(tmpDir).catch(() => {});
+    await removeOwnedStaging(io, root, artifacts, platform).catch(() => {});
     if (await io.stat(pluginDir).then(() => true, () => false)) throw new ConflictError("foreign_artifact", PLUGIN_REL_DIR);
     throw error;
   }
@@ -417,19 +465,19 @@ async function runHermesAgent({ op, root, apply, io, platform, result }) {
     manifestPath(root, "hermes") + TMP_SUFFIX,
   ];
   for (const candidate of candidates) await assertContained(root, candidate, io, platform);
-  let state = await readHermesState(io, root, platform);
+  let state = await readHermesState(io, root, platform, { op, artifacts });
   let plan = planHermes(op, state, artifacts);
   result.changes = plan.changes;
   result.conflicts = plan.conflicts;
   const needsWrite = (p) => p.writeArtifacts || (p.removals?.length ?? 0) > 0 || p.manifestAction !== null || (op === "uninstall" && state.caches.length > 0);
   if (!apply || !needsWrite(plan)) return;
   await withLock(io, root, "hermes", async () => {
-    state = await readHermesState(io, root, platform);
+    state = await readHermesState(io, root, platform, { op, artifacts });
     plan = planHermes(op, state, artifacts);
     result.changes = plan.changes;
     result.conflicts = plan.conflicts;
     if (!needsWrite(plan)) return;
-    if (op === "install" && plan.writeArtifacts) await step(result, "artifacts", () => installHermesArtifacts(io, root, artifacts, state));
+    if (op === "install" && plan.writeArtifacts) await step(result, "artifacts", () => installHermesArtifacts(io, root, artifacts, state, platform));
     if (op === "uninstall") await step(result, "artifacts", () => removeHermesArtifacts(io, root, plan, state, platform));
     if (plan.manifestAction) {
       await step(result, "manifest", () =>
