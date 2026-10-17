@@ -1015,3 +1015,248 @@ repetida. Testes e sondas usam ambiente mínimo e conteúdo sintético; as sonda
 códigos, ações, conflitos, estados e caminhos de temporários próprios. Nenhuma instalação em perfil
 pessoal; todos os `--target` em temporários; nenhum agente, modelo, download ou E2E; nenhum
 bypass/confiança concedido; nenhum subagente.
+
+## Correção da revisão formal round 2 — preservação JSON e temporários (17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega. Partida em `f0f5322` (só achados no Handoff;
+produto e testes = `7147ac0`), checkout limpo. Esta seção é evidência do autor, **não é verificação
+independente** nem revisão formal: nenhum `review:run`/`review:check`/`pr:create`/push/PR/merge/
+Verifier foi executado; `.verified.md`, contadores, estado do motor (2 de 10 tentativas formais) e
+histórico não foram tocados. Commits: `56e688d` (Landing F2), `264e4df` (F1), `0481b28` (F2),
+`de4f9d6` (Landing da nova tentativa do rename), `c914e5d` (C29 no Windows), `f1de786` (Landing do
+limite da contenção, levando também a nota do coordenador no Handoff), `01c78bd` (limite). `git diff --name-only f0f5322..01c78bd`: só
+`src/integrations/install/{json-hooks,run,target}.mjs`, `tests/integrations/{install.cli,
+install-apply.unit}.test.mjs`, `tests/integrations/helpers/{cli,fs-probe}.mjs`,
+`docs/agent-observation.md` e este checklist (três linhas de Landing e a nota do coordenador);
+nada em doctor, `scripts/`, configuração do motor, dependências, `AGENTS.md`, task ou `.verified.md`.
+
+**Classificação.** F1 e F2 são os achados formais bloqueantes (AC6). Durante a separação dos commits
+apareceu um terceiro defeito, anterior a esta rodada e dentro do AC6: `I4-C29` saía 5 no Windows
+(contrato "cada código ∈ {0,4}"), sem perda — configuração intacta, `incomplete` honesto. Foi
+comunicado na hora e corrigido como defeito já coberto por C29, com Landing antes do código. A nota
+do coordenador acrescentada ao Handoff durante essa correção (laço sem limite em `assertContained`)
+foi confirmada e corrigida em `01c78bd`; a nota fica preservada e é encerrada no Handoff.
+
+### Reprodução RED no produto `7147ac0` (cópias isoladas próprias)
+
+Cópia Windows por `git archive 7147ac0` (SHA-256 do archive `aa89f585…7d973d196`) + `node_modules`,
+blobs de `run.mjs`, `json-hooks.mjs`, `io.mjs` e dos testes conferidos por `git hash-object`; cópia
+WSL do mesmo archive no ext4 (`/tmp/skillme-formal3-red-7147ac0`), SHA-256 dos módulos do instalador
+iguais aos da cópia Windows. Sondas próprias fora das cópias, produto por argumento, só dados
+sintéticos, imprimindo códigos e estados (`f1-proto-probe.mjs`, `f2-temp-probe.mjs`). Saídas
+**iguais nas duas plataformas** (`formal2-red-f{1,2}-probe-{windows,wsl}-7147ac0.json`); GREEN em
+`01c78bd` também igual entre plataformas (`formal2-green-f{1,2}-probe-*-01c78bd.json`).
+
+| F1 — `__proto__` em texto JSON | `7147ac0` | `01c78bd` |
+| --- | --- | --- |
+| Claude, `env` (cenário formal) + grupo de terceiro com `__proto__` objeto | install `0 applied`, `env.__proto__` e o do grupo **perdidos**; remoção `0`, perdidos | as duas chaves próprias mantidas na instalação e na remoção |
+| Claude, objeto `__proto__` na raiz com chave `hooks`, sem `hooks` próprio | install `0 applied` gravando o arquivo **sem nenhum grupo próprio e sem o objeto** (os grupos foram para o protótipo da cópia) | 8 grupos próprios num `hooks` próprio; objeto mantido; remoção devolve o original |
+| Claude, `env.__proto__` acrescentado depois da instalação | remoção `0`, chave perdida | mantida |
+| Codex, `__proto__` no grupo e no handler de terceiro | perdidos na instalação e na remoção | mantidos |
+
+| F2 — temporário de nome fixo | `7147ac0` | `01c78bd` |
+| --- | --- | --- |
+| A — remoção Claude com arquivo do usuário em `settings.json.skill-me-tmp` (cenário formal) | prévia `0 planned`; aplicação **`0 applied`, arquivo apagado** | prévia e aplicação `4 conflict`, `changes=0`, `foreign_artifact:settings.json.skill-me-tmp`; arquivo intacto, configuração inalterada |
+| B–F — instalação Claude (configuração e registro), instalação e remoção Codex (configuração), instalação Hermes (registro) | `0 applied`, arquivo **apagado** | as mesmas `4 … foreign_artifact:<temporário>`, intacto |
+| G/H — remoção parcial (grupo/artefato editado) com o temporário do registro ocupado | `4`, mas arquivo **apagado** e registro reescrito | `4`, `owned_entry_modified` + `foreign_artifact`, nada escrito |
+| I — diretório no temporário do registro (setup antigo de `I4-C33`) | prévia `0`; aplicação `5 incomplete` **depois de escrever a configuração** | `4` na prévia e na aplicação, sem mutação |
+| J — junção no temporário da configuração | prévia `0`; aplicação `5` (`tmp_path_occupied`) | `4`, link mantido |
+| K — temporário editado depois da criação, antes do rename (instrumentado) | `0 applied`: **conteúdo do usuário promovido a `settings.json`** | `4 config_changed_during_apply:settings.json.skill-me-tmp`, arquivo do usuário intacto, configuração inalterada |
+| L/M — temporário editado + edição externa; trocado + `rename` com EIO | catch **apaga o arquivo do usuário** (4 / 5) | catch o preserva (4 / 5) |
+
+### Correções
+
+- **F1 (`json-hooks.mjs`):** `cloneDoc` define cada chave como propriedade própria
+  (`Object.fromEntries`, como o `JSON.parse`); `JSON.rawJSON` segue por referência. Nenhuma outra
+  cópia foi tocada; doctor e política geral fora do recorte.
+- **F2 (`run.mjs`, linha de Landing de `56e688d`):** sem `clearStaleTemp`. O estado lê se cada
+  temporário (configuração, registro; Hermes só o registro) tem alguma entrada, sem seguir link; o
+  plano recusa inteiro (4 `foreign_artifact`, `changes: []`, nenhum passo de escrita) quando um
+  temporário de que precisa está ocupado — `delete_file`/`delete_manifest` não precisam e seguem.
+  `writeViaTemp` reúne a escrita da configuração e do registro: `EEXIST` na criação → o mesmo
+  conflito; antes do rename o temporário precisa ser o arquivo regular com os bytes gravados
+  (`holdsExactly`, a conferência que o staging Hermes já usava) → senão 4
+  `config_changed_during_apply` no temporário; o catch só apaga o temporário que continua nosso.
+- **C29 (`run.mjs` e `target.mjs`, linhas de Landing de `de4f9d6` e `f1de786`):** `EPERM`/`EACCES`/
+  `EBUSY` no rename → até 6 novas tentativas (10…320 ms, ≤ 630 ms), refazendo antes de cada uma a
+  conferência do temporário e a do chamador (SHA-256 e acesso); `assertContained` sonda de novo uma
+  entrada que sumiu entre `lstat` e `realpath`, no máximo 3 vezes, depois 4
+  `config_changed_during_read`.
+
+### Causa e medição do C29 no Windows
+
+Diagnóstico numa cópia descartável com syscall/caminho no código do erro: `rename(settings.json.
+skill-me-tmp → settings.json)` negado com `EPERM` enquanto outro processo mantém `settings.json`
+aberto (as prévias dos outros 5 processos; no uso real, também o agente, um editor ou antivírus) e,
+mais raro, `ENOENT` no `realpath` de `assertContained`, fora do lock, quando o temporário de outro
+processo era renomeado entre o `lstat` e o `realpath`. Execuções isoladas de `I4-C29`, mesma máquina:
+
+| Produto | Windows | WSL |
+| --- | --- | --- |
+| `7147ac0` | 2/25 e **10/100** saem 5 (7 `EPERM`, 3 `ENOENT`) | — |
+| `0481b28` (F1+F2) | 3/25 e 3/40 (+5/40 na cópia de diagnóstico) | 0/60 |
+| protótipo só com a nova tentativa (cópia descartável) | 3/60, só `ENOENT` da contenção; 5 renames passaram na 1ª nova tentativa | — |
+| protótipo com as duas correções (cópia descartável) | 0/100; 12 renames passaram na 1ª nova tentativa (10 ms) | — |
+| `c914e5d` | 0/100 | 0/40 |
+| `01c78bd` | **0/100** | **0/40** |
+
+Amostras nos ambientes declarados, não garantia contra carga arbitrária; a prova discriminante é
+`I4-C29b`/`I4-C29c`. Um passe anterior do protótipo, com erro no próprio registro de diagnóstico, foi
+descartado. A falha do C29 com o `run.mjs` antigo também apareceu na conferência do
+commit 1 (`formal2-commit1-check-windows.tap`): instabilidade anterior, não efeito do F1.
+
+### Regressões e RED/GREEN dos testes
+
+- **`I4-C25d`** (CLI, Claude e Codex): tabela `observed`/`expected` com textos JSON (nenhum literal
+  JS com `__proto__`) — `env`, grupo e handler de terceiro, objeto na raiz com `hooks`, chaves
+  acrescentadas depois da instalação por definição própria; confere propriedade própria, valor,
+  protótipo intacto, forma serializada (`"__proto__": "valor-do-usuario"`), demais valores, tokens
+  `12345678901234567890`/`1.50`, um grupo próprio por evento e a remoção de volta aos valores.
+- **`I4-C25e`** (planos puros, sem sistema de arquivos): os textos planejados de instalação e
+  remoção mantêm as chaves próprias e põem os grupos num `hooks` próprio.
+- **`I4-C30b`** (CLI): 12 casos — os três agentes, install/uninstall, temporários de configuração e
+  registro, arquivo do usuário, diretório, junção/symlink de diretório e link de arquivo (Windows sem
+  privilégio: diagnóstico, executado no WSL); prévia e aplicação iguais (`4`, `changes: []`,
+  conflitos exatos), árvore inteira igual com mtime, ocupante intacto. Controle: remoção que só
+  apaga arquivo e registro não precisa do temporário e conclui deixando o arquivo do usuário.
+  Depois que o usuário move o arquivo, remoção (cenário formal) e instalação (setup antigo) concluem.
+- **`I4-C30c`** (io instrumentado): temporário posto antes da criação, editado ou trocado depois,
+  trocado com rename falhando e controle com rename falhando — configuração Claude, registro Claude,
+  configuração Codex (remoção), registro Hermes; 20 linhas com código, conflitos, passos, ocupante,
+  estado e lock.
+- **`I4-C29b`**: `EPERM` 2×, `EACCES`, `EBUSY`, registro, temporário trocado e configuração editada
+  durante a espera, sempre negado (7 tentativas → 5) e `EIO` sem repetição. **`I4-C29c`**: entrada
+  que some uma vez (configuração e registro) → `0 applied`; instável em sondagens sucessivas → 4
+  `config_changed_during_read` com 4 chamadas de `realpath` e nada escrito.
+- **RED:** testes F1/F2 (versão de `0481b28`, conferida por hash nas duas cópias) sobre o produto
+  `7147ac0` — Windows `25 tests, 21 pass, 4 fail`, WSL `26, 22, 4` (`I4-C25d`, `I4-C25e`, `I4-C30b`,
+  `I4-C30c`); `I4-C25b` (com o `fs-probe` alterado) e o `I4-C33` novo passam no produto antigo.
+  `I4-C29b`/`I4-C29c` (versão de `c914e5d`) sobre `0481b28`: `2 fail` nas duas plataformas.
+  Linhas instáveis de `I4-C29c` sobre `c914e5d`: falha nas duas, 1001 chamadas de `realpath` (o
+  instrumento para de oscilar em 1000) e `0 applied`.
+- **GREEN:** suítes do instalador no worktree depois de cada correção (no fim: Windows 28 testes,
+  27 pass, 1 skip `posix-modes`; WSL 28/28) e os lotes abaixo.
+
+**`I4-C33` — setup trocado, contrato e asserções mantidos.** O diretório no temporário do registro
+agora é recusado antes da primeira mutação (linha I acima), então não produz mais uma falha
+posterior a ela: o `I4-C33` antigo (blob de `7147ac0`) contra o produto corrigido falha com
+`4 !== 5` (`formal2-oldc33-on-fixed-product-windows.tap`). A falha passou a ser E/S real injetada no
+processo do CLI: `fs-probe.mjs` ganhou `SKILL_ME_TEST_FS_PROBE_FAIL_RENAME_TO=<nome>` (rename para
+esse nome → `EIO`), carregado por `--import` (novo `nodeArgs` em `helpers/cli.mjs`). As asserções
+anteriores ficaram (5, `incomplete`, passos `config:done`/`manifest:failed`, 8 grupos escritos,
+reinstalação adotando 8, remoção de volta ao original); acrescentou-se que o registro não foi gravado
+e que o temporário nosso saiu. A barra de C33 não mudou; o setup antigo virou caso de `I4-C30b`.
+
+### Discriminação (mutações só em cópias WSL do `/tmp`, sobre `01c78bd`)
+
+Cada mutação roda `install.cli` + `install-apply.unit` (27 testes); falham só os listados:
+
+| Mutação | Falha |
+| --- | --- |
+| m1 cópia por atribuição (F1 desfeito) | `I4-C25d`, `I4-C25e` |
+| m2 temporário ocupado não recusa o plano · m3 recusa mantém as mudanças · m4 temporário da configuração exigido com `delete_file` · m13 ocupação do registro não lida (Claude/Codex) · m14 idem (Hermes) | `I4-C30b` |
+| m5 `EEXIST` vira falha de E/S | `I4-C30c` |
+| m6 temporário não conferido antes do rename · m7 catch sem conferir · m10 nova tentativa para qualquer código | `I4-C30c`, `I4-C29b` |
+| m8 sem nova tentativa · m9 nova tentativa sem refazer as conferências | `I4-C29b` |
+| m11 sondagem sem limite · m12 entrada que sumiu vira falha de E/S | `I4-C29c` |
+
+(`formal2-mutations-wsl-01c78bd*.json`; o primeiro passe não achou os trechos de várias linhas por
+CRLF do `git archive` e foi repetido com o fim de linha do arquivo.)
+
+### Mudanças colaterais de comportamento, provadas
+
+- Temporário necessário já ocupado (qualquer tipo, inclusive sobra de execução interrompida): antes
+  apagado com `0`/`4`, ou `5`; agora `4 foreign_artifact` na prévia e na aplicação, remoção manual
+  (`I4-C30b`, guia).
+- Diretório no temporário do registro: antes `5` depois de escrever a configuração; agora `4` sem
+  mutação (`I4-C30b`).
+- Temporário editado/trocado durante a aplicação: antes promovido (`0`) ou apagado; agora `4`
+  preservado (`I4-C30c`). `EEXIST` na criação: antes `5`, agora `4 foreign_artifact`.
+- Rename negado de forma transitória: antes `5`; agora repetido (≤ 630 ms). Entrada que some na
+  contenção: antes `5` (`ENOENT`); agora nova sondagem, e oscilando, `4` (`I4-C29b`/`I4-C29c`).
+- Chaves `__proto__`: antes perdidas com `0`; agora mantidas (`I4-C25d`/`I4-C25e`).
+
+**Correção aditiva de afirmação anterior (o texto fica como histórico).** A mensagem de `c914e5d`
+("A contenção sonda de novo a entrada que sumiu") descrevia uma repetição sem limite; vale a regra
+limitada de `01c78bd`.
+
+### Contagens reais em `01c78bd`
+
+Um batch por plataforma: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs scripts/code-review/review.test.mjs`. Windows: worktree com
+`git diff --quiet 01c78bd -- src tests docs scripts package.json`, Hermes nativo pelo helper
+(`python -I -B`, HERMES_HOME e HOME/APPDATA/TEMP temporários, sem modelo). WSL: Ubuntu, Node 24.13.0,
+`git archive 01c78bd` (SHA-256 `e83e3937…4e81bb811f`) no ext4 (`/tmp/skillme-formal3-batch-01c78bd`),
+139 arquivos de `src`, `tests`, `scripts`, `docs` e `package.json` iguais aos blobs (CRLF
+normalizado), `env -i` só com `PATH`; exit do próprio `wsl.exe`. Nenhum spawn lendo por `/mnt/c`.
+
+| Execução | tests | pass | fail | cancelled | skipped | todo | exit | duração |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 70 + governança 6 + motor 16 | 92 | 90 | 0 | 0 | 2 | 0 | 0 | 35 s |
+| WSL — integrações 70 + governança 6 + motor 16 | 92 | 84 | 0 | 0 | 8 | 0 | 0 | 18 s |
+
+Cruzamento das 54 linhas `Proof:` com os TAPs (`formal2-proofs-vs-batch-{windows,wsl}-01c78bd.txt`;
+cada padrão casou exatamente um teste executado, declarado no arquivo da prova — o TAP do lote não
+traz localização): Windows 53 PASS + `I4-C15` SKIP; WSL 46 PASS + 8 SKIP. Fora das linhas `Proof:`
+(38, todos executados): 16 do motor, 5 de governança e 17 de integração — `I4-C16c`, `I4-C25b`,
+`I4-C25c`, `I4-C26b`, `I4-C32b`, `I4-C34b`, `I4-C34c`, `I4-C34d`, `I4-C34e`, `I4-C34f`, `I4-C34g` e
+os novos `I4-C25d`, `I4-C25e`, `I4-C29b`, `I4-C29c`, `I4-C30b`, `I4-C30c` (+6 em relação aos 86 de
+`2830d7f`/`7147ac0`). Skips e motivos:
+
+- Windows (2): `I4-C15` `posix-signals` e `I4-C25b` `posix-modes` (passam no WSL). Subcasos de link
+  de arquivo por `t.diagnostic` (EPERM sem privilégio): 2 em `I4-C27`, 1 em `I4-C34`, 4 em
+  `I4-C34b`, 1 em `I4-C34c`, 1 em `I4-C34e` e 1 novo em `I4-C30b` — executados no WSL, sem
+  diagnóstico. Nenhum diagnóstico de grupo suplementar ausente em `I4-C25b` no WSL.
+- WSL (8): `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente`: prova nativa do Hermes só no
+  Windows (executada nesse batch, 8 PASS); Linux **pendente**. `I4-C35` registrou a observação
+  Hermes pendente.
+- Medição C38: Windows 826 ms depois do filho, 65536 bytes no pipe; WSL 808 ms, 146176 bytes.
+- Doctor (417) não reexecutado: nenhum arquivo do doctor, dos módulos reutilizados, de `scripts/`,
+  `code-review.config.json`, `package.json`/lock ou `AGENTS.md` mudou desde `f0f5322` (`I4-C45`, no
+  lote, confere a interface do doctor com as integrações instaladas).
+
+### Examinado e não alterado (limites e resíduos)
+
+- Operações depois da criação exclusiva fora dos temporários: o lock (`.skill-me/<agente>.lock`) e
+  o registro (`deleteManifest`) são apagados sem conferir o conteúdo. Os dois ficam no diretório de
+  estado próprio, o lock preexistente nunca é apagado (`lock_present`) e a troca exigiria escrever
+  ali dentro da janela da aplicação; não alterados (sem necessidade demonstrada), comunicados.
+- Hermes: um artefato trocado no staging antes do rename da pasta seria promovido, mas o registro
+  guarda o hash do pacote e a remoção o preserva como `owned_entry_modified`; sem perda, não alterado.
+- Remoções concorrentes: o `removeDirIfEmpty(.skill-me)` de um processo pode fazer o lock de outro
+  falhar com `ENOENT` (5, nada mudado) — visto como cascata no C29 antes da correção; não testado
+  nem alterado.
+- Temporário parcialmente escrito por falha de E/S durante a escrita fica e passa a ser reportado
+  como `foreign_artifact` na execução seguinte (remoção manual), como a sobra de uma interrupção.
+- Identidade por caminho, tipo, tamanho e hash: um arquivo posto no lugar com bytes idênticos não é
+  distinguível (declarado no guia). Janela não atômica entre cada conferência e o `rename`/`unlink`.
+- Hermes nativo só no Windows; Linux pendente; macOS só pela CI; E2E real dos três agentes pendente.
+
+### Sobras próprias desta rodada (preservadas; nenhuma exclusão por shell)
+
+Nenhum `rm` de diretório nem limpeza opaca foi emitido. Windows `%TEMP%\skill-me-formal3\`:
+`probes/` (`f1-proto-probe.mjs`, `f2-temp-probe.mjs`, `split-f1.mjs`, `c29-diag-patch.mjs`,
+`c29-loop.sh`, `mutants.mjs`, `proofs-vs-batch.mjs`, `wsl-copy.sh`, `wsl-run.sh`, `hash-files.sh`),
+`head-{7147ac0,c914e5d,01c78bd}/` e os `.tar` de `7147ac0`, `56e688d`, `0481b28`, `c914e5d`,
+`01c78bd`, `redtests-7147ac0/`, `oldc33-newproduct/`, `commit1-check/`, `c29-diag/`, `split/`,
+`wx sonda/`, `c29 alvo/`, os alvos sintéticos `f{1,2} alvos {red-7147ac0,green-c914e5d,
+green-01c78bd} ação/` e TAPs/JSON/listas de hashes. WSL `/tmp`: `skillme-formal3-{probes,
+red-7147ac0,redtests-7147ac0,wip,wip2,wip3,redretry-0481b28,redbound-c914e5d,green-c914e5d,
+mutbase-01c78bd,batch-01c78bd}`, `skillme-formal3-mut-m1..m14` (em m3, m5, m6, m9, m11 e m12 o
+segundo passe copiou a base para dentro do diretório do primeiro, que não tinha sido mutado — a
+mutação foi aplicada e testada no nível de cima, como mostram as falhas esperadas), os alvos
+`skillme-formal3-f{1,2} alvos … ação`, `skillme-formal3-wx sonda` e os `*.c29.tap`. Scratches dos
+testes: removidos pelo `after()` existente (só diretórios de `makeScratch`, caminho absoluto sob o
+TEMP; as junções criadas pelos testes apontam para dentro do próprio scratch e não são seguidas pelo
+`rmSync`). Scratches de Verifiers, recovery e histórico formal não foram tocados.
+
+Saídas brutas (locais, ignoradas) em `.checks/code-review/issue-4/formal2-*`: sondas RED/GREEN,
+TAPs RED (`red-tests-*-7147ac0`, `red-c29bc-*-0481b28`, `red-c29c-unstable-*-c914e5d`),
+`oldc33-on-fixed-product-windows.tap`, `commit1-check-windows.tap`, mutações, lotes e cruzamentos.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token, credencial ou valor de ambiente impresso. Testes e sondas usam ambiente
+mínimo e conteúdo sintético; as sondas imprimiram só códigos, ações, conflitos, estados e caminhos de
+temporários próprios. Nenhuma instalação em perfil pessoal; todos os `--target` em temporários;
+nenhum agente, modelo, download ou E2E; nenhum bypass/confiança concedido; nenhum subagente.

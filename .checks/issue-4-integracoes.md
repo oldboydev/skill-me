@@ -473,3 +473,33 @@ esperado em `.checks/code-review/issue-4/coordinator-containment-retry.md`.
 Não solicita CAS nem timeout genérico: apenas conferir o novo laço de C29/AC6.
 Root não editou produto/testes. Registrar confirmação ou refutação antes do
 fechamento do build, preservando esta nota e os Checks.
+
+Encerramento pelo builder (17/10/2026): confirmado em `c914e5d` com io instrumentado — uma entrada
+que o `lstat` encontra e cujo `realpath` devolve `ENOENT` a cada nova sondagem fazia
+`assertContained` repetir o mesmo caminho até o instrumento parar de oscilar (1001 chamadas) e depois
+aplicar (`0 applied`). Linha de Landing registrada antes do código (`f1de786`); corrigido em `01c78bd`:
+no máximo 3 novas sondagens por chamada, depois 4 `config_changed_during_read` com o caminho, antes de
+qualquer leitura ou escrita. `I4-C29c` ganhou as linhas instáveis (configuração e registro: 4
+chamadas, nada escrito) e mantém as de uma única falha (`0 applied`); links pendentes/externos
+seguem cobertos por `I4-C27`/`I4-C34b`, verdes. A barra dos checks não mudou. Evidência em
+`.checks/issue-4-integracoes.build.md`, "Correção da revisão formal round 2".
+
+Correções da revisão formal round 2 (17/10/2026):
+
+- **Fronteira:** F1 (`cloneDoc` perdia `__proto__`) fechado em `264e4df`; F2 (temporário de nome fixo
+  apagado sem prova de propriedade; promovido ou apagado depois da criação) fechado em `0481b28`,
+  com Landing antes do código em `56e688d`; RED nos dois sobre o produto `7147ac0` em cópias
+  isoladas (Windows e WSL, saídas iguais), GREEN nos dois lotes de 92 testes em `01c78bd`. Defeito
+  anterior do mesmo AC6 encontrado na separação dos commits e comunicado: `I4-C29` saía 5 no Windows
+  (10/100 em `7147ac0`; rename negado por handle aberto e `ENOENT` na contenção), corrigido em
+  `c914e5d` com Landing em `de4f9d6`; 0/100 em `01c78bd`. Nota do coordenador acima confirmada e
+  encerrada (`f1de786`/`01c78bd`). Checks inalterados; Landing +3 linhas; `I4-C33` com setup trocado
+  (falha de E/S injetada no rename do registro pelo `fs-probe`), contrato e asserções mantidos;
+  regressões `I4-C25d`, `I4-C25e`, `I4-C29b`, `I4-C29c`, `I4-C30b`, `I4-C30c`. Nenhuma verificação
+  independente nem revisão formal pedida ou executada; contadores e histórico intactos.
+- **Decidido durante o build:** nada novo do proprietário; a correção do C29 entra como defeito já
+  coberto pelo C29 dentro do AC6 e da autorização de rodadas registrada.
+- **Abandonado:** apagar o temporário regular pelo nome (o defeito F2); adotar como sobra o temporário
+  com os bytes do texto novo; nome de temporário aleatório; inode além do conteúdo; `EPERM` no
+  rename como conflito 4; repetir o rename sem refazer as conferências; espera longa como a do graceful-fs;
+  sondagem repetida sem limite (`c914e5d`); `target_escape` ao esgotar a sondagem.
