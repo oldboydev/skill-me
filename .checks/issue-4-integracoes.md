@@ -439,3 +439,22 @@ Original limpo e sem escrita pelo Verifier nesta rodada; relatório traz
 asserções localizadas, origem dos julgamentos carregados e limites reais.
 Histórico FAIL preservado no Git e nos scratches. A revisão formal seguinte
 continua obrigatória; este fechamento não declara o PR pronto antes dela.
+
+### Revisão formal round 2 — preservação JSON e temporários (17/10/2026)
+
+A revisão formal de `7147ac0` foi `changes_requested`: AC6 unmet, demais oito
+AC met, verificação insuficiente. Dois achados bloqueantes P2: `cloneDoc`
+copia chaves JSON por atribuição em `{}` e perde `__proto__`; `clearStaleTemp`
+apaga qualquer arquivo regular no caminho temporário sem comprovar propriedade.
+Os achados derivam da leitura formal, ainda exigem reprodução pelo Claude e
+regressões. A preservação dos estados anteriores foi reconhecida; o PASS
+independente round 4 fica preservado como resultado daquela versão, sem ser
+usado para ignorar estes estados descobertos depois.
+
+Relatório formal autêntico preservado no estado comum Git e em
+`.checks/code-review/issue-4/formal-round2-report.json`. Correção de ambos está
+dentro de AC6 já aprovado e das rodadas necessárias autorizadas pelo proprietário.
+Claude implementa/prova; depois haverá nova verificação independente e revisão
+formal do conteúdo novo. Histórico e critérios permanecem intactos, duas
+tentativas formais consumidas do teto autorizado de dez. Nenhum PR ou merge
+antes de aprovação válida.
