@@ -888,3 +888,24 @@ bloqueada da preparação6. Nenhum produto/teste foi alterado pelo Verifier/Code
 Próxima etapa automática: revisão formal5 no commit limpo. Quatro tentativas de dez
 consumidas; critérios, histórico e autorização do proprietário para continuar e fazer
 o merge após aprovação permanecem preservados. PR e merge aguardam ready válido.
+Revisão formal round 5 (17/10/2026):
+
+Changes requested em e143228e1aabcae274c5e54b74966cacd70c3de9; oito AC met,
+AC6 unmet, verification insufficient. A correção Windows foi reconhecida e suas
+provas aceitas. Novo P1 estático no POSIX: a criação 0600 pode herdar ACL default
+da pasta com máscara inicialmente fechada; chmod(0640) em matchAccess habilita
+essa máscara e uma entrada nomeada herdada, concedendo leitura a destinatário
+que não lia a configuração original. O temporário e a configuração promovida
+podem expor valores anteriores com saída 0. Bits/uid/gid não comprovam ausência
+de ACL adicional. A ressalva de ACL não preservada no guia não evita o efeito.
+
+O achado foi comunicado ao proprietário como análise estática, sem execução em
+configurações pessoais. Continuidade no mesmo AC6 já autorizada: Claude reproduz
+com fixtures sintéticas, evita ampliar acesso antes da cópia e preserva as
+restrições efetivas ou recusa antes de copiar quando não puder garanti-las.
+Preservação completa de todo mecanismo de segurança não vira framework novo;
+limites não podem autorizar uma exposição concreta no caminho suportado.
+
+Cinco tentativas formais de dez consumidas; histórico e critérios preservados.
+Codex coordena e revisa, sem implementar produto/testes. Próximo parecer independente
+e formal6 só após correção, provas e commit limpo; nenhuma publicação antecipada.
