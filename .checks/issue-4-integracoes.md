@@ -948,3 +948,33 @@ Correção da revisão formal round 5 (17/10/2026):
   entre conferência e criação/`rename`; os demais já registrados.
 - **Próxima ação (orquestrador):** verificação independente 11 pelos testes versionados e leitura permitida; revisão
   formal 6 só depois de PASS e relatório commitado.
+
+Verificação independente round 11 (17/10/2026):
+
+PASS 48/48 e 9/9 em d5ea06239a40c7e2e14d5fb924cfd743b6f77239. Relatório
+integral copiado para a entrega, com carry explícito da rodada 10 e reavaliação
+do diff corretivo e de todo nonPASS da formal5. O P1 POSIX em AC6/C25 foi
+julgado corrigido: a ACL conferida é aplicada ou a herdada removida pelo
+descritor antes de fchmod e conteúdo; a ACL integra as reconferências.
+Provas j/k/l exercitam esse contrato no Linux; j também comprova recusas antes
+de copiar. O executor nativo compartilhado e o caminho DACL Windows foram
+reavaliados e suas provas permanecem verdes. Nenhum novo bloqueio concreto.
+
+Lotes independentes atuais: 109 testes, Windows 103 pass/6 skips e Ubuntu
+97 pass/12 skips, zero falhas/cancelamentos, exit 0. As 54 provas nomeadas e
+os 55 extras foram contabilizados; 179 blobs e archive conferidos antes/depois
+nas cópias. Doctor 417 é carry sem reexecução. macOS/C25m aguarda CI; Hermes
+nativo Linux e E2E real continuam pendentes, com níveis e limites explícitos.
+
+Método independente: leitura e testes já versionados em cópia nova, sem
+sondas, cenários novos ou mutantes próprios. As seis mutações de desenvolvimento
+do autor são declaradas como tal. Preparação WSL sem capacidade na sandbox
+retornou E_ACCESSDENIED antes dos testes; a mesma leitura pela aprovação normal
+foi autorizada, permitindo a retomada da mesma rodada. Isso não foi rejeição de
+conteúdo ou auto-review; o provisório incompleto foi preservado. Um erro de
+redirecionamento Windows ocorreu antes de iniciar Node; cada lote só executou
+uma vez. A antiga ação bloqueada da preparação6 não foi repetida nem recriada.
+
+Cinco tentativas formais de dez consumidas. Próxima etapa automática:
+formal6 no commit limpo, sem publicação antes de ready válido. Autorizações,
+critérios, histórico e resíduos preservados.
