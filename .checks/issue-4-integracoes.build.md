@@ -2164,3 +2164,262 @@ diretório gerenciado real acessado; todos os `--target` em temporários; nenhum
 ou E2E; nenhum bypass/confiança concedido; nenhum subagente; nenhuma operação recusada pela plataforma
 nesta rodada (o batch do Windows rodou fora do sandbox, como nas rodadas anteriores, pela capacidade de
 `taskkill` dos próprios testes do motor).
+
+## Correção da revisão formal round 4 — DACL do temporário no Windows (17/10/2026)
+
+Builder: Claude (tlc-implement `light`), mesma entrega. Partida em `58ed596` (HEAD do despacho, limpo; desde
+`8a8f992` só checklist e relatórios; produto e testes = `b197650`, `git diff --quiet b197650 58ed596 -- src tests
+docs scripts package.json package-lock.json` verdadeiro). Relatório formal autêntico
+`.checks/code-review/issue-4/formal-round4-report.json` lido e não reescrito (SHA-256 `f14f0052…`);
+`.verified.md` não foi alterado. Esta seção é evidência do autor, **não é verificação independente** nem
+revisão formal: nenhum `review:run`/`review:check`/`pr:create`/push/PR/merge/Verifier foi executado;
+contadores, override, estado do motor (4 de 10 tentativas formais) e histórico não foram tocados; scratches de
+Verifiers e recovery não foram lidos nem mexidos. A sonda adicional interrompida na rodada 6
+(`verifier-residual-probe.mjs`) **não** foi executada, recriada nem substituída, e não houve sonda ad hoc do
+produto: a prova é a regressão versionada. Antes de escolher a forma, como o despacho pediu ("verificar
+comportamento real antes de usar"), o comportamento das APIs do Windows foi conferido em
+`%TEMP%\skill-me-f4\probes\api-check.mjs`, `api-check2.mjs` e `helper-check.mjs`: só criam arquivos sintéticos
+num scratch privado, aplicam e leem DACLs pelo PowerShell do Windows e imprimem SDDL com o SID do usuário
+trocado por rótulo; não importam nem executam o produto. Os auxiliares de cópia, execução no WSL, conferência
+de blobs e cruzamento `Proof:`×TAP (`wsl-copy.sh`, `wsl-run.sh`, `verify-blobs.sh`, `proofs-vs-batch.mjs`)
+são os da rodada 8 com o prefixo trocado para `skillme-f4-`. Commits: `316dec6` (Landing, antes do código),
+`e513af7` (correção, regressões e guia) e o desta evidência. `git diff --name-only 58ed596..e513af7`:
+`.checks/issue-4-integracoes.md` (uma linha de Landing), `docs/agent-observation.md`,
+`src/integrations/install/{io,run,windows-access}.mjs`, `tests/integrations/helpers/{fs-probe,windows-acl}.mjs`,
+`tests/integrations/{install-apply.unit,install-permissions.cli,windows-access.unit}.test.mjs`; nada em doctor,
+`scripts/`, configuração do motor, dependências, `AGENTS.md`, task ou `.verified.md`.
+
+**Classificação.** O P1 da revisão formal 4 (`io.mjs:71`, AC6/C25) foi estabelecido por **leitura estática**,
+sem execução pela revisão. Agora foi **reproduzido por execução** no produto intacto `58ed596` (= `b197650`),
+no Windows, só com dados sintéticos dentro do scratch de cada linha: com `settings.json`/`hooks.json` de DACL
+protegida só do usuário do teste (canário sintético no lugar de um segredo) numa pasta que concede a
+"Usuários" leitura herdável por arquivos, `install --apply` e `uninstall --apply` saem 0, o temporário com o
+canário concede leitura a "Usuários" desde a criação (instantes `created`, `before_content`, `after_content`,
+`before_rename`) e o arquivo final fica com a DACL herdada, sem proteção — a configuração antes só do usuário
+passa a ser legível por "Usuários". Também sem detecção: a DACL ampliada pelo dono depois da conferência
+(antes de criar o temporário ou antes da nova tentativa de um rename negado) não era comparada (`accessOf`
+devolvia `null`) e o comando saía 0. A exposição é o estado observado pelo próprio teste; nenhum outro usuário
+leu nada. Não é escopo novo: é o AC6 já aprovado.
+
+### Mecanismo e fontes
+
+- Node não expõe DACL. Mecanismo: PowerShell do Windows 5.1 (componente do sistema; aqui `5.1.26100.9711`, CLR
+  `4.0.30319.42000`, `FullLanguage`) em `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo
+  -NoProfile -NonInteractive -Command <script fixo>`, só com tipos .NET. Nenhuma dependência nova, download,
+  compilação ou elevação.
+- Fontes primárias (Microsoft Learn, consultadas nesta rodada): "File Security and Access Rights" — com
+  `lpSecurityAttributes` nulo o arquivo recebe o descritor padrão, cujas ACLs são herdadas da pasta, "assigned
+  only when a file or directory is newly created, and not when it is renamed or moved", e o acesso é concedido
+  na entrega do handle; construtor `FileStream(String, FileMode, FileSystemRights, FileShare, Int32,
+  FileOptions, FileSecurity)` do .NET Framework 2.0–4.8.1 ("determines the access control and audit security
+  for the file"); `about_PowerShell_exe` (5.1) — com `-Command` em string, "all arguments following it are
+  interpreted as part of the command to execute". As páginas de `Get-Acl`/`Set-Acl` indicadas pelo coordenador
+  não foram usadas (abaixo).
+- Constatado em execução (scratch sintético, antes do código): `FileStream(CreateNew, …, FileSecurity)` cria o
+  arquivo já com a DACL passada; com DACL explícita na criação a pasta **não** mescla entradas herdáveis; o
+  `rename` mantém a DACL do temporário; o handle da criação escreve mesmo com DACL só de leitura;
+  `RawSecurityDescriptor` com a flag `Inherited` limpa (`AceFlags & 0xEF`) e a DACL protegida reproduz a mesma
+  lista ordenada, inclusive fora da ordem canônica; `SetAccessRuleProtection($true,$true)` deixa ACEs marcadas
+  como herdadas dentro da DACL protegida; HResults estáveis (`0x80070002` ausente, `0x80070050` existe);
+  chamada típica 0,15–0,3 s. Com o `PSModulePath` herdado do ambiente (PowerShell 7 no caminho), o Windows
+  PowerShell falha ao carregar `Microsoft.PowerShell.Security` (`Get-ExecutionPolicy`/`Get-Acl`/`Set-Acl`) —
+  por isso nenhum cmdlet.
+
+### Correção (`windows-access.mjs`, `io.mjs`, `run.mjs`; linha de Landing de `316dec6`)
+
+- `src/integrations/install/windows-access.mjs` (novo; só o efeito de processo e o mapeamento da saída):
+  `readDacl(file)` (`:93`) devolve a SDDL da seção `Access` (`[IO.File]::GetAccessControl`), validada por
+  `^D:[^\r\n]*$`; `createWithDacl(file, data, dacl)` (`:102`) cria com `FileStream(CreateNew, Write,
+  FileShare.None, FileSecurity)` — mesmas ACEs, mesma ordem, explícitas, DACL protegida — e escreve e descarrega
+  (`Flush(true)`) o conteúdo pelo handle da criação, depois de ler toda a entrada. Scripts fixos sem aspas
+  duplas (`:38`, `:46`); caminho, DACL e conteúdo (base64) pelo stdin, uma linha cada; caminho ou DACL com
+  quebra de linha é recusado sem processo. Saída: 0; `10` → `ENOENT`; `11` → `EEXIST`; qualquer outro código,
+  processo não criado ou prazo de 20 s (`:17`) → `config_access_unavailable`. Mensagens fixas, stderr
+  descartado, stdout só lido na leitura e validado.
+- `io.mjs`: `accessOf` (`:67`) devolve `{ dacl }` no Windows; `writeExclusive` (`:82`) com `like` no Windows
+  chama `createWithDacl` (`:83`); `sameAccess` (`:15`) — igualdade da forma de `accessOf` — passa a ser a
+  comparação única das duas plataformas (antes, `run.mjs` comparava modo/dono/grupo, que no Windows comparariam
+  `undefined`).
+- `run.mjs`: importa `sameAccess` (`:6`, usada em `:370`); ordem de `replaceChecked` (`:359`) inalterada —
+  raiz/contenção, acesso obtido, conferência antes de criar o temporário e antes de cada tentativa de `rename`,
+  limpeza no `catch`. Uma falha de `accessOf`/`writeExclusive` com `config_access_unavailable` cai no `step`
+  existente: 5, passo `config: failed`, nada gravado com outro acesso.
+- Guia (`docs/agent-observation.md`): código 5 com `config_access_unavailable`; parágrafo do Windows
+  (conferência, criação com a DACL, entradas explícitas e herança desligada, dono, SACL/rótulo, recusa e sobra).
+
+### Regressões
+
+- **`I4-C25g`** (`install-permissions.cli.test.mjs:217`, asserção `:323`) — CLI real com o instrumento
+  `fs-probe.mjs` (no Windows registra a DACL rotulada do temporário em cada instante; com
+  `SKILL_ME_TEST_FS_PROBE_NO_POWERSHELL=1` o `spawn` do PowerShell aponta para um executável inexistente — falha
+  real de criação de processo). 19 linhas: 6 de fixture (arquivo novo na pasta herda "Usuários: leitura", 2
+  ACEs herdadas) e 13 comandos — Claude e Codex com DACL protegida (instalar, instalar de novo, remover),
+  configuração que herda da pasta (instalar e remover: mesmo acesso, DACL protegida explícita), configuração
+  ausente (criada com a ACL herdada, sem conteúdo preexistente; remoção a apaga), PowerShell indisponível na
+  instalação do Claude e na remoção do Codex (5 `config_access_unavailable`, passo `config: failed`, sem
+  temporário, configuração com bytes e DACL, registro como estava, lock liberado). Afirma código, status,
+  erros, passos, instantes do temporário, SIDs ampliados sobre a configuração lida em cada instante, canário,
+  DACL final (protegida, acessos por SID, ACEs herdadas), SIDs ampliados no final, conteúdo, registro, lock e
+  sobra de temporário.
+- **`I4-C25h`** (`install-apply.unit.test.mjs:2462`, asserção `:2557`) — `runIntegrationCommand` com o io real
+  de `accessSwapIo` (o do C25f, agora também com a DACL do temporário). 7 linhas: controles (instalação Claude,
+  remoção Codex), DACL ampliada pelo dono imediatamente antes de criar o temporário (4, temporário com a DACL
+  conferida, sem rename, apagado; a mudança do dono fica), rename negado (EPERM) e DACL ampliada antes da nova
+  tentativa (4, 1 tentativa), documento com a ACL herdada posto imediatamente antes de obter o acesso (Claude
+  instalação e Codex remoção: 4 sem temporário, documento posto e configuração movida com bytes e DACL) e
+  falha de E/S no rename (5 `EIO`, temporário próprio apagado pelo `catch`). Afirma a DACL pedida ACE por ACE
+  contra a da configuração lida, SIDs ampliados em cada instante, canário, conflitos, passos, tentativas,
+  entradas e DACLs finais, registro e lock.
+- **`I4-C25i`** (`windows-access.unit.test.mjs:45`, asserção `:140`) — contrato do módulo: leitura de DACL
+  protegida, herdada e fora da ordem canônica (ACE por ACE); criação **sem conteúdo** já com a DACL — o estado
+  anterior a qualquer conteúdo, protegida, explícita —; com conteúdo (bytes) e DACL só do usuário numa pasta
+  que daria leitura a "Usuários"; ordem preservada; `EEXIST` sem mudar o arquivo; `ENOENT`; DACL inválida, com
+  quebra de linha ou que não é DACL e PowerShell indisponível → `config_access_unavailable` sem criar nada;
+  mensagens sem caminho nem canário.
+- Helper novo `tests/integrations/helpers/windows-acl.mjs`: define e lê DACLs de arquivos sintéticos pelo
+  PowerShell (tipos .NET), decompõe em ACEs (`RawSecurityDescriptor`) e compara acesso por SID (união das
+  máscaras de permissão; ACE de negação → a prova falha em vez de aplicar o modelo). O SID do usuário vira
+  "usuário do teste" dentro do PowerShell; conhecidos têm nome; outros, prefixo de hash. SID conhecido usado nas
+  fixtures: `BU` (Usuários). Independente do produto: compara ACEs/SIDs, não a SDDL transmitida.
+- Testes existentes alterados, com justificativa (nenhuma asserção enfraquecida):
+  - `I4-C25f`: no Windows a coluna `requested` passa de `"nenhum"` (o produto não transmitia acesso — o limite
+    que o achado recusa) para `"DACL da configuração lida"`, conferida ACE por ACE contra a DACL lida antes do
+    comando; POSIX inalterado (`octal(like.mode)`). `accessSwapIo` registra o `like` inteiro e, no Windows, a
+    DACL do temporário (campo extra não usado pelo C25f). No produto antigo só essa coluna diverge (4 linhas).
+  - `I4-C29b`: o limite (< 1,5 s) passa a medir o comando menos o tempo de `accessOf`/`writeExclusive`. Motivo:
+    a asserção substitui "esperas entre tentativas ≤ 630 ms" (linha de Landing da substituição negada); no
+    Windows cada conferência agora é um processo do PowerShell (~0,25 s), sem relação com a espera, e o caso
+    "sempre negado" faz 10. Uma espera longa no laço (sleep) continua contada. No POSIX os descontos são
+    `stat`/`open`. Constatado: com a medida antiga o teste falhava só por isso no Windows — só a linha
+    "sempre negado" passava de 1,5 s, todas as outras chaves iguais (GREEN de desenvolvimento,
+    `f4-dev-green-integrations-windows-wip.tap`).
+  - `I4-C25b`: só o texto do skip no Windows (aponta para `I4-C25g`).
+  - `fs-probe.mjs`: aditivo (DACL no Windows; opção sem PowerShell).
+
+### Reprodução RED no produto `58ed596` (cópias isoladas próprias)
+
+- Windows: `git -c core.autocrlf=false archive 58ed596` (SHA-256 `2069f425…7f30f85`) extraído em
+  `%TEMP%\skill-me-f4\red-58ed596` + `node_modules`; por cima, `git archive e513af7 --` dos 5 arquivos de
+  teste (SHA-256 `e9bc7334…0fb11e83`; blobs `5bfd761a` install-apply, `12595e99` install-permissions,
+  `5d6500c0` windows-access, `48fcc3f2` windows-acl, `a05713a6` fs-probe). 90 blobs (`src`,
+  `tests/integrations`) conferidos sem normalização, 0 diferentes.
+- Resultado (`f4-red-tests-windows-58ed596.tap`, três arquivos): **23 tests, 18 pass, 4 fail, 1 skip** — falham
+  só `I4-C25f`, `I4-C25h` e `I4-C25g`, por diff de asserção (`ERR_ASSERTION`), e o arquivo
+  `windows-access.unit.test.mjs` por `ERR_MODULE_NOT_FOUND` (o módulo é contrato novo, não regressão); skip
+  `I4-C25b` (`posix-modes`); `I4-C29b` e os demais passam.
+- WSL (distro `Ubuntu` explícita, 24.04.3, Node 24.13.0, ext4, `env -i` só com `PATH`): mesmos tars em
+  `/tmp/skillme-f4-red-58ed596`, 90 blobs conferidos. **23 tests, 20 pass, 1 fail, 2 skip** — só o arquivo do
+  módulo novo falha (import); `I4-C25f`, `I4-C25b` e `I4-C29b` passam no produto antigo (a barra POSIX dos
+  testes alterados é a mesma); `I4-C25g`/`I4-C25h` em skip `windows-dacl` (`f4-red-tests-wsl-58ed596.tap`).
+- RED de desenvolvimento antes do código: `I4-C25g` no worktree com o produto ainda sem correção, mesmas
+  divergências (só console).
+
+Valores observados no Windows (`58ed596` → `e513af7`):
+
+| Linha | `58ed596` | `e513af7` |
+| --- | --- | --- |
+| C25g Claude/Codex, DACL protegida, instalar e remover | 0; temporário com canário concede "Usuários: leitura" em `created`, `before_content`, `after_content`, `before_rename`; final herdado, sem proteção, "Usuários: leitura" | 0; só `before_rename` observado (criado pelo PowerShell), sem SID ampliado; final protegido só com o usuário do teste |
+| C25g instalar de novo | 0 `unchanged`; DACL final ampliada da instalação anterior | 0 `unchanged`; DACL protegida mantida |
+| C25g configuração que herda da pasta | 0; sem SID ampliado; final herdado sem proteção | 0; sem SID ampliado; final com o mesmo acesso, explícito e protegido |
+| C25g configuração ausente | 0; temporário (só conteúdo próprio) e final com a ACL herdada | igual |
+| C25g PowerShell indisponível (instalar Claude, remover Codex) | 0 aplicado; temporário e final com "Usuários: leitura" | 5 `config_access_unavailable`, passo `config: failed`, sem temporário, configuração com bytes e DACL, registro como estava |
+| C25h controles | 0; DACL pedida "nenhum"; temporário com "Usuários"; final herdado | 0; DACL pedida = a da configuração lida; temporário sem SID ampliado; final protegido só com o usuário |
+| C25h DACL ampliada antes de criar o temporário | 0 aplicado (mudança não detectada); temporário com "Usuários" | 4, temporário com a DACL conferida, apagado, sem rename; a mudança do dono fica |
+| C25h EPERM + DACL ampliada antes da nova tentativa | 0 depois de 2 tentativas | 4, 1 tentativa, temporário apagado |
+| C25h documento posto antes de obter o acesso | 4 sem temporário (conteúdo) | igual |
+| C25h falha de E/S no rename | 5 `EIO`; temporário com "Usuários" apagado | 5 `EIO`; temporário com a DACL conferida apagado |
+
+### Mudanças colaterais de comportamento, provadas
+
+- Configuração reescrita no Windows fica com DACL protegida explícita (mesmo acesso efetivo), também quando
+  herdava da pasta; a herança não volta na remoção (`I4-C25g`, linhas "herdada"). Registrado no Landing e no guia.
+- DACL mudada depois de obtida → 4 (antes não era comparada) (`I4-C25h`).
+- Windows sem PowerShell utilizável → 5 na reescrita de configuração existente (antes 0 com a ACL herdada);
+  prévia, configuração ausente, exclusão da configuração, registro, lock e Hermes não usam o PowerShell
+  (`I4-C25g`; demais suítes verdes).
+- Custo: 4 chamadas do PowerShell por reescrita sem nova tentativa (obter, conferir, criar, conferir antes do
+  `rename`) e mais 1 por nova tentativa — lote do Windows de 33 s para 116 s.
+
+### Contagens reais em `e513af7`
+
+Um batch por plataforma: `node --test --test-reporter=tap "tests/integrations/**/*.test.mjs"
+scripts/governance-ci.test.mjs scripts/code-review/review.test.mjs`. Windows: worktree com HEAD `e513af7` e
+`git diff --quiet e513af7 -- src tests docs scripts package.json package-lock.json`, executado fora do sandbox
+pelos testes de timeout/taskkill do motor (só processos dos próprios testes), Hermes nativo pelo helper. WSL:
+distro `Ubuntu` explícita (24.04.3), Node 24.13.0, `git -c core.autocrlf=false archive e513af7` (SHA-256
+`41effc6d…d064e`) no ext4 (`/tmp/skillme-f4-batch-e513af7`), 143 arquivos de `src`, `tests`, `scripts`,
+`docs`, `package.json` e `package-lock.json` iguais aos blobs sem normalização, `env -i` só com `PATH`; exit do
+próprio `wsl.exe`. Nenhum spawn lendo por `/mnt/c`.
+
+| Execução | tests | pass | fail | cancelled | skipped | todo | exit | duração |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11, Node 24.21.0 — integrações 83 + governança 6 + motor 16 | 105 | 103 | 0 | 0 | 2 | 0 | 0 | 116 s |
+| WSL — integrações 83 + governança 6 + motor 16 | 105 | 94 | 0 | 0 | 11 | 0 | 0 | 19 s |
+
+Cruzamento das 54 linhas `Proof:` com os TAPs (`f4-proofs-vs-batch-{windows,wsl}-e513af7.txt`, mesmo script
+das rodadas anteriores; cada padrão casou exatamente um teste executado, declarado no arquivo da prova):
+Windows 53 PASS + `I4-C15` SKIP; WSL 46 PASS + 8 SKIP. Fora das linhas `Proof:` (51): 16 do motor, 5 de
+governança e 30 de integração — os 27 anteriores e os novos `I4-C25g`, `I4-C25h`, `I4-C25i` (+3 em relação aos
+102 de `b197650`). Skips e motivos:
+
+- Windows (2): `I4-C15` `posix-signals` e `I4-C25b` `posix-modes` (passam no WSL). Diagnósticos `não executado`
+  (22): os 18 anteriores de link de arquivo (EPERM sem privilégio) e, no `I4-C25f`, as 3 linhas de link e a de
+  modo POSIX — executadas no WSL.
+- WSL (11): `I4-C18..C23`, `I4-C37`, `I4-C44b` `hermes-runtime-ausente` (prova nativa do Hermes só no Windows,
+  executada nesse batch, 8 PASS; Linux **pendente**) e `I4-C25g`, `I4-C25h`, `I4-C25i` `windows-dacl` (DACL só
+  existe no Windows; executados no batch do Windows, 3 PASS; o contrato POSIX equivalente é `I4-C25b`/`I4-C25f`,
+  PASS no WSL).
+- Medição C38: Windows 822 ms depois do filho, 65536 bytes no pipe; WSL 811 ms, 146176 bytes.
+- `I4-C29` não foi repetido em laço: sob o lock o vencedor só ganha as chamadas do PowerShell antes do
+  `rename`; os perdedores saem com `lock_present` antes delas; passou nos dois lotes e no GREEN de
+  desenvolvimento.
+- Doctor (417) não reexecutado: nenhum arquivo do doctor, dos módulos reutilizados, de `scripts/`,
+  `code-review.config.json`, `package.json`/lock ou `AGENTS.md` mudou desde `58ed596` (`I4-C45`, no lote,
+  confere a interface do doctor com as integrações instaladas).
+
+### Examinado e não alterado (limites e resíduos)
+
+- Janela não atômica entre a última conferência e a criação/o `rename`, como no POSIX: a troca encontra o
+  temporário com a DACL conferida e é recusada antes do `rename` (`I4-C25h`). Duas trocas exatas entre os
+  processos das conferências não se distinguem.
+- Prazo de 20 s do PowerShell: só por leitura, não testado (exige um processo que não responde); esgotado,
+  `config_access_unavailable` e 5; durante a criação pode deixar o temporário com a DACL conferida (sobra
+  reportada na execução seguinte, como os demais).
+- Política do ambiente (AppLocker/WDAC, modo de linguagem restrito) que bloqueie o PowerShell ou os tipos .NET:
+  recusa com 5 por construção (qualquer saída diferente de 0/10/11 ou sem processo); provado com o processo
+  inexistente (`I4-C25g`, `I4-C25i`), não com uma política real — nenhuma política foi alterada.
+- Não preservados (registrado no Landing e no guia): vínculo de herança, dono (passa a quem executa), SACL e
+  rótulo de integridade. DACL com tipos de ACE que o .NET não reproduz → recusa (não testado: exigiria ACE
+  condicional/objeto numa fixture).
+- `accessOf` segue link como o `stat` (link de arquivo exige privilégio no Windows; linhas de link continuam só
+  no WSL).
+- Limites anteriores inalterados: link inicial contido vira arquivo regular; bytes idênticos; outro diretório
+  real no mesmo caminho; prévia sem reconferência entre as próprias leituras; `stat` no `catch` do staging;
+  passos parciais de `artifacts`; raiz trocada por arquivo; `mkdir` do staging com `EEXIST`; Hermes nativo só no
+  Windows (Linux pendente); macOS só pela CI; E2E real pendente.
+
+### Sobras próprias desta rodada (preservadas)
+
+Nenhum `rm` nem limpeza opaca. Windows `%TEMP%\skill-me-f4\`: `probes/` (`api-check.mjs`, `api-check2.mjs`,
+`helper-check.mjs`, `wsl-copy.sh`, `wsl-run.sh`, `verify-blobs.sh`, `proofs-vs-batch.mjs`, listas de blobs),
+`api/` (scratches sintéticos das conferências de API, alguns com DACL que concede leitura a "Usuários" a
+conteúdo sintético), `red-58ed596/` (cópia RED), `58ed596-lf.tar`, `overlay-e513af7-tests.tar`,
+`e513af7-lf.tar`, `perm-head.mjs`/`perm-tail.mjs` (montagem do arquivo de teste), `results/` e
+`dev-green-integrations-windows.tap`. WSL `/tmp`: `skillme-f4-red-58ed596`, `skillme-f4-batch-e513af7`.
+Scratches dos testes: removidos pelo `after()` de cada arquivo (só diretórios de `makeScratch`, caminho
+absoluto sob o TEMP; o usuário do teste tem controle total em todas as DACLs das fixtures); nenhum `skill-me i4
+dacl…`, `r4 dacl…` ou `f4 windows-access…` restou nas duas plataformas. Cópias locais (ignoradas) em
+`.checks/code-review/issue-4/f4-*`. Scratches de Verifiers, recovery e histórico formal não foram tocados.
+
+### Privacidade e ambiente
+
+Nenhum `process.env`, token, credencial ou valor de ambiente impresso. Canários e documentos sintéticos; os
+TAPs registram códigos, conflitos, passos, rótulos de conteúdo, se o canário está no temporário (booleano),
+acessos por SID rotulado e caminhos sintéticos — nenhum SID, SDDL ou nome de conta (conferido: nenhuma
+ocorrência de `S-1-5-21`, `D:P(`, `D:AI(` ou dos canários nos `f4-*`). Nas conferências de API o console mostrou
+SDDLs com SIDs de outras contas herdados do TEMP; nada disso foi gravado em arquivo ou commit. Nenhum outro
+usuário, `sudo`, arquivo privado real ou perfil pessoal; nenhum diretório gerenciado real; todos os
+`--target` em temporários; SID conhecido só em DACL de arquivos sintéticos; nenhum agente, modelo, download ou
+E2E; nenhum bypass/confiança concedido; nenhum subagente; nenhuma operação recusada pela plataforma nesta
+rodada (o batch do Windows rodou fora do sandbox, como nas rodadas anteriores, pela capacidade de `taskkill`
+dos próprios testes do motor).

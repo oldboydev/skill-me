@@ -826,3 +826,41 @@ plataformas suportadas; nenhuma dispensa geral dos testes para obter aprovação
 Codex segue coordenando e revisando, sem implementar produto/testes. Quatro tentativas
 formais consumidas, teto dez exclusivo da #4; novo parecer independente e revisão
 formal só após correção/provas/commit limpo, sem apagar histórico nem repetir sondas.
+
+Correção da revisão formal round 4 (17/10/2026):
+
+- **Fronteira:** P1 (`io.mjs:71`, DACL do temporário no Windows) fechado em `e513af7`, com a linha de Landing
+  antes do código em `316dec6`; **reproduzido por execução** (a revisão foi estática) pelas regressões novas no
+  produto intacto `58ed596` (= `b197650`) em cópia isolada no Windows, só com dados sintéticos: configuração com
+  DACL protegida só do usuário do teste, numa pasta com leitura herdável a "Usuários", saía 0 na instalação e na
+  remoção (Claude e Codex) com o temporário — já com o canário — e o arquivo final legíveis por "Usuários"; a DACL
+  mudada pelo dono depois da conferência não era comparada. RED: Windows 23 tests, 18 pass, 4 fail (`I4-C25f`,
+  `I4-C25g`, `I4-C25h` por diff de asserção; o arquivo do módulo novo por import), 1 skip; WSL 23 tests, 20 pass,
+  1 fail (só o import do módulo novo), 2 skips — os testes alterados mantêm a barra POSIX. GREEN nos dois lotes de
+  105 testes em `e513af7` (Windows 103 pass/2 skips, WSL 94 pass/11 skips, exit 0; 54 linhas `Proof:` casadas).
+  Agora, no Windows, a DACL da configuração é lida pelo PowerShell do Windows (tipos .NET, script fixo, dados pelo
+  stdin), conferida com o conteúdo antes de criar o temporário e antes de cada tentativa de `rename`, e aplicada
+  no próprio `CreateFile` do temporário (mesmas ACEs, explícitas, DACL protegida); sem como lê-la ou aplicá-la, 5
+  `config_access_unavailable` antes de qualquer conteúdo. Checks inalterados; Landing +1 linha; regressões
+  `I4-C25g` (19 linhas), `I4-C25h` (7) e `I4-C25i` (contrato do módulo), Windows, com skip `windows-dacl` no POSIX
+  (lá valem `I4-C25b`/`I4-C25f`); `I4-C25f` passa a afirmar no Windows a DACL conferida pedida (antes "nenhum"),
+  `I4-C29b` desconta da espera o tempo de `accessOf`/`writeExclusive` (justificativas na evidência); guia
+  atualizado. Evidência em `.checks/issue-4-integracoes.build.md`, "Correção da revisão formal round 4". Nenhuma
+  verificação independente nem revisão formal pedida ou executada; contadores e histórico intactos; a sonda
+  bloqueada da rodada 6 não foi executada nem substituída e não houve sonda ad hoc do produto (só a conferência de
+  comportamento das APIs do Windows pedida no despacho, em arquivos sintéticos); estas provas são do autor e não
+  aprovam a entrega.
+- **Decidido durante o build:** nada novo do proprietário. Mecanismo: PowerShell do Windows 5.1 com tipos .NET, sem
+  cmdlets (`Get-Acl`/`Set-Acl` não carregam com um `PSModulePath` herdado do PowerShell 7, constatado); temporário
+  criado com a DACL conferida, entradas herdadas tornadas explícitas e DACL protegida; recusa com 5; registro, lock,
+  Hermes e configuração criada do zero com a ACL herdada — tudo na linha de Landing de `316dec6`.
+- **Abandonado:** `Get-Acl`/`Set-Acl`; criar com `wx` e aplicar a DACL depois; copiar a DACL sem proteção;
+  `SetAccessRuleProtection($true,$true)`; comparar com a DACL herdada e proteger só quando diferente; recusar toda
+  DACL protegida ou desligar a reescrita no Windows; `ReplaceFile`; reescrever no lugar; addon, `Add-Type`,
+  `icacls`, `pwsh`, `-File`, argumentos com `-Command`, `-EncodedCommand`; PowerShell persistente.
+- **Limites registrados, não corrigidos:** vínculo de herança, dono, SACL e rótulo de integridade não preservados
+  (acesso efetivo igual); prazo de 20 s e política real de bloqueio do PowerShell só por leitura (provado com
+  processo inexistente); janela não atômica entre conferência e criação/`rename`, como no POSIX; custo de 4
+  chamadas do PowerShell por reescrita (lote do Windows 33 s → 116 s); os demais já registrados.
+- **Próxima ação (orquestrador):** verificação independente 10 pelos testes versionados e leitura permitida;
+  revisão formal 5 só depois de PASS e relatório commitado.
