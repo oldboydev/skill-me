@@ -351,3 +351,23 @@ Continuidade AC6 — pasta própria do plugin Hermes (17/10/2026):
 - **Fronteira:** o achado irmão de F1 acima ("só reportado: aguarda decisão") foi classificado pelo orquestrador como continuidade do AC6 já aprovado e da fronteira de propriedade de F1 — não é nova feature, issue nem decisão de produto; nenhuma autorização humana nova foi pedida ou presumida, e a formulação anterior fica como histórico. Fechado em `42516ad`: pasta própria como junção/link (dentro ou fora do alvo) ou arquivo → 4 na prévia e na aplicação de install e uninstall, nada lido nem apagado através dela, reconferência antes de cada exclusão. Defeitos adjacentes do mesmo AC6/C34, encontrados durante a correção e tratados pelo builder dentro do escopo (sujeitos à conferência do orquestrador/Verifier): `01faaac` (remoção sem registro apagava bytecode), `043f287` (nota do coordenador e irmão `.skill-me`), `6df4d4c` (artefato trocado por link de arquivo; bytecode ao lado de fonte preservada). Checks e Landing inalterados; regressões `I4-C34b`..`I4-C34e`; evidência em `.checks/issue-4-integracoes.build.md`, "Continuidade AC6 — pasta própria do plugin Hermes".
 - **Decidido durante o build:** nada novo do proprietário. A classificação de continuidade é do orquestrador; a nota do coordenador (container `plugins`) foi confirmada e encerrada acima.
 - **Abandonado:** tratar `ENOTDIR` como ausente em `assertContained` (mudaria Claude/Codex com `.skill-me` arquivo; a pasta do plugin passou a ser conferida antes dos caminhos dos artefatos); recusar só `isSymbolicLink` (o arquivo regular no lugar da pasta continuaria substituído pelo rename do staging no Windows); reconferir só no início da remoção (troca entre exclusões passa — M-PDb); manter o cache pela lista lida do estado (aplicação apagava o que a prévia não listava — M-PDc); reter também o bytecode com o `__init__.py` já ausente (deixaria cache órfão da nossa fonte e mudaria o código de saída sem necessidade demonstrada).
+
+### Verificação independente round 3 — registro parcial (17/10/2026)
+
+O Verifier encerrou `7083702` com FAIL, 47/48 claims: C34/AC6 continua
+incompleto. Instalar Hermes, editar apenas `kwargs.json` e remover produz registro
+parcial só desse arquivo; uma fonte `__init__.py` alheia e seu bytecode criados
+depois ficam fora do registro. Nova remoção preserva a fonte, mas apaga o bytecode
+mesmo retornando conflito 4. Reproduzido com dados sintéticos no Windows e WSL;
+nenhum arquivo pessoal afetado. Relatório autêntico em
+`.checks/issue-4-integracoes.verified.md`; histórico PASS round2 preservado no Git.
+Os lotes de 68 testes passaram (Windows 66/2 skips, WSL 60/8 skips), mas não
+cobriam essa transição. F2/F3/F4 e os cenários nomeados de F1 passaram.
+
+A correção desta perda e suas provas continuam dentro de AC6 já aprovado; o
+orquestrador encaminha ao Claude sem alterar os Checks. O limite de três rodadas
+independentes de `tlc-implement/references/verify.md` foi atingido. Não existe
+exceção humana específica para round4: preparar primeiro correção/provas/commits
+e então solicitar uma rodada independente adicional. Nenhum contador/histórico
+foi alterado. O motor formal segue em uma tentativa consumida de duas e não deve
+iniciar a segunda antes de nova verificação independente válida.
