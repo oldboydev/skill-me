@@ -1074,6 +1074,7 @@ function partialHermesRegistry(label) {
   assert.deepEqual(json(path.join(home, ...HERMES_MANIFEST.split("/"))).artifacts.map((a) => a.path), [`${OWN_DIR}/kwargs.json`], label);
   return { home, initial, plugin, kwargs, installedKwargs };
 }
+const pluginDirLeft = (plugin) => (existsSync(plugin) ? snapshotTree(plugin, { withMtime: false }) : "pasta apagada");
 function writeHermesBytecode(plugin, text) {
   mkdirSync(path.join(plugin, "__pycache__"));
   const bytecode = path.join(plugin, "__pycache__", "__init__.cpython-311.pyc");
@@ -1130,7 +1131,7 @@ test("I4-C34f Hermes: registro parcial de remoção anterior não autoriza apaga
     observed.push({
       label,
       results: repeated.map((args) => describeHermesRun(home, args)),
-      pluginLeft: snapshotTree(plugin, { withMtime: false }),
+      pluginLeft: pluginDirLeft(plugin),
       manifest: existsSync(path.join(home, ...HERMES_MANIFEST.split("/"))),
     });
     expected.push({
@@ -1142,6 +1143,43 @@ test("I4-C34f Hermes: registro parcial de remoção anterior não autoriza apaga
       ],
       pluginLeft: userFiles,
       manifest: false,
+    });
+  }
+
+  // `__pycache__` vazio posto pelo usuário: sem a fonte no registro (com fonte
+  // alheia ou nenhuma) ou ao lado da fonte registrada preservada, o diretório
+  // fica, como ficaria o bytecode — diretório real não comprova propriedade.
+  for (const withSource of [true, false]) {
+    const label = `kwargs.json restaurado, __pycache__ vazio ${withSource ? "com fonte do usuário" : "sem fonte"}`;
+    const { home, plugin, kwargs, installedKwargs } = partialHermesRegistry(`partial-empty-cache-${withSource ? "source" : "alone"}`);
+    writeFileSync(kwargs, installedKwargs);
+    if (withSource) writeFileSync(path.join(plugin, "__init__.py"), userSource);
+    mkdirSync(path.join(plugin, "__pycache__"));
+    const { "kwargs.json": _ownKwargs, ...userFiles } = snapshotTree(plugin, { withMtime: false });
+    observed.push({ label, results: [describeHermesRun(home, ["uninstall", "--apply"])], pluginLeft: pluginDirLeft(plugin) });
+    expected.push({
+      label,
+      results: [`uninstall --apply → 4 conflict applied=true changes=[remove_artifact:${OWN_DIR}/kwargs.json,delete_manifest:${HERMES_MANIFEST}] conflicts=foreign_files_preserved:${OWN_DIR}`],
+      pluginLeft: userFiles,
+    });
+  }
+  {
+    const label = "fonte registrada editada com __pycache__ vazio";
+    const home = hermesTarget("edited-source-empty-cache");
+    assert.equal(cli(["install", "--agent", "hermes", "--target", home, "--apply"]).status, 0, label);
+    const plugin = path.join(home, ...OWN_DIR.split("/"));
+    const init = path.join(plugin, "__init__.py");
+    writeFileSync(init, readFileSync(init, "utf8") + "# edição do usuário\n");
+    mkdirSync(path.join(plugin, "__pycache__"));
+    const { "kwargs.json": _ownKwargs, "plugin.yaml": _ownYaml, ...kept } = snapshotTree(plugin, { withMtime: false });
+    observed.push({ label, results: [["uninstall", "--apply"], ["uninstall", "--apply"]].map((args) => describeHermesRun(home, args)), pluginLeft: pluginDirLeft(plugin) });
+    expected.push({
+      label,
+      results: [
+        `uninstall --apply → 4 conflict applied=true changes=[remove_artifact:${OWN_DIR}/kwargs.json,remove_artifact:${OWN_DIR}/plugin.yaml,write_manifest:${HERMES_MANIFEST}] conflicts=owned_entry_modified:${OWN_DIR}/__init__.py`,
+        `uninstall --apply → 4 conflict applied=false changes=[] conflicts=owned_entry_modified:${OWN_DIR}/__init__.py`,
+      ],
+      pluginLeft: kept,
     });
   }
 
@@ -1216,6 +1254,21 @@ test("I4-C34f Hermes: registro parcial de remoção anterior não autoriza apaga
         `uninstall --apply → 4 conflict applied=true changes=[remove_artifact:${OWN_DIR}/kwargs.json,remove_artifact:${OWN_DIR}/plugin.yaml,write_manifest:${HERMES_MANIFEST}] conflicts=owned_entry_modified:${OWN_DIR}/__init__.py`,
         `uninstall --apply → 0 applied applied=true changes=[remove_artifact:${OWN_DIR}/__init__.py,remove_cache:${OWN_BYTECODE},delete_manifest:${HERMES_MANIFEST}] conflicts=`,
       ],
+      treeRestored: true,
+    });
+  }
+
+  // `__pycache__` vazio ao lado da nossa fonte: sai com ela.
+  {
+    const label = "__pycache__ vazio ao lado da nossa fonte";
+    const home = hermesTarget("own-empty-cache");
+    const initial = snapshotTree(home, { withMtime: false });
+    assert.equal(cli(["install", "--agent", "hermes", "--target", home, "--apply"]).status, 0, label);
+    mkdirSync(path.join(home, ...OWN_DIR.split("/"), "__pycache__"));
+    observed.push({ label, results: [describeHermesRun(home, ["uninstall", "--apply"])], treeRestored: isDeepStrictEqual(snapshotTree(home, { withMtime: false }), initial) });
+    expected.push({
+      label,
+      results: [`uninstall --apply → 0 applied applied=true changes=[${HERMES_ARTIFACTS.map((file) => `remove_artifact:${file}`).join(",")},delete_manifest:${HERMES_MANIFEST}] conflicts=`],
       treeRestored: true,
     });
   }

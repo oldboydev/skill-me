@@ -291,7 +291,8 @@ async function readPluginCache(io, root, dir, state, platform) {
     state.foreign.push("__pycache__");
     return;
   }
-  state.cacheDirOwned = true;
+  // Diretório real, não propriedade: quem decide se ele é nosso é o plano.
+  state.cacheDirReal = true;
   for (const name of await io.readdir(dir)) {
     const file = path.join(dir, name);
     await assertContained(root, file, io, platform);
@@ -356,7 +357,7 @@ async function readHermesState(io, root, platform, { op, artifacts }) {
     pluginDirExists: await ownPluginDirExists(io, root),
     files: {},
     caches: [],
-    cacheDirOwned: false,
+    cacheDirReal: false,
     foreign: [],
     staging: null,
   };
@@ -441,16 +442,18 @@ function planHermes(op, state, artifacts) {
   // `__init__.py` registrado e removido agora como nosso, ou já ausente (órfão
   // da nossa fonte). Preservado (editado, trocado por link ou de outro plugin de
   // mesmo nome) ou fora do registro — registro parcial de uma remoção anterior,
-  // com fonte nova do usuário (até cópia exata) ou nenhuma —, o cache fica.
+  // com fonte nova do usuário (até cópia exata) ou nenhuma —, o cache fica,
+  // inclusive o `__pycache__` vazio.
   const recordedNames = state.manifest.artifacts.map((a) => path.posix.basename(a.path));
   const sourceRecorded = recordedNames.includes("__init__.py");
   const sourcePreserved = remaining.some((a) => path.posix.basename(a.path) === "__init__.py");
-  const caches = sourceRecorded && !sourcePreserved ? state.caches : [];
+  const cacheOwned = sourceRecorded && !sourcePreserved;
+  const caches = cacheOwned ? state.caches : [];
   for (const cached of caches) changes.push({ file: `${PLUGIN_REL_DIR}/__pycache__/${cached}`, action: "remove_cache" });
   // Fora do registro, nome de artefato não comprova nada: o arquivo é alheio,
-  // como o bytecode sem fonte registrada, e fica reportado.
+  // como o `__pycache__` sem fonte registrada, e fica reportado.
   const unrecorded = Object.keys(state.files).filter((name) => !recordedNames.includes(name));
-  if (state.foreign.length > 0 || unrecorded.length > 0 || (!sourceRecorded && state.caches.length > 0)) {
+  if (state.foreign.length > 0 || unrecorded.length > 0 || (!sourceRecorded && state.cacheDirReal)) {
     conflicts.push({ code: "foreign_files_preserved", file: PLUGIN_REL_DIR });
   }
   let manifestAction = null;
@@ -462,6 +465,7 @@ function planHermes(op, state, artifacts) {
     conflicts,
     removals,
     caches,
+    removeCacheDir: cacheOwned && state.cacheDirReal,
     manifestAction,
     manifestBody: { artifacts: remaining, created: state.manifest.created },
   };
@@ -519,9 +523,9 @@ async function removeHermesArtifacts(io, root, plan, state, platform) {
     await pluginDirStillOwn();
     await stillRealDir(cacheDir, cacheRel);
   };
-  // O bytecode só sai com a fonte ausente — removida acima como nossa ou já
-  // ausente na leitura. Uma fonte posta depois é de outra origem e o bytecode
-  // ao lado pode ser dela.
+  // O bytecode e o `__pycache__` só saem com a fonte ausente — removida acima
+  // como nossa ou já ausente na leitura. Uma fonte posta depois é de outra
+  // origem e o bytecode ao lado pode ser dela.
   const sourceStillAbsent = async () => {
     if ((await entryKind(io, path.join(pluginDir, "__init__.py"))) !== "absent") {
       throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/__init__.py`);
@@ -546,9 +550,11 @@ async function removeHermesArtifacts(io, root, plan, state, platform) {
       if (!(await io.lstat(file)).isFile()) throw new ConflictError("config_changed_during_apply", `${cacheRel}/${cached}`);
       await io.unlink(file);
     }
-    // Só o diretório real que foi inspecionado.
-    if (state.cacheDirOwned) {
+    // Só o diretório real que foi inspecionado e que o plano tomou por nosso,
+    // como o bytecode: ao lado de fonte preservada ou fora do registro, fica.
+    if (plan.removeCacheDir) {
       await cacheDirStillOwn();
+      await sourceStillAbsent();
       await removeDirIfEmpty(io, cacheDir);
     }
     await pluginDirStillOwn();

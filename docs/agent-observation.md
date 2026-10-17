@@ -131,12 +131,14 @@ simulação de caminho.
   só sai com a fonte comprovada pelo registro: `__init__.py` registrado e removido
   agora como nosso, ou já ausente (órfão da nossa fonte). Depois de uma remoção com
   conflito o registro guarda só o que ficou; um `__init__.py` posto depois na pasta —
-  mesmo cópia exata do pacote —, o bytecode ao lado (com ou sem fonte) e qualquer
-  arquivo com nome de artefato fora do registro são alheios: ficam e a remoção sai
-  com 4. Reinstalar sobre essa sobra só registra artefato fora do registro que tenha
-  o conteúdo exato do pacote; ausente ou diferente, recusa com 4 sem registrar nada.
-  Antes de apagar cada bytecode a remoção reconfere que a fonte continua ausente;
-  uma fonte posta durante a remoção conserva o bytecode (código 4). Bytecode da nossa
+  mesmo cópia exata do pacote —, o bytecode ao lado e o `__pycache__` (mesmo vazio,
+  com ou sem fonte) e qualquer arquivo com nome de artefato fora do registro são
+  alheios: ficam e a remoção sai com 4. Ao lado de fonte registrada preservada o
+  `__pycache__` vazio também fica. Reinstalar sobre essa sobra só registra artefato
+  fora do registro que tenha o conteúdo exato do pacote; ausente ou diferente, recusa
+  com 4 sem registrar nada. Antes de apagar cada bytecode e o `__pycache__` a remoção
+  reconfere que a fonte continua ausente; uma fonte posta durante a remoção conserva
+  o bytecode e o diretório (código 4). Bytecode da nossa
   fonte que o Hermes grave depois da leitura feita pela remoção não está no plano e
   fica; sem a fonte no registro, as remoções seguintes não o tomam por nosso (limpeza
   manual). `__pycache__` ou bytecode que é junção/link para fora do
