@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -898,7 +898,15 @@ test("I4-C32b reinstalar sobre entrada própria editada não duplica nem perde o
     editConfig(path.join(unrecorded, file), (doc) => {
       ownGroupOf(agent, doc.hooks.PreToolUse).hooks[0].timeout = 99;
     });
-    rmSync(path.join(unrecorded, ".skill-me"), { recursive: true });
+    // `unlink`/`rmdir`, não `rmSync`: no Windows, o `rmSync` do Node 24 até
+    // 24.13.0 (o da CI) converte o caminho pela página de código ANSI — com
+    // "ação" não acha a pasta, não apaga e não lança (nodejs/node#56049,
+    // corrigido na 24.13.1). O registro ficava e a prova partia de outro estado.
+    // `rmdir` falha se sobrar algo além do registro.
+    const stateDir = path.join(unrecorded, ".skill-me");
+    unlinkSync(path.join(stateDir, `${agent}-install.json`));
+    rmdirSync(stateDir);
+    assert.equal(existsSync(stateDir), false, `${agent}: a prova parte sem registro`);
     const unrecordedConflict = [{ code: "owned_entry_unrecorded", file, event: "PreToolUse" }];
     const adopted = cli(["install", "--agent", agent, "--target", unrecorded, "--apply"]);
     assert.equal(adopted.status, 4, `${agent} sem registro: ${adopted.stdout}`);

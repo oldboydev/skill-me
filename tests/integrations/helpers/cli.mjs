@@ -8,8 +8,14 @@ export const INTEGRATIONS_CLI = path.join(REPO_ROOT, "src", "integrations", "cli
 
 // Diretório temporário com espaço e Unicode no caminho: toda prova de
 // instalação/execução passa por um caminho desses (crit. 4 e 11).
+// Devolvido na grafia do caminho real que o instalador resolve (`realpath` de
+// `fs/promises`, a semântica de `realpathSync.native`): as provas instrumentam
+// o io por caminho absoluto. `realpathSync` em JS só resolve links e conserva o
+// resto — no Windows, um nome curto 8.3 do TEMP (`C:\Users\RUNNER~1\…` na CI)
+// ou a letra de unidade minúscula ficavam, e nenhuma intervenção disparava
+// (I4-C30f).
 export function makeScratch(label) {
-  return realpathSync(mkdtempSync(path.join(tmpdir(), `skill-me i4 ${label} ação-`)));
+  return realpathSync.native(mkdtempSync(path.join(tmpdir(), `skill-me i4 ${label} ação-`)));
 }
 
 // Ambiente mínimo e explícito: nada do perfil de quem roda os testes

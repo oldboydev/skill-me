@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { isDeepStrictEqual } from "node:util";
@@ -28,6 +28,86 @@ function target(label) {
   writeFileSync(path.join(claude, "settings.json"), ORIGINAL);
   return claude;
 }
+
+// `os.tmpdir()` lê TEMP/TMP (Windows) ou TMPDIR (POSIX) a cada chamada: troca
+// síncrona, sem await no meio, restaurada como estava.
+function withTempDir(dir, fn) {
+  const saved = ["TEMP", "TMP", "TMPDIR"].map((key) => [key, process.env[key]]);
+  for (const [key] of saved) process.env[key] = dir;
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+// As intervenções deste arquivo comparam o caminho absoluto montado pelo teste
+// com o que o instalador passa ao io (`file === tmp`, `from === deny`…). Na CI
+// Windows do PR #16 (run 39071778945) o TEMP tinha um nome curto 8.3
+// (`C:\Users\RUNNER~1\…`): o instalador resolve o alvo para o nome longo e 12
+// testes falharam sem que nenhuma intervenção disparasse (makeScratch, em
+// helpers/cli.mjs). Alias sintético de uma pasta própria no lugar do TEMP —
+// nome curto 8.3 e letra de unidade minúscula (Windows), link simbólico
+// (POSIX): o scratch criado sob ele é o caminho real que o instalador resolve
+// e a intervenção pelo caminho do temporário da configuração dispara na
+// criação e no rename.
+test("I4-C30f scratch das provas no caminho real que o instalador resolve: alias no TEMP não desarma intervenções por caminho", async (t) => {
+  const base = makeScratch("temp alias");
+  scratches.push(base);
+  const longDir = path.join(base, "temporario-longo-da-prova");
+  mkdirSync(longDir);
+  const aliases = [];
+  if (process.platform === "win32") {
+    // Única entrada de uma pasta nova: o NTFS lhe dá o nome curto `TEMPOR~1`.
+    const short = path.join(base, "TEMPOR~1");
+    if (existsSync(short) && realpathSync.native(short) === longDir) aliases.push(["nome curto 8.3", short]);
+    else t.diagnostic("linha do nome curto 8.3 não executada: o volume do TEMP não gerou TEMPOR~1 (nomes curtos desligados ou outro algoritmo)");
+    if (/^[A-Z]:\\/.test(longDir)) aliases.push(["letra de unidade minúscula", longDir[0].toLowerCase() + longDir.slice(1)]);
+    else t.diagnostic("linha da letra de unidade não executada: o TEMP não está numa unidade com letra");
+  } else {
+    const link = path.join(base, "temp por link");
+    symlinkSync(longDir, link, "dir");
+    aliases.push(["link simbólico", link]);
+  }
+  const io = createNodeIo();
+  const observed = [];
+  const expected = [];
+  for (const [label, alias] of aliases) {
+    const scratch = withTempDir(alias, () => makeScratch("sob alias"));
+    const dir = path.join(scratch, ".claude");
+    mkdirSync(dir);
+    writeFileSync(path.join(dir, "settings.json"), ORIGINAL);
+    const tmp = path.join(dir, "settings.json.skill-me-tmp");
+    const hits = { writeExclusive: 0, rename: 0 };
+    const instrumented = {
+      ...io,
+      async writeExclusive(file, data, options) {
+        if (file === tmp) hits.writeExclusive += 1;
+        return io.writeExclusive(file, data, options);
+      },
+      async rename(from, to) {
+        if (from === tmp) hits.rename += 1;
+        return io.rename(from, to);
+      },
+    };
+    const result = await runIntegrationCommand({ command: "install", agent: "claude", target: dir, apply: true, io: instrumented });
+    observed.push({
+      alias: label,
+      aliasIsAnotherSpelling: alias !== longDir,
+      createdUnderAlias: realpathSync.native(path.dirname(scratch)) === longDir,
+      scratchIsRealPath: scratch === (await io.realpath(scratch)),
+      hits,
+      exitCode: result.exitCode,
+      ownEvents: Object.keys(readClaudeHandlers(dir)).length,
+    });
+    expected.push({ alias: label, aliasIsAnotherSpelling: true, createdUnderAlias: true, scratchIsRealPath: true, hits: { writeExclusive: 1, rename: 1 }, exitCode: 0, ownEvents: 8 });
+  }
+  assert.ok(aliases.length > 0, "ao menos um alias executado");
+  assert.deepEqual(observed, expected);
+});
 
 test("I4-C30 edição externa entre a leitura e o rename vira conflito sem escrita", async () => {
   const dir = target("mid-apply");
@@ -589,7 +669,9 @@ test("I4-C29c entrada que some entre o lstat e o realpath da contenção é sond
           if (file !== transient || !existsSync(transient)) return io.realpath(file);
           realpathCalls += 1;
           if (mode === "some uma vez" || realpathCalls > UNSTABLE_CAP) {
-            rmSync(transient);
+            // `unlink`, não `rmSync`: no Windows, o do Node 24 até 24.13.0 não
+            // apaga num caminho com "ação" e não lança (nodejs/node#56049).
+            unlinkSync(transient);
             return io.realpath(file);
           }
           throw Object.assign(new Error("ENOENT simulado: a entrada sumiu de novo"), { code: "ENOENT" });
