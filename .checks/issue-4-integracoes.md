@@ -978,3 +978,28 @@ uma vez. A antiga ação bloqueada da preparação6 não foi repetida nem recria
 Cinco tentativas formais de dez consumidas. Próxima etapa automática:
 formal6 no commit limpo, sem publicação antes de ready válido. Autorizações,
 critérios, histórico e resíduos preservados.
+
+
+CI inicial do PR #16 (17/10/2026), após ready formal6:
+
+O PR foi criado pelo comando obrigatório no HEAD b5eaa2109bcd6566b3c47ec97b144348413198b8,
+publicado e anexado à sessão. Project In Review. Run 39071778945: Ubuntu e macOS
+passaram; Windows falhou nas integrações (87 testes: 60 pass, 13 fail, 14 skips).
+Governança 6/6, motor 16/16 e doctor 410 pass/7 skips não falharam no Windows.
+O log completo foi preservado em .checks/code-review/issue-4/ci-first-windows-pr16-39071778945.log.
+A CI agregada falhou e o merge não foi executado.
+
+Os testes C30c, C29b/c, C30d, C31b, C27b/d, C34h/i/j, C25f/h e C32b falharam.
+Em diversas regressões os indicadores mostram que a instrumentação nem foi acionada
+(mutated/swapped false, renameAttempts 0), apesar de a aplicação executar. C32b
+retornou owned_entry_modified onde a asserção exige owned_entry_unrecorded.
+A causa ainda precisa ser diagnosticada; diferença de representação de caminhos
+é hipótese, não defeito de produto comprovado nem autorização para enfraquecer testes.
+Não houve repetição da CI para tentar obter verde.
+
+A regressão macOS C25m executou nativamente e passou (250,939083 ms, log do job
+117510753658), além do job inteiro: esta pendência local agora tem evidência remota.
+Continuidade já autorizada: Claude corrige a causa comprovada e prova a regressão;
+nova verificação independente e formal7 exigidas para qualquer conteúdo alterado.
+Seis tentativas formais de dez consumidas, todas preservadas. PR16 permanece aberto
+e In Review; não criar outro PR nem novas issues. Merge só após conteúdo e gates válidos.
