@@ -850,6 +850,32 @@ test("I4-C34b Hermes: pasta própria trocada por junção/link ou arquivo não �
       });
     }
   }
+  // Diretório real de mesmo nome que nunca foi instalado (sem registro): nada
+  // nele é comprovadamente nosso, nem o bytecode — a aplicação não apaga o que a
+  // prévia não lista.
+  const unrecorded = hermesTarget("plugin-dir-unrecorded");
+  const unrecordedDir = path.join(unrecorded, "plugins", "skill-me-observer");
+  const unrecordedBytecode = writeOtherPlugin(unrecordedDir, OTHER_PLUGIN_FILES);
+  const unrecordedHash = sha256File(unrecordedBytecode);
+  const unrecordedDirBefore = snapshotTree(unrecordedDir);
+  const unrecordedBefore = snapshotTree(unrecorded);
+  const unrecordedLabel = "diretório real de mesmo nome, sem registro";
+  observed.push({
+    label: unrecordedLabel,
+    results: runPluginDirCommands(unrecorded),
+    bytecode: bytecodeState(unrecordedBytecode, unrecordedHash),
+    otherPluginIntact: isDeepStrictEqual(snapshotIfPresent(unrecordedDir), unrecordedDirBefore),
+    targetIntact: isDeepStrictEqual(snapshotTree(unrecorded), unrecordedBefore),
+    linkKept: null,
+  });
+  expected.push({
+    label: unrecordedLabel,
+    results: PLUGIN_DIR_COMMANDS.map((args) => `${args.join(" ")} → 4 conflict applied=false changes=0 conflicts=${args[0] === "install" ? "foreign_artifact" : "owned_entry_unrecorded"}:plugins/skill-me-observer`),
+    bytecode: "intacto",
+    otherPluginIntact: true,
+    targetIntact: true,
+    linkKept: null,
+  });
   assert.deepEqual(observed, expected);
 
   // Controle: pasta própria real com o cache normal, ao lado de outro plugin com

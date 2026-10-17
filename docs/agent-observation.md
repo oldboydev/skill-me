@@ -131,7 +131,8 @@ simulação de caminho.
   `plugins/skill-me-observer` só é nossa como diretório real: trocada por
   junção/link (para dentro ou para fora do alvo) ou por um arquivo, instalação e
   remoção recusam com 4, também na prévia, sem ler, apagar ou registrar nada através
-  dela. Antes de cada exclusão a remoção reconfere que a pasta e o `__pycache__` continuam
+  dela. Sem registro de instalação nada da pasta é removido, nem o bytecode. Antes de
+  cada exclusão a remoção reconfere que a pasta e o `__pycache__` continuam
   diretórios reais (janela não atômica, como na escrita da configuração). Ponto de
   montagem de volume (Windows) ou bind mount (POSIX) aparece como diretório real e
   não é distinguido; criá-lo exige privilégio.

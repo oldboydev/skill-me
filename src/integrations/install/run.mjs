@@ -403,8 +403,9 @@ function planHermes(op, state, artifacts) {
     return { changes, conflicts, writeArtifacts, manifestAction, manifestBody: body };
   }
   if (!state.manifest) {
+    // Sem registro nada na pasta é comprovadamente nosso, nem o bytecode.
     if (state.pluginDirExists) conflicts.push({ code: "owned_entry_unrecorded", file: PLUGIN_REL_DIR });
-    return { changes, conflicts, removals: [], manifestAction: null };
+    return { changes, conflicts, removals: [], caches: [], manifestAction: null };
   }
   const removals = [];
   const remaining = [];
@@ -430,6 +431,7 @@ function planHermes(op, state, artifacts) {
     changes,
     conflicts,
     removals,
+    caches: state.caches,
     manifestAction,
     manifestBody: { artifacts: remaining, created: state.manifest.created },
   };
@@ -495,7 +497,7 @@ async function removeHermesArtifacts(io, root, plan, state, platform) {
       if (sha256(await io.readBytes(file)) !== removal.sha256) throw new ConflictError("config_changed_during_apply", `${PLUGIN_REL_DIR}/${removal.name}`);
       await io.unlink(file);
     }
-    for (const cached of state.caches) {
+    for (const cached of plan.caches) {
       const file = path.join(cacheDir, cached);
       await cacheDirStillOwn();
       // Mesma conferência para o cache: link posto depois da leitura não é seguido.
@@ -533,7 +535,8 @@ async function runHermesAgent({ op, root, apply, io, platform, result }) {
   let plan = planHermes(op, state, artifacts);
   result.changes = plan.changes;
   result.conflicts = plan.conflicts;
-  const needsWrite = (p) => p.writeArtifacts || (p.removals?.length ?? 0) > 0 || p.manifestAction !== null || (op === "uninstall" && state.caches.length > 0);
+  // O plano é a fonte do que a aplicação apaga: o que a prévia não lista não sai.
+  const needsWrite = (p) => p.writeArtifacts || (p.removals?.length ?? 0) > 0 || (p.caches?.length ?? 0) > 0 || p.manifestAction !== null;
   if (!apply || !needsWrite(plan)) return;
   await withLock(io, root, "hermes", async () => {
     state = await readHermesState(io, root, platform, { op, artifacts });
