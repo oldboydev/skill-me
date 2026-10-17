@@ -155,10 +155,11 @@ async function stillHolds(io, file, bytes) {
   }
 }
 
-// Caminho real da pasta de estado, contida no alvo, enquanto ela for um
-// diretório (junção/link que resolve dentro do alvo conta, como na leitura).
-async function stateDirRealPath(io, root, platform) {
-  const dir = path.join(root, STATE_DIR);
+// Caminho real de uma pasta do alvo atravessada pelos efeitos (`.skill-me`;
+// `plugins` do Hermes), contida no alvo, enquanto ela for um diretório
+// (junção/link que resolve dentro do alvo conta, como na leitura).
+async function dirRealPath(io, root, rel, platform) {
+  const dir = path.join(root, rel);
   const real = await assertContained(root, dir, io, platform);
   let stats = null;
   try {
@@ -166,8 +167,18 @@ async function stateDirRealPath(io, root, platform) {
   } catch (error) {
     if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error;
   }
-  if (!stats?.isDirectory()) throw new ConflictError("config_changed_during_apply", STATE_DIR);
+  if (!stats?.isDirectory()) throw new ConflictError("config_changed_during_apply", rel);
   return real;
+}
+
+// Conferência de que a pasta continua no caminho real de referência da
+// execução. Trocada depois por junção/link (para fora ou para outra pasta do
+// alvo), o mesmo nome alcançaria arquivos de outro lugar — o `lstat` de um
+// filho atravessa o ancestral trocado sem perceber.
+function dirUnchangedGuard(io, root, rel, real, platform) {
+  return async () => {
+    if ((await dirRealPath(io, root, rel, platform)) !== real) throw new ConflictError("config_changed_during_apply", rel);
+  };
 }
 
 // Só sai o lock que esta execução criou: pela mesma pasta de estado e enquanto
@@ -225,10 +236,7 @@ async function withLock(io, root, agent, platform, result, fn) {
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
   }
-  const stateDirReal = await stateDirRealPath(io, root, platform);
-  const stateDirUnchanged = async () => {
-    if ((await stateDirRealPath(io, root, platform)) !== stateDirReal) throw new ConflictError("config_changed_during_apply", STATE_DIR);
-  };
+  const stateDirUnchanged = dirUnchangedGuard(io, root, STATE_DIR, await dirRealPath(io, root, STATE_DIR, platform), platform);
   try {
     await io.writeExclusive(lockPath, lockText);
   } catch (error) {
@@ -549,10 +557,14 @@ async function readHermesState(io, root, platform, { op, artifacts, beforeManife
   const pluginsDir = path.join(root, "plugins");
   const pluginDir = path.join(root, PLUGIN_REL_DIR);
   const exists = async (dir) => io.stat(dir).then((s) => s.isDirectory(), () => false);
+  const pluginsDirExists = await exists(pluginsDir);
   const state = {
     manifestText,
     manifest: manifestText === null ? null : parseManifest("hermes", manifestText),
-    pluginsDirExists: await exists(pluginsDir),
+    pluginsDirExists,
+    // Lido sob o lock, antes da pasta do plugin e do staging, é a referência de
+    // tudo que a aplicação lê, grava ou apaga através de `plugins`.
+    pluginsDirReal: pluginsDirExists ? await dirRealPath(io, root, "plugins", platform) : null,
     pluginDirExists: await ownPluginDirExists(io, root),
     files: {},
     caches: [],
@@ -678,41 +690,60 @@ function planHermesChanges(op, state, artifacts) {
 
 // Remove o staging só enquanto ele continuar comprovadamente nosso: diretório
 // real e, imediatamente antes de cada exclusão, arquivo próprio (mesma
-// reconferência dos artefatos na remoção). Uma troca feita depois da leitura
-// vira conflito e nada além dos arquivos já conferidos é apagado; `rmdir` só
-// alcança o diretório real inspecionado (no Windows removeria uma junção).
-async function removeOwnedStaging(io, root, artifacts, platform) {
+// reconferência dos artefatos na remoção), com `plugins` no caminho real de
+// referência antes de cada leitura e exclusão. Uma troca feita depois da
+// leitura vira conflito e nada além dos arquivos já conferidos é apagado;
+// `rmdir` só alcança o diretório real inspecionado (no Windows removeria uma junção).
+async function removeOwnedStaging(io, root, artifacts, platform, pluginsUnchanged) {
   const dir = path.join(root, STAGING_REL_DIR);
+  await pluginsUnchanged();
   await assertContained(root, dir, io, platform);
   if (!(await io.lstat(dir)).isDirectory()) throw new ConflictError("foreign_artifact", STAGING_REL_DIR);
   for (const name of await io.readdir(dir)) {
     const file = path.join(dir, name);
+    await pluginsUnchanged();
     if (!(await isOwnStagedFile(io, root, file, name, artifacts, platform))) throw new ConflictError("foreign_artifact", STAGING_REL_DIR);
     await io.unlink(file);
   }
+  await pluginsUnchanged();
   await io.rmdir(dir);
 }
 
+// Staging e pasta do plugin ficam em `plugins`: trocada durante a aplicação,
+// nada mais é criado, gravado ou renomeado através dela, e o staging já
+// gravado fica onde estiver.
 async function installHermesArtifacts(io, root, artifacts, state, platform) {
   const pluginsDir = path.join(root, "plugins");
   const pluginDir = path.join(root, PLUGIN_REL_DIR);
   const tmpDir = path.join(root, STAGING_REL_DIR);
-  if (!state.pluginsDirExists) await io.mkdir(pluginsDir);
+  let pluginsDirReal = state.pluginsDirReal;
+  if (!state.pluginsDirExists) {
+    await io.mkdir(pluginsDir);
+    // Criada agora: a referência vem logo depois do `mkdir`, como na pasta de estado.
+    pluginsDirReal = await dirRealPath(io, root, "plugins", platform);
+  }
+  const pluginsUnchanged = dirUnchangedGuard(io, root, "plugins", pluginsDirReal, platform);
   // Sobra própria de uma instalação interrompida; alheia já virou conflito no plano.
-  if (state.staging) await removeOwnedStaging(io, root, artifacts, platform);
+  if (state.staging) await removeOwnedStaging(io, root, artifacts, platform, pluginsUnchanged);
+  await pluginsUnchanged();
   await io.mkdir(tmpDir);
-  for (const a of artifacts) await io.writeExclusive(path.join(tmpDir, a.name), a.content);
+  for (const a of artifacts) {
+    await pluginsUnchanged();
+    await io.writeExclusive(path.join(tmpDir, a.name), a.content);
+  }
+  await pluginsUnchanged();
   try {
     await io.rename(tmpDir, pluginDir);
   } catch (error) {
-    await removeOwnedStaging(io, root, artifacts, platform).catch(() => {});
+    await removeOwnedStaging(io, root, artifacts, platform, pluginsUnchanged).catch(() => {});
     if (await io.stat(pluginDir).then(() => true, () => false)) throw new ConflictError("foreign_artifact", PLUGIN_REL_DIR);
     throw error;
   }
 }
 
-// A pasta do plugin e o `__pycache__` foram lidos como diretórios reais;
-// imediatamente antes de cada exclusão isso é reconferido. Trocados depois da
+// A pasta do plugin e o `__pycache__` foram lidos como diretórios reais, com
+// `plugins` no caminho real de referência; imediatamente antes de cada leitura
+// e exclusão isso é reconferido, o ancestral primeiro. Trocados depois da
 // leitura por junção/link, o mesmo nome apagaria o arquivo de outro plugin, e
 // `rmdir` removeria a junção (Windows). A troca vira conflito e nada além do já
 // conferido é apagado — mesmo limite não atômico do `rename` da configuração.
@@ -723,7 +754,11 @@ async function removeHermesArtifacts(io, root, plan, state, platform) {
   const stillRealDir = async (dir, rel) => {
     if ((await entryKind(io, dir)) !== "dir") throw new ConflictError("config_changed_during_apply", rel);
   };
-  const pluginDirStillOwn = () => stillRealDir(pluginDir, PLUGIN_REL_DIR);
+  const pluginsUnchanged = dirUnchangedGuard(io, root, "plugins", state.pluginsDirReal, platform);
+  const pluginDirStillOwn = async () => {
+    await pluginsUnchanged();
+    await stillRealDir(pluginDir, PLUGIN_REL_DIR);
+  };
   const cacheDirStillOwn = async () => {
     await pluginDirStillOwn();
     await stillRealDir(cacheDir, cacheRel);
@@ -843,6 +878,9 @@ export async function runIntegrationCommand({
       throw new ConflictError("managed_policy_target");
     }
     const root = await resolveTarget(target, io);
+    // O argumento pode ser um alias (junção/link) do diretório gerenciado: o
+    // caminho real passa pela mesma recusa antes de qualquer leitura no alvo.
+    if (agent === "claude" && isManagedPolicyTarget(root, platform)) throw new ConflictError("managed_policy_target");
     result.target = root;
     const op = command === "uninstall" ? "uninstall" : "install";
     if (op === "install") result.manualSteps = MANUAL_STEPS[agent];

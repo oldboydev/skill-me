@@ -19,8 +19,12 @@ function isInside(root, candidate, platform) {
   return relative === "" || (!relative.startsWith("..") && !api.isAbsolute(relative));
 }
 
-// Comparação textual, antes de qualquer acesso: o diretório de política
-// gerenciada do Claude (managed-settings.json) nunca é alvo, exista ou não.
+// Comparação textual: o diretório de política gerenciada do Claude
+// (managed-settings.json) nunca é alvo, exista ou não. Vale para o argumento,
+// antes de qualquer acesso, e para o caminho real do alvo — um alias
+// (junção/link) não contorna a recusa. O diretório gerenciado não é resolvido:
+// o instalador nunca o acessa, e um diretório gerenciado que seja ele mesmo
+// link não é seguido.
 export function isManagedPolicyTarget(targetArg, platform) {
   const managedFile = CLAUDE_MANAGED_SETTINGS_PATH[platform];
   if (!managedFile) return false;

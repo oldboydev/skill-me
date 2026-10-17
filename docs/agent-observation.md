@@ -190,6 +190,22 @@ simulação de caminho.
   diretórios reais (janela não atômica, como na escrita da configuração). Ponto de
   montagem de volume (Windows) ou bind mount (POSIX) aparece como diretório real e
   não é distinguido; criá-lo exige privilégio.
+- Hermes, pasta `plugins`: o caminho real dela, lido sob o lock (ou logo depois de a
+  instalação criá-la), precisa continuar o mesmo antes de cada leitura, gravação e
+  exclusão que passa por ela — artefatos, bytecode, `__pycache__`, pasta do plugin e
+  staging. Trocada durante a aplicação por junção/link para fora do alvo, para outra
+  pasta do alvo (mesmo com cópias exatas dos artefatos) ou por arquivo, nada mais é
+  lido, gravado ou apagado através dela: 4, `target_escape` ou
+  `config_changed_during_apply` em `plugins`. O que já saiu ou foi gravado fica como
+  está (o passo não é desfeito), o staging já gravado fica onde estiver e o registro
+  não muda; confira e repita o comando. Junção/link para dentro do alvo já presente
+  antes do comando continua aceito.
+- Claude, política gerenciada: `--target` igual ao diretório de
+  `managed-settings.json` ou dentro dele é recusado com 4 (`managed_policy_target`)
+  pelo caminho escrito, sem nenhum acesso, e também pelo caminho real logo depois de
+  resolver o alvo — um alias (junção/link) não contorna a recusa, e nada é lido nem
+  gravado nele. O diretório gerenciado em si não é resolvido nem acessado: se ele
+  próprio for um link, o destino desse link não é reconhecido como gerenciado.
 - Diretórios que a instalação criou (`plugins` do Hermes, `.skill-me` dos três
   agentes) saem na remoção só quando vazios e ainda diretórios reais: se o usuário
   os trocou por junção/link, a remoção conclui o que é nosso e o link fica.

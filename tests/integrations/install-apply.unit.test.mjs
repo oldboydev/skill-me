@@ -7,7 +7,7 @@ import { replacementMode } from "../../src/integrations/install/io.mjs";
 import { parseConfig, planJsonInstall, planJsonUninstall } from "../../src/integrations/install/json-hooks.mjs";
 import { widenedRecipients } from "./helpers/posix-access.mjs";
 import { createNodeIo, runIntegrationCommand } from "../../src/integrations/install/run.mjs";
-import { makeScratch } from "./helpers/cli.mjs";
+import { makeScratch, REPO_ROOT } from "./helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers } from "./helpers/installed-hooks.mjs";
 import { sha256File, snapshotTree } from "./helpers/tree.mjs";
 
@@ -1236,5 +1236,334 @@ test("I4-C30e registro que não é arquivo regular não é lido nem apagado: pr�
       });
     }
   }
+  assert.deepEqual(observed, expected);
+});
+
+// Ancestral `plugins` do Hermes trocado durante a aplicação — achado F1 da
+// revisão formal round 3. A troca acontece dentro do próprio comando: na
+// remoção, logo depois da exclusão real do primeiro ou do último artefato
+// próprio, ou logo depois de criado o lock; na instalação, logo depois de criar
+// `plugins`, do primeiro ou do último artefato gravado no staging, ou da
+// primeira exclusão da sobra própria dele. `plugins` é movida (sempre dentro do
+// mesmo scratch) e no lugar fica junção (Windows) / symlink (POSIX) para uma
+// pasta fora do alvo ou para outra pasta do alvo — com cópias exatas dos
+// artefatos cujo hash está no registro, bytecode com o nome do cache próprio,
+// `skill-me-observer` vazio ou staging com cópias exatas — ou para a própria
+// `plugins` movida. Depois da troca nenhuma leitura de conteúdo, gravação ou
+// exclusão passa pelo caminho trocado; o destino alheio fica intacto (bytes,
+// mtime e tipo), o que já saiu ou foi gravado fica onde está e o registro não é
+// tocado. Controles: nada muda; `plugins` como junção/link para outra pasta do
+// alvo já antes do comando (I4-C34d).
+const PLUGIN_SOURCE = path.join(REPO_ROOT, "src", "integrations", "hermes", "plugin");
+const STAGING_NAME = ".skill-me-observer.skill-me-tmp";
+
+function copyPackageArtifacts(dir) {
+  mkdirSync(dir, { recursive: true });
+  for (const name of OWN_ARTIFACTS) copyFileSync(path.join(PLUGIN_SOURCE, name), path.join(dir, name));
+}
+
+// O que fica num caminho, sem seguir link.
+function entryAt(file) {
+  if (isSymlink(file)) return existsSync(file) ? `link → ${path.basename(realpathSync(file))}` : "link pendente";
+  if (!existsSync(file)) return "ausente";
+  return lstatSync(file).isDirectory() ? "diretório real" : "arquivo";
+}
+
+const listTree = (dir) => Object.keys(snapshotTree(dir, { withMtime: false }));
+
+// Destino da junção/link: fora do alvo ou outra pasta dele, e o que tem antes da
+// troca; `own`: a própria `plugins` movida.
+const SWAP_DESTS = {
+  "pasta externa com cópias exatas dos artefatos": { outside: true, fill: (dir) => copyPackageArtifacts(path.join(dir, "skill-me-observer")) },
+  "outra pasta do alvo com cópias exatas dos artefatos": { outside: false, fill: (dir) => copyPackageArtifacts(path.join(dir, "skill-me-observer")) },
+  "pasta externa com skill-me-observer vazio": { outside: true, fill: (dir) => mkdirSync(path.join(dir, "skill-me-observer"), { recursive: true }) },
+  "outra pasta do alvo com bytecode de mesmo nome": {
+    outside: false,
+    fill: (dir) => {
+      mkdirSync(path.join(dir, "skill-me-observer", "__pycache__"), { recursive: true });
+      writeFileSync(path.join(dir, "skill-me-observer", "__pycache__", "__init__.cpython-311.pyc"), USER_FILE);
+    },
+  },
+  "outra pasta do alvo com staging de cópias exatas": { outside: false, fill: (dir) => copyPackageArtifacts(path.join(dir, STAGING_NAME)) },
+  "pasta externa vazia": { outside: true, fill: (dir) => mkdirSync(dir) },
+  "a própria plugins movida para fora do alvo": { outside: true, own: true },
+  "a própria plugins movida para outra pasta do alvo": { outside: false, own: true },
+};
+
+// io real que registra leitura de conteúdo, gravação e exclusão através de
+// `<alvo>/plugins` depois da troca e dispara a troca uma vez, na ocorrência
+// `on[1]` do evento `on[0]`; `probe.trigger` é o nome do arquivo desse evento
+// (a sobra do staging sai na ordem do `readdir`, que o ext4 não ordena).
+function ancestorSwapIo(home, on, swap) {
+  const io = createNodeIo();
+  const plugins = path.join(home, "plugins");
+  const own = path.join(plugins, "skill-me-observer");
+  const staging = path.join(plugins, STAGING_NAME);
+  const lock = path.join(home, ".skill-me", "hermes.lock");
+  const probe = { swapped: false, through: [], trigger: null };
+  const counts = {};
+  const viaPlugins = (file) => file === plugins || file.startsWith(plugins + path.sep);
+  const relToHome = (file) => path.relative(home, file).split(path.sep).join("/");
+  const eventOf = (op, file) => {
+    if (op === "unlink" && path.dirname(file) === own && OWN_ARTIFACTS.includes(path.basename(file))) return "artefato próprio removido";
+    if (op === "unlink" && path.dirname(file) === staging) return "sobra própria do staging removida";
+    if (op === "writeExclusive" && path.dirname(file) === staging) return "artefato gravado no staging";
+    if (op === "writeExclusive" && file === lock) return "lock criado";
+    if (op === "mkdir" && file === plugins) return "plugins criada";
+    return null;
+  };
+  const wrapped = { ...io };
+  for (const op of ["readdir", "readBytes", "readText", "unlink", "rmdir", "mkdir", "writeExclusive", "rename"]) {
+    wrapped[op] = async (...args) => {
+      const files = args.slice(0, op === "rename" ? 2 : 1);
+      if (probe.swapped && files.some(viaPlugins)) probe.through.push(`${op} ${files.map(relToHome).join(" → ")}`);
+      const out = await io[op](...args);
+      const event = eventOf(op, args[0]);
+      if (event !== null) counts[event] = (counts[event] ?? 0) + 1;
+      if (on && !probe.swapped && event === on[0] && counts[event] === on[1]) {
+        swap();
+        probe.swapped = true;
+        probe.trigger = path.basename(args[0]);
+      }
+      return out;
+    };
+  }
+  return { io: wrapped, probe };
+}
+
+test("I4-C34h Hermes: ancestral plugins trocado durante a remoção ou a instalação não leva leitura, gravação ou exclusão para outro lugar", async () => {
+  const escape = { code: "target_escape", file: "plugins" };
+  const changed = { code: "config_changed_during_apply", file: "plugins" };
+  const ownPlugin = (...names) => ["skill-me-observer", ...names.map((name) => `skill-me-observer/${name}`)];
+  const ownStaging = (...names) => [STAGING_NAME, ...names.map((name) => `${STAGING_NAME}/${name}`)];
+  const done = [
+    { step: "artifacts", state: "done" },
+    { step: "manifest", state: "done" },
+  ];
+  const rows = [
+    { op: "uninstall", on: ["artefato próprio removido", 1], dest: "pasta externa com cópias exatas dos artefatos", conflict: escape, ownLeft: ownPlugin("kwargs.json", "plugin.yaml") },
+    { op: "uninstall", on: ["artefato próprio removido", 1], dest: "outra pasta do alvo com cópias exatas dos artefatos", conflict: changed, ownLeft: ownPlugin("kwargs.json", "plugin.yaml") },
+    { op: "uninstall", on: ["artefato próprio removido", 1], dest: "a própria plugins movida para fora do alvo", conflict: escape, ownLeft: ownPlugin("kwargs.json", "plugin.yaml") },
+    { op: "uninstall", cache: true, on: ["artefato próprio removido", 3], dest: "outra pasta do alvo com bytecode de mesmo nome", conflict: changed, ownLeft: ownPlugin("__pycache__", "__pycache__/__init__.cpython-311.pyc") },
+    { op: "uninstall", on: ["artefato próprio removido", 3], dest: "pasta externa com skill-me-observer vazio", conflict: escape, ownLeft: ownPlugin() },
+    { op: "uninstall", on: ["lock criado", 1], dest: "pasta externa com cópias exatas dos artefatos", conflict: escape, ownLeft: ownPlugin(...OWN_ARTIFACTS) },
+    { op: "install", noPlugins: true, on: ["plugins criada", 1], dest: "pasta externa vazia", conflict: escape, ownLeft: [] },
+    { op: "install", on: ["artefato gravado no staging", 1], dest: "a própria plugins movida para fora do alvo", conflict: escape, ownLeft: ownStaging("__init__.py") },
+    { op: "install", on: ["artefato gravado no staging", 3], dest: "a própria plugins movida para fora do alvo", conflict: escape, ownLeft: ownStaging(...OWN_ARTIFACTS) },
+    { op: "install", on: ["artefato gravado no staging", 1], dest: "a própria plugins movida para outra pasta do alvo", conflict: changed, ownLeft: ownStaging("__init__.py") },
+    {
+      op: "install",
+      leftover: true,
+      on: ["sobra própria do staging removida", 1],
+      dest: "outra pasta do alvo com staging de cópias exatas",
+      conflict: changed,
+      ownLeft: (removed) => ownStaging(...OWN_ARTIFACTS.filter((name) => name !== removed)),
+    },
+    { op: "uninstall", control: "nada muda", atPlugins: "ausente" },
+    { op: "uninstall", control: "junção/link para outra pasta do alvo já antes do comando", atPlugins: "link → plugins do usuário", ownLeft: [] },
+    { op: "install", control: "nada muda", atPlugins: "diretório real" },
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [index, row] of rows.entries()) {
+    const label = `${row.op} — ${row.control ? `controle: ${row.control}` : `${row.on[0]} (${row.on[1]}º) — ${row.dest}`}`;
+    const dir = makeScratch(`f1 plugins ${index}`);
+    scratches.push(dir);
+    const home = path.join(dir, "hermes home");
+    mkdirSync(home);
+    const plugins = path.join(home, "plugins");
+    if (row.op === "uninstall") {
+      assert.equal((await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io: createNodeIo() })).exitCode, 0, label);
+      if (row.cache) {
+        mkdirSync(path.join(plugins, "skill-me-observer", "__pycache__"));
+        writeFileSync(path.join(plugins, "skill-me-observer", "__pycache__", "__init__.cpython-311.pyc"), "bytecode sintético próprio\n");
+      }
+    } else if (!row.noPlugins) {
+      mkdirSync(plugins);
+      if (row.leftover) copyPackageArtifacts(path.join(plugins, STAGING_NAME));
+    }
+    const manifest = path.join(home, ".skill-me", "hermes-install.json");
+    const manifestBefore = existsSync(manifest) ? readFileSync(manifest) : null;
+    const dest = row.dest && SWAP_DESTS[row.dest];
+    let destPath = null;
+    let movedPath = null;
+    if (dest) {
+      const inScratch = dest.outside ? dir : home;
+      destPath = path.join(inScratch, dest.own ? "plugins próprio movido" : dest.outside ? "pasta externa" : "outra pasta");
+      movedPath = dest.own ? destPath : path.join(dir, "plugins próprio movido");
+      dest.fill?.(destPath);
+    }
+    if (row.control?.startsWith("junção/link")) {
+      movedPath = path.join(home, "plugins do usuário");
+      renameSync(plugins, movedPath);
+      symlinkSync(movedPath, plugins, DIR_LINK);
+    }
+    const destBefore = dest && !dest.own ? snapshotTree(destPath) : null;
+    const { io, probe } = ancestorSwapIo(home, row.on, () => {
+      renameSync(plugins, movedPath);
+      symlinkSync(destPath, plugins, DIR_LINK);
+    });
+    const result = await runIntegrationCommand({ command: row.op, agent: "hermes", target: home, apply: true, io });
+    observed.push({
+      label,
+      swapped: probe.swapped,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      steps: result.steps,
+      throughSwapped: probe.through,
+      foreignDest: destBefore === null ? "—" : existsSync(destPath) && isDeepStrictEqual(snapshotTree(destPath), destBefore) ? "intacto" : "alterado",
+      atPlugins: entryAt(plugins),
+      ownLeft: movedPath === null ? "—" : listTree(movedPath),
+      manifest: !existsSync(manifest) ? "ausente" : manifestBefore !== null && readFileSync(manifest).equals(manifestBefore) ? "intacto" : "gravado",
+      lockReleased: !existsSync(path.join(home, ".skill-me", "hermes.lock")),
+    });
+    if (row.control) {
+      expected.push({
+        label,
+        swapped: false,
+        exitCode: 0,
+        status: "applied",
+        applied: true,
+        conflicts: [],
+        steps: done,
+        throughSwapped: [],
+        foreignDest: "—",
+        atPlugins: row.atPlugins,
+        ownLeft: row.ownLeft ?? "—",
+        manifest: row.op === "install" ? "gravado" : "ausente",
+        lockReleased: true,
+      });
+      continue;
+    }
+    expected.push({
+      label,
+      swapped: true,
+      exitCode: 4,
+      status: "conflict",
+      applied: false,
+      conflicts: [row.conflict],
+      steps: [],
+      throughSwapped: [],
+      foreignDest: dest.own ? "—" : "intacto",
+      atPlugins: `link → ${path.basename(destPath)}`,
+      ownLeft: typeof row.ownLeft === "function" ? row.ownLeft(probe.trigger) : row.ownLeft,
+      manifest: row.op === "uninstall" ? "intacto" : "ausente",
+      lockReleased: true,
+    });
+  }
+  assert.deepEqual(observed, expected);
+});
+
+// Alias (junção/link) de `--target` para o diretório de política gerenciada do
+// Claude — achado F2 da revisão formal round 3. A prova nunca toca um diretório
+// gerenciado real: o io dela resolve o alias sintético para o nome canônico
+// gerenciado (ou um descendente) e registra e recusa (EACCES) qualquer outro
+// acesso, sem delegar nada ao sistema de arquivos. Só o `stat` e o `realpath`
+// do próprio alvo podem preceder a recusa; o caminho escrito como gerenciado é
+// recusado sem nenhum acesso. Controles: nome irmão com o mesmo prefixo segue
+// para a primeira leitura (recusada pela prova: 5) e alias legítimo num scratch,
+// com o sistema de arquivos real, instala no diretório real.
+const MANAGED_DIR = process.platform === "win32" ? "C:\\Program Files\\ClaudeCode" : process.platform === "darwin" ? "/Library/Application Support/ClaudeCode" : "/etc/claude-code";
+
+function aliasIo(alias, resolvesTo) {
+  const calls = [];
+  const refuse = (op, file) => {
+    calls.push([op, file]);
+    return Object.assign(new Error(`${op} recusado pela prova`), { code: "EACCES" });
+  };
+  const io = {};
+  for (const op of ["lstat", "readdir", "rename", "rmdir", "unlink", "mkdir", "readBytes", "readText", "accessOf", "writeExclusive"]) {
+    io[op] = async (file) => {
+      throw refuse(op, file);
+    };
+  }
+  io.stat = async (file) => {
+    if (file !== alias) throw refuse("stat", file);
+    calls.push(["stat", file]);
+    return { isDirectory: () => true };
+  };
+  io.realpath = async (file) => {
+    if (file !== alias) throw refuse("realpath", file);
+    calls.push(["realpath", file]);
+    return resolvesTo;
+  };
+  return { io, calls };
+}
+
+test("I4-C27c alias de --target para o diretório gerenciado do Claude é recusado pelo caminho real antes de qualquer outro acesso", async () => {
+  const dir = makeScratch("f2 alias gerenciado");
+  scratches.push(dir);
+  const alias = path.join(dir, "perfil claude por alias");
+  const descendant = path.join(MANAGED_DIR, "perfil interno");
+  const sibling = `${MANAGED_DIR}-irmão`;
+  const resolution = [
+    ["stat", alias],
+    ["realpath", alias],
+  ];
+  // [comando, --apply, caso, argumento --target, caminho real devolvido pelo io]
+  const rows = [
+    ["install", true, "alias → diretório gerenciado", alias, MANAGED_DIR],
+    ["uninstall", true, "alias → diretório gerenciado", alias, MANAGED_DIR],
+    ["plan", false, "alias → diretório gerenciado", alias, MANAGED_DIR],
+    ["install", true, "alias → descendente do diretório gerenciado", alias, descendant],
+    ["uninstall", false, "alias → descendente do diretório gerenciado", alias, descendant],
+    ["install", true, "texto: o próprio diretório gerenciado", MANAGED_DIR, MANAGED_DIR],
+    ["install", true, "texto: descendente do diretório gerenciado", descendant, descendant],
+    ["install", true, "controle: alias → irmão com o mesmo prefixo", alias, sibling],
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [command, apply, label, targetArg, real] of rows) {
+    const { io, calls } = aliasIo(targetArg, real);
+    const result = await runIntegrationCommand({ command, agent: "claude", target: targetArg, apply, io });
+    const row = `${command}${apply ? " --apply" : ""} — ${label}`;
+    observed.push({ row, exitCode: result.exitCode, status: result.status, applied: result.applied, conflicts: result.conflicts, errors: result.errors, changes: result.changes, target: result.target, calls });
+    if (label.startsWith("controle")) {
+      expected.push({ row, exitCode: 5, status: "incomplete", applied: false, conflicts: [], errors: [{ code: "EACCES" }], changes: [], target: sibling, calls: [...resolution, ["lstat", path.join(sibling, "settings.json")]] });
+      continue;
+    }
+    expected.push({
+      row,
+      exitCode: 4,
+      status: "conflict",
+      applied: false,
+      conflicts: [{ code: "managed_policy_target" }],
+      errors: [],
+      changes: [],
+      target: targetArg,
+      calls: label.startsWith("texto") ? [] : resolution,
+    });
+  }
+
+  // Controle com o sistema de arquivos real: alias legítimo para um perfil no scratch.
+  const real = target("f2 alias legítimo");
+  const legit = path.join(path.dirname(real), "perfil por alias");
+  symlinkSync(real, legit, DIR_LINK);
+  const result = await runIntegrationCommand({ command: "install", agent: "claude", target: legit, apply: true, io: createNodeIo() });
+  const settings = JSON.parse(readFileSync(path.join(real, "settings.json"), "utf8"));
+  observed.push({
+    row: "install --apply — controle: alias legítimo num scratch",
+    exitCode: result.exitCode,
+    status: result.status,
+    conflicts: result.conflicts,
+    target: result.target === realpathSync.native(real) ? "caminho real do perfil" : result.target,
+    ownEvents: Object.keys(readClaudeHandlers(real)).length,
+    thirdPartyStop: settings.hooks.Stop,
+    aliasKept: entryAt(legit),
+    manifest: existsSync(path.join(real, ".skill-me", "claude-install.json")),
+  });
+  expected.push({
+    row: "install --apply — controle: alias legítimo num scratch",
+    exitCode: 0,
+    status: "applied",
+    conflicts: [],
+    target: "caminho real do perfil",
+    ownEvents: 8,
+    thirdPartyStop: [{ hooks: [{ type: "command", command: "notify.sh" }] }],
+    aliasKept: `link → ${path.basename(real)}`,
+    manifest: true,
+  });
   assert.deepEqual(observed, expected);
 });
