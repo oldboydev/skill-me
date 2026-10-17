@@ -785,3 +785,24 @@ Correção da verificação independente round 8 (17/10/2026):
   demais já registrados.
 - **Próxima ação (orquestrador):** verificação independente 9 pelos testes versionados e leitura
   permitida; revisão formal 4 só depois de PASS e relatório commitado.
+Verificação independente round 9 (17/10/2026):
+
+PASS 48/48 em 8a8f992a30e9651b6ecba7715919fb018d4b4c6e, pelo relatório
+independente integral desta rodada. R8-F1/C25 e AC6 fechados: a mesma conferência de
+contenção, conteúdo e acesso ocorre antes de gravar o temporário e antes de cada
+tentativa de rename; asserções de I4-C25f distinguem recusa antes da gravação, trocas
+posteriores e controles. O parecer e os carries das partes fora do diff estão
+identificados por commit, sem atribuir execução ao autorrelato.
+
+Lotes independentes no novo HEAD: 102 testes por plataforma, Windows 100 pass/2 skips
+e Ubuntu 94 pass/8 skips; zero falhas/cancelamentos, exit 0. As 54 provas nomeadas e os
+48 extras foram contabilizados. Identidade de 172 blobs e archive nas cópias isoladas;
+doctor 417 carregado, sem reexecução local e sem alteração de fonte. Limitações de
+plataforma, Hermes nativo Linux, E2E opt-in e demais limites permanecem declarados.
+
+Método somente leitura normal e testes já versionados. Nenhuma sonda nova ou repetição
+da ação bloqueada da preparação6; nenhum produto/teste alterado pelo Verifier/Codex.
+A queda e a retomada da rodada8 estão preservadas no histórico anterior. O relatório
+completo foi copiado sem reduzir critérios ou histórico. Próxima etapa automática:
+revisão formal 4 no commit limpo, com três tentativas já consumidas e teto dez
+exclusivo da #4. Publicação do PR e merge aguardam ready válido, conforme autorização.
