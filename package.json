@@ -16,7 +16,8 @@
     "test:doctor": "node --test \"tests/doctor/**/*.test.mjs\"",
     "test:integrations": "node --test \"tests/integrations/**/*.test.mjs\"",
     "doctor": "node src/doctor/cli.mjs",
-    "integrations": "node src/integrations/cli.mjs"
+    "integrations": "node src/integrations/cli.mjs",
+    "privacy": "node src/integrations/cli.mjs privacy"
   },
   "devDependencies": {
     "yaml": "2.9.0"

@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { INTEGRATIONS_CLI, baseEnv, makeScratch, parseReport, runIntegrationsJson } from "./helpers/cli.mjs";
+import { INTEGRATIONS_CLI, assertPseudonymIds, baseEnv, makeScratch, parseReport, runIntegrationsJson } from "./helpers/cli.mjs";
 import { fixtureCase } from "./helpers/fixtures.mjs";
 import { DELIVERY_FIXTURE, FIXTURE_PLUGINS, bytecodeState, harnessEnv, locateHermesRuntime, runHarness } from "./helpers/hermes-runtime.mjs";
 import { snapshotTree } from "./helpers/tree.mjs";
@@ -170,20 +170,36 @@ test("I4-C19 hooks nativos chegam ao ingest real com IDs preservados; on_session
     assert.ok(found, label);
     return found;
   };
-  const pre = find((e) => e.eventKind === "tool_pre" && e.ids.toolCallId === "call-0", "tool_pre");
-  assert.deepEqual(pre.ids, { sessionId: IDS.session_id, toolCallId: "call-0", taskId: IDS.task_id, turnId: IDS.turn_id });
-  assert.equal(pre.signal, "native_plugin");
-  const postEnvelope = find((e) => e.eventKind === "tool_post" && e.ids.toolCallId === "call-0", "tool_post");
-  assert.equal(postEnvelope.fields.outcome, "success");
-  const lifecycle = find((e) => e.eventKind === "skill_lifecycle" && e.ids.sessionId === "hermes-sess-01", "skill_lifecycle");
+  // #5: IDs são pseudônimos da chave deste processo de ingest; as relações
+  // entre eventos (mesmo valor nativo → mesmo pseudônimo) continuam provadas.
+  const lifecycle = find((e) => e.eventKind === "skill_lifecycle" && e.fields.useCount === 3, "skill_lifecycle");
   assert.deepEqual(lifecycle.fields, { action: "loaded", skillName: "third-party-skill", provenance: "local", useCount: 3, reused: true, reuseAfterPatch: false });
+  // Chamadas reais do handle_function_call usam a sessão IDS, diferente da
+  // sessão hermes-sess-01 dos kwargs de fixture invocados diretamente.
+  const nativeCalls = report.events.filter((e) => e.eventKind === "tool_pre" && "taskId" in e.ids && e.ids.sessionId !== lifecycle.ids.sessionId);
+  assert.equal(nativeCalls.length, 2, "duas chamadas reais de ferramenta");
+  assert.equal(new Set(nativeCalls.map((e) => e.ids.sessionId)).size, 1, "mesma sessão nativa, mesmo pseudônimo");
+  assert.notEqual(nativeCalls[0].ids.toolCallId, nativeCalls[1].ids.toolCallId);
+  const pre = nativeCalls[0];
+  assertPseudonymIds(pre.ids, { sessionId: IDS.session_id, toolCallId: "call-0", taskId: IDS.task_id, turnId: IDS.turn_id }, "tool_pre");
+  assert.equal(pre.signal, "native_plugin");
+  const postEnvelope = find((e) => e.eventKind === "tool_post" && e.ids.toolCallId === pre.ids.toolCallId, "tool_post da mesma chamada");
+  assert.equal(postEnvelope.fields.outcome, "success");
+  assert.equal(postEnvelope.ids.sessionId, pre.ids.sessionId);
   const turnEnd = find((e) => e.nativeEvent === "on_session_end", "on_session_end");
   assert.equal(turnEnd.eventKind, "turn_end");
-  assert.deepEqual(turnEnd.ids, { sessionId: "hermes-sess-01", turnId: "hermes-turn-01", taskId: "hermes-task-01" });
+  assertPseudonymIds(turnEnd.ids, { sessionId: "hermes-sess-01", turnId: "hermes-turn-01", taskId: "hermes-task-01" }, "turn_end");
+  assert.equal(turnEnd.ids.sessionId, lifecycle.ids.sessionId, "mesma sessão hermes-sess-01");
+  assert.equal(turnEnd.ids.taskId, lifecycle.ids.taskId, "mesma tarefa hermes-task-01");
   assert.ok(!report.events.some((e) => e.eventKind === "session_end"), "fim de run nunca vira fim de sessão");
   const subStart = find((e) => e.eventKind === "subagent_start", "subagent_start");
-  assert.deepEqual(subStart.ids, { parentSessionId: "hermes-sess-01", parentTurnId: "hermes-turn-01", childSessionId: "hermes-sess-child-01", subagentId: "hermes-subagent-01" });
+  assertPseudonymIds(subStart.ids, { parentSessionId: "hermes-sess-01", parentTurnId: "hermes-turn-01", childSessionId: "hermes-sess-child-01", subagentId: "hermes-subagent-01" }, "subagent_start");
+  assert.equal(subStart.ids.parentSessionId, lifecycle.ids.sessionId, "pai = sessão observada");
+  assert.equal(subStart.ids.parentTurnId, turnEnd.ids.turnId);
   assert.ok(subStart.gaps.includes("parentSubagentId:absent"));
+  for (const native of [IDS.session_id, IDS.task_id, IDS.turn_id, "call-0", "hermes-sess-01", "hermes-turn-01", "hermes-subagent-01"]) {
+    assert.ok(!JSON.stringify(report).includes(native), native);
+  }
   const subStop = find((e) => e.eventKind === "subagent_stop", "subagent_stop");
   assert.deepEqual(subStop.fields, { childRole: "leaf", childStatus: "completed", durationMs: 1234 });
   find((e) => e.eventKind === "session_start" && e.fields.platform === "cli", "session_start");

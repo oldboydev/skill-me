@@ -74,7 +74,7 @@ function createExecObserver(observation) {
       } catch {
         return observation.count("invalidJson");
       }
-      observation.submit(codexExecDraft(event));
+      observation.submit(codexExecDraft(event), event);
     },
     onOversize: () => observation.count("oversizeLine"),
     onPartialTrailing: () => observation.count("partialTrailingLine"),

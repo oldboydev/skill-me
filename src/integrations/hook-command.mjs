@@ -52,7 +52,7 @@ export async function runHookCommand({ agent, stdin, env }) {
       payload = undefined;
     }
     if (payload === undefined) observation.count("invalidInput");
-    else observation.submit(adapter(payload));
+    else observation.submit(adapter(payload), payload);
   }
   await observation.flush();
 }

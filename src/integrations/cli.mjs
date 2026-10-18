@@ -70,7 +70,24 @@ async function supervised() {
   await runSupervisedCodex(parsed);
 }
 
+// Controle de capturas de privacidade: um JSON por execução em stdout, stderr
+// vazio; qualquer falha inesperada vira o código fechado io_failure.
+async function privacy() {
+  const { runPrivacyCommand } = await import("./privacy/command.mjs");
+  let result;
+  try {
+    result = await runPrivacyCommand({ argv: argv.slice(1), stdin: process.stdin });
+  } catch {
+    result = { exitCode: 5, body: { schemaVersion: 1, command: null, status: "error", error: { code: "io_failure" } } };
+  }
+  process.stdout.write(result.help ?? JSON.stringify(result.body) + "\n");
+  process.exitCode = result.exitCode;
+}
+
 switch (command) {
+  case "privacy":
+    await privacy();
+    break;
   case "hook":
     await internal(() => import("./hook-command.mjs"), "runHookCommand", ["claude", "codex"]);
     break;
