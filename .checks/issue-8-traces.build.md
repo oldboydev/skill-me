@@ -150,9 +150,13 @@ e o arquivo foi restaurado com `git checkout` (árvore limpa ao fim):
 | WSL Ubuntu, fase 1 | 654 ms | 651 ms | 649 ms |
 | Windows 11, fase 2 (`npm test`) | 665 ms | 651 ms | 653 ms |
 | WSL Ubuntu, fase 2 (`npm test`) | 657 ms | 651 ms | 650 ms |
+| Windows 11, correção 1 (`npm test` em `0c108ee`) | 663 ms; com diagnóstico em arquivo, 665 ms | 651 ms | 652 ms |
+| WSL Ubuntu, correção 1 (`npm test` em `0c108ee`) | 655 ms; com diagnóstico em arquivo, 656 ms | 651 ms | 649 ms |
 
 Em processo a asserção é ≤ 750 ms exatos. No processo real a medida inclui o
-encerramento depois da tentativa; a asserção admite 750 + 500 ms.
+encerramento depois da tentativa; a asserção admite 750 + 500 ms. "Com
+diagnóstico em arquivo" é o hook sem relatório de fixture e com
+`SKILL_ME_CAPTURE_REPORT` (rodada de correção 1, abaixo), mesma asserção.
 
 ## Execuções
 
@@ -162,9 +166,13 @@ encerramento depois da tentativa; a asserção admite 750 + 500 ms.
 | WSL Ubuntu — Node 24.13.0, uid 1000, distro `Ubuntu`, `/tmp/skill-me-i8-YgTUkP` de `git archive 132cb6e` (sha256 `c0b8dfdb…7c7525` conferido; `git get-tar-commit-id` = `132cb6e4…`), `node_modules` copiado do checkout | mesmo alvo | 20 tests, 20 pass, 0 fail, 0 skip |
 | Windows 11 — Node 24.21.0, checkout em `bdd70af` | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 224 (217 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX), T8-C20 inclusive |
 | WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i8-LhxqxN` de `git archive bdd70af` (sha256 `dfbd41ee…1e80c483` conferido; `git get-tar-commit-id` = `bdd70af0…`) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 224 (212 pass, 0 fail, 12 skip pré-existentes: Hermes ausente ×8, DACL Windows ×3, ACL macOS ×1), T8-C20 inclusive |
+| Windows 11 — Node 24.21.0, checkout em `0c108ee` (correção 1) | os 20 comandos `Proof:` de C1–C20, como escritos | cada um exit 0, 0 fail; 24 testes selecionados, 23 pass, 1 skip (T8-C4 sinal POSIX) |
+| Windows 11 — Node 24.21.0, checkout em `0c108ee` (correção 1) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 227 (220 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i8-gKUfgu` de `git archive 0c108ee` (sha256 `4aed4efe…fd674272` conferido; `git get-tar-commit-id` = `0c108eec…`) (correção 1) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 227 (215 pass, 0 fail, 12 skip pré-existentes: Hermes ausente ×8, DACL Windows ×3, ACL macOS ×1); nenhum T8 pulado |
 
 Preparação WSL: tar e `run-wsl.sh` num diretório de `mktemp -d` do `%TEMP%`
-(`skill-me-i8-wsl-stage-n0fAaX` na fase 1, `skill-me-i8-wsl-stage-71TySJ` na 2), chamados com `MSYS_NO_PATHCONV=1 wsl.exe -d
+(`skill-me-i8-wsl-stage-n0fAaX` na fase 1, `skill-me-i8-wsl-stage-71TySJ` na 2,
+`skill-me-i8-wsl-stage-Bm0Csq` na correção 1), chamados com `MSYS_NO_PATHCONV=1 wsl.exe -d
 Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída> <modo>`.
 O script recusa root, outra distro, origem ausente, hash ou commit diferente e
 destino fora de `/tmp/skill-me-i8-??????` antes de extrair; logs ficam no stage.
@@ -208,6 +216,162 @@ origin/main -- …` vazio; blobs idênticos):
   problema e fora do escopo (trocar a persistência está fora do plano).
 - `accepted` não conta o registro recusado pela admissão local do lote (mesmo
   comportamento do `privacy ingest` da #5).
-- O resumo `delivery` só sai no relatório de fixture; para o usuário, a cobertura
-  aparece nos contadores de `status`/`list`.
+- ~~O resumo `delivery` só sai no relatório de fixture~~ — resolvido na rodada de
+  correção 1: o resumo vai ao arquivo de `SKILL_ME_CAPTURE_REPORT` (abaixo).
 - E2E real com agentes e modelos continua pendente.
+
+## Rodada de correção 1 — C4, C16 e C20
+
+Origem: `.checks/issue-8-traces.verified.md` (Verifier, rodada 1: FAIL; C4, C16
+e C20 falharam; C21 pendente da CI macOS). Builder Claude, escopo só desses três
+achados. Não mudaram: `.tasks/issue-8-traces.md`, `.checks/issue-8-traces.md`
+(21 checks, comandos `Proof:` e Landing), a política da #5, `package.json` e os
+cinco arquivos do core (diff vazio contra `origin/main`, blobs acima).
+`.checks/issue-8-traces.verified.md` pertence ao Verifier: não foi alterado nem
+entra nos commits. Sem push, PR, merge, deploy ou revisão Codex.
+
+### Commits
+
+| Commit | Achado | Conteúdo |
+| --- | --- | --- |
+| `cefc629` | C4 | stderr inteiro do wrapper comparado byte a byte com o do Codex falso, com e sem hook do filho |
+| `34cde1a` | C16 | arquivo de diagnóstico `SKILL_ME_CAPTURE_REPORT` e provas na fronteira |
+| `b9ec5e9` | C16 | diagnóstico impossível de gravar não muda o agente |
+| `0c108ee` | C20 | seção "Falhas de entrega" do guia e prova que segue o guia |
+| commit seguinte | — | este registro |
+
+### C4 — stderr do wrapper
+
+Achado: `endsWith` aceitaria uma linha do debugger antes do stderr nativo. Só
+teste mudou. O Codex falso grava em `FAKE_CODEX_STDERR_COPY` cada byte que
+escreve no stderr (probe inclusive); `runWrapper` devolve `stderrBytes` sem
+decodificar. T8-C4 roda dois cenários vinculados, com e sem o hook do filho, e
+exige em cada um `stderrBytes` igual à cópia, stdout byte a byte, código 17 e
+`signal` null, além das asserções de captura de antes. O teste de sinal POSIX
+passou a exigir também stdout e stderr inteiros.
+
+### C16 — diagnóstico acessível no uso normal
+
+Decisão: reaproveitar o resumo `delivery` do relatório existente (`bound`,
+`code`, `entries`, `committed`, `persisted`, `lost`) e gravá-lo, numa linha
+NDJSON por processo, no arquivo de caminho absoluto que o usuário indica em
+`SKILL_ME_CAPTURE_REPORT` (`src/integrations/traces/delivery-report.mjs`;
+`captureDeliveryFor` acrescenta `publish`, chamado por `flush` depois de
+`settle`). A linha só sai quando o processo perdeu entregas ou não abriu a
+captura (`code !== null || lost > 0`) e tem exatamente `skillMeDeliveryReport: 1`,
+`at`, `agent` (nome do lote do `privacy ingest`, ou null), `capture` (ID já
+validado, ou null com `binding_invalid`) e `delivery`. Alternativas descartadas:
+
+- tornar o fd do relatório de fixture uma interface: hooks são iniciados pelo
+  Claude/Codex e o ingest pelo plugin Hermes, sem fd aberto pelo usuário; o
+  PowerShell não abre fd 3 para o filho; e o relatório traz os eventos em
+  memória, que não devem ser persistidos fora da captura;
+- contar a perda em `status`/`list`: com lock ocupado ou falha de E/S o store não
+  pode gravar, e o `state.json` tem a forma fechada da #5 (`captureVersion: 1`,
+  sem migração);
+- arquivo dentro da raiz ou do store: escreveria em captura não escolhida (C6 e
+  C14 exigem a árvore intacta) e entraria no conjunto que `delete`/`prune` apagam;
+- stderr do produtor: pertence ao agente (crit. 3).
+
+Landing: o par `SKILL_ME_CAPTURE_ROOT`/`SKILL_ME_CAPTURE_ID` continua o único
+seletor de captura e o formato persistido não muda; a variável nova só escolhe o
+destino opcional do diagnóstico, sem dado de evento. Por isso o Landing do
+checklist não foi editado; a decisão fica registrada aqui para o Verifier e o
+proprietário.
+
+Comportamento: só caminho absoluto (relativo ignorado, como a raiz); só arquivo
+regular, criado com modo 0o600 se faltar; link, pasta e FIFO não são tocados
+(`lstat`; no POSIX também `O_NOFOLLOW` e `O_NONBLOCK`); uma escrita `O_APPEND`
+por linha; dentro do prazo do relatório do processo (`deadlineAt` do `flush`);
+nunca lança — se o arquivo não puder ser gravado, o diagnóstico se perde sem
+mudar o agente. Sem o par do vínculo a variável não escreve.
+
+Incidente do build: na primeira bateria de mutações, a restauração por
+`git checkout` reverteu também as edições ainda não commitadas de
+`observation.mjs`, `binding.mjs` e `delivery.mjs`, e duas mutações ficaram no
+arquivo novo, ainda não rastreado. Os resultados dessa bateria foram
+descartados. As edições foram reaplicadas e o diff conferido (as mesmas 17, 14
+e 3 linhas); a prova C16 e a suíte T8 rodaram verdes; as mutações foram
+refeitas depois do commit `34cde1a`, restaurando só arquivos commitados.
+
+### C20 — guia
+
+`docs/traces.md`, "Falhas de entrega": como definir `SKILL_ME_CAPTURE_REPORT`
+(PowerShell e bash, caminho com espaço e acento), como ler (`Get-Content`/`cat`),
+exemplo de linha, tabela de campos e regras (só falhas; sem caminho, valor de
+variável, payload, erro ou stack; sem vínculo não escreve; relativo ignorado; só
+arquivo regular; perda silenciosa se o arquivo não puder ser gravado;
+`delete`/`prune` não o apagam; cresce uma linha por processo com falha).
+"Configuração explícita" aponta a variável; "Capacidades demonstradas" separa o
+que foi lido do arquivo do disco parado, provado só em processo.
+`docs/agent-observation.md` cita o arquivo.
+
+### Alterações em testes existentes
+
+- `T8-C4` (fluxo): `endsWith` virou igualdade byte a byte; dois cenários; as
+  asserções de stdout, código e captura continuam em cada cenário (o registro do
+  hook do filho só no cenário com hook). `T8-C4` (sinal): mais stdout e stderr
+  inteiros.
+- `T8-C16` (existente): a confirmação perdida também precisa aparecer no arquivo
+  de diagnóstico; as demais asserções ficaram como estavam.
+- `T8-C20` (existente): a tabela de códigos é escolhida pelo cabeçalho
+  (`tableByHeader`), porque a seção ganhou a tabela de campos; a asserção (igual a
+  `DELIVERY_CODES`) é a mesma.
+- Helpers, aditivos: `FAKE_CODEX_STDERR_COPY` no Codex falso; `stderrBytes` em
+  `runWrapper`; `fixtureReport: false` em `runInternal` (sem
+  `SKILL_ME_OBSERVER_REPORT_FD` nem fd 3).
+
+### Provas novas
+
+| Check | Teste | Afirma |
+| --- | --- | --- |
+| C4 | `T8-C4 supervised Codex live capture: … preserva stdout, stderr e código …` | por cenário (com e sem hook): exit 17, signal null, stdout = linhas do exec, `stderrBytes` = cópia do filho; cada evento do exec uma vez na captura; hook do filho com 1 registro ou nenhum |
+| C16 | `T8-C16 … no uso normal, sem o relatório de fixture …` | hooks Claude e Codex pela linha instalada, ingest e wrapper sem fd de fixture: exit 0 e stdout/stderr vazios (wrapper: 9, stdout e stderr inteiros); uma linha exata por produtor com `lock_present` (1, 1, 2, 1 e 2 entradas); 4 hooks simultâneos com 4 linhas inteiras; `io_failure` real (pasta no nome do próximo segmento, rename falha no SO); `binding_invalid` com `capture: null` sem ecoar o ID; `capture_not_active`; entrega confirmada, variável sem vínculo, caminho relativo e arquivo impossível não escrevem nem mudam o agente; captura intacta; texto sem raiz, canário, ID nativo nem stack; POSIX: sem bits de grupo e outros; hook com diagnóstico ≤ 750 + 500 ms |
+| C16 | `T8-C16 … o diagnóstico só recebe linha de falha …` | caminho ausente, vazio, relativo e absoluto; linha só com falha e forma exata; acréscimo sem sobrescrever; pasta e pasta-mãe ausente sem mudança nem exceção; link (POSIX) e FIFO sem leitor (POSIX) intocados e sem prender |
+| C20 | `T8-C20 … o guia diz onde o usuário lê o diagnóstico …` | variável igual à do código nas duas seções; caminhos absolutos com espaço e acento; leitura aponta o mesmo arquivo; regras do texto; tabela de campos = chaves reais da linha; `agent` lista os produtores do lote; seguindo o guia (captura, três variáveis, lock ocupado, hook real) a linha gravada é o exemplo do guia a menos do ID e do instante |
+
+### Mutações
+
+Aplicadas ao produto commitado (ou ao guia), prova rodada e arquivo restaurado:
+
+| Mutação | Prova | Resultado |
+| --- | --- | --- |
+| wrapper escreve uma linha no stderr antes do filho | C4 nova; C4 de `53d5e99` | nova falhou na igualdade byte a byte; a anterior passou (lacuna confirmada) |
+| `flush` não chama `publish` | C16 | 2 falhas |
+| linha também sem falha | C16 | 2 falhas |
+| caminho relativo resolvido no cwd | C16 | 2 falhas |
+| raiz do vínculo dentro da linha | C16 | 2 falhas |
+| `O_TRUNC` no lugar de `O_APPEND` | C16 | 2 falhas |
+| falha ao gravar escapa do acréscimo | C16 | 2 falhas (em processo e, pelo código do wrapper, na fronteira) |
+| prazo do diagnóstico ignorado (espera 2 s) | C16 | 1 falha (teste de uso normal) |
+| segue link (sem `lstat` nem `O_NOFOLLOW`), no WSL, cópia do tar de `0c108ee` | C16 | falhou: o alvo do link recebeu a linha; restaurado do tar, passou |
+| campos da linha em outra ordem | C20 | falhou (exemplo do guia) |
+| outro nome de variável | C20 | falhou |
+| guia de `53d5e99` com a prova nova | C20 | falhou ("configuração aponta o diagnóstico"); a prova anterior passa com esse guia |
+| `throw` dentro do `try` do acréscimo | C16 | sobreviveu: equivalente, o próprio `catch` absorve; trocada pela "falha ao gravar escapa" |
+
+### Execuções e ausências
+
+Linhas da tabela "Execuções" marcadas "correção 1", todas em `0c108ee`: os 20
+comandos `Proof:` no Windows (cada um selecionou e rodou o teste nomeado: C4 dois,
+C16 três, C20 dois, os demais um), `npm test` no Windows e `npm test` no WSL
+Ubuntu. Medições na tabela de tempo.
+
+- Windows: o caso de link do C16 não foi exercitado (criar link de arquivo exige
+  privilégio; o teste registra o motivo) e FIFO não existe; os dois rodaram no
+  WSL. `T8-C4 … sinal POSIX` pulado no Windows e executado no WSL.
+- WSL: nenhum teste T8 pulado; skips pré-existentes iguais aos da fase 2.
+- macOS não foi executado localmente. C21 continua dependente da CI do PR, que
+  ainda não existe; nada aqui declara execução macOS.
+- Não executados: Claude, Codex ou Hermes reais com modelo.
+
+### Limites conhecidos desta rodada
+
+- O arquivo de diagnóstico não tem teto: cresce uma linha por processo com
+  falha, por exemplo a cada hook enquanto as variáveis apontarem para uma
+  captura encerrada. Documentado; o usuário o apaga.
+- No Windows a recusa de link depende do `lstat` antes do `open` (não há
+  `O_NOFOLLOW`); uma troca entre os dois não é coberta.
+- Fora do escopo desta rodada: `T8-C6` ainda confere o stderr do wrapper com
+  `endsWith("stderr do filho\n")`, a mesma fragilidade apontada em C4. Não foi
+  alterado porque a correção autorizada cobre só C4, C16 e C20.
