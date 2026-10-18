@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Readable } from "node:stream";
@@ -449,9 +449,20 @@ test("I5-C49b pasta .deleting-<id> inesperada junto da captura ativa ou parada: 
   unchanged("API");
 
   // A ativa sem a pasta inesperada volta ao contrato anterior; a parada é apagada.
-  rmSync(foreign(active), { recursive: true });
-  rmSync(foreign(stopped), { recursive: true });
-  assert.deepEqual(runPrivacy(["delete", "--root", root, "--capture", active, "--apply"]).body.error, { code: "capture_active" });
+  // unlink/rmdir em vez de rmSync: no Windows o rmSync do Node 24.11.1 e do
+  // 24.13.0 da CI retorna sem apagar nada num caminho não ASCII (o scratch tem
+  // "ação"), e a pasta que ficava fazia esta etapa provar de novo a coexistência.
+  for (const id of [active, stopped]) {
+    unlinkSync(path.join(foreign(id), "key"));
+    rmdirSync(foreign(id));
+    assert.throws(() => lstatSync(foreign(id)), { code: "ENOENT" }, "pasta inesperada removida antes do CLI");
+  }
+  const withoutForeign = snapshotTree(root);
+  const activeTry = runPrivacy(["delete", "--root", root, "--capture", active, "--apply"]);
+  assert.equal(activeTry.status, 3);
+  assert.deepEqual(activeTry.body, { schemaVersion: 1, command: "delete", status: "error", error: { code: "capture_active" } });
+  assertClosedOutput(activeTry, root);
+  assert.deepEqual(snapshotTree(root), withoutForeign, "ativa recusada: árvore idêntica, inclusive mtime");
   const deleted = runPrivacy(["delete", "--root", root, "--capture", stopped, "--apply"]);
   assert.deepEqual(deleted.body, { schemaVersion: 1, command: "delete", status: "ok", capture: stopped, applied: true, deleted: true });
   assert.deepEqual(readdirSync(captures), [active]);
