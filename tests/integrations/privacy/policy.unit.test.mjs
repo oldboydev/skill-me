@@ -139,6 +139,44 @@ test("I5-C5 ferramenta, evento, contrato ou formato fora da matriz → content n
   assert.deepEqual(unknown, { content: null, privacy: ["content:unsupported_content"] });
 });
 
+test("I5-C5b entrada type:text de mcp_tool_call sem text string (ausente, null, outro tipo, lista mista) omite o conteúdo com unsupported_content; text vazio e entradas de outro tipo seguem a regra anterior", () => {
+  const RESULT = "item.result.content[].text";
+  const mcp = (content) => execEvent("item_completed_mcp_tool_call", { arguments: { q: "SKILLMECANARYc5b" }, result: { content } });
+  const extract = (content) => extractContent({ contract: CONTRACT_OF["codex-exec"], nativeEvent: "item.completed", payload: mcp(content), key: KEY });
+  const invalid = [
+    [{ type: "text" }],
+    [{ type: "text", text: null }],
+    [{ type: "text", text: 5 }],
+    [{ type: "text", text: false }],
+    [{ type: "text", text: {} }],
+    [{ type: "text", text: ["SKILLMECANARYlist"] }],
+    // Listas mistas, nas duas ordens e com entrada de outro tipo antes.
+    [{ type: "text", text: "válido" }, { type: "text" }],
+    [{ type: "text", text: null }, { type: "text", text: "válido" }],
+    [{ type: "image", data: "x" }, { type: "text", text: "válido" }, { type: "text" }],
+  ];
+  invalid.forEach((content, i) => {
+    same(extract(content), { content: null, privacy: ["content:unsupported_content"] }, `extração ${i}`);
+    const record = policy("codex-exec", mcp(content));
+    assert.equal(record.content, null, `registro ${i}`);
+    same(record.privacy.filter((e) => !e.startsWith("envelope.")), ["content:unsupported_content"], `privacy ${i}`);
+    assert.ok(!JSON.stringify(record).includes("SKILLMECANARY") && !JSON.stringify(record).includes("válido"), `registro ${i} sem argumentos nem texto`);
+  });
+
+  // Controles: texto vazio legítimo, texto válido e entrada de outro tipo.
+  const args = { field: "item.arguments", role: "args", kind: "structured", value: { q: "SKILLMECANARYc5b" } };
+  const list = (value) => ({ field: RESULT, role: "result", kind: "text_list", value, truncated: false });
+  const controls = [
+    [[{ type: "text", text: "" }], [""], []],
+    [[{ type: "text", text: "a" }, { type: "text", text: "" }], ["a", ""], []],
+    [[{ type: "text", text: "ok" }, { type: "image", data: "x" }], ["ok"], [`${RESULT}:unsupported_content`]],
+    [[{ type: "image", data: "x" }], [], [`${RESULT}:unsupported_content`]],
+  ];
+  controls.forEach(([content, value, privacy], i) => {
+    same(extract(content), { content: { contentVersion: 1, tool: "mcp_tool_call", fields: [args, list(value)] }, privacy }, `controle ${i}`);
+  });
+});
+
 test("I5-C6 prompts, raciocínio, mensagem final, Skill, collab e Hermes nunca produzem conteúdo com opt-in", () => {
   const cases = [
     ["claude", claudePayload("pre_tool_skill")],
@@ -910,6 +948,61 @@ test("I5-C14m Bearer/Basic em qualquer caixa ASCII e credencial depois de espaç
   assert.ok(!text.includes("bAsIc YTpi") && !text.includes("  ab fim") && !text.includes("basic\\nYTpi") && !text.includes("\\u0000"), "registro sem as credenciais no contexto nem marcador interno");
 });
 
+test("I5-C14o separador escrito como escape (\\n, \\r, \\t, \\u000a…) entre Bearer/Basic e a credencial ou antes do esquema remove a credencial sem decodificar; cabeçalho que termina no esquema escapado omite o campo", () => {
+  const SPELLINGS = ["Basic", "basic", "BASIC", "bAsIc", "Bearer", "bearer", "BEARER", "BeArEr"];
+  // Todos com `\` literal (texto já serializado); os dois últimos misturam escape e quebra real.
+  const ESCAPED = [String.raw`\n`, String.raw`\r`, String.raw`\t`, String.raw`\r\n`, String.raw`\u000a`, String.raw`\u000A`, String.raw`\u000d`, String.raw`\u0009`, String.raw`\u0020`, String.raw`\\n`, String.raw`\\\n`, String.raw` \n\t `, String.raw`\n` + "\n  "];
+  exactCases(
+    [
+      ...SPELLINGS.flatMap((scheme) => ESCAPED.map((separator) => [`${scheme}${separator}YTpi ok`, `${scheme}${separator}${R} ok`])),
+      // Forma do achado: JSON serializado de novo dentro do texto coletado.
+      [String.raw`{\"Authorization\":\"Basic\nYTpi\"}`, String.raw`{\"Authorization\":\"Basic\n` + R],
+      [String.raw`{\"headers\":{\"Authorization\":\"bearer\tab\",\"x\":1}}`, String.raw`{\"headers\":{\"Authorization\":\"bearer\t` + R],
+      // Sob chave comum, com aspas reais; a credencial curta não depende do nome.
+      // A aspa de fecho fica e o `}` colado sai com a palavra (regra anterior).
+      [String.raw`{"value":"Basic\nYTpi"}`, String.raw`{"value":"Basic\n${R}"`],
+      [String.raw`"Basic\nYTpi"`, `"Basic\\n${R}"`],
+      // Escape antes do esquema: o `n`/`0` do escape colaria no esquema.
+      [String.raw`{"out":"x\nBasic YTpi\nok"}`, String.raw`{"out":"x\nBasic ` + R],
+      [String.raw`\u0020basic\u0009YTpi ok`, String.raw`\u0020basic\u0009${R} ok`],
+      [String.raw`linha\r\nBEARER ab fim`, String.raw`linha\r\nBEARER ${R} fim`],
+      [String.raw`\tBearer\tab fim`, String.raw`\tBearer\t${R} fim`],
+      // Uma camada de JSON já saía pela regra 5; o resultado não muda.
+      [String.raw`{"Authorization":"Basic\nYTpi"}`, `{"Authorization":${R}`],
+      // Perdas declaradas: palavra depois do escape, caminho, `\N` pela flag `i`.
+      [String.raw`Basic\nfim da frase`, String.raw`Basic\n${R} da frase`],
+      [String.raw`C:\Basic\new`, String.raw`C:\Basic\n${R}`],
+      [String.raw`Basic\NYTpi ok`, String.raw`Basic\N${R} ok`],
+    ],
+    true,
+  );
+  // Palavra aberta antes de `(`; cabeçalho sem aspa cuja linha termina no
+  // esquema seguido de escape, com a credencial depois da quebra real.
+  refusedCases([
+    String.raw`Basic\nab(c) ok`,
+    String.raw`Authorization: Basic\n` + "\nYTpi",
+    String.raw`authorization: bearer\t\u0020` + "\r\n ab\nok",
+    String.raw`Proxy-Authorization: x BASIC\\n` + "\n\tYTpi",
+  ]);
+  // Controles: esquema escapado sem credencial, outros escapes e codificações,
+  // `n` sem `\` antes do esquema e outros esquemas.
+  exactCases(
+    [
+      ...SPELLINGS.flatMap((scheme) => [String.raw`${scheme}\n`, String.raw`${scheme}\u000a`, String.raw`${scheme}\t(x)`, String.raw`${scheme}\né`]),
+      ...[String.raw`Basic\\`, String.raw`Basic\x0aYTpi`, "Basic%0AYTpi", String.raw`Basic\u00a0YTpi`, String.raw`Basic\bYTpi`, String.raw`Basic\u000YTpi`, "xnBasic a", String.raw`Token\nab`, String.raw`Digest\tab`, String.raw`Basics\nab`],
+    ].map((text) => [text, text]),
+    false,
+  );
+
+  // Fronteira da política: resultado MCP com as duas formas do achado sai com
+  // `sensitive_removed`; o cabeçalho que termina no esquema escapado é omitido.
+  const record = policy("codex-exec", execEvent("item_completed_mcp_tool_call", { arguments: { q: "x" }, result: { content: [{ type: "text", text: String.raw`{\"Authorization\":\"Basic\nYTpi\"}` }, { type: "text", text: String.raw`{"out":"x\nBearer\u0020ab\nok"}` }, { type: "text", text: String.raw`Authorization: Basic\n` + "\nYTpi" }] } }));
+  same(field(record, "item.result.content[].text").value, [String.raw`{\"Authorization\":\"Basic\n` + R, String.raw`{"out":"x\nBearer\u0020` + R], "credenciais removidas e cabeçalho omitido");
+  same(record.privacy.filter((e) => !e.startsWith("envelope.")), ["item.result.content[].text:sensitive_removed", "item.result.content[].text:unsanitizable"], "privacy exata");
+  const text = JSON.stringify(record);
+  assert.ok(!text.includes("nYTpi") && !text.includes("u0020ab") && !text.includes("\\u0000"), "registro sem as credenciais no contexto nem marcador interno");
+});
+
 test("I5-C14i valor sensível em bloco multilinha, na linha seguinte, depois de tag/âncora ou de comentário omite o campo; indicador sem linha seguinte ou com texto na mesma linha segue a regra anterior", () => {
   // Nome já reconhecido pelas regras 3 e 5 seguido de `|`/`>` no fim da linha.
   refusedCases([
@@ -1090,6 +1183,10 @@ test("I5-C14h sanitização de 1 MiB numa linha com muitos valores termina em te
     [fill("&secret:") + "\nfim", false],
     // Comentário: só lido quando há quebra depois, e então recusa.
     [fill("secret: # ") + "\nfim", false],
+    // Separador escapado depois e antes do esquema; sequência longa de `\`
+    // que não termina em escape de separador.
+    [fill(String.raw`x\nBearer ab' `), true],
+    ["Basic" + "\\".repeat(MiB - 20) + "x", true],
   ];
   cases.forEach(([input, ok], i) => {
     const started = performance.now();

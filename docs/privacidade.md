@@ -91,6 +91,12 @@ previsto — gera `content:unsupported_content` sem ler o valor. `path` e
 Hermes não tem linha: o plugin aprovado na #4 envia só nomes escalares, nunca
 argumentos ou resultados.
 
+Em `item.result.content[]`, uma entrada `type` = `text` precisa de `text` string.
+Sem `text`, com `null` ou outro tipo, o conteúdo inteiro do evento (inclusive
+`item.arguments`) sai com `content:unsupported_content`, mesmo que outras entradas
+sejam válidas; `text` vazio continua `""` sem motivo, e entradas de outro `type`
+são puladas com `item.result.content[].text:unsupported_content`.
+
 ## Sanitização e seus limites
 
 Objetos (argumentos MCP) passam por projeção: chave sensível (`password`,
@@ -117,8 +123,17 @@ os separadores ficam como vieram. Isso também remove a palavra seguinte em pros
 omite o campo inteiro com `unsanitizable`. Um cabeçalho sem aspas cuja linha
 termina no esquema, com a credencial na linha seguinte (`Authorization: Basic`
 seguido de quebra e `YTpi`), também é omitido inteiro com `unsanitizable`.
-Outros esquemas e outros separadores (NBSP, `\n` escrito como texto escapado) não
-são reconhecidos.
+Em texto serializado de novo (JSON dentro de um resultado), o separador escrito
+como escape também vale, sem decodificar nada: um ou mais `\` seguidos de `n`,
+`r`, `t` ou `u000a`, `u000d`, `u0009`, `u0020`, entre o esquema e a credencial ou
+logo antes do esquema. `{\"Authorization\":\"Basic\nYTpi\"}` vira
+`{\"Authorization\":\"Basic\n[removido]` e `"Basic\nYTpi"` vira
+`"Basic\n[removido]"`; o resto da palavra colada à credencial sai junto. Isso
+também remove a palavra depois de um escape que segue o esquema em prosa ou
+caminho (`C:\Basic\new`) e aceita `\N`, `\R`, `\T` como escape. Outros esquemas e
+outros separadores ou codificações (NBSP, `\x0a`, `%0A`, entidades HTML) não são
+reconhecidos, nem um nome de cabeçalho ou atribuição colado depois de um escape
+(`x\nCookie: s=…`).
 
 O valor de um parâmetro de URL também é examinado com uma camada de codificação
 percentual: se `?q=ghp%5F…` (ou o valor inteiro codificado) contém um formato de

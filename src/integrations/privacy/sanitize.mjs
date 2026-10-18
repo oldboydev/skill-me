@@ -41,11 +41,17 @@ const HEADER_NAME = /(["']?)\b(authorization|proxy-authorization|cookie|set-cook
 // separadores ficam como vieram. Custa a palavra seguinte em prosa (`basic
 // idea`, inclusive na linha seguinte); linhas "Credencial curta depois de
 // `Bearer`/`Basic`" e "Caixa e quebra antes da credencial…" do Landing.
-const AUTH_SCHEME = /\b(bearer|basic)[ \t\r\n]+([A-Za-z0-9._~+/=-]+)/gi;
+// Texto serializado de novo (JSON dentro de um resultado) traz o separador
+// escrito como escape (`Basic\nYTpi` com `\` literal): ele é só lido, nunca
+// decodificado, e também vale como fronteira antes do esquema (`x\nBasic`).
+// Com a flag `i`, `\N` também conta (perda declarada); linha "Separador
+// escrito como escape…" do Landing.
+const ESCAPED_SEPARATOR = String.raw`\\+(?:[nrt]|u00(?:0[9ad]|20))`;
+const AUTH_SCHEME = new RegExp(String.raw`(?:\b|(?<=${ESCAPED_SEPARATOR}))(bearer|basic)(?:[ \t\r\n]|${ESCAPED_SEPARATOR})+([A-Za-z0-9._~+/=-]+)`, "gi");
 // Cabeçalho sem aspa cuja linha termina no esquema: a regra 3 o consome antes
 // da regra 4, e a credencial da linha seguinte ficaria. Estender o valor seria
 // ler dobra de cabeçalho HTTP; o campo é recusado.
-const SCHEME_AT_LINE_END = /\b(?:bearer|basic)[ \t]*$/i;
+const SCHEME_AT_LINE_END = new RegExp(String.raw`(?:\b|(?<=${ESCAPED_SEPARATOR}))(?:bearer|basic)(?:[ \t]|${ESCAPED_SEPARATOR})*$`, "i");
 const CREDENTIAL_AFTER_BREAK = /\r?\n[ \t\r\n]*[A-Za-z0-9._~+/=-]/y;
 // Nome + separador sem o valor: o valor só é consumido quando o nome é
 // sensível, para que `foo:password=x` não esconda a segunda atribuição.

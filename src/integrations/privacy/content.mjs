@@ -179,7 +179,12 @@ function readField(rowSpec, payload, key, tally) {
         tally.note(field, "unsupported_content");
         continue;
       }
-      const text = cleanText(leaf(entry, "text", "string") ?? "", field, tally);
+      // `text` ausente ou `null` é formato inválido como o tipo errado: virar
+      // `""` confundiria perda com texto vazio (linha "Entrada `type:"text"`
+      // sem `text` string…" do Landing).
+      const value = leaf(entry, "text", "string");
+      if (value === undefined) throw new Unsupported();
+      const text = cleanText(value, field, tally);
       if (text !== null) values.push(text);
     }
     return { ...base, value: values, truncated: false };
