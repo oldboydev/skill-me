@@ -5,7 +5,8 @@ import { validateEnvelope } from "./boundary.mjs";
 // arquivos, rede ou processos (há teste conferindo). Armazenamento e consumidor
 // real pertencem à #8.
 
-function deepFreeze(value) {
+// Também usado pela releitura de capturas da #8 (traces/replay.mjs).
+export function deepFreeze(value) {
   if (value !== null && typeof value === "object") {
     for (const child of Object.values(value)) deepFreeze(child);
     Object.freeze(value);
