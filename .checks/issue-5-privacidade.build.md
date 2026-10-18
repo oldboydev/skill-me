@@ -2241,3 +2241,60 @@ foram repetidos nele.
   valor nessas formas passa só pelo sanitizador de texto. Não é garantia universal.
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+# Falha de I5-C49b na CI Windows: `rmSync` da fixture sem efeito em caminho não ASCII (18/10/2026)
+
+CI `39161018450` (Windows, Node 24.13.0; log preservado em
+`.checks/code-review/issue-5/ci-failed.log`): integrações 203, 188 pass, 14 skip,
+1 fail. A única falha é `store.cli.test.mjs:454`, em I5-C49b: depois de
+`rmSync(foreign(active|stopped), { recursive: true })`, `delete --capture <ativa>
+--apply` devolveu `foreign_entry` em vez de `capture_active`. Ubuntu e macOS passaram.
+Não é tratada como instabilidade e a CI não foi repetida.
+
+## Causa comprovada (fixture, não produto)
+
+- `foreign_entry` só sai de `deletionTarget` quando o `lstat` de `.deleting-<id>`
+  não é `missing`; `readCapture` não produz esse código. Logo a pasta ainda existia
+  depois do `rmSync` da fixture.
+- Sonda (`%TEMP%\skill-me-i5-f9-tools-x3qvoj\rmsync-probe.mjs`): pasta com um
+  arquivo e arquivo solto, sob um caminho com `ação` e outro só ASCII, removidos
+  por `rmSync`. No Windows (ACP 1252, a mesma do runner), Node 24.11.1 retorna
+  sem exceção e **sem apagar** nada no caminho com `ação`; o caminho ASCII é
+  apagado. 20.2.0, 22.12.0, 22.13.1, 22.23.2, 24.14.0, 24.15.0, 24.19.0 e
+  24.21.0 apagam os dois. Node 24.13.0 para Windows não está disponível nesta
+  máquina e não foi instalado; o comportamento da CI coincide com o de 24.11.1.
+- `makeScratch` sempre põe `ação` no nome, e C49b é o único teste executado no
+  Windows que afirma o efeito de um `rmSync`. Os demais `rmSync` dos testes são
+  limpeza com `force` sem asserção, ou rodam em teste pulado no Windows; o
+  `rmSync(control)` de I4-C25g (issue #4, fora do escopo) deixaria o arquivo de
+  controle sem afetar as asserções daquele teste — só comunicado, não alterado.
+- O produto não usa `rm`/`rmSync`/`cp`: `src/integrations/privacy/fs.mjs` remove
+  com `unlink`/`rmdir`/`rename` de `fs/promises` (libuv). Nenhuma mudança em `src/`.
+
+## RED exato (Windows)
+
+`red-c49b.sh` em `%TEMP%\skill-me-i5-f9-tools-x3qvoj\`: `git archive` de
+`3a2bacef54ce9049fb416eb50c34b980dca7e8dd`, `get-tar-commit-id` conferido antes
+de extrair, tar sha256 `ee8562c0…c573cd80`, cópia em
+`%TEMP%\skill-me-i5-f9-red-4h66fJ\copy-CnEHOk`; só o seletor `"^I5-C49b "`.
+
+| Node (Windows) | Resultado |
+| --- | --- |
+| 24.11.1 | 1 teste, 0 pass, 1 fail: `store.cli.test.mjs:454`, `foreign_entry` ≠ `capture_active` (a falha da CI) |
+| 24.14.0 | 1/1 pass |
+| 24.21.0 | 1/1 pass |
+
+## Correção planejada (só a fixture de C49b)
+
+- Remover cada `.deleting-<id>` alheia com `unlinkSync` da `key` e `rmdirSync` da
+  pasta (libuv, as mesmas chamadas que o sistema faz sem passar pelo `rmSync`) e
+  afirmar `lstat` → `ENOENT` dos dois nomes antes de chamar o CLI: uma remoção
+  sem efeito volta a falhar na pré-condição, não no contrato.
+- Manter o expected `capture_active` e reforçar a etapa: corpo exato, saída 3 e
+  árvore idêntica (inclusive mtime) depois da recusa da ativa; a parada continua
+  apagada e `captures/` fica só com a ativa. Controles de coexistência
+  (`foreign_entry`, nenhuma operação dentro das pastas), junção (`link_refused`)
+  e retomada legítima (I5-C51b) sem mudança. Nenhum título, seletor ou contrato novo.
+- Prova: C49b sob Node 24.11.1 (o runtime que reproduz a CI) passa a verde na
+  correção, e sob 24.21.0; depois alvo de privacidade e `npm test` completos em
+  Windows e WSL no commit limpo.
