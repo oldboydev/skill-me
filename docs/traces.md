@@ -42,6 +42,10 @@ contratos nativos e a instalação das integrações são os da #4
    export SKILL_ME_CAPTURE_ID="<id>"
    ```
 
+   Para ver as entregas que falharem, defina também `SKILL_ME_CAPTURE_REPORT`
+   com o caminho absoluto de um arquivo de diagnóstico (seção "Falhas de
+   entrega").
+
 3. Inicie o agente desse terminal (Claude, Codex com hooks, `integrations run
    --agent codex -- …` ou Hermes com `SKILL_ME_HERMES_DELIVERY`). Os hooks, o
    ingest e o wrapper herdam as variáveis e gravam na captura.
@@ -146,10 +150,62 @@ parado não prende o agente: no prazo a tentativa é abandonada; se o processo
 sair durante um commit, o `.lock` pode ficar, e as operações seguintes saem com
 4 (`lock_present`) até você conferir que nenhum processo está ativo e removê-lo.
 
-Para conferir a cobertura, use `status` ou `list`: os contadores separam aceitos,
+`status` e `list` mostram o que chegou à captura: os contadores separam aceitos,
 persistidos, malformados, descartados por motivo e conteúdo omitido. Uma entrega
-que falhou não aparece neles. Cada processo produtor resume a entrega só com um
-código fechado e contagens, sem caminho, argumento, resultado ou stack:
+que falhou não chega lá — com o lock ocupado ou o disco falhando, a captura não
+pode registrar a perda. Para ver as falhas, defina, no mesmo terminal das duas
+variáveis do vínculo, o caminho absoluto de um arquivo de diagnóstico fora da
+raiz da captura:
+
+```
+# PowerShell
+$env:SKILL_ME_CAPTURE_REPORT = "C:\Users\você\diagnóstico de entrega.ndjson"
+# bash/zsh
+export SKILL_ME_CAPTURE_REPORT="/home/você/diagnóstico de entrega.ndjson"
+```
+
+Cada processo produtor vinculado (hook, ingest ou wrapper) que perde ao menos uma
+entrega, ou que não consegue abrir a captura, acrescenta uma linha JSON a esse
+arquivo ao terminar. Uma entrega confirmada não escreve nada: arquivo ausente ou
+sem linhas quer dizer nenhuma falha registrada. Para ler, durante ou depois da
+sessão:
+
+```
+# PowerShell
+Get-Content "C:\Users\você\diagnóstico de entrega.ndjson"
+# bash/zsh
+cat "/home/você/diagnóstico de entrega.ndjson"
+```
+
+Um hook do Claude que encontrou o lock ocupado até o prazo escreve:
+
+```
+{"skillMeDeliveryReport":1,"at":"2026-10-18T12:00:00.000Z","agent":"claude","capture":"<id>","delivery":{"bound":true,"code":"lock_present","entries":1,"committed":0,"persisted":0,"lost":1}}
+```
+
+| Campo | Conteúdo |
+| --- | --- |
+| `skillMeDeliveryReport` | versão do formato: 1 |
+| `at` | instante (UTC) em que o processo encerrou a entrega |
+| `agent` | produtor: `claude`, `codex-hooks`, `codex-exec` (wrapper) ou `hermes`; `null` num hook com agente desconhecido |
+| `capture` | ID da captura do vínculo; `null` com `binding_invalid` (o valor inválido não é copiado) |
+| `delivery.bound` | `false` só com `binding_invalid` |
+| `delivery.code` | o primeiro código da tabela abaixo que encerrou uma tentativa do processo |
+| `delivery.entries` | entradas lidas pelo processo |
+| `delivery.committed` | entradas confirmadas na captura |
+| `delivery.persisted` | registros gravados por elas; o resto está nos contadores de descarte ou malformado |
+| `delivery.lost` | entradas não confirmadas, inclusive as de confirmação perdida |
+
+A linha não traz caminho, valor de variável, payload, mensagem de erro nem
+stack. Sem o par do vínculo, `SKILL_ME_CAPTURE_REPORT` sozinha não escreve, e um
+caminho relativo é ignorado (os hooks rodam no diretório do projeto do agente).
+O arquivo é criado se faltar — no POSIX, só com permissão do dono — e só recebe
+linhas acrescentadas; um link, uma pasta ou outro tipo de entrada naquele
+caminho não é tocado. Se o arquivo não puder ser gravado (pasta inexistente, sem
+permissão, disco cheio), o diagnóstico se perde e nada muda para o agente. O
+arquivo é seu: `delete` e `prune` não o apagam, e ele cresce uma linha por
+processo com falha — por exemplo, a cada hook enquanto as variáveis apontarem
+para uma captura encerrada. Apague-o quando quiser.
 
 | Código | Significado |
 | --- | --- |
@@ -192,7 +248,8 @@ Com fixtures sintéticas, pelas provas de `tests/integrations/traces/`:
 - hooks do Claude e do Codex pela linha que o instalador grava, com a captura
   vinculada; ingest Hermes; wrapper supervisionando um Codex falso;
 - `list`, `export`, `follow` e `replayCapture`; produtores concorrentes; lock
-  ocupado, falha de E/S, confirmação perdida e disco parado; os limites acima;
+  ocupado, falha de E/S e confirmação perdida, com o diagnóstico lido do arquivo
+  de `SKILL_ME_CAPTURE_REPORT`; disco parado (em processo); os limites acima;
 - a demonstração de ponta a ponta `tests/integrations/traces/demo.e2e.test.mjs`,
   que rotula cada passo como fixture ou comando do usuário.
 

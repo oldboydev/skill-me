@@ -10,7 +10,9 @@ Não há coletor nem serviço de coleta. Sem vínculo explícito a uma captura, 
 observação fica na memória do processo que a produziu e é descartada quando ele
 termina: nada é gravado nem enviado pelo debugger. Com `SKILL_ME_CAPTURE_ROOT` e
 `SKILL_ME_CAPTURE_ID` de uma captura ativa no ambiente do agente, o mesmo processo
-também grava o resultado sanitizado nessa captura local; nada é enviado.
+também grava o resultado sanitizado nessa captura local; nada é enviado. Uma
+entrega que falha deixa só código fechado e contagens no arquivo de
+`SKILL_ME_CAPTURE_REPORT`, quando definido ([docs/traces.md](traces.md)).
 
 ## O que roda onde
 
