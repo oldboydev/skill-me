@@ -70,17 +70,30 @@ async function supervised() {
   await runSupervisedCodex(parsed);
 }
 
-// Controle de capturas de privacidade: um JSON por execução em stdout, stderr
-// vazio; qualquer falha inesperada vira o código fechado io_failure.
+// Controle de capturas de privacidade: um JSON por execução em stdout (o
+// `follow` escreve as próprias linhas), stderr vazio; qualquer falha
+// inesperada vira o código fechado io_failure.
 async function privacy() {
   const { runPrivacyCommand } = await import("./privacy/command.mjs");
+  // Cada linha do follow espera o stdout aceitá-la: um consumidor lento não
+  // acumula a captura inteira na memória, e um que saiu encerra o follow.
+  let stdoutClosed = false;
+  process.stdout.on("error", () => {
+    stdoutClosed = true;
+  });
+  const write = (text) =>
+    new Promise((resolve) => {
+      if (stdoutClosed) return resolve(false);
+      process.stdout.write(text, (error) => resolve(!error && !stdoutClosed));
+    });
   let result;
   try {
-    result = await runPrivacyCommand({ argv: argv.slice(1), stdin: process.stdin });
+    result = await runPrivacyCommand({ argv: argv.slice(1), stdin: process.stdin, write });
   } catch {
     result = { exitCode: 5, body: { schemaVersion: 1, command: null, status: "error", error: { code: "io_failure" } } };
   }
-  process.stdout.write(result.help ?? JSON.stringify(result.body) + "\n");
+  if (result.help !== undefined) process.stdout.write(result.help);
+  else if (result.body !== undefined) process.stdout.write(JSON.stringify(result.body) + "\n");
   process.exitCode = result.exitCode;
 }
 

@@ -344,30 +344,90 @@ export function openCaptureForIngest({ root, id, io = createStoreIo() }) {
 
 // Registros da captura, como gravados: o segmento tem exatamente `dataBytes`
 // e cada linha precisa ser um registro v1 com envelope válido.
+async function readRecords(io, dir, state) {
+  const records = [];
+  if (state.dataFile === null) return records;
+  const bytes = await readSmallFile(io, path.join(dir, state.dataFile), state.dataBytes, "capture_invalid");
+  if (bytes === null || bytes.length !== state.dataBytes) throw new StoreError("capture_invalid");
+  const text = bytes.toString("utf8");
+  if (!text.endsWith("\n")) throw new StoreError("capture_invalid");
+  for (const line of text.slice(0, -1).split("\n")) {
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      throw new StoreError("capture_invalid");
+    }
+    if (!isStoredRecord(record)) throw new StoreError("capture_invalid");
+    records.push(record);
+  }
+  return records;
+}
+
 export function exportCapture({ root, id, io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openExisting(root, io);
     return withLock(ctx, async () => {
       const { dir, state } = await readCapture(ctx, id);
-      const records = [];
-      if (state.dataFile !== null) {
-        const bytes = await readSmallFile(io, path.join(dir, state.dataFile), state.dataBytes, "capture_invalid");
-        if (bytes === null || bytes.length !== state.dataBytes) throw new StoreError("capture_invalid");
-        const text = bytes.toString("utf8");
-        if (!text.endsWith("\n")) throw new StoreError("capture_invalid");
-        for (const line of text.slice(0, -1).split("\n")) {
-          let record;
-          try {
-            record = JSON.parse(line);
-          } catch {
-            throw new StoreError("capture_invalid");
-          }
-          if (!isStoredRecord(record)) throw new StoreError("capture_invalid");
-          records.push(record);
+      return { capture: publicCapture(state), records: await readRecords(io, dir, state) };
+    });
+  });
+}
+
+// Sondagem do `privacy follow` (#8, crit. 7): estado sempre; segmento só
+// quando há registros além dos `seen` já entregues. Os registros só crescem
+// no fim do segmento, então os `seen` primeiros são os já entregues.
+export function readCaptureSince({ root, id, seen, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openExisting(root, io);
+    return withLock(ctx, async () => {
+      const { dir, state } = await readCapture(ctx, id);
+      if (state.counters.persisted < seen) throw new StoreError("capture_invalid");
+      if (state.counters.persisted === seen) return { capture: publicCapture(state), records: [] };
+      const records = await readRecords(io, dir, state);
+      if (records.length !== state.counters.persisted) throw new StoreError("capture_invalid");
+      return { capture: publicCapture(state), records: records.slice(seen) };
+    });
+  });
+}
+
+export const LIST_PAGE_SIZE = 100;
+
+const byCreation = (a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+// `privacy list` (#8, crit. 5): página de capturas por `createdAt`,`id`,
+// continuando depois de `after`. Sem a pasta do store a lista é vazia (nada é
+// criado). Pasta em exclusão e nomes alheios ficam fora; uma captura ilegível
+// impede a ordem da página inteira e aparece em `failed`, como no prune.
+export function listCaptures({ root, after = null, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io);
+    const read = async () => {
+      if (ctx === null || (await capturesDirKind(ctx)) === "missing") return { states: [], failed: [] };
+      const states = [];
+      const failed = [];
+      for (const name of (await io.readdir(ctx.capturesDir)).sort()) {
+        if (!CAPTURE_ID_PATTERN.test(name)) continue;
+        try {
+          states.push((await readCapture(ctx, name)).state);
+        } catch (error) {
+          if (!(error instanceof StoreError)) throw error;
+          failed.push({ capture: name, code: error.code });
         }
       }
-      return { capture: publicCapture(state), records };
-    });
+      return { states, failed };
+    };
+    const { states, failed } = ctx === null ? await read() : await withLock(ctx, read);
+    if (failed.length > 0) return { captures: [], nextAfter: null, failed };
+    states.sort(byCreation);
+    let start = 0;
+    if (after !== null) {
+      start = states.findIndex((state) => state.id === after) + 1;
+      if (start === 0) throw new StoreError("capture_not_found");
+    }
+    const page = states.slice(start, start + LIST_PAGE_SIZE);
+    const nextAfter = start + LIST_PAGE_SIZE < states.length ? page.at(-1).id : null;
+    return { captures: page.map(publicCapture), nextAfter, failed };
   });
 }
 
