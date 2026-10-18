@@ -64,13 +64,14 @@ export function expectedPseudonym(root, id, value) {
 // [stdin, stdout, stderr, relatório no fd 3]. `stdinText` vai inteiro de uma
 // vez; `writeAfterMs` adia a escrita e o fim do stdin (processo já iniciado),
 // devolvendo `stdinClosedAt`; `keepOpen` nunca fecha o stdin; `lines` alterna
-// textos e pausas (ms).
-export function runInternal(args, { env, cwd, stdinText = "", writeAfterMs = 0, keepOpen = false, nodeArgs = [], lines } = {}) {
+// textos e pausas (ms). `fixtureReport: false` inicia o comando como no uso
+// normal: sem SKILL_ME_OBSERVER_REPORT_FD nem fd 3 (`report` fica null).
+export function runInternal(args, { env, cwd, stdinText = "", writeAfterMs = 0, keepOpen = false, nodeArgs = [], lines, fixtureReport = true } = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [...nodeArgs, INTEGRATIONS_CLI, ...args], {
-      env: { ...env, SKILL_ME_OBSERVER_REPORT_FD: "3" },
+      env: fixtureReport ? { ...env, SKILL_ME_OBSERVER_REPORT_FD: "3" } : env,
       cwd,
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
+      stdio: fixtureReport ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
     let stdout = "";
@@ -79,8 +80,10 @@ export function runInternal(args, { env, cwd, stdinText = "", writeAfterMs = 0, 
     let stdinClosedAt = null;
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
-    child.stdio[3].on("data", (chunk) => (fd3 += chunk));
-    child.stdio[3].on("error", () => {});
+    if (fixtureReport) {
+      child.stdio[3].on("data", (chunk) => (fd3 += chunk));
+      child.stdio[3].on("error", () => {});
+    }
     child.stdin.on("error", () => {});
     const feed = async () => {
       if (writeAfterMs > 0) await new Promise((r) => setTimeout(r, writeAfterMs));
@@ -97,7 +100,7 @@ export function runInternal(args, { env, cwd, stdinText = "", writeAfterMs = 0, 
     feed();
     child.on("close", (status, signal) => {
       child.stdin.destroy();
-      resolve({ status, signal, stdout, stderr, report: parseReport(fd3), stdinClosedAt, closedAt: performance.now() });
+      resolve({ status, signal, stdout, stderr, report: fixtureReport ? parseReport(fd3) : null, stdinClosedAt, closedAt: performance.now() });
     });
   });
 }

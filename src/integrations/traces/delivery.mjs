@@ -6,7 +6,8 @@ import { appendRecords, openCaptureForIngest, StoreError } from "../privacy/stor
 // captura escolhida (issue #8, crit. 1–4 e 9–10). Reutiliza o lote do
 // `privacy ingest` (adaptador → política → admissão) com a chave e o opt-in da
 // captura, e o commit do store sob o mesmo lock. Nada sai em stdout/stderr: o
-// resultado é um código fechado e contagens no relatório do processo.
+// resultado é um código fechado e contagens (`report`), que o processo leva ao
+// relatório de fixture e ao arquivo de diagnóstico do usuário.
 
 export const DELIVERY_DEADLINE_MS = 750;
 // A tentativa desiste com esta folga antes do prazo: o timer do Node dispara

@@ -7,9 +7,11 @@ import { applyPolicy, createEphemeralKey } from "./privacy/policy.mjs";
 // memória. Aqui não há opt-in: conteúdo sempre desligado e chave efêmera do
 // processo. Com vínculo explícito a uma captura (#8), cada entrada também vai
 // à `delivery`, que aplica a mesma política com a chave e o opt-in da
-// captura. Fora isso, nada sai do processo, exceto pelo exportador de
-// fixture abaixo, que só existe quando os testes definem
-// SKILL_ME_OBSERVER_REPORT_FD — a instalação nunca define essa variável.
+// captura, e uma entrega com falha deixa só código e contagens no arquivo de
+// diagnóstico que o usuário indicar (traces/delivery-report.mjs). Fora isso,
+// nada sai do processo, exceto pelo exportador de fixture abaixo, que só existe
+// quando os testes definem SKILL_ME_OBSERVER_REPORT_FD — a instalação nunca
+// define essa variável.
 
 const COUNTER_NAMES = [
   "oversize",
@@ -111,11 +113,14 @@ export function createObservation({ env = process.env, allowStderrReport = true,
     // `deadlineAt` (relógio monotônico de `performance.now()`) permite a quem
     // chama contar o prazo de um instante anterior — o wrapper conta do fim do
     // filho. A serialização entra no prazo. A entrega à captura termina antes,
-    // porque o relatório traz o resultado dela; o prazo de cada entrada
-    // (DELIVERY_DEADLINE_MS) cabe no do relatório.
+    // porque os relatórios trazem o resultado dela; o prazo de cada entrada
+    // (DELIVERY_DEADLINE_MS) e o diagnóstico do usuário cabem no do relatório.
     async flush({ deadlineAt = performance.now() + REPORT_DEADLINE_MS } = {}) {
       receiver.close();
-      if (delivery !== null) await delivery.settle();
+      if (delivery !== null) {
+        await delivery.settle();
+        await delivery.publish(deadlineAt);
+      }
       const fd = reportFd(env, allowStderrReport);
       if (fd === null) return;
       let line;

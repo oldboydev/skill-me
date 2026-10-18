@@ -24,10 +24,18 @@ export function captureBinding(env) {
 
 // Entrega do processo, ou null sem vínculo. O store só é carregado quando o
 // ambiente pede uma captura: o hook de cada evento continua carregando o mínimo.
+// `publish`, chamado depois de `settle`, leva o resumo final ao arquivo de
+// diagnóstico do usuário (delivery-report.mjs), quando houver um.
 export async function captureDeliveryFor({ env, agent }) {
   const binding = captureBinding(env);
   if (binding.kind === "none") return null;
-  const { createCaptureDelivery, refusedDelivery } = await import("./delivery.mjs");
-  if (binding.kind === "invalid") return refusedDelivery(binding.code);
-  return createCaptureDelivery({ root: binding.root, id: binding.id, agent });
+  const [{ createCaptureDelivery, refusedDelivery }, report] = await Promise.all([import("./delivery.mjs"), import("./delivery-report.mjs")]);
+  const delivery = binding.kind === "invalid" ? refusedDelivery(binding.code) : createCaptureDelivery({ root: binding.root, id: binding.id, agent });
+  const file = report.deliveryReportFile(env);
+  const publish = async (deadlineAt) => {
+    if (file === null) return;
+    const line = report.deliveryReportLine({ summary: delivery.report(), capture: binding.id ?? null, agent, at: new Date().toISOString() });
+    if (line !== null) await report.appendDeliveryReport(file, line, deadlineAt);
+  };
+  return { ...delivery, publish };
 }
