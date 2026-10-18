@@ -169,6 +169,9 @@ diagnóstico em arquivo" é o hook sem relatório de fixture e com
 | Windows 11 — Node 24.21.0, checkout em `0c108ee` (correção 1) | os 20 comandos `Proof:` de C1–C20, como escritos | cada um exit 0, 0 fail; 24 testes selecionados, 23 pass, 1 skip (T8-C4 sinal POSIX) |
 | Windows 11 — Node 24.21.0, checkout em `0c108ee` (correção 1) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 227 (220 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX) |
 | WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i8-gKUfgu` de `git archive 0c108ee` (sha256 `4aed4efe…fd674272` conferido; `git get-tar-commit-id` = `0c108eec…`) (correção 1) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 227 (215 pass, 0 fail, 12 skip pré-existentes: Hermes ausente ×8, DACL Windows ×3, ACL macOS ×1); nenhum T8 pulado |
+| Windows 11 — Node 24.21.0, checkout em `e5ebb61` (correção 2) | `Proof:` de C6, como escrito | exit 0; 1 teste selecionado (T8-C6), 1 pass |
+| Windows 11 — Node 24.21.0, checkout em `e5ebb61` (correção 2) | `node --test tests/integrations/traces/*.test.mjs` | exit 0; 24 tests, 23 pass, 0 fail, 1 skip (T8-C4 sinal POSIX) |
+| Windows 11 — Node 24.21.0, checkout em `e5ebb61` (correção 2) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 227 (220 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX), T8-C6 inclusive |
 
 Preparação WSL: tar e `run-wsl.sh` num diretório de `mktemp -d` do `%TEMP%`
 (`skill-me-i8-wsl-stage-n0fAaX` na fase 1, `skill-me-i8-wsl-stage-71TySJ` na 2,
@@ -372,6 +375,85 @@ Ubuntu. Medições na tabela de tempo.
   captura encerrada. Documentado; o usuário o apaga.
 - No Windows a recusa de link depende do `lstat` antes do `open` (não há
   `O_NOFOLLOW`); uma troca entre os dois não é coberta.
-- Fora do escopo desta rodada: `T8-C6` ainda confere o stderr do wrapper com
+- ~~Fora do escopo desta rodada: `T8-C6` ainda confere o stderr do wrapper com
   `endsWith("stderr do filho\n")`, a mesma fragilidade apontada em C4. Não foi
-  alterado porque a correção autorizada cobre só C4, C16 e C20.
+  alterado porque a correção autorizada cobre só C4, C16 e C20.~~ — resolvido na
+  rodada de correção 2 (abaixo).
+
+## Rodada de correção 2 — C6
+
+Origem: `.checks/issue-8-traces.verified.md` (Verifier, rodada 2 em `dc8c0fe`:
+FAIL, 20/21; C6 com asserção insuficiente). Builder Claude, escopo só desse
+achado. Só teste mudou: produto, `.tasks/issue-8-traces.md`,
+`.checks/issue-8-traces.md` (comando `Proof:` de C6 inclusive), helpers, a
+política da #5, `package.json` e os cinco arquivos do core (diff vazio contra
+`origin/main`) ficaram como estavam. `.checks/issue-8-traces.verified.md`
+pertence ao Verifier: não foi alterado nem entra nos commits. Sem push, PR,
+merge, deploy ou revisão Codex.
+
+### Commits
+
+| Commit | Achado | Conteúdo |
+| --- | --- | --- |
+| `e5ebb61` | C6 | stderr inteiro do wrapper com vínculo ausente ou inválido comparado byte a byte com o do Codex falso |
+| commit seguinte | — | este registro |
+
+### C6 — stderr do wrapper sem vínculo válido
+
+Achado: `T8-C6` afirmava só `wrapped.stderr.endsWith("stderr do filho\n")`;
+uma linha do debugger emitida apenas no ramo `binding_invalid`, antes do stderr
+do filho, passava em C6 e não era vista por C4 nem C16, que usam vínculo válido.
+
+Correção, reaproveitando a fixture e o helper de C4: em cada uma das oito
+variantes o wrapper roda com `FAKE_CODEX_STDERR_COPY` e `assertNativeStderr`
+exige `stderrBytes` igual à cópia gravada pelo próprio filho (e que a cópia
+contenha o probe). As cópias ficam numa pasta temporária própria, fora de `base`
+e da raiz, porque a prova de que nada foi criado ou alterado compara as duas
+árvores inteiras. Continuam em cada variante: código 17, stdout byte a byte, o
+código de vínculo do relatório (ou relatório sem `delivery` sem nenhuma
+variável), a árvore da raiz e a lista de `base` inalteradas, os três produtores
+com código 0, stdout e stderr vazios, e, no fim, os contadores zerados da captura
+ativa. Acrescentada `signal` null do wrapper, que o veredito lista no esperado
+(código/sinal/stdout preservados) e C6 não afirmava.
+
+### Mutação
+
+Aplicada a `src/integrations/codex-run.mjs` commitado, logo depois de
+`captureDeliveryFor`: `if (delivery?.report().code === "binding_invalid")
+process.stderr.write("skill-me integrations run: vínculo de captura inválido;
+nada será gravado\n")` — aviso do debugger só no ramo de vínculo inválido,
+antes do filho.
+
+| Prova | Resultado com a mutação |
+| --- | --- |
+| C6 nova (`e5ebb61`), comando `Proof:` | falhou na primeira variante inválida, "só a raiz": `stderrBytes` = 5633 bytes começando por `skill-me integrations run: ví…`, diferente da cópia do filho |
+| C6 de `dc8c0fe` (`git show HEAD:…` num arquivo temporário `.tmp.mjs` ao lado do original, fora do glob `*.test.mjs`, rodado pelo caminho explícito) | passou: lacuna confirmada |
+| `node --test tests/integrations/traces/*.test.mjs` com a C6 nova | 24 tests, 22 pass, 1 fail, 1 skip; a única falha foi T8-C6 (C4 e os três C16 passaram) |
+
+Restauração: cópia de `codex-run.mjs` feita antes da mutação, numa pasta de
+`mktemp -d` fora do repositório, copiada de volta; `git diff --quiet --
+src/integrations/codex-run.mjs` vazio; arquivo temporário do teste antigo e
+cópia removidos. As execuções abaixo foram feitas depois da restauração.
+
+### Execuções e ausências
+
+Linhas da tabela "Execuções" marcadas "correção 2", todas em `e5ebb61`, cuja
+única diferença para o commit deste registro é este arquivo: `Proof:` de C6 no
+Windows (selecionou e rodou T8-C6), o lote de traces no Windows e `npm test` no
+Windows, com T8-C6 entre os testes executados.
+
+- `T8-C4 … sinal POSIX` continua pulado no Windows (mesmo motivo); não é
+  afetado pela mudança.
+- WSL Ubuntu e macOS não foram executados nesta rodada. A mudança é só de
+  teste, sem ramo por plataforma (escrita do Codex falso por `appendFileSync`,
+  comparação de `Buffer`); a última execução WSL é a da correção 1, em
+  `0c108ee`, com a C6 anterior.
+- Não executados: Claude, Codex ou Hermes reais com modelo.
+
+### Limites desta rodada
+
+- A cópia é escrita pelo próprio Codex falso: a prova compara o stderr do
+  wrapper com o que o filho declarou ter escrito, não com uma captura
+  independente do fd 2 do filho. É o mesmo limite aceito em C4 e C16.
+- A mutação cobre um prefixo; um sufixo ou uma linha no meio no mesmo ramo
+  também quebrariam a igualdade, mas não foram aplicados separadamente.
