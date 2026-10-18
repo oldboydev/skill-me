@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
+import { STORE_DIR } from "../privacy/store.mjs";
 
 // Diagnóstico de entrega para o usuário (issue #8, crit. 3 e 9;
 // docs/traces.md, "Falhas de entrega"). Hooks, ingest e wrapper não podem usar
@@ -43,6 +44,22 @@ export async function appendDeliveryReport(file, line, deadlineAt) {
   }
 }
 
+// O store nunca recebe a linha: no state.json, na key, num segmento ou no
+// marcador ela torna a captura ilegível; um `.lock` criado bloqueia a raiz; um
+// nome novo na captura impede o delete. Vale o caminho real da pasta (links,
+// junções, nomes 8.3, `..` e `\\?\` resolvidos), sem diferenciar maiúsculas, e
+// o store de qualquer raiz, inclusive com o par inválido. No Windows o nome
+// final conta sem o fluxo: `pasta:fluxo` é um fluxo de dados da própria pasta.
+function insideStore(realDir, file) {
+  const name = path.basename(file);
+  const names = [...realDir.split(path.sep), process.platform === "win32" ? name.split(":")[0] : name];
+  return names.some((part) => part.toLowerCase() === STORE_DIR);
+}
+
+// Um hard link é outro nome do mesmo arquivo, talvez o state.json ou a key de
+// uma captura: arquivo com mais de um nome não é tocado.
+const isOwnFile = (stats) => stats.isFile() && stats.nlink <= 1;
+
 // Só arquivo regular, criado se faltar; link, pasta, FIFO ou dispositivo ficam
 // intocados. O_NONBLOCK impede que um FIFO sem leitor prenda o `open` no POSIX
 // (o Windows não tem FIFO nem O_NOFOLLOW; lá vale o `lstat`). A linha é uma
@@ -50,12 +67,13 @@ export async function appendDeliveryReport(file, line, deadlineAt) {
 // entra inteira.
 async function appendLine(file, line) {
   try {
+    if (insideStore(await realpath(path.dirname(file)), file)) return;
     const existing = await lstat(file).catch((error) => (error.code === "ENOENT" ? null : Promise.reject(error)));
-    if (existing !== null && !existing.isFile()) return;
+    if (existing !== null && !isOwnFile(existing)) return;
     const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
     const handle = await open(file, flags, 0o600);
     try {
-      if ((await handle.stat()).isFile()) await handle.write(line);
+      if (isOwnFile(await handle.stat())) await handle.write(line);
     } finally {
       await handle.close();
     }

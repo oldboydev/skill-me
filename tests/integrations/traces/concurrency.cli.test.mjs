@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { after, test } from "node:test";
 import { claudeHookDraft } from "../../../src/integrations/adapters/claude.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
+import { deleteCapture, exportCapture, listCaptures, pruneCaptures } from "../../../src/integrations/privacy/store.mjs";
 import { DELIVERY_DEADLINE_MS, createCaptureDelivery } from "../../../src/integrations/traces/delivery.mjs";
 import { CAPTURE_REPORT_ENV, appendDeliveryReport, deliveryReportFile, deliveryReportLine } from "../../../src/integrations/traces/delivery-report.mjs";
-import { REPO_ROOT, baseEnv, makeScratch, runIntegrationsJson } from "../helpers/cli.mjs";
+import { REPO_ROOT, baseEnv, makeScratch, runIntegrations, runIntegrationsJson } from "../helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers, runClaudeHandler, runCodexHandler } from "../helpers/installed-hooks.mjs";
 import { MARKER, claudePayload, codexHookPayload, execEvent, hermesRecord } from "../helpers/privacy-canaries.mjs";
-import { ISO_MS, TRACES_PROBE, boundEnv, captureDir, exportOf, expectedPseudonym, privacyOk, runHermesIngest, runHook, startCapture, statusOf, storeDir } from "../helpers/traces.mjs";
+import { ISO_MS, TRACES_PROBE, boundEnv, captureDir, capturesDir, exportOf, expectedPseudonym, privacyOk, runHermesIngest, runHook, startCapture, statusOf, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
 
@@ -388,4 +390,175 @@ test("T8-C16 delivery failure neutrality: o diagnóstico só recebe linha de fal
     await appendDeliveryReport(fifo, "x\n", performance.now() + 5_000);
     assert.ok(performance.now() - started < 1_000, "FIFO não prende");
   } else t.diagnostic("FIFO: só POSIX; no Windows não há FIFO no sistema de arquivos");
+});
+
+// Nome curto 8.3 de uma pasta filha no Windows, ou null se o volume não os gera.
+function shortName(parent, name) {
+  const listing = execFileSync("cmd", ["/d", "/c", "dir", "/x", "/ad", parent], { encoding: "latin1", windowsHide: true });
+  const found = new RegExp(`<DIR>\\s+(\\S+)\\s+${name}\\r?$`, "m").exec(listing)?.[1];
+  return found === undefined || found === name ? null : found;
+}
+
+// Caminhos de SKILL_ME_CAPTURE_ROOT/REPORT que alcançam um arquivo do store, ou
+// criam um dentro dele, sem a grafia literal: equivalentes, links de pasta (junção
+// no Windows) e hard links. `ctx.dir` é a captura encerrada; `ctx.aside` fica fora da raiz.
+function storeReportVariants(t) {
+  const state = (ctx) => path.join(ctx.dir, "state.json");
+  const dirLink = (target, at) => {
+    symlinkSync(target, at, process.platform === "win32" ? "junction" : "dir");
+    return at;
+  };
+  const hardLink = (target, at) => {
+    linkSync(target, at);
+    return at;
+  };
+  const variants = [
+    { label: "state.json da captura encerrada", report: state },
+    { label: "key", report: (ctx) => path.join(ctx.dir, "key") },
+    { label: "segmento", report: (ctx) => path.join(ctx.dir, "events-000001.ndjson") },
+    { label: "marcador do store", report: (ctx) => path.join(storeDir(ctx.root), "store.json") },
+    { label: ".lock ainda ausente", report: (ctx) => path.join(storeDir(ctx.root), ".lock") },
+    { label: "arquivo novo na pasta da captura", report: (ctx) => path.join(ctx.dir, "diagnóstico.ndjson") },
+    { label: "arquivo novo em captures", report: (ctx) => path.join(capturesDir(ctx.root), "diagnóstico.ndjson") },
+    { label: "com . e ..", report: (ctx) => [storeDir(ctx.root), ".", "captures", ctx.closed, "..", ctx.closed, "state.json"].join(path.sep) },
+    // No Windows e no macOS é o mesmo arquivo; no Linux, um caminho que não existe.
+    { label: "maiúsculas", report: (ctx) => path.join(ctx.root, "SKILL-ME-PRIVACY", "CAPTURES", ctx.closed, "STATE.JSON") },
+    { label: "pasta da captura por link", report: (ctx) => path.join(dirLink(ctx.dir, path.join(ctx.aside, "atalho da captura")), "state.json") },
+    { label: "store por link", report: (ctx) => path.join(dirLink(storeDir(ctx.root), path.join(ctx.aside, "atalho do store")), "captures", ctx.closed, "state.json") },
+    {
+      label: "raiz do vínculo e diagnóstico pelo mesmo link",
+      env: (ctx, report) => boundEnv(ctx.linkedRoot, ctx.closed, { [CAPTURE_REPORT_ENV]: report }),
+      report: (ctx) => path.join((ctx.linkedRoot = dirLink(ctx.root, path.join(ctx.aside, "raiz por link"))), "skill-me-privacy", "captures", ctx.closed, "state.json"),
+    },
+    { label: "hard link do state.json", report: (ctx) => hardLink(state(ctx), path.join(ctx.aside, "estado.ndjson")) },
+    { label: "hard link da key", report: (ctx) => hardLink(path.join(ctx.dir, "key"), path.join(ctx.aside, "chave.ndjson")) },
+    {
+      label: "par inválido com o state.json",
+      code: "binding_invalid",
+      env: (ctx, report) => baseEnv({ SKILL_ME_CAPTURE_ROOT: ctx.root, SKILL_ME_CAPTURE_ID: "fora-do-formato", [CAPTURE_REPORT_ENV]: report }),
+      report: state,
+    },
+    {
+      label: "state.json da captura ativa com lock ocupado",
+      code: "lock_present",
+      env: (ctx, report) => boundEnv(ctx.root, ctx.active, { [CAPTURE_REPORT_ENV]: report }),
+      report: (ctx) => path.join(captureDir(ctx.root, ctx.active), "state.json"),
+      lock: true,
+    },
+  ];
+  if (process.platform === "win32") {
+    variants.push(
+      { label: "barras normais", report: (ctx) => state(ctx).replaceAll("\\", "/") },
+      { label: "prefixo \\\\?\\", report: (ctx) => `\\\\?\\${state(ctx)}` },
+      { label: "ponto final no nome", report: (ctx) => `${state(ctx)}.` },
+      { label: "fluxo ::$DATA", report: (ctx) => `${state(ctx)}::$DATA` },
+      // Fluxo nomeado da própria pasta do store: a árvore não o mostra, só o arquivo criado.
+      { label: "fluxo nomeado da pasta do store", report: (ctx) => `${storeDir(ctx.root)}:diagnóstico.ndjson` },
+      {
+        label: "nome curto 8.3 do store",
+        report: (ctx) => {
+          const short = shortName(ctx.root, "skill-me-privacy");
+          if (short === null) return null;
+          return path.join(ctx.root, short, "captures", ctx.closed, "state.json");
+        },
+      },
+    );
+  } else t.diagnostic("barras, \\\\?\\, ponto final, ::$DATA e nome 8.3: grafias só do Windows");
+  return variants;
+}
+
+// O que o usuário não poderia mais fazer com o store: cada operação pública que
+// falhar ou responder diferente do modelo vira um item.
+async function storeDamage(root, { closed, active, exported }) {
+  const damage = [];
+  const attempt = async (label, operation) => {
+    try {
+      const problem = await operation();
+      if (problem) damage.push(`${label}: ${problem}`);
+    } catch (error) {
+      damage.push(`${label}: ${error.code ?? error.message}`);
+    }
+  };
+  await attempt("export da encerrada", async () => !isDeepStrictEqual(await exportCapture({ root, id: closed }), exported.closed) && "diferente");
+  await attempt("export da ativa", async () => !isDeepStrictEqual(await exportCapture({ root, id: active }), exported.active) && "diferente");
+  await attempt("list", async () => {
+    const { captures, failed } = await listCaptures({ root });
+    return (failed.length > 0 || captures.length !== 2) && JSON.stringify(failed);
+  });
+  await attempt("prune", async () => {
+    const { failed } = await pruneCaptures({ root });
+    return failed.length > 0 && JSON.stringify(failed);
+  });
+  await attempt("delete --apply", async () => !(await deleteCapture({ root, id: closed, apply: true })).deleted && "não apagou");
+  return damage;
+}
+
+test("T8-C16 delivery failure neutrality: SKILL_ME_CAPTURE_REPORT dentro do store, por qualquer grafia, link ou hard link, não altera a captura nem impede consulta e exclusão", async (t) => {
+  // Modelo copiado para cada variante: captura encerrada com um registro e uma ativa vazia.
+  const base = scratch("t8 c16 store");
+  const template = path.join(base, "modelo");
+  mkdirSync(template);
+  const closed = startCapture(template);
+  assert.equal((await runHook("claude", claudePayload("pre_tool_bash"), { env: boundEnv(template, closed) })).report.delivery.persisted, 1);
+  privacyOk(["stop", "--root", template, "--capture", closed]);
+  const active = startCapture(template);
+  const exported = { closed: await exportCapture({ root: template, id: closed }), active: await exportCapture({ root: template, id: active }) };
+  assert.equal(exported.closed.records.length, 1);
+
+  const damaged = [];
+  for (const [index, variant] of storeReportVariants(t).entries()) {
+    const ctx = { root: path.join(base, `raiz ${index} ação`), aside: path.join(base, `fora ${index}`), closed, active };
+    cpSync(template, ctx.root, { recursive: true });
+    mkdirSync(ctx.aside);
+    ctx.dir = captureDir(ctx.root, closed);
+    const report = variant.report(ctx);
+    if (report === null) {
+      t.diagnostic(`${variant.label}: o volume não gera nomes 8.3; variante não exercitada`);
+      continue;
+    }
+    const lock = path.join(storeDir(ctx.root), ".lock");
+    if (variant.lock) writeFileSync(lock, "lock alheio\n");
+    const before = snapshotTree(ctx.root);
+    const existed = existsSync(report);
+    const env = variant.env ? variant.env(ctx, report) : boundEnv(ctx.root, closed, { [CAPTURE_REPORT_ENV]: report });
+    const run = await runHook("claude", claudePayload("pre_tool_bash"), { env });
+    // O agente não percebe nada e o código do processo é o da entrega, não o do diagnóstico.
+    assert.deepEqual([run.status, run.stdout, run.stderr], [0, "", ""], variant.label);
+    assert.equal(run.report.delivery.code, variant.code ?? "capture_not_active", variant.label);
+    if (!isDeepStrictEqual(snapshotTree(ctx.root), before)) damaged.push(`${variant.label}: arquivos do store mudaram`);
+    if (!existed && existsSync(report)) damaged.push(`${variant.label}: o caminho apontado foi criado`);
+    if (variant.lock) {
+      if (readFileSync(lock, "utf8") !== "lock alheio\n") damaged.push(`${variant.label}: lock alheio mudou`);
+      rmSync(lock);
+    }
+    damaged.push(...(await storeDamage(ctx.root, { closed, active, exported })).map((item) => `${variant.label}: ${item}`));
+  }
+  assert.deepEqual(damaged, [], "nenhuma grafia do store recebe a linha de diagnóstico");
+
+  // Cenário da revisão pela CLI do usuário: hook tardio numa captura encerrada
+  // com o diagnóstico apontado para o state.json dela.
+  const root = path.join(base, "raiz da revisão");
+  cpSync(template, root, { recursive: true });
+  const state = path.join(captureDir(root, closed), "state.json");
+  const stateBytes = readFileSync(state);
+  const late = await runHook("claude", claudePayload("pre_tool_bash"), { env: boundEnv(root, closed, { [CAPTURE_REPORT_ENV]: state }), fixtureReport: false });
+  assert.deepEqual([late.status, late.stdout, late.stderr], [0, "", ""]);
+  assert.deepEqual(readFileSync(state), stateBytes, "state.json intacto");
+  // O mesmo hook com um arquivo fora do store registra o código da entrega, sem vazar nada.
+  const valid = path.join(base, "diagnóstico de entrega.ndjson");
+  const logged = await runHook("claude", claudePayload("pre_tool_bash"), { env: boundEnv(root, closed, { [CAPTURE_REPORT_ENV]: valid }), fixtureReport: false });
+  assert.deepEqual([logged.status, logged.stdout, logged.stderr], [0, "", ""]);
+  const lines = diagnostics(valid);
+  assert.equal(lines.length, 1);
+  assertDiagnostic(lines[0], { agent: "claude", capture: closed, delivery: lostAll("capture_not_active", 1) }, "fora do store");
+  for (const value of [root, base, "state.json"]) assert.ok(!readFileSync(valid, "utf8").includes(value), `vazou ${value}`);
+
+  assert.deepEqual(privacyOk(["export", "--root", root, "--capture", closed]).records, exported.closed.records);
+  assert.deepEqual(privacyOk(["list", "--root", root]).captures.map((capture) => capture.id).sort(), [closed, active].sort());
+  const followed = runIntegrations(["privacy", "follow", "--root", root, "--capture", closed]);
+  assert.equal(followed.status, 0);
+  assert.deepEqual(followed.stdout.trimEnd().split("\n").map((line) => JSON.parse(line).type), ["record", "end"]);
+  assert.deepEqual(privacyOk(["prune", "--root", root]).failed, []);
+  assert.equal(privacyOk(["delete", "--root", root, "--capture", closed, "--apply"]).deleted, true);
+  assert.ok(!existsSync(captureDir(root, closed)));
 });
