@@ -1457,3 +1457,153 @@ foram repetidos nele.
   reconhecem, `--password<NBSP>valor` e formato de segredo desconhecido.
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+# Credencial curta, chave própria `__proto__` e pasta em exclusão coexistente (revisão formal, tentativa 3; 18/10/2026)
+
+Evidência autoral, não verificação independente nem revisão formal: não conta
+como rodada do Verifier nem tentativa da revisão e não altera tetos. Nenhum
+relatório anterior, `.verified.md`, incidente, aprovação, task, configuração ou
+core foi editado. Autorização vigente: "autorizo quantos precisaram para
+resolver" (registro `157add2`); Verifier e revisão formal depois deste lote ficam
+com o coordenador; nenhum `review:run`, subagente, push, PR ou merge. Escopo: os
+três achados de `.checks/code-review/issue-5/formal-round3-report.json`.
+Commits: `9b85652` (três linhas do Landing, antes do código), `fecbea5`
+(correções, provas, guia e comandos de prova do checklist) e o commit desta
+evidência.
+
+## Natureza de cada achado e correção
+
+- **F1 P1 `sanitize.mjs`** — `AUTH_SCHEME` exigia ≥ 8 caracteres e deixava
+  `Basic YTpi` (`a:b`) no conteúdo, chegando a temporário, segmento e export.
+  Correção: `{8,}` → `+` no mesmo alfabeto token68 e nas mesmas três grafias
+  (`Bearer`, `bearer`, `Basic`); completamento da palavra, contagem e caminho de
+  recusa inalterados. Sem esquema novo, caixa nova ou decodificação.
+- **F2 P2 `content.mjs`** — a projeção `structured` atribuía `out[key] = …` num
+  objeto comum: a chave própria `__proto__` vinda de `JSON.parse` acionava o
+  setter herdado, o membro sumia sem motivo nem contagem e, com valor objeto ou
+  `null`, trocava o protótipo do resultado. Correção: membros coletados e
+  montados por `Object.fromEntries` (mesma solução de
+  `install/json-hooks.mjs#cloneDoc`); classificação de chave, contagem de membros
+  e limites inalterados; nenhum classificador novo.
+- **F3 P1 `store.mjs`** — `deletionTarget` preferia `captures/.deleting-<id>` sem
+  olhar `captures/<id>`: com captura ativa e uma pasta inesperada
+  `.deleting-<id>/key`, `delete --apply` apagava o arquivo alheio e respondia
+  `deleted:true` com a captura e a chave intactas. Correção: com
+  `.deleting-<id>` diretório, `lstat(captures/<id>)`; o nome existindo com
+  qualquer tipo → 4 `foreign_entry` antes de escolher, listar, ler ou mutar.
+  Retomada só com a pasta em exclusão, `capture_active` e `link_refused`
+  inalterados. Sem journal, marcador de posse ou formato novo.
+- **Mudança de controle anterior (registrada no Landing antes do código)**:
+  `Bearer curto, Bearer é prosa` era controle intacto no I5-C14f; saiu de lá com
+  comentário e é provado no I5-C14k como `Bearer [removido] Bearer é prosa`.
+  Nenhuma asserção apagada.
+
+## O que cada prova nova afirma
+
+- **I5-C14k** (policy.unit): 22 entradas removidas exatamente — comprimentos 1
+  a 8 nas três grafias, padding (`YQ==`, `Og==`, `=`), alfabeto token68 inteiro,
+  tab, texto ao redor, duas credenciais, vírgula colada, quebra, JSON compacto,
+  o controle mudado e os falsos positivos `Basic auth`/`Bearer token`; 2
+  recusas exatas `{ok:false}` (palavra antes de `(`); 13 controles intactos com
+  `removed:false` (esquema sem valor, só espaços, quebra logo depois, `é`, `(`,
+  aspa, `basic`, `BASIC`, `BEARER`, `xBasic`, `Token`, `Digest`). Fronteira da
+  política: stdout exato, stderr omitido, `privacy` exata
+  `["tool_response.stdout:sensitive_removed","tool_response.stderr:unsanitizable"]`.
+- **I5-C14l** (outputs.cli, CLI real com `fs-probe` e sonda procurando
+  `Basic YTpi`): resultados de codex-exec, claude e codex-hooks; textos exatos
+  (só as credenciais saem, comandos intactos), um motivo exato por registro,
+  `contentOmitted` de cada lote `{sensitive_removed:1}` e do `status`
+  `{sensitive_removed:3}`; nenhum arquivo, stdout, log de sonda, temporário antes
+  do rename ou arquivo escrito com a credencial; stderr vazio; delete aplicado.
+- **I5-C16c** (policy.unit): seis entradas reais (`JSON.parse` da linha JSONL,
+  pré-condição de chave própria conferida) — raiz string/objeto, aninhada, em
+  array, com `password` descartado e `DB_PASSWORD=` mascarado dentro, e
+  `constructor`/`prototype`/`__proto__:null`: serialização e releitura exatas,
+  `privacy` exata, protótipos comuns em todo objeto, valor não vira protótipo,
+  `Object.prototype` intacto; 128 membros com `__proto__` cabem, 129 →
+  `content:unsanitizable`.
+- **I5-C16d** (outputs.cli): a mesma chave na raiz, aninhada e em array pelo
+  ingest/export real: stdout do export com o valor serializado, chaves próprias
+  depois do `JSON.parse`, valor exato, motivo exato, `contentOmitted` do lote e
+  do `status` `{sensitive_removed:1}`, sondas sem marcador.
+- **I5-C49b** (store.cli): `.deleting-<id>/key` alheio junto da captura ativa e
+  da parada; delete prévia/`--apply` (CLI) e prune prévia/`--apply` (CLI com
+  relógio real e `runPrivacyCommand` com relógio 30 dias à frente) → 4 com corpo
+  exato (`delete` sem `entries`/`deleted`; `prune` com `selected` = os dois,
+  `deleted:[]`, `failed` = os dois `foreign_entry`); árvore idêntica inclusive
+  mtime e arquivo alheio byte a byte; `io` registrador: nenhuma operação dentro
+  das duas pastas, só `lstat` dos dois nomes, `unlink`/`rename`/`rmdir`/`mkdir`/
+  `writeExclusive` só no `.lock`. Controles: sem a pasta inesperada, a ativa volta
+  a `capture_active` e a parada é apagada; `.deleting-<id>` como junção ao lado
+  da captura continua `link_refused` sem atravessar.
+- **I5-C51b** (store.cli, controle): retomadas legítimas só com a pasta em
+  exclusão — só `state.json` (falha no unlink dele), vazia (falha no `rmdir`,
+  prévia `entries:[]`) e chave+estado pelo `prune --apply` — concluídas com corpo
+  exato; ativa normal continua `capture_active`.
+- Contagem do alvo de privacidade: 97 → 103 (seis testes de topo novos);
+  `test:integrations` 185 → 191.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-formal3-win-dd9qIH\`; scratch em
+`%TEMP%\skill-me-i5-formal3-scratch-ePO5us\` (`old/` = `sanitize.mjs`/`content.mjs`
+de `9b85652`, `new/` corrigidos, `compare-*.json`, `compare.log`, `f3-old.json`,
+`f3-new.json`); ferramentas em `%TEMP%\skill-me-i5-formal3-tools\`
+(`compare.mjs`, `f3probe.mjs`, `gate-win.sh`). Nenhum log contém `SKILLMECANARY`
+nem `YTpi`.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red-policy.tap.log` | `src/` intacto (`git diff --exit-code HEAD -- src`, cabeça `9b85652`) | C14k `caso 0` (`Basic YTpi`), C16c `raiz string: serialização exata`; C14f passa (controle só retirado); 3 testes, 1 pass, 2 fail |
+| `red-outputs.tap.log` | idem | C14l `codex-exec: contagem do lote` (nada removido), C16d `export serializa o membro`; 2 fail |
+| `red-store.tap.log`, `red-store-2-finaltest.tap.log` | idem; o segundo com o teste final e só `store.mjs` voltado a `HEAD` por `git stash` (restaurado, lista de stash vazia) | C49b falha em `delete` (prévia saiu 0); C51b passa (controle); 2 testes, 1 pass, 1 fail |
+| `green-store-1-testfix.tap.log` | correção | C49b falhou por erro do próprio teste: conferia o `lstat` do ID da ativa também nas execuções da parada; corrigido para o ID de cada execução e para os dois nomes |
+| `compare.log` (scratch, só booleanos) | antigo × corrigido | F1: 33 casos (11 valores × 3 grafias) — antigo removia 3 (só os de 8), 30 com a credencial no texto; corrigido 33/33. F2: 5 entradas — antigo perde `__proto__` nas 5, troca o protótipo da raiz em 2 (objeto, `null`), nenhuma perda contada; corrigido preserva as 5 com protótipo comum |
+| `f3-old.json` / `f3-new.json` (scratch) | sonda F3 no store antigo × corrigido | antigo: prévia 0 com `entries:["key"]`, apply 0 `deleted:true`, arquivo alheio apagado, captura ativa com chave e `state:"active"`; corrigido: prévia e apply 4 `foreign_entry`, arquivo alheio intacto |
+| `green-policy.tap.log`, `green-outputs.tap.log`, `green-store.tap.log` | correção, antes do commit | 3/3, 2/2, 2/2, exit 0 |
+
+## Execuções no commit `fecbea5`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, HEAD e árvore limpa conferidos antes e depois (`gate-fecbea5/gate.meta`) | `node --test tests/integrations/privacy/*.test.mjs` / `npm test` | 103/103, 0 skip (C34/C35 incluídos); exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 191 (185, 6 skip) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-formal3-y4ypww`, tar sha256 `2ab639b4…4ba9ac` e `get-tar-commit-id` = `fecbea52…` conferidos no script; stage `skill-me-i5-formal3-wsl-stage-V9F6Mp` | idem | 103/103, 0 skip; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 191 (179, 12 skip) |
+
+Skips iguais aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m). Os seis
+testes novos aparecem como `ok` nos dois logs de privacidade.
+
+Preparação WSL: `run-wsl.sh` copiado do stage anterior trocando só o comentário
+e os prefixos (`diff` conferido: linhas 2, 22, 27 e 29), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+o script recusa root, outra distro, origem ausente e saída/destino fora do
+padrão antes de copiar ou extrair. Nenhum comando inline no WSL, nada em `/repo`
+ou `/src.tar`; preparação antiga do Verifier6, seu probe, sessões ou
+configurações pessoais não tocados; nenhum modelo, rede de produto, instalação,
+subagente, push ou `review:run`. Nenhum arquivo do repositório editado durante
+os gates; o WSL começou depois do fim do gate Windows. Nenhuma rejeição de
+política nem falha de capacidade.
+
+**Diferença de SHA**: os gates acima rodaram em `fecbea5`. O commit desta
+evidência só acrescenta esta seção (`.checks/`); código, testes, guia e checklist
+são idênticos aos do gate. Nele rodaram só I5-C34 e I5-C35, numa invocação com
+seletor sobre `docs-privacy.test.mjs` (Windows); `npm test` e o alvo completo não
+foram repetidos nele.
+
+## Riscos e perdas comunicados
+
+- F1, perdas declaradas (falsos positivos, falha fechada): a palavra depois de
+  `Bearer`/`Basic` em prosa sai (`Basic auth`, `Bearer token`); palavra que para
+  antes de `(` (`Bearer tokens(s)`) omite o campo inteiro com `unsanitizable`.
+- F1, limites mantidos e comunicados (não aceitos como vazamento): grafias
+  `basic`/`BASIC`/`BEARER` (o esquema HTTP não diferencia caixa), credencial na
+  linha seguinte ao esquema e esquemas não listados continuam não reconhecidos
+  fora de um cabeçalho `Authorization:`; ampliar exige decisão do coordenador.
+- F2: nenhuma perda nova; `__proto__` passa a ocupar orçamento e membros como
+  qualquer chave.
+- F3: a recusa vale para coexistência criada fora do produto; não é proteção
+  contra falsificação arbitrária do disco (uma pasta `.deleting-<id>` sozinha e
+  forjada continua tratada como retomada, como antes).
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
