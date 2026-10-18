@@ -1607,3 +1607,127 @@ foram repetidos nele.
   forjada continua tratada como retomada, como antes).
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+# Caixa e quebra antes da credencial em `Bearer`/`Basic` (18/10/2026)
+
+Evidência autoral, não verificação independente nem revisão formal: não conta
+como rodada do Verifier nem tentativa da revisão e não altera tetos. Nenhum
+relatório anterior, `.verified.md`, incidente, aprovação, task, configuração ou
+core foi editado. Escopo: decisão do coordenador de 18/10/2026 de que as
+variantes de caixa e de quebra relatadas em aberto são da mesma regra 4 já
+autorizada (mesma autorização `157add2`; os mesmos dois esquemas, nenhum esquema
+novo). Commits: `91ab701` (linha do Landing, antes do código), `83e241d`
+(correção, provas, guia e comandos de prova do checklist) e o commit desta
+evidência. Nenhum `review:run`, subagente, push, PR ou merge.
+
+## Natureza do problema e correção
+
+- `AUTH_SCHEME` só reconhecia `Bearer`, `bearer` e `Basic` seguidos de espaço/tab
+  na mesma linha: `basic YTpi`, `BEARER ab` e `Basic\nYTpi` passavam intactos.
+  Correção: mesma regex com flag `i` (sem `u`: só caixa ASCII; `Baſic` não casa)
+  e separador `[ \t\r\n]+`, mesmo alfabeto, mesmo completamento da palavra, mesma
+  contagem e mesmo caminho de recusa. Só a credencial é trocada: esquema e
+  separadores ficam com os bytes da entrada.
+- A regra 3 (cabeçalho sem aspa, valor até o fim da linha) consome o esquema
+  antes da regra 4: `Authorization: Basic\nYTpi` virava
+  `Authorization: [removido]\nYTpi` (conferido no produto intacto, só com
+  canário sintético). Correção: quando a linha do valor termina em
+  `Bearer`/`Basic` (qualquer caixa) e depois da quebra vem um caractere do
+  alfabeto, `headerValue` devolve a recusa existente (`unsanitizable`). Sem dobra
+  de cabeçalho, parser HTTP/YAML, decodificação ou execução.
+- **Mudança de controles anteriores (registrada no Landing antes do código)**:
+  no I5-C14k, `Basic\nfim`, `Basic \nfim`, `basic YTpi`, `BASIC YTpi` e
+  `BEARER ab` saíram da lista de controles intactos para uma lista de remoção
+  com resultado exato (`Basic\n[removido]`, `Basic \n[removido]`,
+  `basic [removido]`, `BASIC [removido]`, `BEARER [removido]`), com comentário.
+  Os outros oito controles continuam intactos; nenhuma asserção apagada. O
+  título do C14k troca "grafias fora da regra" por "palavras fora da regra"
+  (prefixo do seletor inalterado); o comando de prova do checklist registra a
+  mudança.
+
+## O que cada prova nova afirma
+
+- **I5-C14m** (policy.unit): 165 entradas removidas exatamente — 8 caixas
+  (`Basic`, `basic`, `BASIC`, `bAsIc`, `Bearer`, `bearer`, `BEARER`, `BeArEr`) × 11
+  credenciais (1 a 8 caracteres, `YQ==`, `Og==`, `=`) e × 8 separadores (tab, LF,
+  CRLF, CR, ` \n  `, `\t\r\n\t`, linha em branco, ` \r\n \r\n `), com esquema e
+  separadores preservados; texto ao redor, palavra completada depois da quebra,
+  atribuição `auth: Basic\nYTpi` → `auth: [removido]\n[removido]`, cabeçalho sem
+  credencial depois da quebra ou na mesma linha (regra anterior), cabeçalho entre
+  aspas sem fecho (inalterado) e as perdas declaradas `basic idea` e
+  `BEARER\nfim da frase`; 6 recusas exatas `{ok:false}` (quatro cabeçalhos que
+  terminam no esquema, a perda `Authorization: Basic\nok` e `Basic\nab(c) ok`);
+  74 controles intactos com `removed:false` (8 formas de esquema sem credencial
+  em cada caixa e 10 palavras que não são o esquema ou outros esquemas depois de
+  quebra). Fronteira da política: stdout exato, stderr omitido, `privacy` exata
+  `["tool_response.stdout:sensitive_removed","tool_response.stderr:unsanitizable"]`,
+  ausência das credenciais conferida pelo contexto (`bAsIc YTpi`, `  ab fim`,
+  `basic\nYTpi`), não por substring curta solta.
+- **I5-C14n** (outputs.cli, CLI real com `fs-probe` e sonda procurando o canário
+  longo `SKILLMECANARYc14n`): resultados de codex-exec, claude e codex-hooks com
+  `bAsIc YTpi`, `BEARER\r\n  ab` e `BeArEr\n` + canário; stderr do claude
+  `Authorization: basic\n` + canário. Textos exatos (só as credenciais saem,
+  cabeçalho omitido, comandos intactos), motivo exato por registro,
+  `contentOmitted` de cada lote exato e do `status`
+  `{sensitive_removed:3, unsanitizable:1}`; nenhum arquivo, stdout, log de sonda,
+  temporário antes do rename ou arquivo escrito com o canário ou as credenciais
+  curtas no contexto; stderr vazio; delete aplicado.
+- Contagem do alvo de privacidade: 103 → 105; `test:integrations` 191 → 193.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-case-win-DpRoLj\`; sonda e gate em
+`%TEMP%\skill-me-i5-case-tools\` (`probe.mjs`, só strings sintéticas;
+`gate-win.sh`, cópia do gate anterior com só o comentário da linha 2 trocado,
+`diff` conferido). Nenhum log contém `SKILLMECANARY`. Sem `git stash`, reset ou
+troca do produto: o RED rodou com `src/` intacto, antes da edição.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red-policy.tap.log` | `src/` intacto (`git diff --exit-code HEAD -- src`, cabeça `91ab701`), `--test-name-pattern="^I5-C14[km] "` | C14k `caso 0` (`Basic\nfim`, controle mudado), C14m `caso 11` (`basic a`); 2 testes, 0 pass, 2 fail |
+| `red-outputs.tap.log` | idem, `"^I5-C14[ln] "` | C14n `codex-exec: contagem do lote` (nada removido); C14l passa (controle); 2 testes, 1 pass, 1 fail |
+| `green-policy.tap.log`, `green-outputs.tap.log` | correção, antes do commit, mesmos seletores | 2/2, 2/2, exit 0 |
+
+## Execuções no commit `83e241d`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, HEAD e árvore limpa conferidos antes e depois (`gate-83e241d/gate.meta`) | `node --test tests/integrations/privacy/*.test.mjs` / `npm test` | 105/105, 0 skip (C34/C35 incluídos); exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 193 (187, 6 skip) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-casebreak-0HnF8h`, tar sha256 `35c3c54c…e2ea52` e `get-tar-commit-id` = `83e241d6…` conferidos no script; stage `skill-me-i5-casebreak-wsl-stage-tSSyC5` | idem | 105/105, 0 skip; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 193 (181, 12 skip) |
+
+Skips iguais aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m). C14k,
+C14l, C14m e C14n aparecem como `ok` nos dois logs de privacidade.
+
+Preparação WSL: `run-wsl.sh` copiado do stage anterior trocando só o comentário
+e os prefixos (`diff` conferido: linhas 2, 22, 27 e 29), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+o script recusa root, outra distro, origem ausente e saída/destino fora do
+padrão antes de copiar ou extrair. Nenhum comando inline no WSL, nada em `/repo`
+ou `/src.tar`; preparação antiga do Verifier6, seu probe, sessões ou
+configurações pessoais não tocados; nenhum modelo, rede de produto, instalação,
+subagente, push ou `review:run`. Nenhum arquivo do repositório editado durante
+os gates; o WSL começou depois do fim do gate Windows. Nenhuma rejeição de
+política nem falha de capacidade.
+
+**Diferença de SHA**: os gates acima rodaram em `83e241d`. O commit desta
+evidência só acrescenta esta seção (`.checks/`); código, testes, guia e checklist
+são idênticos aos do gate. Nele rodaram só I5-C34 e I5-C35, numa invocação com
+seletor sobre `docs-privacy.test.mjs` (Windows); `npm test` e o alvo completo não
+foram repetidos nele.
+
+## Riscos e perdas comunicados
+
+- Perdas declaradas (falsos positivos, falha fechada): a palavra depois do
+  esquema em prosa sai em qualquer caixa (`basic idea`) e também depois de quebra
+  (primeira palavra da linha ou do parágrafo seguinte a um `Basic`/`Bearer` no fim
+  de linha); cabeçalho sem aspa cuja linha termina no esquema seguido de qualquer
+  palavra do alfabeto omite o campo inteiro (`Authorization: Basic\nok`).
+- Em aberto, comunicado ao coordenador e não aceito como resolvido: quebra
+  escrita como texto escapado (`\` seguido de `n`, por exemplo JSON serializado
+  dentro de um resultado textual) não é separador; fechar exigiria decodificar
+  escapes, fora desta decisão. Também não reconhecidos: NBSP como separador,
+  esquemas não listados e formatos desconhecidos.
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
