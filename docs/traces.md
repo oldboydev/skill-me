@@ -146,9 +146,11 @@ vazio; o wrapper devolve o código do Codex. Lock ocupado é tentado de novo at�
 prazo de 750 ms; nenhuma outra falha é repetida. Quando a falha chega depois de
 gravar (a confirmação se perdeu), o evento pode estar na captura mas conta como
 não confirmado — ele nunca é reenviado, então não aparece duas vezes. Um disco
-parado não prende o agente: no prazo a tentativa é abandonada; se o processo
-sair durante um commit, o `.lock` pode ficar, e as operações seguintes saem com
-4 (`lock_present`) até você conferir que nenhum processo está ativo e removê-lo.
+parado não prende o agente: no prazo a tentativa é abandonada. Se ela já tinha
+o lock, ainda pode gravar depois (`delivery_timeout`, confirmação incerta); se
+não tinha, não grava mais. Se o processo sair durante um commit, o `.lock` pode
+ficar, e as operações seguintes saem com 4 (`lock_present`) até você conferir
+que nenhum processo está ativo e removê-lo.
 
 `status` e `list` mostram o que chegou à captura: os contadores separam aceitos,
 persistidos, malformados, descartados por motivo e conteúdo omitido. Uma entrega
@@ -201,11 +203,15 @@ stack. Sem o par do vínculo, `SKILL_ME_CAPTURE_REPORT` sozinha não escreve, e 
 caminho relativo é ignorado (os hooks rodam no diretório do projeto do agente).
 O arquivo é criado se faltar — no POSIX, só com permissão do dono — e só recebe
 linhas acrescentadas; um link, uma pasta ou outro tipo de entrada naquele
-caminho não é tocado. Se o arquivo não puder ser gravado (pasta inexistente, sem
-permissão, disco cheio), o diagnóstico se perde e nada muda para o agente. O
-arquivo é seu: `delete` e `prune` não o apagam, e ele cresce uma linha por
-processo com falha — por exemplo, a cada hook enquanto as variáveis apontarem
-para uma captura encerrada. Apague-o quando quiser.
+caminho não é tocado. Também não é tocado um caminho que, resolvido, passa por
+uma pasta `skill-me-privacy` — o store de qualquer raiz, por qualquer grafia,
+link, junção ou nome curto —, nem um arquivo com mais de um nome (hard link):
+a linha se perde, e o diagnóstico nunca altera uma captura nem impede `export`,
+`follow`, `delete` ou `prune`. Se o arquivo não puder ser gravado (pasta
+inexistente, sem permissão, disco cheio), o diagnóstico se perde e nada muda
+para o agente. O arquivo é seu: `delete` e `prune` não o apagam, e ele cresce
+uma linha por processo com falha — por exemplo, a cada hook enquanto as
+variáveis apontarem para uma captura encerrada. Apague-o quando quiser.
 
 | Código | Significado |
 | --- | --- |
@@ -216,12 +222,12 @@ para uma captura encerrada. Apague-o quando quiser.
 | `capture_not_found` | a captura não existe (ou foi excluída) |
 | `capture_invalid` | o estado da captura é ilegível |
 | `capture_not_active` | a captura foi encerrada |
-| `lock_present` | o lock continuou ocupado até o prazo (inclusive quando a última tentativa foi cortada nele) |
+| `lock_present` | o lock estava ocupado na última resposta e nenhuma tentativa o obteve até o prazo; as entradas perdidas não são gravadas depois |
 | `link_refused` | link ou junção no caminho do store |
 | `foreign_entry` | entrada alheia no caminho do store |
 | `root_changed` | a raiz foi trocada durante a operação |
 | `io_failure` | falha de E/S, inclusive com a confirmação perdida |
-| `delivery_timeout` | a operação ainda não tinha terminado no prazo, sem disputa de lock (disco parado) |
+| `delivery_timeout` | a operação ainda não tinha terminado no prazo (disco parado); se ela já tinha o lock, a confirmação é incerta — a entrada pode ser gravada depois |
 
 ## Códigos de saída
 
@@ -249,7 +255,9 @@ Com fixtures sintéticas, pelas provas de `tests/integrations/traces/`:
   vinculada; ingest Hermes; wrapper supervisionando um Codex falso;
 - `list`, `export`, `follow` e `replayCapture`; produtores concorrentes; lock
   ocupado, falha de E/S e confirmação perdida, com o diagnóstico lido do arquivo
-  de `SKILL_ME_CAPTURE_REPORT`; disco parado (em processo); os limites acima;
+  de `SKILL_ME_CAPTURE_REPORT`; disco parado (em processo, e num hook real com
+  uma pré-carga de teste depois de obter o lock); diagnóstico apontado para
+  arquivos do store por grafias equivalentes, links e hard links; os limites acima;
 - a demonstração de ponta a ponta `tests/integrations/traces/demo.e2e.test.mjs`,
   que rotula cada passo como fixture ou comando do usuário.
 
