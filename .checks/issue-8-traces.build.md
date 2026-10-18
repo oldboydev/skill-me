@@ -42,7 +42,9 @@ Nenhuma altera as linhas do Landing; todas cabem nas três decisões registradas
   timer do Node atrasa sob carga: sem a reserva, a suíte inteira em paralelo no
   Windows mediu 756 ms (lock) e 764 ms (disco parado). Operação ainda em curso no
   prazo é abandonada (`delivery_timeout`; `lock_present` se o prazo se foi
-  disputando o lock). Falha depois do commit nunca é reenviada.
+  disputando o lock). Falha depois do commit nunca é reenviada. Refinado na
+  rodada de correção 3 (abaixo): a tentativa cortada que já tinha o lock sai
+  como `delivery_timeout`, e a cortada antes de obtê-lo não grava mais nada.
 - **Lotes.** Linhas de um mesmo bloco síncrono entram no mesmo commit; as que
   chegam durante um commit vão no seguinte, com o prazo da mais antiga. A
   admissão local usa um limite inferior do uso real; o store continua decidindo.
@@ -152,6 +154,8 @@ e o arquivo foi restaurado com `git checkout` (árvore limpa ao fim):
 | WSL Ubuntu, fase 2 (`npm test`) | 657 ms | 651 ms | 650 ms |
 | Windows 11, correção 1 (`npm test` em `0c108ee`) | 663 ms; com diagnóstico em arquivo, 665 ms | 651 ms | 652 ms |
 | WSL Ubuntu, correção 1 (`npm test` em `0c108ee`) | 655 ms; com diagnóstico em arquivo, 656 ms | 651 ms | 649 ms |
+| Windows 11, correção 3 (`npm test` em `d823c00`) | 679 ms; com diagnóstico em arquivo, 666 ms; lock obtido na repetição e disco parado, 666 ms | 656 ms | 654 ms; lock obtido na repetição, 662 ms |
+| WSL Ubuntu, correção 3 (`npm test` em `d823c00`) | 657 ms; com diagnóstico em arquivo, 658 ms; lock obtido na repetição e disco parado, 657 ms | 650 ms | 650 ms; lock obtido na repetição, 650 ms |
 
 Em processo a asserção é ≤ 750 ms exatos. No processo real a medida inclui o
 encerramento depois da tentativa; a asserção admite 750 + 500 ms. "Com
@@ -172,6 +176,9 @@ diagnóstico em arquivo" é o hook sem relatório de fixture e com
 | Windows 11 — Node 24.21.0, checkout em `e5ebb61` (correção 2) | `Proof:` de C6, como escrito | exit 0; 1 teste selecionado (T8-C6), 1 pass |
 | Windows 11 — Node 24.21.0, checkout em `e5ebb61` (correção 2) | `node --test tests/integrations/traces/*.test.mjs` | exit 0; 24 tests, 23 pass, 0 fail, 1 skip (T8-C4 sinal POSIX) |
 | Windows 11 — Node 24.21.0, checkout em `e5ebb61` (correção 2) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 227 (220 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX), T8-C6 inclusive |
+| Windows 11 — Node 24.21.0, checkout em `d823c00` (correção 3) | os 20 comandos `Proof:` de C1–C20, como escritos | cada um exit 0, 0 fail; 29 testes selecionados, 28 pass, 1 skip (T8-C4 sinal POSIX); C16 seleciona 8 |
+| Windows 11 — Node 24.21.0, checkout em `d823c00` (correção 3) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 232 (225 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX), os 8 T8-C16 inclusive; nome 8.3 exercitado |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i8-hVDkg9` de `git archive d823c00` (sha256 `e17a7ae8…20fb8203` conferido; `git get-tar-commit-id` = `d823c004…`) (correção 3) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 232 (220 pass, 0 fail, 12 skip pré-existentes: Hermes ausente ×8, DACL Windows ×3, ACL macOS ×1); nenhum T8 pulado, os 8 T8-C16 inclusive |
 
 Preparação WSL: tar e `run-wsl.sh` num diretório de `mktemp -d` do `%TEMP%`
 (`skill-me-i8-wsl-stage-n0fAaX` na fase 1, `skill-me-i8-wsl-stage-71TySJ` na 2,
@@ -457,3 +464,199 @@ Windows, com T8-C6 entre os testes executados.
   independente do fd 2 do filho. É o mesmo limite aceito em C4 e C16.
 - A mutação cobre um prefixo; um sufixo ou uma linha no meio no mesmo ramo
   também quebrariam a igualdade, mas não foram aplicados separadamente.
+
+## Rodada de correção 3 — revisão Codex local, P1 e P2
+
+Origem: `.checks/code-review/issue-8/state.json`, última tentativa (HEAD
+`7250a69`, `changes_requested`, `verification: insufficient`), com três achados.
+Corrigidos aqui os dois de produto: **P1** (`delivery-report.mjs:18`, o
+diagnóstico podia corromper o store) e **P2** (`delivery.mjs:73`, código de
+prazo herdado de um `lock_present` anterior). O terceiro achado (macOS em
+C21/AC8) é uma decisão de ordem pendente do proprietário: nada aqui declara
+execução macOS. Builder Claude, escopo só desses dois defeitos. Não mudaram:
+`.tasks/issue-8-traces.md`, `.checks/issue-8-traces.md` (21 checks, comandos
+`Proof:` e Landing), `.checks/issue-8-traces.verified.md` (do Verifier; não
+alterado nem commitado), o histórico do motor em `.checks/code-review/`,
+`package.json` e os cinco arquivos do core (diff vazio contra `origin/main`).
+Sem push, PR, merge, deploy ou revisão Codex.
+
+### Commits
+
+| Commit | Achado | Conteúdo |
+| --- | --- | --- |
+| `e175e68` | P1 | `delivery-report.mjs` recusa caminho real dentro de qualquer store e hard link; regressão com 22 grafias no Windows e o cenário da revisão pela CLI |
+| `edd9d69` | P2 | `onLock` no store (`appendRecords`, `openCaptureForIngest`); `untilDeadline` distingue corte com e sem o lock e desfaz a tentativa abandonada; quatro regressões e duas variáveis na pré-carga de teste |
+| `40290e6` | P1, P2 | guia: recusa do store no diagnóstico; `lock_present` e `delivery_timeout` |
+| `d823c00` | P1 | variante do fluxo da pasta do store em maiúsculas (torna observável a comparação sem maiúsculas) |
+| commit seguinte | — | este registro |
+
+### P1 — diagnóstico apontado para um arquivo do store
+
+Cenário da revisão: captura encerrada, `SKILL_ME_CAPTURE_REPORT` = caminho
+absoluto do `state.json` dela, hook tardio com `capture_not_active`. Antes,
+`appendLine` abria qualquer arquivo regular com `O_APPEND`: a linha entrava no
+`state.json` e `export`, `follow`, `list`, `delete` e `prune` passavam a
+responder `capture_invalid`.
+
+Decisão: o acréscimo não escreve quando o caminho real da pasta do arquivo
+(`realpath` de `dirname`) ou o nome final tem um componente
+`skill-me-privacy` (comparado sem maiúsculas; no Windows, o nome final sem o
+fluxo `:nome`), nem quando o arquivo tem mais de um nome (`nlink > 1`, no
+`lstat` antes do `open` e no handle depois). A linha se perde, como nas demais
+recusas; o agente não percebe e o código da entrega não muda. `STORE_DIR` vem
+de `store.mjs` (fonte única do nome; o módulo já é carregado pela entrega).
+
+Caminhos equivalentes e indiretos considerados. Antes do código, uma sonda
+no Windows 11 (scripts em `%TEMP%`, fora do repositório) mostrou que o
+`realpath` da pasta-mãe resolve `.`/`..`, separador duplo, barras normais,
+prefixo `\\?\`, maiúsculas das pastas, nome curto 8.3 (`SKILL-~1`), junção e
+unidade `subst` apontando para o store; que `state.json.` cria no Windows um
+arquivo distinto na pasta da captura e `::$DATA` abre o próprio `state.json`
+(os dois caem na pasta-mãe dentro do store); que um fluxo nomeado da pasta do
+store abre como arquivo regular; e que `lstat` informa `nlink` 2 num hard
+link. Na regressão estão todos esses, menos separador duplo e `subst` (só
+sonda). Hard link para `state.json` ou `key` fora do store só é visto pelo
+`nlink`; o fluxo nomeado da pasta do store (`<raiz>\SKILL-ME-PRIVACY:x`) só
+pelo nome final sem o fluxo e sem maiúsculas.
+
+Alternativas descartadas:
+
+- comparação léxica do caminho: não vê junção, link, nome 8.3 nem `subst`
+  (mutação M3 abaixo);
+- só o store da raiz do vínculo: com o par inválido não há raiz, e o store de
+  outra raiz no mesmo disco seria corrompido igual;
+- identidade (`dev`/`ino`) dos ancestrais contra a pasta do store vinculado:
+  cobriria bind mount, mas não o par inválido nem outras raizes, e acrescenta
+  uma varredura por publicação; sem necessidade demonstrada além do nome;
+- recusar toda a raiz da captura: o guia já recomenda um arquivo fora dela,
+  mas fora do store nada da raiz é lido ou apagado pela #5, e uma raiz como o
+  diretório do usuário perderia o diagnóstico sem motivo de integridade.
+
+### P2 — código do prazo depois de um lock ocupado
+
+Cenário da revisão: a primeira tentativa recebe `lock_present`; a repetição
+obtém o lock e o disco para. Antes, o timer devolvia o `code` da tentativa
+anterior (`lock_present`) e a operação podia ainda gravar. Ao analisar o
+achado apareceu um segundo efeito do mesmo defeito, confirmado pela regressão
+do caso 3 no produto anterior: uma tentativa cortada **antes** de obter o
+lock, se o obtivesse depois do prazo, gravava a entrada que a entrega já
+tinha contado perdida com `lock_present`.
+
+Decisão: `withLock` chama `ctx.onLock` assim que o lock é da operação, antes
+de qualquer leitura ou mutação, e uma exceção ali libera o lock sem mudar
+nada; `appendRecords` e `openCaptureForIngest` aceitam `onLock` (os demais
+comandos não mudam). `untilDeadline` marca `locked` nesse aviso; no corte,
+`locked` → `delivery_timeout` (confirmação incerta); senão vale o código
+anterior, e a tentativa fica `abandoned`: se obtiver o lock depois, `onLock`
+lança e o store o devolve. Assim `lock_present` nunca acompanha uma gravação
+tardia, e `delivery_timeout` é o único código em que a entrada perdida ainda
+pode aparecer na captura.
+
+Alternativas descartadas:
+
+- todo corte vira `delivery_timeout`: com o lock alheio, a última repetição
+  pode começar a menos de 1 ms do prazo (a espera de até 10 ms usa timers de
+  resolução de milissegundo) e ser cortada antes do `EEXIST`, trocando de
+  forma intermitente o diagnóstico de um lock realmente ocupado — raciocínio
+  sobre o timer, não medido; as provas de lock alheio de C15/C16 exigem
+  `lock_present` exato;
+- não começar repetição perto do prazo: limiar heurístico, e um `EEXIST` sob
+  carga pode passar dele;
+- envolver `io.writeExclusive` na entrega para reconhecer o `.lock`: depende
+  do nome interno do arquivo de lock do store.
+
+### Provas novas
+
+Todas em `tests/integrations/traces/concurrency.cli.test.mjs`, com o prefixo
+`T8-C16 delivery failure neutrality`, selecionadas pelo `Proof:` de C16
+(agora 8 testes: os 3 anteriores e estes 5).
+
+| Teste | Afirma |
+| --- | --- |
+| `SKILL_ME_CAPTURE_REPORT dentro do store, por qualquer grafia, link ou hard link, …` | por variante, numa cópia nova de uma raiz com uma captura encerrada (1 registro) e uma ativa: hook real com exit 0 e stdout/stderr vazios; código da entrega igual ao esperado (`capture_not_active`, `binding_invalid` com o par inválido, `lock_present` com lock alheio); árvore da raiz idêntica (hash e mtime); o caminho apontado não foi criado; lock alheio intacto; `exportCapture` das duas iguais ao modelo, `listCaptures` e `pruneCaptures` sem `failed`, `deleteCapture --apply` apaga. Variantes: `state.json`, `key`, segmento, `store.json`, `.lock` ausente, nome novo na captura e em `captures`, `.`/`..`, maiúsculas, link da captura, link do store, raiz do vínculo e diagnóstico pelo mesmo link, hard link do `state.json` e da `key`, par inválido, captura ativa com lock; no Windows também barras normais, `\\?\`, ponto final, `::$DATA`, fluxo da pasta do store em maiúsculas e nome 8.3 (pulado com diagnóstico se o volume não gerar nomes curtos). Depois, o cenário da revisão pela CLI: `state.json` intacto; o mesmo hook com arquivo fora do store grava uma linha `capture_not_active` exata, sem raiz nem caminho; `privacy export` igual ao modelo, `list`, `follow` (`record`, `end`, exit 0), `prune` sem `failed` e `delete --apply` |
+| `commit cortado no prazo depois de obter o lock na repetição sai como delivery_timeout, …` | em processo, lock 1 (abertura) real, 2 `EEXIST`, 3 obtido e segmento parado: relatório exato com `delivery_timeout`, ≤ 750 ms, 3 criações de lock; liberado o disco, o registro aparece uma vez e o segmento fica coerente (confirmação incerta) |
+| `abertura cortada no prazo depois de obter o lock na repetição …` | lock 1 `EEXIST`, 2 obtido, leitura do `state.json` parada: `delivery_timeout`, ≤ 750 ms; captura intacta depois |
+| `tentativa cortada no prazo antes de obter o lock sai como lock_present e, obtido o lock depois, não grava nada` | lock 2 `EEXIST`, criação 3 parada até depois do prazo: `lock_present`, ≤ 750 ms; liberada, a tentativa obtém e devolve o lock; captura idêntica, sem `.lock`, `persisted` 0 |
+| `no hook real, lock obtido na repetição e disco parado aparecem como delivery_timeout no diagnóstico, …` | hook real com `SKILL_ME_TEST_TRACES_BUSY_LOCK=2` e `SKILL_ME_TEST_TRACES_STALL_SEGMENT=1`: exit 0, stdout/stderr vazios, ≤ 750 + 500 ms do fim do stdin à saída; relatório de fixture e linha única do arquivo de diagnóstico com `delivery_timeout`, sem raiz, canário, ID nativo nem stack; o `.lock` do processo que saiu no meio do commit fica (limite do guia) e, removido, a captura está como antes |
+
+Alterações em testes existentes: nenhuma asserção anterior mudou. A
+pré-carga `helpers/traces-probe.mjs` ganhou duas variáveis aditivas
+(`SKILL_ME_TEST_TRACES_BUSY_LOCK`, `SKILL_ME_TEST_TRACES_STALL_SEGMENT`); o
+produto não as lê.
+
+### Falha no comportamento anterior
+
+Os testes novos foram escritos e executados antes da correção, no produto de
+`7250a69` (Windows 11, Node 24.21.0):
+
+- P1: o teste falhou com as **22** variantes do Windows danificando o store —
+  90 itens; por exemplo `state.json`: árvore mudou, `export`/`list`/`prune`/
+  `delete` com `capture_invalid`; `store.json`: tudo `store_invalid`; `.lock`
+  ausente: lock criado e toda operação com `lock_present`; nome novo na
+  captura e `state.json.`: `delete` com `foreign_entry`; links, 8.3, `\\?\`,
+  `::$DATA` e hard links: `capture_invalid`; fluxo da pasta do store: criado.
+  Nessa execução o fluxo ainda estava em minúsculas; a variante em maiúsculas
+  de `d823c00` também falhou ("o caminho apontado foi criado") com o
+  `delivery-report.mjs` de `7250a69` no lugar, restaurado por `git checkout`.
+- P2: com `delivery.mjs` e `store.mjs` de `7250a69` no lugar (cópia de
+  segurança fora do repositório, restaurada e conferida com `cmp`), os quatro
+  testes falharam — commit, abertura e hook real com `lock_present` em vez de
+  `delivery_timeout`; o corte antes do lock com `events-000001.ndjson` e
+  `state.json` gravados depois do prazo.
+
+### Mutações
+
+Aplicadas ao produto já commitado (`d823c00`) por um script fora do
+repositório, prova rodada e arquivo restaurado com `git checkout --`; árvore
+limpa conferida antes e depois.
+
+| Mutação | Prova | Resultado |
+| --- | --- | --- |
+| M1 sem a recusa do store (`insideStore`) | P1 | falhou: 20 variantes (todas menos os dois hard links) |
+| M2 sem a recusa de hard link (`nlink`) | P1 | falhou: hard link do `state.json` e da `key` |
+| M3 caminho léxico (`path.resolve`) no lugar do `realpath` | P1 | falhou: link da captura, link do store, nome 8.3 |
+| M4 nome final com o fluxo `:nome` | P1 | falhou: fluxo da pasta do store |
+| M5 comparação que diferencia maiúsculas | P1 | falhou: fluxo da pasta do store em maiúsculas |
+| M6 o timer devolve o código anterior, como antes da correção | P2 | 3 de 4 falharam (commit, abertura, hook); o corte antes do lock passou, como esperado |
+| M7 tentativa abandonada ainda grava (sem a exceção de `onLock`) | P2 | falhou: corte antes do lock |
+| M8 `withLock` não chama `onLock` | P2 | 4 de 4 falharam |
+
+### Execuções e ausências
+
+Linhas da tabela "Execuções" marcadas "correção 3", todas em `d823c00`, cuja
+única diferença para o commit deste registro é este arquivo: os 20 comandos
+`Proof:` no Windows (cada um selecionou e rodou os testes nomeados: C4 dois,
+C16 oito, C20 dois, os demais um), `npm test` no Windows e `npm test` no WSL
+Ubuntu (stage `skill-me-i8-wsl-stage-MlC4S1`, mesmo `run-wsl.sh` da correção 1,
+que recusa root, outra distro, hash ou commit diferente). Medições na tabela
+de tempo. O pedido desta rodada exigia só Windows; o WSL foi executado para
+exercitar os ramos POSIX das provas novas.
+
+- Windows: os links de pasta das variantes de P1 são junções (não exigem
+  privilégio); o link de arquivo e o FIFO do teste C16 anterior continuam não
+  exercitados, como antes. `T8-C4 … sinal POSIX` pulado (mesmo motivo).
+- WSL: as variantes de P1 com link usam symlink de pasta; as grafias só do
+  Windows (barras, `\\?\`, ponto final, `::$DATA`, fluxo e 8.3) não se aplicam
+  e o teste o registra; "maiúsculas" no Linux é um caminho inexistente. Nenhum
+  teste T8 pulado; skips pré-existentes iguais aos da correção 1.
+- macOS não foi executado. A ordem entre a revisão `ready` e a CI macOS do PR
+  é a decisão pendente do proprietário (terceiro achado da revisão, C21/AC8);
+  nada aqui a resolve nem declara execução macOS.
+- Não executados: Claude, Codex ou Hermes reais com modelo.
+
+### Limites desta rodada
+
+- O nome é a fronteira: um mecanismo que exponha a pasta do store sob outro
+  nome sem que o `realpath` o resolva (bind mount do Linux, por exemplo) não é
+  reconhecido. Exige montagem privilegiada; não exercitado.
+- Entre o `realpath`/`lstat` e o `open` uma pasta-mãe pode ser trocada por uma
+  junção por outro processo do mesmo usuário; a troca não é coberta (o mesmo
+  limite do `lstat` antes do `open` no Windows, já registrado).
+- A recusa de hard link depende de o sistema de arquivos informar `nlink`; um
+  que sempre informe 1 não a teria.
+- Um commit que já tinha o lock no prazo continua: num processo longo
+  (wrapper, ingest Hermes) ele pode gravar a entrada contada como perdida com
+  `delivery_timeout` — por isso o guia o chama de confirmação incerta. Se o
+  processo sair no meio dele, o `.lock` fica, como antes.
+- O fluxo nomeado da pasta do store só existe no Windows; a recusa de
+  `pasta:fluxo` só vale lá.
