@@ -36,9 +36,17 @@ const QUERY_PARAM = /([?&])([^=&#\s"'<>]+)=([^&#\s"'<>]*)/g;
 // Aspa logo antes do nome: o cabeçalho é o conteúdo dela (`-H 'Authorization: …'`).
 const HEADER_NAME = /(["']?)\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)([ \t]*:[ \t]*)/gi;
 // Sem mínimo de comprimento: token68 tem um caractere ou mais, e `Basic YTpi`
-// (`a:b`) já é credencial. Custa a palavra seguinte em prosa (`Basic auth`);
-// linha "Credencial curta depois de `Bearer`/`Basic`" do Landing.
-const AUTH_SCHEME = /\b(Bearer|bearer|Basic)[ \t]+([A-Za-z0-9._~+/=-]+)/g;
+// (`a:b`) já é credencial. Qualquer caixa ASCII (sem `u`, `ſ` não vira `s`) e
+// credencial depois de quebra ou linha em branco: só ela sai, esquema e
+// separadores ficam como vieram. Custa a palavra seguinte em prosa (`basic
+// idea`, inclusive na linha seguinte); linhas "Credencial curta depois de
+// `Bearer`/`Basic`" e "Caixa e quebra antes da credencial…" do Landing.
+const AUTH_SCHEME = /\b(bearer|basic)[ \t\r\n]+([A-Za-z0-9._~+/=-]+)/gi;
+// Cabeçalho sem aspa cuja linha termina no esquema: a regra 3 o consome antes
+// da regra 4, e a credencial da linha seguinte ficaria. Estender o valor seria
+// ler dobra de cabeçalho HTTP; o campo é recusado.
+const SCHEME_AT_LINE_END = /\b(?:bearer|basic)[ \t]*$/i;
+const CREDENTIAL_AFTER_BREAK = /\r?\n[ \t\r\n]*[A-Za-z0-9._~+/=-]/y;
 // Nome + separador sem o valor: o valor só é consumido quando o nome é
 // sensível, para que `foo:password=x` não esconda a segunda atribuição.
 const ASSIGNMENT_NAME = /(["']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1([ \t]*[:=][ \t]*)/g;
@@ -231,6 +239,8 @@ function headerValue(match, text, _quotes, opensBlock) {
   const line = LINE_REST.exec(text)[0];
   const open = count(line, '"') % 2 === 1 || count(line, "'") % 2 === 1 || endsInEscape(line);
   const end = open ? text.length : start + line.length;
+  CREDENTIAL_AFTER_BREAK.lastIndex = end;
+  if (!open && SCHEME_AT_LINE_END.test(line) && CREDENTIAL_AFTER_BREAK.test(text)) return NO_SAFE_PROJECTION;
   return { start, end, keep: "", stop: end };
 }
 

@@ -787,7 +787,7 @@ test("I5-C14f valor sensível composto: composição aberta omite o campo; NBSP,
   assert.ok(leaks(text).length === 0 && !text.includes("\\u0000"), "registro sem vazamento nem marcador interno");
 });
 
-test("I5-C14k credencial curta depois de Bearer/bearer/Basic (1 a 8 caracteres, padding) é removida; esquema sem valor e grafias fora da regra não mudam", () => {
+test("I5-C14k credencial curta depois de Bearer/bearer/Basic (1 a 8 caracteres, padding) é removida; esquema sem valor e palavras fora da regra não mudam", () => {
   // `YTpi` é `a:b` em base64: credencial Basic sintética do achado.
   exactCases(
     [
@@ -823,11 +823,24 @@ test("I5-C14k credencial curta depois de Bearer/bearer/Basic (1 a 8 caracteres, 
   );
   // Palavra que para antes de `(`: composição aberta, campo omitido (perda declarada).
   refusedCases(["Bearer tokens(s) ok", "Basic a(b) ok"]);
-  // Fora da regra: esquema sem valor na linha, primeiro caractere fora do
-  // alfabeto, outras grafias, esquema colado e outros esquemas.
+  // Fora da regra: esquema sem valor, primeiro caractere fora do alfabeto,
+  // esquema colado e outros esquemas.
   exactCases(
-    ["Basic", "Bearer   ", "Basic\nfim", "Basic \nfim", "Basic é", "Basic (x)", 'Basic "x"', "basic YTpi", "BASIC YTpi", "BEARER ab", "xBasic a", "Token abc", "Digest ab"].map((text) => [text, text]),
+    ["Basic", "Bearer   ", "Basic é", "Basic (x)", 'Basic "x"', "xBasic a", "Token abc", "Digest ab"].map((text) => [text, text]),
     false,
+  );
+  // Eram controles intactos até a decisão do coordenador de 18/10/2026 (Landing
+  // "Caixa e quebra antes da credencial…"): outra caixa e credencial depois da
+  // quebra são a mesma regra; resultado novo exato, casos completos no I5-C14m.
+  exactCases(
+    [
+      ["Basic\nfim", `Basic\n${R}`],
+      ["Basic \nfim", `Basic \n${R}`],
+      ["basic YTpi", `basic ${R}`],
+      ["BASIC YTpi", `BASIC ${R}`],
+      ["BEARER ab", `BEARER ${R}`],
+    ],
+    true,
   );
 
   // Fronteira da política: o valor curto sai com `sensitive_removed`; a palavra
@@ -838,6 +851,63 @@ test("I5-C14k credencial curta depois de Bearer/bearer/Basic (1 a 8 caracteres, 
   same(record.privacy, ["tool_response.stdout:sensitive_removed", "tool_response.stderr:unsanitizable"], "privacy exata");
   const text = JSON.stringify(record);
   assert.ok(!text.includes("YTpi") && !text.includes("Bearer ab ") && !text.includes("tokens(s)") && !text.includes("\\u0000"), "registro sem a credencial nem marcador interno");
+});
+
+test("I5-C14m Bearer/Basic em qualquer caixa ASCII e credencial depois de espaço, tab ou quebra são removidos com a caixa e os separadores da entrada; cabeçalho que termina no esquema antes da credencial omite o campo", () => {
+  const SPELLINGS = ["Basic", "basic", "BASIC", "bAsIc", "Bearer", "bearer", "BEARER", "BeArEr"];
+  // Comprimentos 1 a 8 e padding, como no I5-C14k.
+  const CREDENTIALS = ["a", "ab", "abc", "YTpi", "abcde", "abcdef", "abcdefg", "abcdefgh", "YQ==", "Og==", "="];
+  const SEPARATORS = ["\t", "\n", "\r\n", "\r", " \n  ", "\t\r\n\t", "\n\n", " \r\n \r\n "];
+  exactCases(
+    [
+      ...SPELLINGS.flatMap((scheme) => CREDENTIALS.map((credential) => [`${scheme} ${credential}`, `${scheme} ${R}`])),
+      ...SPELLINGS.flatMap((scheme) => SEPARATORS.map((separator) => [`${scheme}${separator}YTpi`, `${scheme}${separator}${R}`])),
+      // No texto ao redor; palavra de shell completada depois da quebra.
+      ["GET /x bAsIc YTpi 200", `GET /x bAsIc ${R} 200`],
+      ["resposta:\nBeArEr\r\n  ab\r\nok", `resposta:\nBeArEr\r\n  ${R}\r\nok`],
+      ["BASIC\nYTpi,resto ok", `BASIC\n${R} ok`],
+      // Esquema como valor de atribuição: regra 4 antes da 5.
+      ["auth: Basic\nYTpi", `auth: ${R}\n${R}`],
+      ["TOKEN=bearer\r\nab ls", `TOKEN=${R}\r\n${R} ls`],
+      // Cabeçalho sem credencial depois da quebra ou na mesma linha: regra anterior.
+      ["Authorization: Basic\n", `Authorization: ${R}\n`],
+      ["Authorization: BASIC\n(x)", `Authorization: ${R}\n(x)`],
+      ["authorization: bAsIc YTpi\nok", `authorization: ${R}\nok`],
+      ["curl -H 'Authorization: Basic\nYTpi' ok", `curl -H 'Authorization: ${R}`],
+      // Perdas declaradas: palavra seguinte em prosa em qualquer caixa e depois da quebra.
+      ["basic idea", `basic ${R}`],
+      ["BEARER\nfim da frase", `BEARER\n${R} da frase`],
+    ],
+    true,
+  );
+  // Cabeçalho cuja linha termina no esquema com a credencial depois da quebra
+  // (a perda declarada inclui `Authorization: Basic\nok`); palavra aberta.
+  refusedCases([
+    "Authorization: Basic\nYTpi",
+    "authorization: BEARER\r\n ab\nok",
+    "Proxy-Authorization: x bAsIc\n\tYTpi",
+    "Cookie: s=1; Bearer\n\nab",
+    "Authorization: Basic\nok",
+    "Basic\nab(c) ok",
+  ]);
+  // Controles: esquema sem credencial em cada caixa; palavras que não são o
+  // esquema; outros esquemas depois de quebra.
+  exactCases(
+    [
+      ...SPELLINGS.flatMap((scheme) => [scheme, `${scheme}   `, `${scheme}\n`, `${scheme}\r\n`, `${scheme} \n\t\n`, `${scheme}\né`, `${scheme}\n(x)`, `${scheme}\r\n"x"`]),
+      ...["Basics a", "Bearers ab", "xbasic a", "BASICx a", "basic_x a", "Bearer-ab", "Baſic a", "BEARERS\nab", "Token\nab", "Digest\r\nab"],
+    ].map((text) => [text, text]),
+    false,
+  );
+
+  // Fronteira da política: credenciais com caixa e quebra saem com
+  // `sensitive_removed`; o cabeçalho que termina no esquema omite só o seu campo.
+  const record = policy("claude", claudePayload("post_tool_bash", { tool_input: { command: "ls" }, tool_response: { stdout: "GET /api bAsIc YTpi 200\nBEARER\r\n  ab fim", stderr: "Authorization: basic\nYTpi" } }));
+  same(field(record, "tool_response.stdout").value, `GET /api bAsIc ${R} 200\nBEARER\r\n  ${R} fim`, "stdout com as duas credenciais removidas");
+  assert.equal(field(record, "tool_response.stderr"), undefined, "stderr omitido");
+  same(record.privacy, ["tool_response.stdout:sensitive_removed", "tool_response.stderr:unsanitizable"], "privacy exata");
+  const text = JSON.stringify(record);
+  assert.ok(!text.includes("bAsIc YTpi") && !text.includes("  ab fim") && !text.includes("basic\\nYTpi") && !text.includes("\\u0000"), "registro sem as credenciais no contexto nem marcador interno");
 });
 
 test("I5-C14i valor sensível em bloco multilinha, na linha seguinte, depois de tag/âncora ou de comentário omite o campo; indicador sem linha seguinte ou com texto na mesma linha segue a regra anterior", () => {

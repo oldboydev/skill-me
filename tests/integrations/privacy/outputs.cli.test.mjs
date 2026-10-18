@@ -862,6 +862,60 @@ test("I5-C14l credencial curta depois de Basic/Bearer num resultado textual sai 
   check(clean, 3);
 });
 
+test("I5-C14n Basic/Bearer em outra caixa e credencial depois de quebra num resultado textual saem com sensitive_removed; cabeçalho que termina no esquema sai com unsanitizable; nada chega a temporários, lock, arquivos, logs nem export", () => {
+  const R = "[removido]";
+  // Credenciais sintéticas: curtas (`YTpi`, `ab`) conferidas pelo contexto que as
+  // representa; a longa é a sonda procurada em todo arquivo, log e temporário.
+  const marker = "SKILLMECANARYc14n";
+  const output = `GET /api bAsIc YTpi 200\nBEARER\r\n  ab fim\nBeArEr\n${marker} ok`;
+  const outputOut = `GET /api bAsIc ${R} 200\nBEARER\r\n  ${R} fim\nBeArEr\n${R} ok`;
+  const command = "curl -s https://example.test/api";
+  const input = {
+    "codex-exec": [execEvent("item_completed_command", { command, aggregated_output: output })],
+    claude: [claudePayload("post_tool_bash", { tool_input: { command }, tool_response: { stdout: output, stderr: `Authorization: basic\n${marker}header` } })],
+    "codex-hooks": [codexHookPayload("post_tool_bash", { tool_input: { command }, tool_response: { output } })],
+  };
+  const batches = { "codex-exec": { sensitive_removed: 1 }, claude: { sensitive_removed: 1, unsanitizable: 1 }, "codex-hooks": { sensitive_removed: 1 } };
+  // Sem diff: a mensagem de falha não pode carregar a credencial.
+  const clean = (text, label) => assert.ok(!text.includes("SKILLMECANARY") && !text.includes("bAsIc YTpi") && !text.includes("  ab fim"), label);
+  const { root, run, check } = probedCapture("c14n", marker);
+
+  const id = run(["start", "--root", root, "--content"]).body.capture.id;
+  for (const [agent, entries] of Object.entries(input)) {
+    const result = run(["ingest", "--root", root, "--capture", id, "--agent", agent], { input: ndjson(entries) });
+    assert.equal(result.status, 0, agent);
+    assert.equal(result.body.batch.persisted, entries.length, agent);
+    assert.ok(isDeepStrictEqual(result.body.batch.contentOmitted, batches[agent]), `${agent}: contagem do lote`);
+  }
+  for (const file of walkFiles(root)) clean(readFileSync(file, "latin1"), `após ingest: ${path.relative(root, file)}`);
+
+  const exported = run(["export", "--root", root, "--capture", id]);
+  assert.equal(exported.status, 0);
+  const texts = exported.body.records.flatMap((r) => (r.content?.fields ?? []).filter((f) => f.kind === "text").map((f) => [f.field, f.value]));
+  assert.ok(
+    isDeepStrictEqual(texts.sort(), [
+      ["item.aggregated_output", outputOut],
+      ["item.command", command],
+      ["tool_input.command", command],
+      ["tool_input.command", command],
+      ["tool_response.output", outputOut],
+      ["tool_response.stdout", outputOut],
+    ]),
+    "só as credenciais saíram dos três resultados e o cabeçalho foi omitido",
+  );
+  const omissions = exported.body.records.map((r) => r.privacy.filter((e) => !e.startsWith("envelope."))).sort();
+  assert.ok(
+    isDeepStrictEqual(omissions, [["item.aggregated_output:sensitive_removed"], ["tool_response.output:sensitive_removed"], ["tool_response.stdout:sensitive_removed", "tool_response.stderr:unsanitizable"]]),
+    "motivo exato por registro",
+  );
+  const status = run(["status", "--root", root, "--capture", id]);
+  assert.ok(isDeepStrictEqual(status.body.capture.counters.contentOmitted, { sensitive_removed: 3, unsanitizable: 1 }), "contagem exata no status");
+  run(["stop", "--root", root, "--capture", id]);
+  assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
+  assert.deepEqual(readdirSync(path.join(root, "skill-me-privacy", "captures")), [], "captura apagada");
+  check(clean, 3);
+});
+
 test("I5-C16d chave própria __proto__ em argumentos MCP pelo ingest/export real fica como membro próprio, mascarado por dentro e sem perda silenciosa", () => {
   const R = "[removido]";
   const args = JSON.parse('{"__proto__":{"q":"DB_PASSWORD=SKILLMECANARYproto","ok":"fica"},"n":{"__proto__":"valor comum"},"l":[{"__proto__":"v"}],"q":"x"}');

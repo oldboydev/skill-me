@@ -106,13 +106,19 @@ sensível); valores de `Authorization`, `Cookie`, `Set-Cookie`,
 conhecidos de token (GitHub, OpenAI, Slack, AWS, GitLab, Google, JWT); prefixo de
 diretório pessoal vira `<home>`. Cada valor removido vira `[removido]`.
 
-Depois de `Bearer`, `bearer` ou `Basic` e de espaço, qualquer valor não vazio no
-alfabeto de token (letras, dígitos, `._~+/=-`, padding incluído) é removido, por
-mais curto que seja: `Basic YTpi` vira `Basic [removido]`. Isso também remove a
-palavra seguinte em prosa (`Basic auth`, `Bearer token`), e uma palavra que para
-antes de `(` (`Bearer tokens(s)`) omite o campo inteiro com `unsanitizable`.
-Outras grafias (`basic`, `BEARER`), outros esquemas e um valor na linha seguinte
-ao esquema não são reconhecidos.
+Depois de `Bearer` ou `Basic`, em qualquer caixa (`basic`, `BEARER`, `bAsIc`), e
+de espaço, tab ou quebra de linha (inclusive `\r\n` e linha em branco), qualquer
+valor não vazio no alfabeto de token (letras, dígitos, `._~+/=-`, padding
+incluído) é removido, por mais curto que seja: `Basic YTpi` vira
+`Basic [removido]` e `BASIC\r\n  YTpi` vira `BASIC\r\n  [removido]`; o esquema e
+os separadores ficam como vieram. Isso também remove a palavra seguinte em prosa
+(`Basic auth`, `basic idea`, inclusive a primeira palavra da linha depois de um
+`Basic` no fim de linha), e uma palavra que para antes de `(` (`Bearer tokens(s)`)
+omite o campo inteiro com `unsanitizable`. Um cabeçalho sem aspas cuja linha
+termina no esquema, com a credencial na linha seguinte (`Authorization: Basic`
+seguido de quebra e `YTpi`), também é omitido inteiro com `unsanitizable`.
+Outros esquemas e outros separadores (NBSP, `\n` escrito como texto escapado) não
+são reconhecidos.
 
 O valor de um parâmetro de URL também é examinado com uma camada de codificação
 percentual: se `?q=ghp%5F…` (ou o valor inteiro codificado) contém um formato de
