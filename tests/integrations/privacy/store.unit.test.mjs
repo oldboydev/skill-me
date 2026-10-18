@@ -1,0 +1,146 @@
+import assert from "node:assert/strict";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { test } from "node:test";
+import { runPrivacyCommand } from "../../../src/integrations/privacy/command.mjs";
+import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
+import { appendRecords, StoreError } from "../../../src/integrations/privacy/store.mjs";
+import { makeScratch } from "../helpers/cli.mjs";
+import { appendSanitized, recordLineBytes, sanitizedRecord, startIn } from "../helpers/privacy-store.mjs";
+import { snapshotTree } from "../helpers/tree.mjs";
+
+// Camada de armazenamento com registros JÁ sanitizados (helpers/privacy-store):
+// provam admissão, contadores, atomismo e barreira de estado do storage. Os
+// checks de CLI correspondentes (C30, C42, C48, C52b, C53) dependem de
+// `privacy ingest` e ficam pendentes até o lote da política.
+
+const captureDir = (root, id) => path.join(root, "skill-me-privacy", "captures", id);
+const readState = (root, id) => JSON.parse(readFileSync(path.join(captureDir(root, id), "state.json"), "utf8"));
+const command = (argv) => runPrivacyCommand({ argv });
+
+async function rejects(promise, code) {
+  await assert.rejects(promise, (error) => error instanceof StoreError && error.code === code);
+}
+
+test("I5-C42s captura stopped ou disabled recusa novos registros sem mudar a árvore", async () => {
+  const root = makeScratch("i5 c42s");
+  for (const action of ["stop", "disable"]) {
+    const id = await startIn(root);
+    await appendSanitized(root, id, 1);
+    assert.equal((await command([action, "--root", root, "--capture", id])).exitCode, 0);
+    const before = snapshotTree(root);
+    await rejects(appendSanitized(root, id, 1), "capture_not_active");
+    assert.deepEqual(snapshotTree(root), before, action);
+  }
+});
+
+test("I5-C48s depois de stop/disable/delete um produtor atrasado não grava nem recria a captura", async () => {
+  const root = makeScratch("i5 c48s");
+  const id = await startIn(root);
+  await appendSanitized(root, id, 1);
+  assert.equal((await command(["stop", "--root", root, "--capture", id])).exitCode, 0);
+  await rejects(appendSanitized(root, id, 1), "capture_not_active");
+  assert.equal((await command(["disable", "--root", root, "--capture", id])).exitCode, 0);
+  await rejects(appendSanitized(root, id, 1), "capture_not_active");
+  assert.equal((await command(["delete", "--root", root, "--capture", id, "--apply"])).exitCode, 0);
+  await rejects(appendSanitized(root, id, 1), "capture_not_found");
+  assert.ok(!existsSync(captureDir(root, id)), "não recria captures/<id>");
+  assert.deepEqual(readdirSync(path.join(root, "skill-me-privacy", "captures")), []);
+});
+
+test("I5-C52s storage admite 500 de 510 registros e exatamente 8 MiB", async () => {
+  const root = makeScratch("i5 c52s");
+  const id = await startIn(root);
+  const result = await appendSanitized(root, id, 510);
+  assert.deepEqual(result, { admitted: 500, dropped: { capture_event_limit: 10 } });
+  const state = readState(root, id);
+  assert.deepEqual(state.counters, { accepted: 510, persisted: 500, malformed: 0, dropped: { capture_event_limit: 10 }, contentOmitted: {} });
+  const lines = readFileSync(path.join(captureDir(root, id), state.dataFile), "utf8").split("\n");
+  assert.equal(lines.pop(), "");
+  assert.equal(lines.length, 500);
+  assert.equal(state.dataBytes, readFileSync(path.join(captureDir(root, id), state.dataFile)).length);
+
+  // Oito registros de exatamente 1 MiB serializado: 8 388 608 aceitos; o seguinte, não.
+  const bytesRoot = makeScratch("i5 c52s bytes");
+  const big = await startIn(bytesRoot);
+  const base = recordLineBytes(sanitizedRecord(0, ""));
+  const mib = sanitizedRecord(0, "x".repeat(1_048_576 - base));
+  assert.equal(recordLineBytes(mib), 1_048_576);
+  const records = Array.from({ length: 8 }, () => mib);
+  assert.deepEqual(await appendRecords({ root: bytesRoot, id: big, batch: { records, malformed: 0, dropped: {}, contentOmitted: {} } }), {
+    admitted: 8,
+    dropped: {},
+  });
+  assert.equal(readState(bytesRoot, big).dataBytes, 8_388_608);
+  assert.deepEqual(await appendRecords({ root: bytesRoot, id: big, batch: { records: [sanitizedRecord(1)], malformed: 0, dropped: {}, contentOmitted: {} } }), {
+    admitted: 0,
+    dropped: { capture_byte_limit: 1 },
+  });
+  const final = readState(bytesRoot, big);
+  assert.equal(final.dataBytes, 8_388_608);
+  assert.deepEqual(final.counters, { accepted: 9, persisted: 8, malformed: 0, dropped: { capture_byte_limit: 1 }, contentOmitted: {} });
+});
+
+test("I5-C53s status traz contadores exatos de um lote misto e accepted >= persisted", async () => {
+  const root = makeScratch("i5 c53s");
+  const id = await startIn(root);
+  await appendSanitized(root, id, 498, { malformed: 2, dropped: { envelope_oversize: 1 }, contentOmitted: { content_disabled: 498 } });
+  await appendSanitized(root, id, 4, { malformed: 1, dropped: { envelope_oversize: 2 }, contentOmitted: { content_disabled: 4, unsupported_content: 1 } });
+  const status = await command(["status", "--root", root, "--capture", id]);
+  assert.equal(status.exitCode, 0);
+  assert.deepEqual(status.body.capture.counters, {
+    accepted: 502,
+    persisted: 500,
+    malformed: 3,
+    dropped: { envelope_oversize: 3, capture_event_limit: 2 },
+    contentOmitted: { content_disabled: 502, unsupported_content: 1 },
+  });
+  assert.deepEqual(Object.keys(status.body.capture).sort(), [
+    "content",
+    "counters",
+    "createdAt",
+    "dataBytes",
+    "endedAt",
+    "id",
+    "limits",
+    "retentionDays",
+    "state",
+  ]);
+  assert.ok(status.body.capture.counters.accepted >= status.body.capture.counters.persisted);
+});
+
+test("I5-C30s falha de rename na gravação deixa estado e dados anteriores idênticos e nenhum temporário", async () => {
+  const root = makeScratch("i5 c30s");
+  const id = await startIn(root);
+  await appendSanitized(root, id, 2);
+  const real = createStoreIo();
+  for (const target of [/^events-\d{6}\.ndjson$/, /^state\.json$/]) {
+    const before = snapshotTree(root);
+    const io = {
+      ...real,
+      async rename(from, to) {
+        if (target.test(path.basename(to))) throw Object.assign(new Error("EIO injetado"), { code: "EIO" });
+        return real.rename(from, to);
+      },
+    };
+    await rejects(appendRecords({ root, id, io, batch: { records: [sanitizedRecord(9)], malformed: 0, dropped: {}, contentOmitted: {} } }), "io_failure");
+    const after = snapshotTree(root);
+    // Arquivos idênticos; o novo arquivo de dados que não chegou ao commit sai.
+    assert.deepEqual(after, before, String(target));
+    assert.ok(!Object.keys(after).some((name) => name.endsWith(".skill-me-tmp")));
+  }
+  assert.equal(readState(root, id).counters.persisted, 2);
+});
+
+test("I5-S-record o storage recusa o que não é registro v1 sem gravar nada", async () => {
+  const root = makeScratch("i5 record");
+  const id = await startIn(root);
+  const before = snapshotTree(root);
+  for (const bad of [null, "texto", [], { recordVersion: 2 }, { envelope: {} }]) {
+    await assert.rejects(appendRecords({ root, id, batch: { records: [bad], malformed: 0, dropped: {}, contentOmitted: {} } }), TypeError);
+  }
+  for (const counters of [{ contentOmitted: { "SKILLME-CANARY-x": 1 } }, { dropped: { "Fora Do Padrão": 1 } }, { malformed: -1 }, { dropped: { envelope_oversize: 1.5 } }]) {
+    await assert.rejects(appendRecords({ root, id, batch: { records: [], malformed: 0, dropped: {}, contentOmitted: {}, ...counters } }), TypeError);
+  }
+  assert.deepEqual(snapshotTree(root), before);
+});
