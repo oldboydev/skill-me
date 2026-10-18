@@ -18,7 +18,7 @@ nem enviado pelo debugger.
 | Hook Codex (`hooks.json`) | processo iniciado pelo Codex a cada evento | igual ao Claude |
 | Wrapper `integrations run --agent codex` | processo único durante o `codex exec` | stdout = JSONL nativo do Codex, byte a byte (inclusive itens de raciocínio que o próprio Codex emitir — saída do agente, não telemetria do debugger); stderr = do Codex; o receptor vive até o fim do `exec` e é descartado |
 | Plugin Hermes `skill-me-observer` | dentro do processo Hermes | sem `SKILL_ME_HERMES_DELIVERY`: inativo (callback devolve `None`, sem fila, thread ou processo); com ele: projeção dos nomes de `kwargs.json`, fila de 256, entrega a um processo `integrations ingest` |
-| Exportador de fixture | só com `SKILL_ME_OBSERVER_REPORT_FD` definido pelos testes | uma linha JSON com envelopes minimizados e contadores, num pipe; a instalação nunca define essa variável |
+| Exportador de fixture | só com `SKILL_ME_OBSERVER_REPORT_FD` definido pelos testes | uma linha JSON (relatório v2) com envelopes já tratados pela política de privacidade da #5 e contadores, num pipe; a instalação nunca define essa variável |
 
 ## Envelope v1
 
@@ -29,7 +29,9 @@ limites, lacunas) está na seção "Fronteira mínima — assinatura fechada (U1
 
 - `signal`: `native_hook`, `native_plugin` ou `supervised_exec`. Nenhuma inferência é
   produzida nesta entrega; atribuição de skill é da #6.
-- `ids`: IDs nativos inalterados (nunca truncados); nenhuma correlação é calculada.
+- `ids`: desde a #5, cada ID vira um pseudônimo `h1:` da chave do processo (ou da
+  captura, no `privacy ingest`), nunca truncado; nenhuma correlação é calculada.
+  Política completa em `docs/privacidade.md`.
 - `gaps`: `<campo>:absent | not_in_contract | invalid_type | too_long | not_identifier |
   unrecognized_value` — um campo sem valor confiável vira lacuna, nunca default.
 - Nunca saem do debugger: argumentos e entrada de ferramenta, resultados, prompts,
