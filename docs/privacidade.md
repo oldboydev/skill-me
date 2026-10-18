@@ -126,14 +126,22 @@ seguido de quebra e `YTpi`), também é omitido inteiro com `unsanitizable`.
 Em texto serializado de novo (JSON dentro de um resultado), o separador escrito
 como escape também vale, sem decodificar nada: um ou mais `\` seguidos de `n`,
 `r`, `t` ou `u000a`, `u000d`, `u0009`, `u0020`, entre o esquema e a credencial ou
-logo antes do esquema. `{\"Authorization\":\"Basic\nYTpi\"}` vira
-`{\"Authorization\":\"Basic\n[removido]` e `"Basic\nYTpi"` vira
-`"Basic\n[removido]"`; o resto da palavra colada à credencial sai junto. Isso
-também remove a palavra depois de um escape que segue o esquema em prosa ou
-caminho (`C:\Basic\new`) e aceita `\N`, `\R`, `\T` como escape. Outros esquemas e
-outros separadores ou codificações (NBSP, `\x0a`, `%0A`, entidades HTML) não são
-reconhecidos, nem um nome de cabeçalho ou atribuição colado depois de um escape
-(`x\nCookie: s=…`).
+logo antes do esquema. `"Basic\nYTpi"` vira `"Basic\n[removido]"`; o resto da
+palavra colada à credencial sai junto. Isso também remove a palavra depois de um
+escape que segue o esquema em prosa ou caminho (`C:\Basic\new`) e aceita `\N`,
+`\R`, `\T` como escape.
+
+O mesmo escape vale antes dos nomes de cabeçalho, atribuição e flag e entre flag
+e valor: `x\nCookie: s=abc` vira `x\nCookie: [removido]`, `x\nauth=abc` vira
+`x\nauth=[removido]` e `--password\tabc` vira `--password\t[removido]`. Um nome
+sensível entre aspas escapadas também é reconhecido: `{\"Cookie\":\"s=abc\"}` vira
+`{\"Cookie\":[removido]` e `{\"Authorization\":\"Basic\nYTpi\"}` vira
+`{\"Authorization\":[removido]`. Em texto numa linha só, o resto do JSON colado
+ao valor sai junto, e um componente de caminho que começa pela letra de um escape
+pode perder a palavra seguinte (`C:\new\nauth=1`). Nos nomes de atribuição e flag,
+só o escape minúsculo conta (`\N` maiúsculo não). Outros esquemas e outros
+separadores ou codificações (NBSP, `\x0a`, `%0A`, entidades HTML) não são
+reconhecidos.
 
 O valor de um parâmetro de URL também é examinado com uma camada de codificação
 percentual: se `?q=ghp%5F…` (ou o valor inteiro codificado) contém um formato de

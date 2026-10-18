@@ -33,20 +33,26 @@ const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----[\s\S]
 // dela (`u:a@b@host`). Aspas e `\` fazem parte dela como da palavra de shell.
 const URL_USERINFO = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)(?=([^ \t\n/?#<>]*))(?:[^ \t\n/?#<>]+@)?/g;
 const QUERY_PARAM = /([?&])([^=&#\s"'<>]+)=([^&#\s"'<>]*)/g;
+// Texto serializado de novo (JSON dentro de um resultado) traz o separador
+// escrito como escape (`Basic\nYTpi`, `x\nCookie:` com `\` literal): ele é só
+// lido, nunca decodificado. Vale entre `Bearer`/`Basic` e a credencial e
+// entre flag e valor, e o fim dele vale como fronteira antes do esquema e dos
+// nomes das regras 3 e 5 (o `n`/`0` do escape colaria no nome). Linhas
+// "Separador escrito como escape…" e "Nome sensível depois de separador
+// escapado…" do Landing.
+const ESCAPE_BODY = String.raw`(?:[nrt]|u00(?:0[9adAD]|20))`;
+const ESCAPED_SEPARATOR = String.raw`\\+${ESCAPE_BODY}`;
+// Lookbehind: consumir a sequência de `\` em cada posição seria quadrático.
+const AFTER_ESCAPE = `(?<=${ESCAPED_SEPARATOR})`;
 // Aspa logo antes do nome: o cabeçalho é o conteúdo dela (`-H 'Authorization: …'`).
-const HEADER_NAME = /(["']?)\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)([ \t]*:[ \t]*)/gi;
+const HEADER_NAME = new RegExp(String.raw`(["']?)(?:\b|${AFTER_ESCAPE})(authorization|proxy-authorization|cookie|set-cookie|x-api-key)([ \t]*:[ \t]*)`, "gi");
 // Sem mínimo de comprimento: token68 tem um caractere ou mais, e `Basic YTpi`
 // (`a:b`) já é credencial. Qualquer caixa ASCII (sem `u`, `ſ` não vira `s`) e
 // credencial depois de quebra ou linha em branco: só ela sai, esquema e
 // separadores ficam como vieram. Custa a palavra seguinte em prosa (`basic
 // idea`, inclusive na linha seguinte); linhas "Credencial curta depois de
-// `Bearer`/`Basic`" e "Caixa e quebra antes da credencial…" do Landing.
-// Texto serializado de novo (JSON dentro de um resultado) traz o separador
-// escrito como escape (`Basic\nYTpi` com `\` literal): ele é só lido, nunca
-// decodificado, e também vale como fronteira antes do esquema (`x\nBasic`).
-// Com a flag `i`, `\N` também conta (perda declarada); linha "Separador
-// escrito como escape…" do Landing.
-const ESCAPED_SEPARATOR = String.raw`\\+(?:[nrt]|u00(?:0[9ad]|20))`;
+// `Bearer`/`Basic`" e "Caixa e quebra antes da credencial…" do Landing. Com
+// a flag `i`, o separador escapado `\N` também conta (perda declarada).
 const AUTH_SCHEME = new RegExp(String.raw`(?:\b|(?<=${ESCAPED_SEPARATOR}))(bearer|basic)(?:[ \t\r\n]|${ESCAPED_SEPARATOR})+([A-Za-z0-9._~+/=-]+)`, "gi");
 // Cabeçalho sem aspa cuja linha termina no esquema: a regra 3 o consome antes
 // da regra 4, e a credencial da linha seguinte ficaria. Estender o valor seria
@@ -54,9 +60,13 @@ const AUTH_SCHEME = new RegExp(String.raw`(?:\b|(?<=${ESCAPED_SEPARATOR}))(beare
 const SCHEME_AT_LINE_END = new RegExp(String.raw`(?:\b|(?<=${ESCAPED_SEPARATOR}))(?:bearer|basic)(?:[ \t]|${ESCAPED_SEPARATOR})*$`, "i");
 const CREDENTIAL_AFTER_BREAK = /\r?\n[ \t\r\n]*[A-Za-z0-9._~+/=-]/y;
 // Nome + separador sem o valor: o valor só é consumido quando o nome é
-// sensível, para que `foo:password=x` não esconda a segunda atribuição.
-const ASSIGNMENT_NAME = /(["']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1([ \t]*[:=][ \t]*)/g;
-const FLAG_NAME = /(^|[\s"'(])(--?)([A-Za-z][A-Za-z0-9_.-]{0,63})[ \t]+/g;
+// sensível, para que `foo:password=x` não esconda a segunda atribuição. O
+// nome também pode vir entre aspas escapadas (`{\"Cookie\":\"s=…\"}`), com a
+// mesma sequência de `\` nos dois lados; ela só começa no primeiro `\`.
+const ASSIGNMENT_NAME = new RegExp(String.raw`((?<!\\)\\+"|["']?)(?:\b|${AFTER_ESCAPE})([A-Za-z][A-Za-z0-9_.-]{0,63})\1([ \t]*[:=][ \t]*)`, "g");
+// Nome lido a partir da letra de um escape (`nauth` em `x\nauth=`).
+const ESCAPE_AT_NAME = new RegExp(String.raw`(?<=\\)${ESCAPE_BODY}(?=[A-Za-z])`, "y");
+const FLAG_NAME = new RegExp(String.raw`(^|[\s"'(]|${AFTER_ESCAPE})(--?)([A-Za-z][A-Za-z0-9_.-]{0,63})(?:[ \t]|${ESCAPED_SEPARATOR})+`, "g");
 // Valor = palavra de shell na mesma linha: vírgula, `}`, `-` inicial e
 // separador escapado pertencem a ela (`DB_PASSWORD=a,b`). Só espaço, tab,
 // quebra de linha e os operadores a encerram: o Bash não separa palavras em
@@ -254,10 +264,16 @@ function headerValue(match, text, _quotes, opensBlock) {
 // de espaço é ausência de valor (`password: (x)`); colado ao separador, um `(`
 // seguinte é composição (`NOME=(…)`). Valor que começa no marcador já foi
 // completado pelas regras 1–4: pular antes de varrer a palavra evita relê-la
-// a cada nome numa linha longa.
+// a cada nome numa linha longa. Nome comum que começa na letra de um escape
+// é lido de novo depois dele (`nauth` → `auth`); reler a partir da posição
+// seguinte qualquer nome mudaria `x-auth` e o limite de 64.
 function assignedValue(match, text, nameGroup, opensBlock) {
   const name = match[nameGroup];
-  if (!isSensitiveKey(name)) return { skip: match.index + match[0].indexOf(name) + name.length };
+  if (!isSensitiveKey(name)) {
+    const nameStart = match.index + match[0].indexOf(name);
+    ESCAPE_AT_NAME.lastIndex = nameStart;
+    return { skip: ESCAPE_AT_NAME.test(text) ? ESCAPE_AT_NAME.lastIndex : nameStart + name.length };
+  }
   const start = match.index + match[0].length;
   if (text[start] === PENDING_REMOVED) return { skip: start };
   if (opensBlock(start)) return NO_SAFE_PROJECTION;

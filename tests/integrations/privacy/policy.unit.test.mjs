@@ -955,9 +955,11 @@ test("I5-C14o separador escrito como escape (\\n, \\r, \\t, \\u000a…) entre Be
   exactCases(
     [
       ...SPELLINGS.flatMap((scheme) => ESCAPED.map((separator) => [`${scheme}${separator}YTpi ok`, `${scheme}${separator}${R} ok`])),
-      // Forma do achado: JSON serializado de novo dentro do texto coletado.
-      [String.raw`{\"Authorization\":\"Basic\nYTpi\"}`, String.raw`{\"Authorization\":\"Basic\n` + R],
-      [String.raw`{\"headers\":{\"Authorization\":\"bearer\tab\",\"x\":1}}`, String.raw`{\"headers\":{\"Authorization\":\"bearer\t` + R],
+      // Forma do achado: JSON serializado de novo dentro do texto coletado. Desde
+      // a linha "Nome sensível depois de separador escapado…" do Landing, o nome
+      // entre `\"` é reconhecido e o valor inteiro sai pela regra 5.
+      [String.raw`{\"Authorization\":\"Basic\nYTpi\"}`, String.raw`{\"Authorization\":` + R],
+      [String.raw`{\"headers\":{\"Authorization\":\"bearer\tab\",\"x\":1}}`, String.raw`{\"headers\":{\"Authorization\":` + R],
       // Sob chave comum, com aspas reais; a credencial curta não depende do nome.
       // A aspa de fecho fica e o `}` colado sai com a palavra (regra anterior).
       [String.raw`{"value":"Basic\nYTpi"}`, String.raw`{"value":"Basic\n${R}"`],
@@ -997,13 +999,90 @@ test("I5-C14o separador escrito como escape (\\n, \\r, \\t, \\u000a…) entre Be
   // Fronteira da política: resultado MCP com as duas formas do achado sai com
   // `sensitive_removed`; o cabeçalho que termina no esquema escapado é omitido.
   const record = policy("codex-exec", execEvent("item_completed_mcp_tool_call", { arguments: { q: "x" }, result: { content: [{ type: "text", text: String.raw`{\"Authorization\":\"Basic\nYTpi\"}` }, { type: "text", text: String.raw`{"out":"x\nBearer\u0020ab\nok"}` }, { type: "text", text: String.raw`Authorization: Basic\n` + "\nYTpi" }] } }));
-  same(field(record, "item.result.content[].text").value, [String.raw`{\"Authorization\":\"Basic\n` + R, String.raw`{"out":"x\nBearer\u0020` + R], "credenciais removidas e cabeçalho omitido");
+  same(field(record, "item.result.content[].text").value, [String.raw`{\"Authorization\":` + R, String.raw`{"out":"x\nBearer\u0020` + R], "credenciais removidas e cabeçalho omitido");
   same(record.privacy.filter((e) => !e.startsWith("envelope.")), ["item.result.content[].text:sensitive_removed", "item.result.content[].text:unsanitizable"], "privacy exata");
   const text = JSON.stringify(record);
   assert.ok(!text.includes("nYTpi") && !text.includes("u0020ab") && !text.includes("\\u0000"), "registro sem as credenciais no contexto nem marcador interno");
 });
 
-test("I5-C14i valor sensível em bloco multilinha, na linha seguinte, depois de tag/âncora ou de comentário omite o campo; indicador sem linha seguinte ou com texto na mesma linha segue a regra anterior", () => {
+test("I5-C14q nome sensível de cabeçalho, atribuição ou flag colado depois de separador escrito como escape, ou entre aspas escapadas, tem o valor removido sem decodificar; nomes comuns e outros escapes ficam", () => {
+  // Todos com `\` literal (texto já serializado); o mesmo separador escapado da regra 4.
+  const ESCAPED = [String.raw`\n`, String.raw`\r`, String.raw`\t`, String.raw`\r\n`, String.raw`\u000a`, String.raw`\u000A`, String.raw`\u000d`, String.raw`\u0009`, String.raw`\u0020`, String.raw`\\n`, String.raw`\\\n`, String.raw`\n\t`];
+  const HEADERS = ["Cookie", "cookie", "Set-Cookie", "Authorization", "Proxy-Authorization", "X-Api-Key"];
+  // `auth`, `pwd` e `passwd` são exatos: colados à letra do escape (`nauth`) não eram sensíveis.
+  const ASSIGNED = ["auth", "Auth", "pwd", "passwd", "secret", "api_key"];
+  const FLAGS = ["--password", "--token", "-secret"];
+  exactCases(
+    [
+      ...ESCAPED.flatMap((sep) => HEADERS.map((name) => [`x${sep}${name}: s=abc ok`, `x${sep}${name}: ${R}`])),
+      ...ESCAPED.flatMap((sep) => ASSIGNED.flatMap((name) => [[`x${sep}${name}=abc ok`, `x${sep}${name}=${R} ok`], [`x${sep}${name}: abc ok`, `x${sep}${name}: ${R} ok`]])),
+      ...ESCAPED.flatMap((sep) => FLAGS.map((name) => [`x${sep}${name} abc ok`, `x${sep}${name} ${R} ok`])),
+      // Casos relatados ao coordenador, sozinhos e dentro de JSON numa linha
+      // (cabeçalho sem aspa até o fim do texto quando a linha deixa aspa aberta).
+      [String.raw`x\nCookie: s=abc`, String.raw`x\nCookie: ${R}`],
+      [String.raw`x\nauth=abc`, String.raw`x\nauth=${R}`],
+      [String.raw`{"out":"x\nCookie: s=abc\nok"}`, String.raw`{"out":"x\nCookie: ${R}`],
+      [String.raw`{"out":"x\nauth=abc\nok"}`, String.raw`{"out":"x\nauth=${R}`],
+      // Separador escapado entre flag e valor.
+      [String.raw`--password\tabc ok`, String.raw`--password\t${R} ok`],
+      [String.raw`x\n--token\u0020abc ok`, String.raw`x\n--token\u0020${R} ok`],
+      // Nome entre aspas escapadas (forma F1 reserializada), inclusive segunda serialização.
+      [String.raw`{\"Cookie\":\"s=abc\"}`, String.raw`{\"Cookie\":${R}`],
+      [String.raw`{\"Set-Cookie\":\"s=abc\"}`, String.raw`{\"Set-Cookie\":${R}`],
+      [String.raw`{\"x-api-key\":\"abc\"}`, String.raw`{\"x-api-key\":${R}`],
+      [String.raw`{\"user\":\"u\",\"auth\":\"abc\"}`, String.raw`{\"user\":\"u\",\"auth\":${R}`],
+      [String.raw`{\"password\": \"abc\"} ok`, String.raw`{\"password\": ${R} ok`],
+      [String.raw`{\\\"auth\\\":\\\"abc\\\"}`, String.raw`{\\\"auth\\\":${R}`],
+      [String.raw`x\n{\"pwd\":\"abc\"}`, String.raw`x\n{\"pwd\":${R}`],
+      // Perdas declaradas: componente de caminho com a letra do escape; palavra
+      // depois de `\n` escapado numa flag sensível.
+      [String.raw`C:\new\nauth=1`, String.raw`C:\new\nauth=${R}`],
+      [String.raw`--password\nabc`, String.raw`--password\n${R}`],
+    ],
+    true,
+  );
+  // Recusas existentes continuam depois do nome: bloco com a linha seguinte
+  // real, composição aberta, cabeçalho que termina no esquema.
+  refusedCases([
+    String.raw`x\nauth: |` + "\n  abc",
+    String.raw`x\n--token $(cat f) ok`,
+    String.raw`{\"auth\":\"a$(b)\"}`,
+    String.raw`x\nAuthorization: Basic` + "\nYTpi",
+  ]);
+  // Controles: sem `\` antes, nome comum depois do escape, outros escapes e
+  // codificações, `\N` maiúsculo fora da regra 3 (limite declarado).
+  exactCases(
+    [
+      "xnCookie: s=abc",
+      "xnauth=abc",
+      String.raw`x\nauthor=abc`,
+      String.raw`x\nfoo=abc`,
+      String.raw`x\nCookiex: s`,
+      String.raw`x\n--verbose abc`,
+      String.raw`x\n-p abc`,
+      String.raw`{\"user\":\"abc\"}`,
+      String.raw`x\n=abc`,
+      "x-auth=abc",
+      String.raw`x\xCookie: s=abc`,
+      String.raw`x\x0aauth=abc`,
+      "x%0Aauth=abc",
+      String.raw`x\bauth=abc`,
+      String.raw`x\u000author=abc`,
+      String.raw`x\Nauth=abc ok`,
+    ].map((text) => [text, text]),
+    false,
+  );
+
+  // Fronteira da política: resultado MCP com os casos relatados e a forma entre
+  // aspas escapadas sai com `sensitive_removed`; o nome comum fica.
+  const record = policy("codex-exec", execEvent("item_completed_mcp_tool_call", { arguments: { q: "x" }, result: { content: [String.raw`x\nCookie: s=abc`, String.raw`{"out":"x\nauth=abc\nok"}`, String.raw`{\"Cookie\":\"s=abc\"}`, String.raw`x\nfoo=abc`].map((text) => ({ type: "text", text })) } }));
+  same(field(record, "item.result.content[].text").value, [String.raw`x\nCookie: ${R}`, String.raw`{"out":"x\nauth=${R}`, String.raw`{\"Cookie\":${R}`, String.raw`x\nfoo=abc`], "valores removidos e nome comum intacto");
+  same(record.privacy.filter((e) => !e.startsWith("envelope.")), ["item.result.content[].text:sensitive_removed"], "privacy exata");
+  const text = JSON.stringify(record);
+  assert.ok(!text.includes("s=abc") && !text.includes("auth=abc") && !text.includes("\\u0000"), "registro sem as credenciais no contexto nem marcador interno");
+});
+
+test("I5-C14ivalor sensível em bloco multilinha, na linha seguinte, depois de tag/âncora ou de comentário omite o campo; indicador sem linha seguinte ou com texto na mesma linha segue a regra anterior", () => {
   // Nome já reconhecido pelas regras 3 e 5 seguido de `|`/`>` no fim da linha.
   refusedCases([
     "secret: |\n  SKILLMECANARYa",
@@ -1187,6 +1266,14 @@ test("I5-C14h sanitização de 1 MiB numa linha com muitos valores termina em te
     // que não termina em escape de separador.
     [fill(String.raw`x\nBearer ab' `), true],
     ["Basic" + "\\".repeat(MiB - 20) + "x", true],
+    // Nome depois de separador escapado: nome comum relido depois do escape,
+    // nome entre aspas escapadas, flag com separador escapado e sequência
+    // longa de `\` antes de aspa e de nome.
+    [fill(String.raw`x\nfoo=a `), true],
+    [fill(String.raw`{\"auth\":\"a\"} `), true],
+    [fill(String.raw`x\n--token\ta `), true],
+    ["\\".repeat(MiB - 20) + '"auth":x', true],
+    ["\\".repeat(MiB - 20) + "nauth=x", true],
   ];
   cases.forEach(([input, ok], i) => {
     const started = performance.now();

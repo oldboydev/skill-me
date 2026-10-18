@@ -922,7 +922,9 @@ test("I5-C14p separador escrito como escape antes da credencial de Basic/Bearer 
   // `nYTpi` (escape, inclusive reserializado); a longa é a sonda das saídas.
   const marker = "SKILLMECANARYc14p";
   const mcpTexts = [String.raw`{\"Authorization\":\"Basic\nYTpi\"}`, String.raw`{"out":"x\nBearer ${marker}\nok"}`];
-  const mcpOut = [String.raw`{\"Authorization\":\"Basic\n${R}`, String.raw`{"out":"x\nBearer ${R}`];
+  // Nome entre `\"` reconhecido desde a linha "Nome sensível depois de
+  // separador escapado…" do Landing: o valor inteiro sai pela regra 5.
+  const mcpOut = [String.raw`{\"Authorization\":${R}`, String.raw`{"out":"x\nBearer ${R}`];
   const output = String.raw`resposta "bAsIc\\nYTpi" e BEARER\r\n${marker} fim`;
   const outputOut = String.raw`resposta "bAsIc\\n${R}" e BEARER\r\n${R} fim`;
   const command = "curl -s https://example.test/api";
@@ -969,7 +971,60 @@ test("I5-C14p separador escrito como escape antes da credencial de Basic/Bearer 
   check(clean, 3);
 });
 
-test("I5-C5c entrada type:text sem text string num resultado MCP pelo ingest/export real omite o conteúdo do evento com unsupported_content; text vazio fica vazio sem motivo", () => {
+test("I5-C14r nome sensível colado depois de separador escrito como escape ou entre aspas escapadas num resultado reserializado sai com sensitive_removed; bloco depois do nome sai com unsanitizable; nada chega a temporários, lock, arquivos, logs nem export", () => {
+  const R = "[removido]";
+  // `s=abc` e `auth=abc` são os casos curtos relatados, conferidos pelo
+  // contexto; a longa é a sonda procurada em todo arquivo, log e temporário.
+  const marker = "SKILLMECANARYc14r";
+  const mcpTexts = [String.raw`x\nCookie: s=abc`, String.raw`{\"user\":\"u\",\"auth\":\"${marker}\"}`, String.raw`x\nfoo=ok`];
+  const mcpOut = [String.raw`x\nCookie: ${R}`, String.raw`{\"user\":\"u\",\"auth\":${R}`, String.raw`x\nfoo=ok`];
+  const output = String.raw`resposta x\nauth=abc e x\t--token ${marker} fim`;
+  const outputOut = String.raw`resposta x\nauth=${R} e x\t--token ${R} fim`;
+  const command = "curl -s https://example.test/api";
+  const input = {
+    "codex-exec": [execEvent("item_completed_mcp_tool_call", { arguments: { q: "x" }, result: { content: mcpTexts.map((text) => ({ type: "text", text })) } })],
+    claude: [claudePayload("post_tool_bash", { tool_input: { command }, tool_response: { stdout: output, stderr: String.raw`x\nauth: |` + `\n  ${marker}bloco` } })],
+    "codex-hooks": [codexHookPayload("post_tool_bash", { tool_input: { command }, tool_response: { output } })],
+  };
+  const batches = { "codex-exec": { sensitive_removed: 1 }, claude: { sensitive_removed: 1, unsanitizable: 1 }, "codex-hooks": { sensitive_removed: 1 } };
+  // Sem diff: a mensagem de falha não pode carregar a credencial.
+  const clean = (text, label) => assert.ok(!text.includes("SKILLMECANARY") && !text.includes("s=abc") && !text.includes("auth=abc"), label);
+  const { root, run, check } = probedCapture("c14r", marker);
+
+  const id = run(["start", "--root", root, "--content"]).body.capture.id;
+  for (const [agent, entries] of Object.entries(input)) {
+    const result = run(["ingest", "--root", root, "--capture", id, "--agent", agent], { input: ndjson(entries) });
+    assert.equal(result.status, 0, agent);
+    assert.equal(result.body.batch.persisted, entries.length, agent);
+    assert.ok(isDeepStrictEqual(result.body.batch.contentOmitted, batches[agent]), `${agent}: contagem do lote`);
+  }
+  for (const file of walkFiles(root)) clean(readFileSync(file, "latin1"), `após ingest: ${path.relative(root, file)}`);
+
+  const exported = run(["export", "--root", root, "--capture", id]);
+  assert.equal(exported.status, 0);
+  const values = exported.body.records.flatMap((r) => (r.content?.fields ?? []).filter((f) => f.role === "result").map((f) => [f.field, f.value]));
+  assert.ok(
+    isDeepStrictEqual(values.sort(), [
+      ["item.result.content[].text", mcpOut],
+      ["tool_response.output", outputOut],
+      ["tool_response.stdout", outputOut],
+    ]),
+    "só os valores saíram dos três resultados e o bloco foi omitido",
+  );
+  const omissions = exported.body.records.map((r) => r.privacy.filter((e) => !e.startsWith("envelope."))).sort();
+  assert.ok(
+    isDeepStrictEqual(omissions, [["item.result.content[].text:sensitive_removed"], ["tool_response.output:sensitive_removed"], ["tool_response.stdout:sensitive_removed", "tool_response.stderr:unsanitizable"]]),
+    "motivo exato por registro",
+  );
+  const status = run(["status", "--root", root, "--capture", id]);
+  assert.ok(isDeepStrictEqual(status.body.capture.counters.contentOmitted, { sensitive_removed: 3, unsanitizable: 1 }), "contagem exata no status");
+  run(["stop", "--root", root, "--capture", id]);
+  assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
+  assert.deepEqual(readdirSync(path.join(root, "skill-me-privacy", "captures")), [], "captura apagada");
+  check(clean, 3);
+});
+
+test("I5-C5centrada type:text sem text string num resultado MCP pelo ingest/export real omite o conteúdo do evento com unsupported_content; text vazio fica vazio sem motivo", () => {
   const marker = "SKILLMECANARYc5c";
   const RESULT = "item.result.content[].text";
   const mcp = (content) => execEvent("item_completed_mcp_tool_call", { arguments: { q: marker }, result: { content } });
