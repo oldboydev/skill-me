@@ -116,6 +116,11 @@ calculado no teste com a chave lida do disco); valores exatos de contadores,
 códigos e `delivery`; nenhum ID nativo, `cwd`, `transcript_path` ou canário no
 disco; árvore da raiz idêntica (com mtimes) quando nada deve ser gravado.
 
+Cada comando `Proof:` de `.checks/issue-8-traces.md` (C1–C20), executado como
+escrito no Windows em `ed83bf1`, selecionou e rodou exatamente o teste nomeado:
+um teste por check, todos com exit 0, `pass 1`, `fail 0`; C4 seleciona dois
+(fluxo, pass; sinal POSIX, skip no Windows).
+
 ## Mutações
 
 Cada mutação foi aplicada ao produto já commitado, a prova correspondente rodou
