@@ -2113,3 +2113,131 @@ foram repetidos nele.
   valor nessas formas passa só pelo sanitizador de texto. Não é garantia universal.
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+# Tupla nome/valor e rótulo com espaço ou dois-pontos em `structured` (decisão do coordenador; 18/10/2026)
+
+Decisão expressa do coordenador sobre os limites registrados em `948e7f4`/`3252f3f`:
+o par em array `[["Cookie","session=…"]]` sob `headers` e o rótulo `"Cookie:"`/
+`" Cookie"` são variantes diretas do mesmo valor de cabeçalho de AC2 e da tentativa
+formal 5, e não encerram como limite documentado. Linha "Tupla nome/valor e rótulo
+com espaço ou dois-pontos em `structured`" do Landing em `1511601`, antes do código
+(supersede só aqueles dois limites da linha "Par nome/valor"); correção, testes,
+guia e Proof em `c20262d`.
+
+## Natureza do problema e correção
+
+- `project` só reconhecia o nome sensível como valor exato de `name`/`key`, e
+  arrays não tinham forma de par: o valor ficava só com o sanitizador de texto, que
+  não o reconhece (`Cookie` sem valor depois de `:`; `session=…` isolado).
+- Correção em `content.mjs`, sobre as decisões e membros de `948e7f4`:
+  `headerLabel` normaliza o rótulo num laço linear (espaços/tabs nas pontas e um
+  `:` final) e o resultado vai para `isSensitiveKey`, sem cópia da lista; vale
+  para o valor de `name`/`key` e para o primeiro elemento de uma tupla. Os
+  elementos de cada array são capturados uma vez (`[...value]`, a mesma iteração
+  que a projeção já usava); com exatamente dois e rótulo sensível no primeiro, o
+  segundo sai inteiro com `sensitive_removed`, conta como visitado e não é
+  descido; o rótulo segue o sanitizador de texto e sai como veio. Sem tipo,
+  motivo, parser, dependência ou leitura nova de getter/índice. `__proto__`,
+  profundidade 8, 128 membros, orçamento 8192 e exclusões anteriores não mudam.
+- Correção de título, não de comportamento: `948e7f4` havia removido o espaço do
+  título de I5-C17b (`I5-C17bparâmetro…`) ao inserir C16e, e o seletor
+  `"^I5-C17 |^I5-C17b "` do checklist passava a casar só C17. O título original
+  (`git show 9763768`) foi restaurado em `c20262d`; o seletor volta a executar 2
+  testes (`green-c17b.tap.log`: 2/2). A afirmação de `3252f3f` de que nenhum
+  título existente foi alterado estava errada; fica corrigida aqui.
+
+## O que cada prova nova afirma
+
+- **I5-C16g** (`policy.unit`): forma do achado pela política inteira →
+  `{"headers":[["Cookie"]]}` e `privacy` `["item.arguments:sensitive_removed"]`, sem
+  `session=` nem marcador; 20 rótulos (11 nomes sensíveis e 9 variantes de
+  espaço/tab/`:` final, cada um com pré-condição de texto intacto no sanitizador)
+  em tupla, em `name`/`value` e em `Key`/`Value` com vizinho; tupla na raiz,
+  aninhada, array em array, vizinha de tuplas comuns e sob `__proto__` vindo de
+  `JSON.parse` (protótipo comum); oito tipos do segundo elemento (`""`, `null`,
+  número, booleano, objeto, array, subárvore de profundidade 10 e array de 138
+  itens, não descidos) — projeção e `privacy` exatas. 22 controles intactos com
+  `privacy` vazia (tupla comum, rótulo vazio e `" :"`, um e três elementos,
+  primeiro elemento array/número/null/objeto, rótulo no segundo, arrays aninhados
+  comuns, e `"Cookie\n"`, `"Cookie="`, `"\"Cookie\""`, `"Cookie;"`, NBSP,
+  `"Cookie\r"` em tupla e em `name`); `"Cookie::"` mantém o valor e o rótulo sai
+  pelo sanitizador como antes (`Cookie:[removido]`). Índices com getter: o rótulo
+  responderia `Cookie` e depois `Accept`; valor descartado e uma leitura de cada
+  índice. 125 + membro + tupla de 2 = 128 cabe; 129 →
+  `{content:null, privacy:["content:unsanitizable"]}`.
+- **I5-C16h** (`outputs.cli`): quatro eventos `mcp_tool_call` pelo ingest real
+  `--agent codex-exec` com sonda longa `SKILLMECANARYc16h…` (≥ 148 caracteres):
+  tupla sob `headers`, `name` `"Cookie:"` e `" Set-Cookie"`, tupla aninhada
+  `" X-Api-Key :\t"` com subárvore, e controle de tupla comum/um/três elementos/
+  rótulo no segundo. `persisted` 4; `contentOmitted` do lote e do `status`
+  exatamente `{sensitive_removed:3}`; export com conteúdo exato por registro e
+  motivo exato (`[]` só no controle); nenhum arquivo do store, stdout, log do
+  fs-probe, log da sonda de privacidade, temporário antes do rename ou arquivo
+  escrito contém `SKILLMECANARY` nem `session=`; delete aplicado.
+- Nenhum caso, asserção ou seletor existente removido ou relaxado; nenhum
+  expected anterior mudou (nenhum controle antigo tinha as formas novas). Único
+  título alterado: a restauração de I5-C17b acima. Contagem do alvo de
+  privacidade: 113 → 115; `test:integrations` 201 → 203. Seletores: 96 linhas
+  `Proof`, 94 com `--test-name-pattern`; cada alternativa casa ao menos um título
+  do arquivo citado (conferência com `skill-me-i5-f8-tools/selectors.mjs`: 0 sem
+  match; os dois `Proof` sem padrão são `git diff` e `npm test`).
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-f8-win-IaNHsx\`. Sem `git stash`, reset, pop ou
+troca do produto: o RED rodou com `src/` intacto (`git diff --exit-code HEAD -- src`,
+cabeça `1511601`, registrado em `red.head`), depois de escrever os testes e antes
+da edição do produto.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red-policy.tap.log` | `src/` intacto, `"^I5-C16g "` | 1 teste, 0 pass, 1 fail: `achado: só o valor sai` |
+| `red-outputs.tap.log` | `src/` intacto, `"^I5-C16h "` | 1 teste, 0 pass, 1 fail: `contagem exata do lote` |
+| `green-policy.tap.log`, `green-outputs.tap.log` | correção, antes do commit, mesmos seletores | 1/1, 1/1, exit 0 |
+| `green-policy-file.tap.log` | correção, arquivo `policy.unit` inteiro | 37/37, exit 0 |
+| `green-c17b.tap.log` | correção, seletor de C17/C17b | 2/2, exit 0 |
+
+## Execuções no commit `c20262d`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, HEAD e árvore limpa conferidos antes e depois (`gate-c20262d/gate.meta`, 19:31:51Z–19:37:37Z) | `node --test tests/integrations/privacy/*.test.mjs` / `npm test` | 115/115, 0 skip (C16g, C16h, C17b, C34/C35 incluídos); exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 203 (197, 6 skip); total 642, 629 pass, 13 skip, 0 fail |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-f8final-wpd5mL`, tar sha256 `268b8217…823dae52` e `get-tar-commit-id` = `c20262d2…` conferidos no script; stage `skill-me-i5-f8final-wsl-stage-1NvEsS` | idem | 115/115, 0 skip; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 203 (191, 12 skip); total 642, 629 pass, 13 skip, 0 fail |
+
+Skips iguais aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m). C16g,
+C16h, C17b, C34 e C35 aparecem como `ok` nos dois logs de privacidade. Nenhum log
+contém `SKILLMECANARY`.
+
+Preparação: `gate-win.sh` em `%TEMP%\skill-me-i5-f8-tools\` copiado de
+`skill-me-i5-f7-tools` trocando só o comentário da linha 2; `run-wsl.sh` copiado
+do stage anterior trocando o comentário da linha 2 e os prefixos (`f7final` →
+`f8final`; `diff` conferido: linhas 2, 23, 29 e 31), com a guarda `uid` = 1000
+antes de qualquer mutação, chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`.
+Nenhum comando inline no WSL, nada em `/repo` ou `/src.tar`; preparação antiga do
+Verifier6, seu probe, stages e logs anteriores, sessões ou configurações pessoais
+não tocados; nenhum modelo, rede de produto, instalação, subagente, push ou
+`review:run`; só processos próprios. Nenhum arquivo do repositório editado
+durante os gates; o WSL começou depois do fim do gate Windows. Nenhuma rejeição
+de política nem falha de capacidade.
+
+**Diferença de SHA**: os gates acima rodaram em `c20262d`. O commit desta
+evidência só acrescenta esta seção (`.checks/`); código, testes, guia e checklist
+são idênticos aos do gate. Nele rodaram só I5-C34 e I5-C35, numa invocação com
+seletor sobre `docs-privacy.test.mjs` (Windows); `npm test` e o alvo completo não
+foram repetidos nele.
+
+## Riscos e perdas comunicados
+
+- Perdas declaradas (falso positivo, falha fechada): lista de dois itens cujo
+  primeiro é um nome sensível perde o segundo (`["Cookie","Accept"]` →
+  `["Cookie"]`, `["token","refresh"]` → `["token"]`), como a chave sensível; as
+  perdas da linha "Par nome/valor" continuam.
+- Limites declarados: outros espaços ou quebras no rótulo (LF, CR, NBSP), mais
+  de um `:`, aspas, `=` ou outro texto; tupla de outro tamanho; nome em membro
+  dentro da tupla; outros nomes de membros (`header`, `val`) e codificações; o
+  valor nessas formas passa só pelo sanitizador de texto. Não é garantia universal.
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
