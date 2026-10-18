@@ -288,13 +288,27 @@ test("T8-C16 delivery failure neutrality: no uso normal, sem o relatório de fix
   lines = diagnostics(reportFile);
   assertDiagnostic(lines[10], { agent: "claude", capture: null, delivery: lostAll("binding_invalid", 1, false) }, "par inválido");
 
-  // 4. Sem vínculo a variável sozinha não escreve; caminho relativo é ignorado.
+  // 4. Sem vínculo a variável sozinha não escreve; caminho relativo é ignorado;
+  // um arquivo impossível de gravar perde o diagnóstico sem o agente perceber.
   neutral(await runHook("claude", claudePayload("pre_tool_bash"), { env: baseEnv({ [CAPTURE_REPORT_ENV]: reportFile }), fixtureReport: false }), "sem vínculo");
   const cwdBefore = readdirSync(project).sort();
   writeFileSync(lock, "lock alheio\n");
   neutral(await runHook("claude", claudePayload("pre_tool_bash"), { env: boundEnv(root, id, { [CAPTURE_REPORT_ENV]: "diagnóstico relativo.ndjson" }), cwd: project, fixtureReport: false }), "relativo");
-  rmSync(lock);
   assert.deepEqual(readdirSync(project).sort(), cwdBefore, "nada criado no diretório do projeto");
+  const unwritable = path.join(base, "não existe", "entregas.ndjson");
+  neutral(await runHook("claude", claudePayload("pre_tool_bash"), { env: boundEnv(root, id, { [CAPTURE_REPORT_ENV]: unwritable }), fixtureReport: false }), "impossível");
+  const stderrCopyLost = path.join(base, "stderr do filho, diagnóstico perdido.bin");
+  const wrappedLost = await runWrapper({
+    args: ["p"],
+    env: boundEnv(root, id, { [CAPTURE_REPORT_ENV]: unwritable, FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_EXIT: "9", FAKE_CODEX_STDERR_COPY: stderrCopyLost }),
+    cwd: base,
+    reportFd: null,
+  });
+  assert.equal(wrappedLost.status, 9, "impossível: código do filho");
+  assert.deepEqual(wrappedLost.stdout, Buffer.from(execLine + "\n"));
+  assert.deepEqual(wrappedLost.stderrBytes, readFileSync(stderrCopyLost));
+  assert.equal(existsSync(path.dirname(unwritable)), false);
+  rmSync(lock);
 
   // 5. Captura encerrada: a perda também aparece.
   privacyOk(["stop", "--root", root, "--capture", id]);
