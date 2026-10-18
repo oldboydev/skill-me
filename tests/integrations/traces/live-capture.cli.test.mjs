@@ -191,62 +191,82 @@ test("T8-C3 Hermes live capture: ingest vinculado grava cada evento suportado um
 const EXEC_CASES = loadFixture("codex-exec.json").cases.filter((c) => c.valid && c.event);
 const HOOK_STEP = (payload) => ({ hook: { command: process.execPath, args: [INTEGRATIONS_CLI, "hook", "--agent", "codex"], stdin: JSON.stringify(payload) } });
 
-test("T8-C4 supervised Codex live capture: wrapper vinculado grava o exec --json uma vez, preserva bytes e código, e o hook do filho não duplica o fluxo", async () => {
-  const dir = scratch("t8 c4 raiz");
-  const id = startCapture(dir);
+// O stderr inteiro do wrapper é o que o filho escreveu (cópia gravada pelo
+// próprio Codex falso): uma linha a mais do debugger em qualquer posição falha.
+function assertNativeStderr(run, stderrCopy, label) {
+  const native = readFileSync(stderrCopy);
+  assert.ok(native.includes("FAKE_CODEX_PROBE "), `${label}: a cópia registrou o stderr do filho`);
+  assert.deepEqual(run.stderrBytes, native, `${label}: stderr do wrapper = stderr do filho, byte a byte`);
+}
+
+test("T8-C4 supervised Codex live capture: wrapper vinculado grava o exec --json uma vez, preserva stdout, stderr e código, e o hook do filho não duplica o fluxo", async () => {
   const lines = EXEC_CASES.map((c) => JSON.stringify(c.event));
   const half = Math.floor(lines.length / 2);
-  const hookPayload = codexHookPayload("pre_tool_bash");
-  const steps = [
-    ...lines.slice(0, half).map((stdout) => ({ stdout })),
-    { stderr: "stderr nativo do Codex ação" },
-    HOOK_STEP(hookPayload),
-    ...lines.slice(half).map((stdout) => ({ stdout })),
-  ];
-  const scenario = writeScenario(dir, "c4", steps);
   const expectedStdout = Buffer.from(lines.map((line) => line + "\n").join(""));
-  const env = boundEnv(dir, id, { FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_EXIT: "17" });
-  const run = await runWrapper({ args: ["prompt ação"], env, cwd: dir });
-  assert.equal(run.status, 17, run.stderr);
-  assert.deepEqual(run.stdout, expectedStdout, "stdout nativo byte a byte");
-  const probe = probeOf(run.stderr);
-  assert.equal(probe.env.SKILL_ME_CAPTURE_ROOT, dir, "o filho herda o vínculo");
-  assert.equal(probe.env.SKILL_ME_CAPTURE_ID, id);
-  assert.ok(run.stderr.endsWith("stderr nativo do Codex ação\n"), "stderr do filho intacto");
-
-  const execEvents = run.report.events;
   const excluded = EXEC_CASES.filter((c) => c.event.item?.type === "reasoning").length;
-  assert.equal(execEvents.length, EXEC_CASES.length - excluded + 1, "eventos suportados + process.exit");
-  // Toda linha é uma entrada confirmada; o raciocínio só conta como descarte.
-  assert.deepEqual(run.report.delivery, { bound: true, code: null, entries: EXEC_CASES.length + 1, committed: EXEC_CASES.length + 1, persisted: execEvents.length, lost: 0 });
+  for (const withHook of [true, false]) {
+    const label = withHook ? "com hook do filho" : "sem hook";
+    const dir = scratch(`t8 c4 ${withHook ? "hook" : "sem hook"}`);
+    const id = startCapture(dir);
+    const hookPayload = codexHookPayload("pre_tool_bash");
+    const steps = [
+      { stderr: "stderr nativo do Codex antes ação" },
+      ...lines.slice(0, half).map((stdout) => ({ stdout })),
+      { stderr: "stderr nativo do Codex ação" },
+      ...(withHook ? [HOOK_STEP(hookPayload)] : []),
+      ...lines.slice(half).map((stdout) => ({ stdout })),
+      { stderr: "stderr nativo do Codex depois" },
+    ];
+    const scenario = writeScenario(dir, "c4", steps);
+    const stderrCopy = path.join(dir, "stderr do filho.bin");
+    const env = boundEnv(dir, id, { FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_EXIT: "17", FAKE_CODEX_STDERR_COPY: stderrCopy });
+    const run = await runWrapper({ args: ["prompt ação"], env, cwd: dir });
+    assert.equal(run.status, 17, `${label}: ${run.stderr}`);
+    assert.equal(run.signal, null, label);
+    assert.deepEqual(run.stdout, expectedStdout, `${label}: stdout nativo byte a byte`);
+    assertNativeStderr(run, stderrCopy, label);
+    const probe = probeOf(run.stderr);
+    assert.equal(probe.env.SKILL_ME_CAPTURE_ROOT, dir, `${label}: o filho herda o vínculo`);
+    assert.equal(probe.env.SKILL_ME_CAPTURE_ID, id, label);
 
-  const stored = exportOf(dir, id).records;
-  const fromExec = stored.filter((r) => r.envelope.source.contract === EXEC_SOURCE.contract);
-  const fromHooks = stored.filter((r) => r.envelope.source.contract === CODEX_HOOK_SOURCE.contract);
-  assert.equal(stored.length, fromExec.length + fromHooks.length);
-  assert.equal(fromExec.length, execEvents.length, "cada evento do exec uma vez");
-  for (const [index, record] of fromExec.entries()) {
-    assert.deepEqual(record.envelope.source, EXEC_SOURCE);
-    assert.equal(record.envelope.signal, "supervised_exec");
-    sameEnvelope(record.envelope, execEvents[index], execEvents[index].nativeEvent);
+    const execEvents = run.report.events;
+    assert.equal(execEvents.length, EXEC_CASES.length - excluded + 1, `${label}: eventos suportados + process.exit`);
+    // Toda linha é uma entrada confirmada; o raciocínio só conta como descarte.
+    assert.deepEqual(run.report.delivery, { bound: true, code: null, entries: EXEC_CASES.length + 1, committed: EXEC_CASES.length + 1, persisted: execEvents.length, lost: 0 }, label);
+
+    const stored = exportOf(dir, id).records;
+    const fromExec = stored.filter((r) => r.envelope.source.contract === EXEC_SOURCE.contract);
+    const fromHooks = stored.filter((r) => r.envelope.source.contract === CODEX_HOOK_SOURCE.contract);
+    assert.equal(stored.length, fromExec.length + fromHooks.length, label);
+    assert.equal(fromExec.length, execEvents.length, `${label}: cada evento do exec uma vez`);
+    for (const [index, record] of fromExec.entries()) {
+      assert.deepEqual(record.envelope.source, EXEC_SOURCE, label);
+      assert.equal(record.envelope.signal, "supervised_exec", label);
+      sameEnvelope(record.envelope, execEvents[index], `${label}: ${execEvents[index].nativeEvent}`);
+    }
+    if (withHook) {
+      assert.equal(fromHooks.length, 1, "o hook do filho grava só o próprio evento");
+      assert.equal(fromHooks[0].envelope.nativeEvent, "PreToolUse");
+      assert.equal(fromHooks[0].envelope.ids.sessionId, expectedPseudonym(dir, id, hookPayload.session_id));
+    } else assert.deepEqual(fromHooks, [], "sem hook, só o fluxo do exec");
+    const threadRecord = fromExec.find((r) => r.envelope.nativeEvent === "thread.started");
+    assert.equal(threadRecord.envelope.ids.threadId, expectedPseudonym(dir, id, EXEC_CASES.find((c) => c.name === "thread_started").event.thread_id), label);
+    const status = statusOf(dir, id);
+    assert.equal(status.counters.persisted, stored.length, label);
+    assert.deepEqual(status.counters.dropped, { reasoning_excluded: excluded }, label);
   }
-  assert.equal(fromHooks.length, 1, "o hook do filho grava só o próprio evento");
-  assert.equal(fromHooks[0].envelope.nativeEvent, "PreToolUse");
-  assert.equal(fromHooks[0].envelope.ids.sessionId, expectedPseudonym(dir, id, hookPayload.session_id));
-  const threadRecord = fromExec.find((r) => r.envelope.nativeEvent === "thread.started");
-  assert.equal(threadRecord.envelope.ids.threadId, expectedPseudonym(dir, id, EXEC_CASES.find((c) => c.name === "thread_started").event.thread_id));
-  const status = statusOf(dir, id);
-  assert.equal(status.counters.persisted, stored.length);
-  assert.deepEqual(status.counters.dropped, { reasoning_excluded: excluded });
 });
 
 test("T8-C4 supervised Codex live capture: sinal POSIX do filho é espelhado com a captura vinculada", { skip: process.platform === "win32" ? "posix-signals: no Windows, sinal programático vira TerminateProcess sem handler (limite do guia da #4)" : false }, async () => {
   const dir = scratch("t8 c4 sinal");
   const id = startCapture(dir);
-  const scenario = writeScenario(dir, "c4s", [{ stdout: JSON.stringify(execEvent("thread_started")) }]);
-  const run = await runWrapper({ args: ["p"], env: boundEnv(dir, id, { FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_SELF_SIGNAL: "SIGTERM" }), cwd: dir });
+  const scenario = writeScenario(dir, "c4s", [{ stdout: JSON.stringify(execEvent("thread_started")) }, { stderr: "stderr antes do sinal" }]);
+  const stderrCopy = path.join(dir, "stderr do filho.bin");
+  const run = await runWrapper({ args: ["p"], env: boundEnv(dir, id, { FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_SELF_SIGNAL: "SIGTERM", FAKE_CODEX_STDERR_COPY: stderrCopy }), cwd: dir });
   assert.equal(run.signal, "SIGTERM");
   assert.equal(run.status, null);
+  assert.deepEqual(run.stdout, Buffer.from(JSON.stringify(execEvent("thread_started")) + "\n"));
+  assertNativeStderr(run, stderrCopy, "sinal");
   const stored = exportOf(dir, id).records.map((r) => [r.envelope.nativeEvent, r.envelope.fields]);
   assert.deepEqual(stored, [["thread.started", {}], ["process.exit", { processSignal: "SIGTERM" }]]);
 });

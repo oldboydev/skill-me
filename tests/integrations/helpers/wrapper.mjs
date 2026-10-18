@@ -26,7 +26,8 @@ export function probeOf(stderr) {
 // Inicia `integrations run` como processo real. `reportFd: 3` abre o pipe do
 // exportador de fixture; `closeReportFd` mantém a variável mas deixa o fd
 // inexistente (destino que falha). `onLine` recebe cada linha do stdout assim
-// que chega, para provar repasse incremental.
+// que chega, para provar repasse incremental. `stderrBytes` é o stderr sem
+// decodificação, para comparação byte a byte com o do filho.
 export function runWrapper({ args, entry = FAKE_CODEX, env, cwd, stdinText, reportFd = 3, closeReportFd = false, onLine, extraArgs = [] }) {
   return new Promise((resolve) => {
     const childEnv = { ...env };
@@ -38,6 +39,7 @@ export function runWrapper({ args, entry = FAKE_CODEX, env, cwd, stdinText, repo
       stdio: [stdinText === undefined ? "ignore" : "pipe", "pipe", "pipe", closeReportFd ? "ignore" : "pipe"],
     });
     const stdoutChunks = [];
+    const stderrChunks = [];
     let stderr = "";
     let fd3 = "";
     let partial = "";
@@ -53,7 +55,10 @@ export function runWrapper({ args, entry = FAKE_CODEX, env, cwd, stdinText, repo
         }
       }
     });
-    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.stderr.on("data", (chunk) => {
+      stderrChunks.push(chunk);
+      stderr += chunk;
+    });
     if (!closeReportFd) child.stdio[3].on("data", (chunk) => (fd3 += chunk));
     if (stdinText !== undefined) {
       child.stdin.on("error", () => {});
@@ -61,7 +66,7 @@ export function runWrapper({ args, entry = FAKE_CODEX, env, cwd, stdinText, repo
     }
     child.on("close", (status, signal) => {
       const stdout = Buffer.concat(stdoutChunks);
-      resolve({ status, signal, stdout, stderr, report: parseReport(fd3), child });
+      resolve({ status, signal, stdout, stderr, stderrBytes: Buffer.concat(stderrChunks), report: parseReport(fd3), child });
     });
   });
 }
