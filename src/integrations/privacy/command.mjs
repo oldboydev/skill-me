@@ -1,6 +1,7 @@
 import { isPrivacyCommand, parsePrivacyArgs, PRIVACY_HELP_TEXT, PrivacyUsageError } from "./args.mjs";
 import { createStoreIo } from "./fs.mjs";
-import { changeCaptureState, deleteCapture, pruneCaptures, readCaptureStatus, startCapture, StoreError } from "./store.mjs";
+import { ingestCapture } from "./ingest.mjs";
+import { changeCaptureState, deleteCapture, exportCapture, pruneCaptures, readCaptureStatus, startCapture, StoreError } from "./store.mjs";
 
 // Vocabulário fechado de falhas → código de saída (crit. 16). Nenhuma
 // resposta carrega caminho, valor de flag, mensagem de exceção ou stack.
@@ -27,11 +28,15 @@ const failure = (command, code, exitCode, fields = {}) => ({
   body: { schemaVersion: 1, command, status: "error", ...fields, error: { code } },
 });
 
-async function execute(command, args, { nowMs, io }) {
+async function execute(command, args, { nowMs, io, stdin }) {
   const { root, capture: id } = args;
   switch (command) {
     case "start":
       return ok(command, { capture: await startCapture({ root, content: args.content, retentionDays: args.retentionDays, nowMs, io }) });
+    case "ingest":
+      return ok(command, { capture: id, batch: await ingestCapture({ root, id, agent: args.agent, stdin, io }) });
+    case "export":
+      return ok(command, await exportCapture({ root, id, io }));
     case "stop":
     case "disable":
       return ok(command, await changeCaptureState({ root, id, action: command, nowMs, io }));
@@ -52,15 +57,15 @@ async function execute(command, args, { nowMs, io }) {
 }
 
 // Relógio só injetável em processo (provas de retenção); o CLI nunca o lê de
-// flag ou variável de ambiente.
-export async function runPrivacyCommand({ argv, now = Date.now, io = createStoreIo() }) {
+// flag ou variável de ambiente. Só `ingest` lê `stdin`.
+export async function runPrivacyCommand({ argv, now = Date.now, io = createStoreIo(), stdin }) {
   const [command, ...tokens] = argv;
   if (command === "--help" || command === "help" || (isPrivacyCommand(command) && tokens.includes("--help"))) {
     return { exitCode: 0, help: PRIVACY_HELP_TEXT };
   }
   if (!isPrivacyCommand(command)) return failure(null, "unknown_command", 2);
   try {
-    return await execute(command, parsePrivacyArgs(command, tokens), { nowMs: now(), io });
+    return await execute(command, parsePrivacyArgs(command, tokens), { nowMs: now(), io, stdin });
   } catch (error) {
     if (error instanceof PrivacyUsageError) return failure(command, error.code, 2);
     const code = error instanceof StoreError && Object.hasOwn(EXIT_BY_CODE, error.code) ? error.code : "io_failure";

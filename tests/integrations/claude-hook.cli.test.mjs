@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { baseEnv, makeScratch, runIntegrationsJson } from "./helpers/cli.mjs";
+import { assertPseudonymIds, baseEnv, makeScratch, runIntegrationsJson } from "./helpers/cli.mjs";
 import { fixtureCase } from "./helpers/fixtures.mjs";
 import { readClaudeHandlers, runClaudeHandler } from "./helpers/installed-hooks.mjs";
 
@@ -54,33 +54,35 @@ test("I4-C1 claude: eventos de ferramenta atravessam o hook instalado preservand
   assert.equal(pre.eventKind, "tool_pre");
   assert.equal(pre.nativeEvent, "PreToolUse");
   assert.equal(pre.signal, "native_hook");
-  assert.deepEqual(pre.ids, {
+  // #5: IDs chegam como pseudônimos da chave do processo do hook (um evento por
+  // processo), com os mesmos nomes e sem o valor nativo.
+  assertPseudonymIds(pre.ids, {
     sessionId: "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01",
     promptId: "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-01",
     toolUseId: "toolu_01ClaudeFixtureBash",
-  });
+  }, "pre");
   assert.deepEqual(pre.fields, { toolName: "Bash" });
 
   const post = single(await observe("PostToolUse", "post_tool_bash"), "post");
   assert.equal(post.eventKind, "tool_post");
-  assert.equal(post.ids.toolUseId, "toolu_01ClaudeFixtureBash");
+  assertPseudonymIds(post.ids, { sessionId: "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01", promptId: "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-01", toolUseId: "toolu_01ClaudeFixtureBash" }, "post");
   assert.deepEqual(post.fields, { toolName: "Bash", outcome: "success", durationMs: 42 });
 
   const failure = single(await observe("PostToolUseFailure", "post_tool_failure_bash"), "failure");
   assert.equal(failure.eventKind, "tool_post");
   assert.equal(failure.nativeEvent, "PostToolUseFailure");
-  assert.equal(failure.ids.toolUseId, "toolu_01ClaudeFixtureFail");
+  assertPseudonymIds(failure.ids, { sessionId: "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01", promptId: "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-01", toolUseId: "toolu_01ClaudeFixtureFail" }, "failure");
   assert.deepEqual(failure.fields, { toolName: "Bash", outcome: "failure", interrupted: false, durationMs: 7 });
 
   const inSubagent = single(await observe("PreToolUse", "subagent_pre_tool"), "subagent tool");
-  assert.equal(inSubagent.ids.agentId, "agent-claude-fixture-01");
+  assertPseudonymIds(inSubagent.ids, { sessionId: "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01", promptId: "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-01", agentId: "agent-claude-fixture-01", toolUseId: "toolu_01ClaudeFixtureSubagent" }, "subagent tool");
 });
 
 test("I4-C2 claude: início/fim de sessão e subagentes pelo hook instalado", async () => {
   const start = single(await observe("SessionStart", "session_start"), "start");
   assert.equal(start.eventKind, "session_start");
   assert.deepEqual(start.fields, { source: "startup" });
-  assert.equal(start.ids.sessionId, "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01");
+  assertPseudonymIds(start.ids, { sessionId: "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01" }, "start");
 
   const end = single(await observe("SessionEnd", "session_end"), "end");
   assert.equal(end.eventKind, "session_end");
@@ -88,12 +90,12 @@ test("I4-C2 claude: início/fim de sessão e subagentes pelo hook instalado", as
 
   const subStart = single(await observe("SubagentStart", "subagent_start"), "subagent start");
   assert.equal(subStart.eventKind, "subagent_start");
-  assert.equal(subStart.ids.agentId, "agent-claude-fixture-01");
+  assertPseudonymIds(subStart.ids, { sessionId: "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01", agentId: "agent-claude-fixture-01" }, "subagent start");
   assert.deepEqual(subStart.fields, { agentType: "Explore" });
 
   const subStop = single(await observe("SubagentStop", "subagent_stop"), "subagent stop");
   assert.equal(subStop.eventKind, "subagent_stop");
-  assert.equal(subStop.ids.agentId, "agent-claude-fixture-01");
+  assertPseudonymIds(subStop.ids, { sessionId: "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01", agentId: "agent-claude-fixture-01" }, "subagent stop");
   assert.deepEqual(subStop.fields, { agentType: "Explore" });
   assert.ok(!JSON.stringify(subStop).includes("SKILLME-CANARY"));
 });
@@ -121,7 +123,7 @@ test("I4-C4 claude: invocação pelo agente via ferramenta Skill", async () => {
   assert.equal(skill.eventKind, "skill_invocation");
   assert.equal(skill.nativeEvent, "PreToolUse");
   assert.deepEqual(skill.fields, { invocationPath: "skill_tool", phase: "pre", skillName: "third-party-skill" });
-  assert.equal(skill.ids.toolUseId, "toolu_01ClaudeFixtureSkill");
+  assertPseudonymIds(skill.ids, { sessionId: "5f1e9c2a-0b7d-4e55-9a31-claude-sess-01", promptId: "7c0d2b44-1a9e-4f0b-8d2e-claude-prompt-02", toolUseId: "toolu_01ClaudeFixtureSkill" }, "skill");
   assert.ok(!JSON.stringify(report).includes("SKILLME-CANARY-args"));
 });
 

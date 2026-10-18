@@ -1,10 +1,12 @@
 import net from "node:net";
-import { buildEnvelope } from "./boundary.mjs";
 import { createMemoryReceiver } from "./memory-receiver.mjs";
+import { applyPolicy, createEphemeralKey } from "./privacy/policy.mjs";
 
 // Sessão de observação de um processo (hook, ingest ou wrapper): rascunho →
-// fronteira → receptor em memória. Nada sai do processo, exceto pelo
-// exportador de fixture abaixo, que só existe quando os testes definem
+// política de privacidade da #5 (fronteira, pseudônimos, nomes) → receptor em
+// memória. Sem captura não há opt-in: conteúdo sempre desligado e chave
+// efêmera do processo. Nada sai do processo, exceto pelo exportador de
+// fixture abaixo, que só existe quando os testes definem
 // SKILL_ME_OBSERVER_REPORT_FD — a instalação nunca define essa variável.
 
 const COUNTER_NAMES = [
@@ -57,27 +59,34 @@ function writeWithDeadline(fd, buffer, deadlineMs) {
   });
 }
 
+const PRIVACY_CODES = ["content_disabled", "unsupported_content", "unsanitizable", "sensitive_removed", "content_truncated", "privacy_failure"];
+
 export function createObservation({ env = process.env, allowStderrReport = true, capacity } = {}) {
   const receiver = createMemoryReceiver(capacity === undefined ? {} : { capacity });
   const counters = Object.fromEntries(COUNTER_NAMES.map((name) => [name, 0]));
+  const privacy = Object.fromEntries(PRIVACY_CODES.map((code) => [code, 0]));
+  const key = createEphemeralKey();
+  // v2: IDs pseudonimizados pela chave do processo e contagem dos códigos da
+  // política; um consumidor de v1 compararia IDs nativos sem saber da troca.
   const report = () => {
     const snap = receiver.snapshot();
-    return { skillMeObserverReport: 1, events: snap.events, counters: { ...snap.counters, ...counters } };
+    return { skillMeObserverReport: 2, events: snap.events, counters: { ...snap.counters, ...counters, privacy: { ...privacy } } };
   };
 
   return {
     count(name) {
       counters[name] += 1;
     },
-    // Envelope recusado pela fronteira conta como descarte; nunca lança.
-    submit(adapted) {
+    // Evento recusado pela política conta como descarte; nunca lança.
+    submit(adapted, payload) {
       try {
         if (adapted.kind === "unknown") return counters.unknownEvent++;
         if (adapted.kind === "excluded") return counters.reasoningExcluded++;
         if (adapted.kind !== "draft") return counters.invalidInput++;
-        const built = buildEnvelope(adapted.draft);
-        if (!built.ok) return built.reason === "oversize" ? counters.oversize++ : counters.invalidInput++;
-        receiver.receive(built.envelope);
+        const result = applyPolicy({ draft: adapted.draft, payload, key, content: false });
+        if (!result.ok) return result.drop === "envelope_oversize" ? counters.oversize++ : counters.invalidInput++;
+        for (const entry of result.record.privacy) privacy[entry.slice(entry.lastIndexOf(":") + 1)] += 1;
+        receiver.receive(result.record.envelope);
       } catch {
         counters.invalidInput += 1;
       }

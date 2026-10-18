@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -70,9 +71,25 @@ export function runIntegrationsAsync(args, { env = baseEnv(), cwd } = {}) {
 }
 
 // Linha do exportador de fixture (`SKILL_ME_OBSERVER_REPORT_FD`): única
-// linha JSON com `skillMeObserverReport: 1` no canal indicado.
+// linha JSON com `skillMeObserverReport: 2` no canal indicado. A v2 (issue #5)
+// traz IDs pseudonimizados pela chave do processo e `counters.privacy`; um
+// relatório v1 não é mais aceito.
+export const PSEUDONYM = /^h1:[A-Za-z0-9_-]{43}$/;
+
+// Desde a #5 o relatório traz, no lugar de cada ID nativo, um pseudônimo da
+// chave do processo: mesmos nomes de ID, nenhum valor nativo.
+export function assertPseudonymIds(ids, nativeIds, label) {
+  assert.deepEqual(Object.keys(ids).sort(), Object.keys(nativeIds).sort(), label);
+  for (const [name, value] of Object.entries(ids)) {
+    assert.match(value, PSEUDONYM, `${label}: ${name}`);
+    assert.ok(!Object.values(nativeIds).includes(value), `${label}: ${name} nativo`);
+  }
+  const text = JSON.stringify(ids);
+  for (const native of Object.values(nativeIds)) assert.ok(!text.includes(native), `${label}: ${native}`);
+}
+
 export function parseReport(channelText) {
-  const lines = channelText.split(/\r?\n/).filter((line) => line.startsWith('{"skillMeObserverReport":1'));
+  const lines = channelText.split(/\r?\n/).filter((line) => line.startsWith('{"skillMeObserverReport":2'));
   if (lines.length !== 1) return null;
   return JSON.parse(lines[0]);
 }

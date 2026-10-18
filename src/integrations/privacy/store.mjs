@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { validateEnvelope } from "../boundary.mjs";
 import { createStoreIo } from "./fs.mjs";
 import { admitLines, CAPTURE_ID_PATTERN, isExpired, MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, PRIVACY_LIMITS, transition } from "./lifecycle.mjs";
 
@@ -320,6 +321,65 @@ export function readCaptureStatus({ root, id, io = createStoreIo() }) {
     const ctx = await openExisting(root, io);
     return withLock(ctx, async () => publicCapture((await readCapture(ctx, id)).state));
   });
+}
+
+// Fase 1 do ingest: estado e chave lidos sob o lock e liberados antes do
+// stdin (Landing "Ingest — fases"). A chave só sai deste módulo para a
+// política, em memória; nunca para uma resposta.
+export function openCaptureForIngest({ root, id, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openExisting(root, io);
+    return withLock(ctx, async () => {
+      const { dir, state } = await readCapture(ctx, id);
+      if (state.state !== "active") throw new StoreError("capture_not_active");
+      const key = await readSmallFile(io, path.join(dir, KEY_FILE), KEY_BYTES, "capture_invalid");
+      if (key === null || key.length !== KEY_BYTES) throw new StoreError("capture_invalid");
+      return { content: state.content, usage: { events: state.counters.persisted, bytes: state.dataBytes }, key };
+    });
+  });
+}
+
+// Registros da captura, como gravados: o segmento tem exatamente `dataBytes`
+// e cada linha precisa ser um registro v1 com envelope válido.
+export function exportCapture({ root, id, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openExisting(root, io);
+    return withLock(ctx, async () => {
+      const { dir, state } = await readCapture(ctx, id);
+      const records = [];
+      if (state.dataFile !== null) {
+        const bytes = await readSmallFile(io, path.join(dir, state.dataFile), state.dataBytes, "capture_invalid");
+        if (bytes === null || bytes.length !== state.dataBytes) throw new StoreError("capture_invalid");
+        const text = bytes.toString("utf8");
+        if (!text.endsWith("\n")) throw new StoreError("capture_invalid");
+        for (const line of text.slice(0, -1).split("\n")) {
+          let record;
+          try {
+            record = JSON.parse(line);
+          } catch {
+            throw new StoreError("capture_invalid");
+          }
+          if (!isStoredRecord(record)) throw new StoreError("capture_invalid");
+          records.push(record);
+        }
+      }
+      return { capture: publicCapture(state), records };
+    });
+  });
+}
+
+const RECORD_KEYS = ["content", "envelope", "privacy", "recordVersion"];
+
+function isStoredRecord(record) {
+  return (
+    record !== null &&
+    typeof record === "object" &&
+    !Array.isArray(record) &&
+    isDeepStrictEqual(Object.keys(record).sort(), RECORD_KEYS) &&
+    record.recordVersion === 1 &&
+    Array.isArray(record.privacy) &&
+    validateEnvelope(record.envelope)
+  );
 }
 
 function addCounts(target, source) {

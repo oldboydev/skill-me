@@ -4,9 +4,9 @@ import { appendRecords } from "../../../src/integrations/privacy/store.mjs";
 import { runIntegrations } from "./cli.mjs";
 
 // Registro v1 JÁ sanitizado, escrito à mão para a camada de armazenamento:
-// não é saída de applyPolicy (lote da política pendente de D1) e não prova
-// sanitização. Só a forma externa do registro do Landing; `pad` controla o
-// tamanho serializado.
+// não é saída de applyPolicy e não prova sanitização (as provas da política
+// usam o `privacy ingest` real). Só a forma externa do registro do Landing;
+// `pad` controla o tamanho serializado.
 export function sanitizedRecord(index, pad = "") {
   return {
     recordVersion: 1,

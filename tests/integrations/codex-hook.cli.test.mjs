@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { baseEnv, makeScratch, runIntegrationsJson } from "./helpers/cli.mjs";
+import { assertPseudonymIds, baseEnv, makeScratch, runIntegrationsJson } from "./helpers/cli.mjs";
 import { fixtureCase } from "./helpers/fixtures.mjs";
 import { readCodexHandlers, runCodexHandler } from "./helpers/installed-hooks.mjs";
 
@@ -59,14 +59,15 @@ test("I4-C7 codex: hooks locais instalados encaminham ferramentas e ciclo de vid
     assert.equal(envelope.eventKind, eventKind, event);
     assert.equal(envelope.nativeEvent, event, event);
     assert.equal(envelope.signal, "native_hook", event);
-    assert.deepEqual(envelope.ids, ids, event);
+    // #5: mesmos nomes de ID, valores trocados por pseudônimos do processo.
+    assertPseudonymIds(envelope.ids, ids, event);
     assert.ok(!text.includes("SKILLME-CANARY"), event);
   }
   const { envelope: post } = await observe("PostToolUse", "post_tool_bash");
   assert.deepEqual(post.fields, { toolName: "Bash" });
   assert.ok(post.gaps.includes("outcome:not_in_contract"));
   const { envelope: sub } = await observe("PreToolUse", "subagent_pre_tool");
-  assert.equal(sub.ids.agentId, "codex-agent-fixture-01");
+  assertPseudonymIds(sub.ids, { sessionId: "0199a213-81c0-7800-8aa1-codex-sess-01", turnId: "codex-turn-03", agentId: "codex-agent-fixture-01", toolUseId: "call_codex_fixture_sub" }, "subagent tool");
 });
 
 test("I4-C8 codex: ler SKILL.md não vira evento de skill nem atribuição", async () => {

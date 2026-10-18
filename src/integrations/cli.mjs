@@ -76,7 +76,7 @@ async function privacy() {
   const { runPrivacyCommand } = await import("./privacy/command.mjs");
   let result;
   try {
-    result = await runPrivacyCommand({ argv: argv.slice(1) });
+    result = await runPrivacyCommand({ argv: argv.slice(1), stdin: process.stdin });
   } catch {
     result = { exitCode: 5, body: { schemaVersion: 1, command: null, status: "error", error: { code: "io_failure" } } };
   }

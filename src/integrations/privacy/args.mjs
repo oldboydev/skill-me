@@ -1,20 +1,25 @@
 import { CAPTURE_ID_PATTERN, DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS, MIN_RETENTION_DAYS } from "./lifecycle.mjs";
 
-// `ingest` e `export` entram com o lote da política (D1): até lá não são
-// anunciados nem aceitos, para nenhum comando sugerir sanitização inexistente.
 export const PRIVACY_HELP_TEXT = `Uso:
   integrations privacy start --root <diretório> [--content] [--retention-days <1-365>]
+  integrations privacy ingest --root <diretório> --capture <id> --agent <claude|codex-hooks|codex-exec|hermes>
   integrations privacy stop --root <diretório> --capture <id>
   integrations privacy disable --root <diretório> --capture <id>
   integrations privacy status --root <diretório> --capture <id>
+  integrations privacy export --root <diretório> --capture <id>
   integrations privacy delete --root <diretório> --capture <id> [--apply]
   integrations privacy prune --root <diretório> [--apply]
 
 Capturas locais de privacidade (issue #5). --root é obrigatório e não tem
 default: nada é criado fora de <diretório>/skill-me-privacy/. Cada start cria uma
 captura nova, com ID e chave próprios, conteúdo desligado (--content liga só
-para essa captura) e retenção de 7 dias. stop encerra a captura; disable também
-desliga o conteúdo; nenhuma captura volta a ativa. delete e prune mostram uma
+para essa captura) e retenção de 7 dias. ingest lê do stdin eventos nativos
+NDJSON (uma entrada por linha, até 64 KiB) e grava só o resultado sanitizado:
+IDs viram pseudônimos da captura e argumentos/resultados só entram com
+--content, nos campos da matriz do guia docs/privacidade.md; texto coletado é
+dado, nunca executado. stop encerra a captura; disable também desliga o
+conteúdo; nenhuma captura volta a ativa. status mostra estado e contagens;
+export mostra os registros sanitizados da captura. delete e prune mostram uma
 prévia e só apagam com --apply; prune remove capturas encerradas cuja idade,
 contada do encerramento, alcançou a retenção — não há daemon: rode prune quando
 quiser aplicar a retenção. Nada é enviado pela rede.
@@ -33,13 +38,16 @@ export class PrivacyUsageError extends Error {
 
 const COMMAND_FLAGS = {
   start: ["--root", "--content", "--retention-days"],
+  ingest: ["--root", "--capture", "--agent"],
   stop: ["--root", "--capture"],
   disable: ["--root", "--capture"],
   status: ["--root", "--capture"],
+  export: ["--root", "--capture"],
   delete: ["--root", "--capture", "--apply"],
   prune: ["--root", "--apply"],
 };
-const VALUE_FLAGS = new Set(["--root", "--capture", "--retention-days"]);
+const VALUE_FLAGS = new Set(["--root", "--capture", "--retention-days", "--agent"]);
+const INGEST_AGENT_NAMES = ["claude", "codex-hooks", "codex-exec", "hermes"];
 const RETENTION_PATTERN = /^[1-9][0-9]{0,2}$/;
 
 export function isPrivacyCommand(name) {
@@ -80,6 +88,10 @@ export function parsePrivacyArgs(command, tokens) {
     if (values["--capture"] === undefined) throw new PrivacyUsageError("missing_capture");
     if (!CAPTURE_ID_PATTERN.test(values["--capture"])) throw new PrivacyUsageError("invalid_capture_id");
     parsed.capture = values["--capture"];
+  }
+  if (command === "ingest") {
+    if (!INGEST_AGENT_NAMES.includes(values["--agent"])) throw new PrivacyUsageError("invalid_agent");
+    parsed.agent = values["--agent"];
   }
   if (command === "start") {
     parsed.content = values["--content"] === true;

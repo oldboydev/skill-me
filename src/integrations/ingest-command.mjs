@@ -18,7 +18,7 @@ export async function runIngestCommand({ agent, stdin, env }) {
       } catch {
         return observation.count("invalidJson");
       }
-      observation.submit(hermesDraft(record));
+      observation.submit(hermesDraft(record), record);
     },
     onOversize: () => observation.count("oversizeLine"),
     onPartialTrailing: () => observation.count("partialTrailingLine"),

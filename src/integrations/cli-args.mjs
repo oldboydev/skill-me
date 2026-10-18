@@ -5,7 +5,7 @@ export const HELP_TEXT = `Uso:
   integrations install --agent <claude|codex|hermes> --target <diretório> [--apply] [--json]
   integrations uninstall --agent <claude|codex|hermes> --target <diretório> [--apply] [--json]
   integrations run --agent codex [--codex-entry <arquivo>] -- <argumentos de codex exec>
-  integrations privacy <start|stop|disable|status|delete|prune> --root <diretório> …
+  integrations privacy <start|ingest|stop|disable|status|export|delete|prune> --root <diretório> …
 
 Observação local de execuções (issue #4), separada do doctor. Sem --apply nada é
 escrito e nenhum agente é iniciado; --target é obrigatório e não tem default.
