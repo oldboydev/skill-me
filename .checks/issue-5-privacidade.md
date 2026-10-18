@@ -188,7 +188,7 @@ Proof: `node --test --test-name-pattern="^I5-C10 " tests/integrations/privacy/st
 Proof: `node --test --test-name-pattern="^I5-C10b " tests/integrations/privacy/outputs.cli.test.mjs`
 
 **C11** - Cada um dos 11 campos `name` com caminho, `@`, `~`, drive ou segredo é removido com `envelope.<campo>:sensitive_removed`; nome comum (`Bash`, `mcp__docs__search`) passa intacto
-Proof: `node --test --test-name-pattern="^I5-C11 " tests/integrations/privacy/policy.unit.test.mjs`
+Proof: `node --test --test-name-pattern="^I5-C11 |^I5-C11b " tests/integrations/privacy/policy.unit.test.mjs`
 
 **C12** - Campo `path` de conteúdo vira só `ref`; nenhum componente original (usuário, pasta, arquivo, extensão) aparece no registro
 Proof: `node --test --test-name-pattern="^I5-C12 " tests/integrations/privacy/policy.unit.test.mjs`

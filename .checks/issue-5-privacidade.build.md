@@ -428,3 +428,108 @@ ao coordenador (registrá-lo aqui mudaria a cabeça de novo).
   cada entrada com seu registro.
 - Perfil `light`: nenhuma falha injetada sistematicamente; um teste ainda pode
   passar com implementação errada fora dos casos enumerados.
+
+# Correção da regressão do Verifier — rodada 2 (18/10/2026)
+
+Evidência autoral, não verificação independente: não conta como rodada do
+Verifier nem da revisão formal e não mexe nos tetos. O relatório
+`.checks/issue-5-privacidade.verified.md` (FAIL, 58/59, Round 2) não foi
+editado. Escopo: só o achado P2 da rodada 2 em `policy.mjs` e sua prova; C3,
+C11 (valores estáveis, `~`, nomes recusados pela forma v1) e C15 preservados
+sem mudança de asserção. Commits: `db1b6d0` (linha nova do Landing "Valor
+entregue no envelope decide sempre", antes do código), `ff466e5` (correção e
+prova) e o commit desta evidência (registro e comando de prova do C11 no
+checklist, que passa a incluir `I5-C11b`).
+
+## Natureza do achado e correção
+
+- **Produto**, regressão introduzida em `0292e67`: `unsafeNameFields` relia
+  `draft.fields[name]` e decidia só por essa releitura. Um getter que responde
+  `CANARIES.token` na cópia de `buildEnvelope` (aceito por `NAME_PATTERN`, menos
+  de 128 caracteres) e `Bash` na releitura deixava o token em
+  `envelope.fields`, com `removed=[]` e `ok:true`. O mesmo valia para
+  `fieldGaps` com getter que some na leitura de `buildEnvelope` e reaparece na
+  releitura. JSON do stdin não produz getters; o contrato da API em processo
+  cobre objetos hostis.
+- **Correção**: o campo sai quando o valor efetivamente copiado em
+  `envelope.fields` é inseguro, sem consultar o rascunho (o comportamento de
+  `d936fc7`), **ou** quando o valor do rascunho é inseguro pela linha anterior
+  do Landing (motivo do nome recusado pela forma v1). Mesmo predicado
+  `isUnsafeName`; nenhuma regex nova, nenhum fallback bruto. `boundary.mjs`,
+  core e configuração inalterados.
+
+## O que a prova nova afirma
+
+**I5-C11b** (policy.unit), nos 11 `NAME_FIELDS`:
+
+- pré-condição: `buildEnvelope` com o getter token→`Bash` é aceito e o
+  envelope contém o marcador (o cenário não é vazio);
+- token→`Bash`, `Bash`→token e `fieldGaps` alternante (`absent`, ausente,
+  `absent`) com token em `fields`: `ok:true`, campo fora de `fields`, entradas
+  `envelope.*` exatamente `[envelope.<campo>:sensitive_removed]`,
+  `validateEnvelope` verdadeiro e `leaks(...)` = `[]`;
+- releitura que lança: `Bash`→erro → `{ok:false, drop:"privacy_failure"}`
+  exato; token→erro → campo removido com o mesmo motivo, sem vazar (a remoção
+  não depende da releitura).
+- Mensagens `<campo> <cenário>`, sem eco de canário; os logs abaixo têm
+  `grep -c SKILLMECANARY` = 0.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-fix2-win-FGsNfs\` (preservados).
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red.tap.log` | `policy.mjs` de `f8300cc` | I5-C11b `not ok` em `toolName token→Bash removido`; I5-C11 e I5-C28 `ok` |
+| `red-scenarios.log` | idem, scratch do autor fora do repo (`scenarios.mjs`, só booleanos) | token→Bash `leak:true, reason:[]`; fieldGaps `leak:true, reason:[]`; Bash→token removido; token→erro `privacy_failure` |
+| `green-scenarios.log` | corrigido | os quatro cenários sem vazamento, `sensitive_removed`; token→erro passa a remover sem reler (ver abaixo) |
+| `green-named.tap.log` | corrigido | I5-C11b `not ok` — expectativa do próprio teste novo, abaixo; C3/C11/C15/C28 `ok` |
+| `red-2.tap.log` | `policy.mjs` de `f8300cc` restaurado temporariamente, teste final | I5-C11b `not ok` em `toolName token→Bash removido`; o corrigido voltou em seguida (`cmp` igual à cópia `policy.fixed.mjs`) |
+| `green-named-2.tap.log` | corrigido, teste final | I5-C3, I5-C11, I5-C11b, I5-C15, I5-C28: 5 `ok` |
+
+Expectativa corrigida no teste novo, ainda não commitado, sem enfraquecer: o
+primeiro texto esperava `privacy_failure` para token→erro, mas a correção
+decide pelo valor entregue antes de reler, então o token é removido sem a
+releitura. O caso passou a duas asserções exatas: `Bash`→erro (releitura
+necessária) → `privacy_failure`; token→erro → removido sem vazar.
+
+## Execuções no commit `ff466e5`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, checkout local, árvore limpa, logs `win-privacy.tap.log`/`win-npm-test.log` no diretório acima | `node --test --test-reporter=tap "tests/integrations/privacy/*.test.mjs"` | 75 tests, 75 pass, 0 fail, 0 skip (C35 e C11b incluídos) |
+| Windows 11 | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 163 (157 pass, 6 skip, 0 fail) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-fix2-xwO3AE` de `git archive ff466e5` (sha256 `45159b6a…7d2d5489` igual nos dois lados; `git get-tar-commit-id` = `ff466e5d…` conferido dentro do script antes da extração), logs em `%TEMP%\skill-me-i5-fix2-wsl-stage-SWY4yO\` | mesmo alvo de privacidade | 75 tests, 75 pass, 0 fail, 0 skip (C35 e C11b incluídos) |
+| WSL Ubuntu | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 163 (151 pass, 12 skip, 0 fail) |
+
+Skips idênticos aos anteriores, conferidos nos logs: Windows doctor 7 (POSIX
+symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b Hermes ausente,
+I4-C25g/h/i DACL Windows, I4-C25m macOS). Integrações passam de 162 para 163
+só pelo I5-C11b.
+
+Preparação WSL: `run-wsl.sh` em arquivo no stage (derivado do da rodada 1, só
+prefixos trocados e a guarda do commit do tar acrescentada), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+recusa root, outra distro, origem ausente, saída e destino fora do padrão antes
+de copiar/extrair. Sem preflight inline nesta rodada. Nenhum `/repo` ou
+`/src.tar`; preparação antiga do Verifier6, seu probe, sessões ou
+configurações pessoais não tocados; nenhum modelo chamado. Nenhum arquivo do
+repositório editado durante os gates; WSL só iniciou depois do fim do gate
+Windows.
+
+## Limites honestos
+
+- Getter que muda entre leituras pode remover um nome comum (`Bash`→token)
+  com `sensitive_removed`: falha fechada declarada no Landing.
+- O motivo do nome recusado pela forma v1 ainda depende da releitura do
+  rascunho; um getter hostil pode fazê-lo cair como lacuna v1
+  (`not_identifier`) em vez de `sensitive_removed`. Nesse caso nenhum valor sai
+  no envelope (a forma já o recusou); só o motivo pode divergir.
+- Os cenários hostis são de API em processo; não houve vazamento observado por
+  CLI/JSON nem antes nem depois.
+- Esta evidência muda o conteúdo lido por C34/C35; o alvo de privacidade é
+  reexecutado na cabeça desta evidência nas duas plataformas e o resultado vai
+  ao coordenador (registrá-lo aqui mudaria a cabeça de novo).
+- Perfil `light`: nenhuma falha injetada sistematicamente fora dos cenários
+  enumerados.
