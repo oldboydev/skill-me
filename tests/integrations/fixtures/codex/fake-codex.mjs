@@ -1,6 +1,7 @@
 // Codex falso para as provas do wrapper supervisionado (fixture sintética,
 // nunca executa modelo). Reporta no stderr o que recebeu e emite no stdout os
 // passos de um cenário JSON (FAKE_CODEX_SCENARIO), na ordem e no ritmo pedidos.
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeSync } from "node:fs";
 
 const env = process.env;
@@ -28,6 +29,9 @@ for (const step of scenario.steps) {
   if (step.raw !== undefined) writeSync(1, step.raw);
   if (step.stderr !== undefined) writeSync(2, step.stderr + "\n");
   if (step.repeat !== undefined) for (let i = 0; i < step.repeat.count; i++) writeSync(1, step.repeat.line.replaceAll("{i}", String(i)) + "\n");
+  // Hook de comando como o Codex o inicia: processo próprio, ambiente herdado
+  // e payload no stdin; a saída do hook não entra no JSONL do exec.
+  if (step.hook !== undefined) spawnSync(step.hook.command, step.hook.args, { input: step.hook.stdin, env, stdio: ["pipe", "ignore", "ignore"] });
   if (step.sleepMs !== undefined) await sleep(step.sleepMs);
   if (step.waitFile !== undefined) {
     const deadline = Date.now() + 10_000;

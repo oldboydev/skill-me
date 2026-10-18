@@ -2,10 +2,13 @@ import { ONE_MIB_BYTES } from "../doctor/config-projection.mjs";
 import { claudeHookDraft } from "./adapters/claude.mjs";
 import { codexHookDraft } from "./adapters/codex-hooks.mjs";
 import { createObservation } from "./observation.mjs";
+import { captureDeliveryFor } from "./traces/binding.mjs";
 
 export const HOOK_STDIN_DEADLINE_MS = 2000;
 
 const ADAPTERS = { claude: claudeHookDraft, codex: codexHookDraft };
+// Nome do mesmo contrato no lote do `privacy ingest`.
+const INGEST_AGENTS = { claude: "claude", codex: "codex-hooks" };
 
 // Lê o stdin até o EOF, guardando no máximo `maxBytes`. O excedente continua
 // sendo drenado (e descartado) para que o agente nunca receba erro de escrita
@@ -36,10 +39,12 @@ export function readBoundedStdin(stream, { maxBytes, deadlineMs }) {
 
 // Um evento por processo, como os dois agentes iniciam hooks de comando. Nunca
 // escreve em stdout (no Claude e no Codex isso vira contexto ou decisão) e
-// quem chama sempre termina com 0 — nunca 2, que bloquearia a ação.
+// quem chama sempre termina com 0 — nunca 2, que bloquearia a ação. Vinculado
+// a uma captura, a entrega abre a captura só depois de ler o evento.
 export async function runHookCommand({ agent, stdin, env }) {
-  const observation = createObservation({ env });
   const adapter = Object.prototype.hasOwnProperty.call(ADAPTERS, agent) ? ADAPTERS[agent] : null;
+  const delivery = await captureDeliveryFor({ env, agent: adapter === null ? null : INGEST_AGENTS[agent] });
+  const observation = createObservation({ env, delivery });
   const input = await readBoundedStdin(stdin, { maxBytes: ONE_MIB_BYTES, deadlineMs: HOOK_STDIN_DEADLINE_MS });
   if (input.state === "too_large") observation.count("inputTooLarge");
   else if (input.state === "timeout") observation.count("stdinTimeout");
