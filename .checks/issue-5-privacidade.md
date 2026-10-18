@@ -220,7 +220,7 @@ Proof: `node --test --test-name-pattern="^I5-C14i " tests/integrations/privacy/p
 Proof: `node --test --test-name-pattern="^I5-C14j " tests/integrations/privacy/outputs.cli.test.mjs` (C14j: resultado textual de Bash com o bloco, com o valor na linha seguinte, com tag/âncora antes do indicador, com tag e com âncora seguidas do valor na mesma linha e com comentário antes do valor na linha seguinte, uma captura por família em subteste próprio, pelo ingest/export real: saídas omitidas com `unsanitizable` e contagem no `status`, comandos preservados, sondas sem marcador nem NUL)
 
 **C15** - Os mesmos canários colocados em IDs, nomes (`toolName`, `skillName`) e caminhos (`cwd`, `file_path`, `transcript_path`) também não aparecem em nenhum desses canais
-Proof: `node --test --test-name-pattern="^I5-C15 " tests/integrations/privacy/outputs.cli.test.mjs`
+Proof: `node --test --test-name-pattern="^I5-C15canários " tests/integrations/privacy/outputs.cli.test.mjs`
 
 **C16** - Subárvore sob chave sensível (aninhada a profundidade 3, variações `API-Key`, `db_password`, `Set-Cookie`) é descartada inteira com `sensitive_removed`
 Proof: `node --test --test-name-pattern="^I5-C16 |^I5-C16b " tests/integrations/privacy/policy.unit.test.mjs` (C16b: chave com formato de token)
@@ -505,3 +505,9 @@ proprietário já havia respondido livremente "autorizo quantos precisaram para
 resolver"; a confirmação não revoga essa autorização ampla nem autoriza merge.
 Ambas as respostas ficam registradas, sem exigir nova permissão para cada
 rodada necessária dentro desta issue e do limite técnico atual do motor.
+
+Conferência editorial após Round5 (18/10/2026): o Proof C15 passa a usar o
+prefixo literal `I5-C15canários `, título real já executado e aprovado nos
+quatro alvos completos do Verifier em `e34791a`. O relatório preserva o seletor
+antigo sem match observado naquele HEAD. Nenhuma claim, asserção, teste ou
+código muda; esta correção e o registro do relatório são documentais.
