@@ -301,6 +301,8 @@ test("T8-C6 no implicit capture: sem o par completo e válido nada é escolhido;
   privacyOk(["stop", "--root", root, "--capture", stopped]);
   const execLine = JSON.stringify(execEvent("thread_started"));
   const scenario = writeScenario(base, "c6", [{ stdout: execLine }, { stderr: "stderr do filho" }]);
+  // Fora de `base` e da raiz, que precisam continuar intactas.
+  const copies = scratch("t8 c6 stderr do filho");
   const variants = [
     ["nenhuma variável", {}, undefined],
     ["só a raiz", { SKILL_ME_CAPTURE_ROOT: root }, "binding_invalid"],
@@ -313,7 +315,7 @@ test("T8-C6 no implicit capture: sem o par completo e válido nada é escolhido;
   ];
   const rootBefore = snapshotTree(root);
   const baseEntries = readdirSync(base).sort();
-  for (const [label, extra, code] of variants) {
+  for (const [index, [label, extra, code]] of variants.entries()) {
     const env = baseEnv(extra);
     // cwd = pasta que contém a raiz: uma descoberta implícita pelo cwd acharia a captura.
     const runs = {
@@ -328,10 +330,12 @@ test("T8-C6 no implicit capture: sem o par completo e válido nada é escolhido;
       if (code === undefined) assert.equal(run.report.delivery, undefined, `${label}/${producer}`);
       else assert.deepEqual(run.report.delivery, { bound: code !== "binding_invalid", code, entries: 1, committed: 0, persisted: 0, lost: 1 }, `${label}/${producer}`);
     }
-    const wrapped = await runWrapper({ args: ["p"], env: baseEnv({ ...extra, FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_EXIT: "17" }), cwd: base });
+    const stderrCopy = path.join(copies, `variante ${index}.bin`);
+    const wrapped = await runWrapper({ args: ["p"], env: baseEnv({ ...extra, FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_EXIT: "17", FAKE_CODEX_STDERR_COPY: stderrCopy }), cwd: base });
     assert.equal(wrapped.status, 17, label);
+    assert.equal(wrapped.signal, null, label);
     assert.deepEqual(wrapped.stdout, Buffer.from(execLine + "\n"), label);
-    assert.ok(wrapped.stderr.endsWith("stderr do filho\n"), label);
+    assertNativeStderr(wrapped, stderrCopy, label);
     if (code === undefined) assert.equal(wrapped.report.delivery, undefined, label);
     else assert.equal(wrapped.report.delivery.code, code, label);
     // Nada gravado, criado ou alterado, inclusive na captura ativa e ao lado da raiz.
