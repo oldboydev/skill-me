@@ -309,3 +309,122 @@ esta seção ao registro.
 - macOS fica para a CI do PR; nenhuma afirmação de execução local.
 - Perfil `light`: um membro de conjunto pode ficar sem prova e um teste pode
   passar com implementação errada; nenhuma falha foi injetada sistematicamente.
+
+# Correção dos achados do Verifier — rodada 1 (18/10/2026)
+
+Evidência autoral, não verificação independente: não conta como nova rodada do
+Verifier nem da revisão formal e não mexe nos tetos (Verifier 3, formal 2). O
+relatório `.checks/issue-5-privacidade.verified.md` (FAIL, 56/59) não foi
+editado. Escopo: só os três achados concretos (C11, C15, C3); nenhum check ou
+critério foi alterado. Commits: `81cf3f8` (linha nova do Landing, antes do
+código), `0292e67` (correção e provas) e o commit desta evidência (registro e
+uma frase do guia).
+
+## Natureza de cada achado
+
+| Achado | Lacuna | Correção |
+| --- | --- | --- |
+| 1 — C11 `~` | **produto**: a forma v1 (`NAME_PATTERN`) recusava `~segredo` como `not_identifier` antes da política, e o motivo publicado divergia de `sensitive_removed`. Valia também para canários com `=`, `?` ou quebra de linha (URL, password, chave privada) e para nome inseguro acima de 128 caracteres (`too_long`) | `applyPolicy` decide o motivo dos 11 `NAME_FIELDS` pelo valor do rascunho (Landing "Nome inseguro recusado pela forma v1"): campo fora de `fields`, lacuna v1 dele retirada, `envelope.<campo>:sensitive_removed`. `boundary.mjs` inalterado; nome recusado só pela forma (`Bash;echo`) continua `not_identifier` sem entrada `privacy` |
+| 2 — C15 | **prova**: chave privada ausente dos metadados, subconjunto de categorias por papel e nenhuma sonda de lock/temporário no lote de metadados. Ao completar a prova, o motivo dos nomes com URL/password/chave privada também caiu no achado 1 | I5-C15 reescrito: as cinco categorias, cada uma em todo papel de ID, nome e caminho dos quatro contratos (por categoria: Claude 6 entradas, Codex hooks 1, exec 3, Hermes 2) |
+| 3 — C3 | **prova**: ambiente/configuração herdados só no ingest e hook Claude | I5-C3 estendido ao hook Codex, ingest Hermes da #4, wrapper Codex e aos quatro `--agent` do `privacy ingest`, mesmo `env`/`cwd` |
+
+## O que cada prova agora afirma
+
+- **I5-C11** (policy.unit): lista insegura com `~segredo`, `C:segredo`, `C:/x`,
+  `dir/arquivo`, `alice@example.test`, token, cabeçalho, `sk-…`, password e chave
+  privada dos canários e um nome de 129 caracteres com `/`, nos 11 campos (121
+  casos): campo ausente, entradas `envelope.*` exatamente
+  `[envelope.<campo>:sensitive_removed]`, nenhuma lacuna v1 do campo,
+  `validateEnvelope` verdadeiro, sem canário nem valor. Controle por campo:
+  `Bash;echo` → `<campo>:not_identifier` e nenhuma entrada `envelope.*` (distingue
+  a correção de uma que trocasse todo `not_identifier`). Nomes comuns continuam
+  intactos. Mensagens de falha usam `<campo>#<índice>`, sem ecoar canário.
+- **I5-C15** (outputs.cli): cada entrada declara os IDs que devem sair como
+  `h1:`+43, os nomes que devem pertencer ao `eventKind` e sair removidos sem
+  lacuna v1, e o caminho que vira `ref`/`refs` com opt-in — prova de que a
+  entrada chegou ao papel, não só de que o canário sumiu. `cwd` e
+  `transcript_path` (não lidos pelos adaptadores) são entrada presente e ausente
+  das saídas, sem afirmação além disso. Canais: stdout/stderr/fd3 de cada hook
+  (30 processos) com `sensitive_removed` exato por processo; stdout/stderr/fd3 do
+  ingest Hermes; relatório e stderr do wrapper (o filho não escreve stderr; o
+  stdout nativo é repasse, C33); `privacy` start/ingest/export/status/stop/
+  disable/delete/prune/delete --apply com e sem `--content`: stdout sem canário,
+  stderr vazio, árvore final sem canário, export com IDs pseudonimizados, nomes
+  `sensitive_removed` e refs. Sondas da C14 reutilizadas: `fs-probe` em todo
+  ingest, stop e disable (≥ 8 temporários de dados e ≥ 8 de estado observados
+  em `before_rename`, `containsCanary:false` em toda observação) e
+  `privacy-probe` em todo comando (`.lock` escrito e fechado ao menos uma vez por
+  comando, `containsMarker:false` em toda escrita, temporários inclusive). Os
+  dois logs das sondas também são varridos e não contêm canário.
+- **I5-C3** (store.cli): mesmas oito variáveis e três arquivos sintéticos.
+  `privacy ingest` claude 2, codex-hooks 2, codex-exec 3, hermes 2 →
+  `contentOmitted` `{content_disabled:n}` exato por lote; export com 9
+  registros, `content:null` e `privacy` exatamente `["content:content_disabled"]`;
+  `status` `{content_disabled:9}` e `content:false`. Hooks Claude e Codex,
+  ingest Hermes (3 eventos) e wrapper (5 eventos + `process_exit`): eventos só
+  com as chaves do envelope e `counters.privacy` exatamente 1, 1, 2 e 3 de
+  `content_disabled`, os outros cinco códigos 0.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-fix1-win-rtrVsT\` (preservados; nenhum contém o
+marcador `SKILLMECANARY`: `grep -c` = 0 em cada um). Comando: `node --test
+--test-reporter=tap --test-name-pattern="^I5-C11 |^I5-C15 |^I5-C3 "` sobre
+policy.unit, outputs.cli e store.cli.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red.tap.log` | `81cf3f8` (antigo), testes novos | C11 `not ok` em `toolName#4` (`~segredo`: `[]` em vez de `[envelope.toolName:sensitive_removed]`); C15 `not ok` em `claude PreToolUse url nome sem lacuna v1`; C3 `ok` |
+| `green-named.tap.log` | corrigido | C11 e C3 `ok`; C15 `not ok` — erro do próprio teste novo, abaixo |
+| `green-named-2.tap.log` | corrigido | 3 `ok` |
+| `red-2.tap.log` | `policy.mjs` do HEAD antigo restaurado temporariamente, testes já corrigidos | mesmo RED (C11 em `toolName#4`, C15 no nome `url`, C3 `ok`); o `policy.mjs` corrigido voltou em seguida, diff conferido |
+
+- Erro de expectativa no teste novo, corrigido sem enfraquecer: o caso
+  `expansion_slash_command` vira `skill_invocation` (`skillName`/`commandSource`),
+  não `command_expansion`. A expectativa passou a esses nomes, entrou o caso
+  `expansion_mcp_prompt` para exercitar `commandName` de fato, e a asserção
+  passou a exigir que cada nome esperado pertença ao `eventKind` — uma lista
+  errada não pode mais passar em silêncio.
+- C3 verde no produto antigo: lacuna de prova, sem ativação indevida — o
+  `content:false` explícito de `createObservation` já valia.
+
+## Execuções no commit `0292e67`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, checkout local, árvore limpa, logs `win-privacy.tap.log`/`win-npm-test.log` no diretório acima | `node --test --test-reporter=tap "tests/integrations/privacy/*.test.mjs"` | 74 tests, 74 pass, 0 fail, 0 skip (C35 incluído) |
+| Windows 11 | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 162 (156 pass, 6 skip, 0 fail) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-fix1-Ce6R9L` de `git archive 0292e67` (sha256 `946f4f34…a3ece898633b` igual nos dois lados; `git get-tar-commit-id` = `0292e677…`), logs copiados para `%TEMP%\skill-me-i5-fix1-wsl-stage-DlxizN\` | mesmo alvo de privacidade | 74 tests, 74 pass, 0 fail, 0 skip (C35 incluído) |
+| WSL Ubuntu | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 162 (150 pass, 12 skip, 0 fail) |
+
+Skips idênticos aos das execuções anteriores (lista em "Execuções do lote D1").
+I5-C3, I5-C11 e I5-C15 aparecem `ok` nos dois logs do alvo de privacidade.
+
+Preparação WSL: `run-wsl.sh` em arquivo no stage, chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+o script recusa root, outra distro, origem ausente, saída e destino fora de
+`/tmp/skill-me-i5-fix1-??????` antes de copiar/extrair, e confere o hash antes
+da extração. Antes dele, um preflight só de leitura (`id -u`, distro, versão do
+node; resultado em `preflight.txt`) foi passado inline entre aspas simples —
+sem mutação, mas fora da regra de script em arquivo; não foi repetido. Nenhum
+`/repo` ou `/src.tar`; preparação antiga do Verifier6 e seu probe não tocados.
+Nenhuma rejeição de política nem falha de capacidade ocorreu.
+
+Durante o `npm test` do Windows editei e desfiz o guia em seguida; o log mostra
+que a suíte de integrações (única que lê o guia e este arquivo) ainda não tinha
+começado, então o gate exercitou o conteúdo de `0292e67`. A frase do guia
+(`~` inicial) entra no commit desta evidência e o alvo de privacidade é
+reexecutado nessa cabeça nas duas plataformas; o resultado fica no relatório
+ao coordenador (registrá-lo aqui mudaria a cabeça de novo).
+
+## Limites honestos
+
+- `isUnsafeName` trata como sensível valor que o sanitizador não examina (NUL,
+  surrogate isolado): um nome com NUL passa a `sensitive_removed`, não
+  `not_identifier` — falha fechada registrada no Landing.
+- C15 continua amostral dentro de cada papel: um caso por papel e categoria,
+  não todas as combinações de campos; detecção por padrões não é universal.
+- A ordem dos registros do export é a da ingestão; o teste a usa para casar
+  cada entrada com seu registro.
+- Perfil `light`: nenhuma falha injetada sistematicamente; um teste ainda pode
+  passar com implementação errada fora dos casos enumerados.

@@ -19,8 +19,10 @@ agente.
 - IDs viram pseudônimos `h1:` (HMAC-SHA-256 com chave aleatória da captura):
   iguais dentro da captura, diferentes entre capturas. A chave fica só em
   `captures/<id>/key`, nunca aparece em `status` ou `export` e sai com a captura.
-- Nomes (`toolName`, `skillName` e os demais) com caminho, `@`, drive ou segredo
-  são removidos do envelope, com `envelope.<campo>:sensitive_removed`.
+- Nomes (`toolName`, `skillName` e os demais) com caminho, `~` inicial, `@`,
+  drive ou segredo são removidos do envelope, com
+  `envelope.<campo>:sensitive_removed`, mesmo quando a forma do envelope v1 já
+  os recusaria.
 - Prompts, raciocínio privado, mensagens finais de assistente, a ferramenta
   `Skill`, `collab_tool_call` e os eventos Hermes nunca produzem conteúdo, mesmo
   com `--content`. Os resultados suportados podem conter texto de `SKILL.md`:
