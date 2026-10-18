@@ -82,8 +82,8 @@ async function readSmallFile(io, file, maxBytes, invalidCode) {
   if (kind === "missing") return null;
   if (kind === "link") throw new StoreError("link_refused");
   if (kind !== "file") throw new StoreError(invalidCode);
-  const bytes = await io.readFile(file);
-  if (bytes.length > maxBytes) throw new StoreError(invalidCode);
+  const bytes = await io.readBounded(file, maxBytes);
+  if (bytes === null) throw new StoreError(invalidCode);
   return bytes;
 }
 
@@ -368,7 +368,11 @@ export async function appendRecords({ root, id, batch, io = createStoreIo() }) {
       };
       let written = null;
       if (admission.admitted > 0) {
-        const previous = state.dataFile === null ? Buffer.alloc(0) : await io.readFile(path.join(dir, state.dataFile));
+        // O segmento anterior tem exatamente `dataBytes`: maior, menor ou não
+        // regular, ele não é o que o commit registrou.
+        const previous =
+          state.dataFile === null ? Buffer.alloc(0) : await readSmallFile(io, path.join(dir, state.dataFile), state.dataBytes, "capture_invalid");
+        if (previous === null || previous.length !== state.dataBytes) throw new StoreError("capture_invalid");
         const sequence = state.dataFile === null ? 1 : Number(DATA_FILE_PATTERN.exec(state.dataFile)[1]) + 1;
         const added = Buffer.from(lines.slice(0, admission.admitted).join(""));
         written = dataFileName(sequence);

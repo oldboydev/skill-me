@@ -132,6 +132,64 @@ test("I5-C30s falha de rename na gravação deixa estado e dados anteriores idê
   assert.equal(readState(root, id).counters.persisted, 2);
 });
 
+// Abertura instrumentada: soma os bytes realmente lidos de cada arquivo pelo
+// handle, para provar que o teto vale na leitura, não depois dela.
+function countingIo() {
+  const bytesRead = new Map();
+  const io = createStoreIo({
+    async openFile(file, flags) {
+      const { open } = await import("node:fs/promises");
+      const handle = await open(file, flags);
+      return new Proxy(handle, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target);
+          if (property !== "read") return typeof value === "function" ? value.bind(target) : value;
+          return async (...args) => {
+            const result = await value.apply(target, args);
+            bytesRead.set(path.basename(file), (bytesRead.get(path.basename(file)) ?? 0) + result.bytesRead);
+            return result;
+          };
+        },
+      });
+    },
+  });
+  return { io, bytesRead };
+}
+
+test("I5-S-bounded controle ou segmento maior que o limite é recusado sem ler o arquivo inteiro", async () => {
+  const { truncateSync } = await import("node:fs");
+  const MIB = 1024 * 1024;
+  const root = makeScratch("i5 bounded");
+  const id = await startIn(root);
+  await appendSanitized(root, id, 2);
+  const dir = captureDir(root, id);
+  const { dataFile, dataBytes } = readState(root, id);
+
+  // Segmento de dados maior que o dataBytes registrado: recusa lendo no máximo dataBytes + 1.
+  truncateSync(path.join(dir, dataFile), 4 * MIB);
+  const data = countingIo();
+  await rejects(appendRecords({ root, id, io: data.io, batch: { records: [sanitizedRecord(3)], malformed: 0, dropped: {}, contentOmitted: {} } }), "capture_invalid");
+  assert.ok(data.bytesRead.get(dataFile) <= dataBytes + 1, `lidos ${data.bytesRead.get(dataFile)}`);
+
+  // state.json acima de 64 KiB: capture_invalid lendo no máximo 64 KiB + 1.
+  truncateSync(path.join(dir, "state.json"), 4 * MIB);
+  const state = countingIo();
+  const status = await runPrivacyCommand({ argv: ["status", "--root", root, "--capture", id], io: state.io });
+  assert.equal(status.exitCode, 3);
+  assert.deepEqual(status.body.error, { code: "capture_invalid" });
+  assert.ok(state.bytesRead.get("state.json") <= 64 * 1024 + 1, `lidos ${state.bytesRead.get("state.json")}`);
+
+  // Marcador do store acima do seu tamanho: store_invalid lendo no máximo 26 bytes.
+  const markerRoot = makeScratch("i5 bounded marker");
+  await startIn(markerRoot);
+  truncateSync(path.join(markerRoot, "skill-me-privacy", "store.json"), 4 * MIB);
+  const marker = countingIo();
+  const start = await runPrivacyCommand({ argv: ["start", "--root", markerRoot], io: marker.io });
+  assert.equal(start.exitCode, 3);
+  assert.deepEqual(start.body.error, { code: "store_invalid" });
+  assert.ok(marker.bytesRead.get("store.json") <= '{"skillMePrivacyStore":1}'.length + 1, `lidos ${marker.bytesRead.get("store.json")}`);
+});
+
 test("I5-S-record o storage recusa o que não é registro v1 sem gravar nada", async () => {
   const root = makeScratch("i5 record");
   const id = await startIn(root);
