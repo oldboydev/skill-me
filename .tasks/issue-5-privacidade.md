@@ -19,8 +19,8 @@ A #4 está encerrada; #8 depende expressamente da política da #5, #7 depende de
 Nenhuma issue aberta está Ready e o Project não define prioridade para elas.
 
 20 critérios em 4 fatias · decisões técnicas abaixo delegadas pela issue ·
-U1 resolvida. D1 bloqueia apenas a coleta de resultados textuais; armazenamento
-e ciclo de vida independentes continuam autorizados.
+U1 e D1 resolvidas por aprovação explícita do proprietário. Nenhuma decisão de
+escopo bloqueante permanece aberta.
 
 Base local e remota conferida em 17/10/2026:
 `1b6685fe97862ac1a2d2cff1e4d9f0e1f09a6a27`, árvore limpa antes deste plano.
@@ -44,10 +44,12 @@ AC da issue e não dispensam controles reais de captura/retenção. Os critério
    produz metadados e motivo `unsupported_content`, nunca fallback para copiar
    argumentos/resultados brutos. A tabela literal é registrada antes do código,
    baseada nas fixtures versionadas, sem prometer coleta que o host não fornece.
-3. Prompts, raciocínio privado, mensagens finais de assistente e instruções de
-   arquivos de skill permanecem fora da captura de conteúdo, inclusive com
-   opt-in. Payloads e referências a scripts nunca são executados. Uma fixture
-   contendo instrução para criar um arquivo não cria esse arquivo.
+3. Prompts, raciocínio privado e mensagens finais de assistente permanecem fora
+   da captura de conteúdo, inclusive com a opção ligada. Nos campos de resultado
+   suportados, texto sanitizado de `SKILL.md` pode ser guardado quando o usuário
+   ativa “incluir conteúdo”; ele é tratado somente como dado, sem executar nem
+   adotar instruções. Payloads e referências a scripts nunca são executados.
+   Uma fixture contendo instrução para criar um arquivo não cria esse arquivo.
 4. Para cada metadado textual permitido no envelope v1, a política trata o valor
    antes da entrega ao receptor/exportador. IDs aceitos mantêm igualdade dentro
    da captura por pseudônimos com chave exclusiva dessa captura; a mesma entrada
@@ -289,13 +291,20 @@ para a #5: a autorização registrada na #4 não foi generalizada.
   armazenamento local mínimo na #5, reutilizável pela #8, e seguir o loop de
   desenvolvimento com as verificações e o PR.” Resolve U1 e autoriza a execução
   e o push/PR após as verificações, sem delegar merge nem rodadas extras.
+- D1, aprovação explícita em 17/10/2026: à pergunta “Posso seguir com a opção
+  ‘incluir conteúdo’, desligada por padrão, que quando você a ligar grava
+  argumentos e resultados sanitizados, inclusive texto de SKILL.md, sem executar
+  nem obedecer às instruções coletadas?”, o proprietário respondeu “Sim, seguir
+  com esse comportamento (Recomendado)”. Autoriza a alteração visível do critério
+  3 e do check C7; mantém prompts/eventos de raciocínio excluídos e as demais
+  restrições. Não altera limites de revisão, merge ou publicação.
 
 ## Unresolved
 
 | # | Kind | Question | Until answered |
 | --- | --- | --- | --- |
 | U1 | resolved — 17/10/2026 | Armazenamento mínimo na #5, reutilizável pela #8 | Aprovado literalmente pelo proprietário, conforme Sources. Critérios 13–20 fecham o recorte; #8 mantém transporte entre processos, consulta/acompanhamento e núcleo completo. |
-| D1 | blocks — conteúdo textual | O critério 3 acrescentou exclusão absoluta de instruções de skills, além do AC7 original. Após a preocupação do proprietário com perda de informação, a proposta é permitir resultados sanitizados inclusive de SKILL.md quando o usuário ligar “incluir conteúdo”, tratando-os só como dados; alternativa: manter a exclusão das leituras reconhecidas de SKILL.md. | Aprovação ainda pendente. O proprietário pediu explicações (“mas se eu omitir como vamos saber o que esta acontecendo?” e “o que vc quer dizer por opt-in?”); isso não foi interpretado como aprovação. Foi explicado que a opção começa desligada, é escolhida uma vez por captura e não executa/adota instruções. C3/C7 e Landing só serão ajustados depois da decisão explícita. O lote independente de armazenamento está em `.checks/issue-5-privacidade.build.md`. |
+| D1 | resolved — 17/10/2026 | Guardar resultados sanitizados inclusive texto de SKILL.md quando o usuário ativa “incluir conteúdo”, tratando-os somente como dados | Aprovado literalmente conforme Sources. As perguntas anteriores por esclarecimento não foram tomadas como aprovação. Critério 3 e check C7 foram ajustados após a resposta explícita; o histórico da exclusão excessiva e das provas parciais fica preservado. |
 
 Recorte aprovado de U1: comando local recebe somente fixtures/entrada
 explícita, sanitiza antes de escrever e permite ao usuário controlar sua captura

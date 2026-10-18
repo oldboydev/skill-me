@@ -153,7 +153,7 @@ Proof: `node --test --test-name-pattern="^I5-C5 " tests/integrations/privacy/pol
 **C6** - Com opt-in, prompts, raciocínio, mensagem final, ferramenta `Skill`, `collab_tool_call.prompt` e Hermes nunca produzem conteúdo (casos das fixtures com canário)
 Proof: `node --test --test-name-pattern="^I5-C6 " tests/integrations/privacy/policy.unit.test.mjs`
 
-**C7** - (pendente D1) Evento com argumento referenciando `SKILL.md` grava os args sanitizados e omite todos os `result` com `unsupported_content`
+**C7** - (D1 aprovada em 17/10/2026) Com “incluir conteúdo” ligado, evento suportado com argumento referenciando `SKILL.md` mantém o resultado textual sanitizado, inclusive instruções benignas de fixture, sem executar nem adotar essas instruções; sem a opção, o resultado continua omitido
 Proof: `node --test --test-name-pattern="^I5-C7 " tests/integrations/privacy/policy.unit.test.mjs`
 
 **C8** - Ingest com `--content` de payloads que mandam criar arquivo (`touch`, `node -e writeFileSync`, `$(…)`) não cria o arquivo no scratch nem no cwd e não inicia processo
@@ -357,7 +357,7 @@ Total ≈ 25 + 21 + 9 + 17 + 8 + 10 = 90k < 150k: **um lote com S1–S4**. Se o
 build estourar mesmo assim, a fronteira é depois de S2 (≈ 65k): S3/S4 entram
 em CLI, guia e disco, superfície diferente das saídas existentes.
 
-Bloqueios e pontos para o coordenador/proprietário antes do build:
+Histórico dos bloqueios antes do build (D1 resolvida abaixo):
 
 - **D1 (bloqueia C7 e as linhas `result` da matriz):** o crit. 3 diz que
   instruções de arquivos de skill ficam fora "inclusive com opt-in", mas qualquer
@@ -373,6 +373,15 @@ Bloqueios e pontos para o coordenador/proprietário antes do build:
   pode passar com implementação errada; nenhuma falha é injetada sistematicamente.
   Plataformas: só as executadas entram em `.checks/issue-5-privacidade.build.md`;
   WSL em cópia `/tmp` com identidade conferida; I4-C19 depende de Hermes local.
+
+Resolução D1 em 17/10/2026 (antes do código de política): o proprietário aprovou
+guardar resultados sanitizados inclusive texto de SKILL.md quando liga “incluir
+conteúdo”, sem executar nem obedecer a instruções. Fonte literal em
+`.checks/issue-5-privacidade.approval.md`. C7 foi alterado visivelmente somente
+depois dessa autorização. A linha histórica do Landing que previa omissão de
+`result` por caminho de SKILL.md fica superada para resultados suportados;
+prompts, raciocínio privado e mensagens finais continuam excluídos. O autor
+acrescenta a linha literal substituta de D1 em Landing antes de implementar.
 
 Lote de armazenamento (Claude, sem D1), fronteira traçada pelo coordenador e
 não pela fatia: dentro de S4, antes do ingest.
