@@ -51,3 +51,31 @@ camadas que as possam expandir antecipadamente.
 Não se tratou de rejeição da plataforma nem da preparação antiga do Verifier6.
 Esse fluxo proibido e seu probe residual não foram repetidos. Nenhum histórico,
 scratch de Verifier ou backup anterior foi removido para reiniciar verificações.
+
+## Comparação RED do store na árvore original — 18/10/2026
+
+No lote de correções da terceira tentativa formal, o autor usou `git stash
+push/pop -- src/integrations/privacy/store.mjs` duas vezes para comparar o
+produto antigo com o corrigido. O coordenador identificou o procedimento ao
+ler o log e informou o proprietário. A referência `verify.md` da skill
+`tlc-implement` prescreve isolamento para comparações/mutações e diz “never
+use git stash” na seção de fault injection. O procedimento não será repetido;
+as provas finais e independentes usam commits limpos e cópias com identidade
+conferida. O perfil light não alegou injeção sistemática de falhas.
+
+Os registros preservados em `.checks/code-review/issue-5/author-fix-formal3.jsonl`
+mostram `STORE_AT_HEAD`, RED de C49b com controle C51b aprovado e o retorno da
+correção (`STORE_FIXED`), sem erro/conflito de pop. O diff subsequente dos três
+módulos correspondeu às correções inspecionadas, commitadas em `fecbea5`;
+Windows/WSL passaram os gates nesse commit. A lista de stash ao final estava
+vazia; não foi capturado um hash inicial de toda a pilha, portanto não se
+alega prova retrospectiva absoluta sobre seu estado anterior. Não há evidência
+de perda de fonte nos resultados examinados. Root não executou stash, reset,
+limpeza ou nova operação sobre essa pilha.
+
+A comparação F3 reproduziu a perda exclusivamente no scratch sintético: o
+produto antigo informou `deleted:true`, removeu a chave alheia da fixture e
+manteve a captura ativa com sua chave; o corrigido recusou com `foreign_entry`,
+exit4, preservando ambos. Nenhum dado pessoal foi usado. O recibo autoral
+`86815ad` registra a comparação; a nova verificação independente reexecutará
+as provas no HEAD final e distinguirá sua execução do método autoral anterior.
