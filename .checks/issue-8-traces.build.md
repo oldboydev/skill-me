@@ -15,7 +15,8 @@ revisão Codex ficam com o orquestrador.
 | `5ec6ed9` | S2 — `privacy list` e `privacy follow` (C9–C14) |
 | `89fb6c8` | S3 — `replayCapture`, concorrência, falhas, limites e demonstração (C15–C19) |
 | `132cb6e` | guia `docs/traces.md`, guias da #4/#5 e prova da documentação (C20) |
-| este registro | evidências (C21) |
+| `bdd70af` | evidências da fase 1 (C21) |
+| commit seguinte | fase 2: `npm test` completo em `bdd70af` |
 
 ## Decisões de implementação
 
@@ -81,7 +82,8 @@ Nenhuma altera as linhas do Landing; todas cabem nas três decisões registradas
 ## Provas por check
 
 Todas executadas e verdes nas duas linhas da fase 1 (abaixo), exceto C20, que lê
-este arquivo e roda na fase 2.
+este arquivo; C20 e todas as demais passaram no `npm test` completo da fase 2, no
+Windows e no WSL (o sinal POSIX de C4 só no WSL).
 
 | Check | Teste | Arquivo |
 | --- | --- | --- |
@@ -141,6 +143,8 @@ e o arquivo foi restaurado com `git checkout` (árvore limpa ao fim):
 | --- | --- | --- | --- |
 | Windows 11, fase 1 | 662 ms | 663 ms | 651 ms |
 | WSL Ubuntu, fase 1 | 654 ms | 651 ms | 649 ms |
+| Windows 11, fase 2 (`npm test`) | 665 ms | 651 ms | 653 ms |
+| WSL Ubuntu, fase 2 (`npm test`) | 657 ms | 651 ms | 650 ms |
 
 Em processo a asserção é ≤ 750 ms exatos. No processo real a medida inclui o
 encerramento depois da tentativa; a asserção admite 750 + 500 ms.
@@ -151,9 +155,11 @@ encerramento depois da tentativa; a asserção admite 750 + 500 ms.
 | --- | --- | --- |
 | Windows 11 — Node 24.21.0, checkout em `132cb6e` | `node --test` dos sete arquivos de `tests/integrations/traces/` exceto `docs.test.mjs` | 20 tests, 19 pass, 0 fail, 1 skip (T8-C4 sinal POSIX) |
 | WSL Ubuntu — Node 24.13.0, uid 1000, distro `Ubuntu`, `/tmp/skill-me-i8-YgTUkP` de `git archive 132cb6e` (sha256 `c0b8dfdb…7c7525` conferido; `git get-tar-commit-id` = `132cb6e4…`), `node_modules` copiado do checkout | mesmo alvo | 20 tests, 20 pass, 0 fail, 0 skip |
+| Windows 11 — Node 24.21.0, checkout em `bdd70af` | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 224 (217 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX), T8-C20 inclusive |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i8-LhxqxN` de `git archive bdd70af` (sha256 `dfbd41ee…1e80c483` conferido; `git get-tar-commit-id` = `bdd70af0…`) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 224 (212 pass, 0 fail, 12 skip pré-existentes: Hermes ausente ×8, DACL Windows ×3, ACL macOS ×1), T8-C20 inclusive |
 
 Preparação WSL: tar e `run-wsl.sh` num diretório de `mktemp -d` do `%TEMP%`
-(`skill-me-i8-wsl-stage-n0fAaX`), chamados com `MSYS_NO_PATHCONV=1 wsl.exe -d
+(`skill-me-i8-wsl-stage-n0fAaX` na fase 1, `skill-me-i8-wsl-stage-71TySJ` na 2), chamados com `MSYS_NO_PATHCONV=1 wsl.exe -d
 Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída> <modo>`.
 O script recusa root, outra distro, origem ausente, hash ou commit diferente e
 destino fora de `/tmp/skill-me-i8-??????` antes de extrair; logs ficam no stage.
@@ -164,7 +170,9 @@ destino fora de `/tmp/skill-me-i8-??????` antes de extrair; logs ficam no stage.
   TerminateProcess sem handler (mesmo limite do I4-C15). Executado no WSL.
 - Pré-existentes no Windows (linha de base `npm test` antes da mudança: doctor
   410 pass + 7 skip; integrações 197 pass + 6 skip): FIFO/symlink POSIX do doctor
-  e I4-C15, I4-C25b/j/k/l/m (modos e ACL POSIX/macOS).
+  e I4-C15, I4-C25b/j/k/l/m (modos e ACL POSIX/macOS). No WSL: hermes_cli.PYD do
+  doctor, I4-C18–C23, I4-C37, I4-C44b (Hermes ausente), I4-C25g/h/i (DACL
+  Windows) e I4-C25m (ACL macOS). Nenhum teste T8 é pulado no WSL.
 - macOS não foi executado localmente; a CI do PR o executa.
 - Não executados por não estarem autorizados: Claude, Codex ou Hermes reais com
   modelo; o plugin Hermes dentro do Hermes com a captura vinculada (o ingest
