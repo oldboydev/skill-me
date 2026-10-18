@@ -1325,3 +1325,135 @@ foram repetidos nele.
   flag do Bash).
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+# Tag/âncora seguida de valor na mesma linha e comentário antes da quebra (18/10/2026)
+
+Evidência autoral, não verificação independente nem revisão formal: não conta
+como rodada do Verifier nem tentativa da revisão e não altera tetos. Nenhum
+relatório anterior, `.verified.md`, incidente, aprovação, task ou configuração
+foi editado. Autorização vigente: "autorizo quantos precisaram para resolver"
+(registro `157add2`); o Verifier depois deste lote fica a cargo do coordenador;
+nenhum `review:run`, subagente, push, PR ou merge neste lote. Escopo: decisão do
+coordenador de que os limites declarados pelo autor na seção anterior (tag ou
+âncora seguida do valor na mesma linha, comentário sem indicador, mais de duas
+propriedades) não estão aceitos por estarem documentados — mesmo AC2/crit. 6/S2.
+Commits: `54325a2` (Landing "Tag/âncora seguida de texto na mesma linha e
+comentário antes da quebra", antes do código), `d4fe7d3` (correção, provas,
+guia e comandos de prova do checklist) e o commit desta evidência.
+
+## Natureza do problema e correção
+
+- **Produto**: o guard `blockOpener` só recusava tag/âncora seguidas do
+  indicador ou do fim da linha. Com o valor na mesma linha
+  (`secret: !!str <valor>`) só a palavra `!!str` saía; com `&a <valor>` nada saía
+  (o `&` encerra a palavra); com `secret: # c` e o valor abaixo, só a palavra `#`
+  saía. Correção no mesmo guard, mesmo caminho `NO_SAFE_PROJECTION` →
+  `{ok:false}` → `unsanitizable`, mesmos `HEADER_NAME`, `ASSIGNMENT_NAME`,
+  `FLAG_NAME` e `isSensitiveKey`: (3) valor que começa em `!…` ou em `&` seguido
+  de caractere sem espaço, seguido de espaços/tabs e de qualquer caractere na
+  mesma linha, recusa, com ou sem linha depois (fecha também mais de duas
+  propriedades); (4) `NEXT_LINE_VALUE` aceita, como fim da linha, comentário `#…`
+  precedido de espaço/tab. Nada é interpretado como YAML, nenhuma tag, âncora,
+  alias ou comentário é resolvido, nada é extraído, nenhum caminho aberto ou
+  executado.
+- **Custo**: a sequência da propriedade é varrida uma vez por passada; nome
+  dentro dela (`&secret:&secret:…`) reusa o resultado (consultas crescentes, como
+  `quoteCounter`). O comentário só é lido com `at <= lastBreak`, quando há quebra
+  depois, e então recusa. Medida em scratch (`cost.log`): `&secret:` repetido —
+  com o reuso 5/7/13 ms em 32/64/128 KiB; sem ele 28/105/396 ms (quadrático,
+  ≈25 s estimados em 1 MiB, acima do teto de 5 s do C14h). Nenhum SLA novo.
+- **Mudança de controles anteriores (registrada no Landing antes do código)**:
+  `password: !… | cat\nfim` e `x\nsecret: !!str &a |\n` deixavam só a palavra da
+  tag removida e agora são recusas exatas no C14i; o caso de custo
+  `password: !password: !x ` em 1 MiB passou de `ok:true` a `ok:false` no C14h.
+  Nenhuma asserção foi apagada: as entradas mudaram de expectativa conforme a
+  decisão e são provadas como `{ok:false}` exato.
+
+## O que cada prova nova afirma
+
+- **I5-C14i** (policy.unit, título ampliado): 14 entradas da família (3) e 7 da
+  (4) recusadas exatamente `{ok:false}` — tag e âncora com e sem linha depois,
+  as duas propriedades nas duas ordens, tab, nome entre aspas, alias de nome,
+  `\r\n`, mais de duas propriedades antes da quebra, `!` sozinho, depois de `=`,
+  cabeçalho e flag; comentário com `\n`, `\r\n`, CR, nome entre aspas,
+  cabeçalho, flag e depois de tag. Os 2 controles mudados recusados
+  exatamente. Controles exatos: `x\nsecret: !!str   ` → só a palavra sai;
+  `PASSWORD=#x\nls` → `PASSWORD=[removido]\nls`; `secret: # c` →
+  `secret: [removido] c` (regra anterior, sem linha depois); `secret: *a\nfim`
+  → `secret: [removido]\nfim`; `--token & ls`, `secret: &a` e nome comum com tag
+  e comentário intactos com `removed:false`; valor ausente no fim do texto
+  intacto como antes. Fronteira da política: 3 saídas novas (tag, âncora,
+  comentário) → `tool_response.stdout` ausente,
+  `tool_response.stdout:unsanitizable`, comando preservado, sem canário nem
+  `\u0000`.
+- **I5-C14j** (outputs.cli, CLI real com `fs-probe` e sonda de privacidade):
+  cada família virou um subteste (`t.test`), para que uma família que falha não
+  esconda as outras; as asserções de cada uma são as mesmas da seção anterior.
+  Famílias novas `tag-mesma-linha`, `ancora-mesma-linha`, `comentario`: os dois
+  eventos persistidos, export só com os dois comandos e o stderr, as duas saídas
+  omitidas com `…:unsanitizable`, `contentOmitted.unsanitizable = 2` exato,
+  nenhum arquivo/stdout/log de sonda/temporário antes do rename/arquivo escrito
+  com o marcador, `stderr` vazio, lock de cada comando, delete aplicado.
+- **I5-C14h**: `password: !password: !x ` → `ok:false`; `&secret:` em 1 MiB →
+  `ok:true`; com `\nfim` → `ok:false`; `secret: # ` com `\nfim` → `ok:false`.
+  Gate Windows: 474 ms para o teste inteiro (treze entradas).
+- Contagem do alvo de privacidade: 91 → 97 (os seis subtestes do C14j contam
+  como testes; nenhum teste de topo novo); `test:integrations` 179 → 185.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-tagcomment-win-dPVO5j\`; scratch em
+`%TEMP%\skill-me-i5-tagcomment-scratch-ufvlUY\` (`sanitize-old.mjs` de `54325a2`,
+`sanitize-new.mjs`, `sanitize-nomemo.mjs`, `compare.log`, `cost.log`);
+ferramentas em `%TEMP%\skill-me-i5-tagcomment-tools\` (`compare.mjs`,
+`cost.mjs`, `gate-win.sh`). Nenhum log contém `SKILLMECANARY`.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red-policy.tap.log` | `src/` intacto (`git diff --exit-code HEAD -- src`, cabeça `54325a2`, testes novos) | C14i `recusado 0` (primeira entrada nova), C14h `caso 8` (`password: !password: !x ` ainda `ok:true`); exit 1 |
+| `red-cli.tap.log` | idem | C14j: `bloco`, `linha-seguinte`, `tag-ancora` passam; `tag-mesma-linha`, `ancora-mesma-linha`, `comentario` falham, cada uma com o marcador em `events-000002.ndjson` após o ingest; 7 testes, 3 pass, 4 fail (a falha do pai conta) |
+| `compare.log` (scratch, só booleanos) | `sanitize.mjs` antigo × corrigido | 21 entradas das famílias (3) e (4): antigo `ok:true` em 21 (marcador no texto em 19; nos 2 cabeçalhos a regra 3 já removia a linha), corrigido recusa 21/21; 2 controles mudados: antigo `ok:true` sem vazamento, novo `ok:false`; 16 controles idênticos |
+| `green-policy.tap.log`, `green-cli.tap.log` | correção, antes do commit | 2/2 e 7/7 (6 subtestes), exit 0 |
+
+## Execuções no commit `d4fe7d3`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, HEAD e árvore limpa conferidos antes e depois (`gate-d4fe7d3/gate.meta`) | `node --test tests/integrations/privacy/*.test.mjs` / `npm test` | 97/97, 0 skip (C34/C35 incluídos); exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 185 (179, 6 skip) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-tagcomment-l5JVoY`, tar sha256 `e411490f…e80158f` e `get-tar-commit-id` = `d4fe7d3b…` conferidos no script; stage `skill-me-i5-tagcomment-wsl-stage-37fSHb` | idem | 97/97, 0 skip; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 185 (173, 12 skip) |
+
+Skips iguais aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m). Os seis
+subtestes do C14j aparecem como `ok` nos dois logs de privacidade.
+
+Preparação WSL: `run-wsl.sh` copiado do stage anterior trocando só o comentário
+e os prefixos (`diff` conferido: linhas 2, 22, 27 e 29), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+o script recusa root, outra distro, origem ausente e saída/destino fora do
+padrão antes de copiar ou extrair. Nenhum comando inline no WSL, nada em `/repo`
+ou `/src.tar`; preparação antiga do Verifier6, seu probe, sessões ou
+configurações pessoais não tocados; nenhum modelo, rede de produto, instalação,
+subagente, push ou `review:run`. Nenhum arquivo do repositório editado durante
+os gates; o WSL começou depois do fim do gate Windows. Nenhuma rejeição de
+política nem falha de capacidade.
+
+**Diferença de SHA**: os gates acima rodaram em `d4fe7d3`. O commit desta
+evidência só acrescenta esta seção (`.checks/`); código, testes, guia e checklist
+são idênticos aos do gate. Nele rodaram só I5-C34 e I5-C35, numa invocação com
+seletor sobre `docs-privacy.test.mjs` (Windows); `npm test` e o alvo completo não
+foram repetidos nele.
+
+## Riscos e perdas comunicados
+
+- Perdas declaradas no Landing e no guia (falha fechada): o campo inteiro sai
+  também em palavra de shell que começa com `!`/`&…` seguida de outra palavra
+  (`PASSWORD=!x ls`, `--password !x -v`, `--token &>/dev/null ls`), em cabeçalho
+  cuja linha começa com propriedade (`Authorization: !x y`, antes removido até o
+  fim da linha) e em comentário de shell depois do nome no fim da linha.
+- Os limites "tag/âncora seguida do valor na mesma linha", "comentário sem
+  indicador" e "mais de duas propriedades" da seção anterior estão superados.
+  Limites restantes, iguais antes e depois: nomes que as regras atuais não
+  reconhecem, `--password<NBSP>valor` e formato de segredo desconhecido.
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
