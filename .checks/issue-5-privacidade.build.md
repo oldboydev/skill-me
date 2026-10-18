@@ -247,7 +247,7 @@ rodou e passou nas duas linhas do alvo de privacidade acima (Windows e WSL).
 | C32 | I5-C32 (os 23 códigos por cenário real) | store.cli | executado |
 | C33 | I5-C33 | outputs.cli | executado |
 | C34 | I5-C34 | docs-privacy | executado |
-| C35 | I5-C35 | docs-privacy | ver "Conferência do guia" |
+| C35 | I5-C35 | docs-privacy | executado em `eed5658` nas duas plataformas (ver "Conferência do guia") |
 | C36 | I5-C36 | store.cli | executado |
 | C37 | I5-C37 | store.cli | executado |
 | C38 | I5-C38 | store.cli | executado |
@@ -271,10 +271,22 @@ rodou e passou nas duas linhas do alvo de privacidade acima (Windows e WSL).
 | C56 | I5-C56 (2 rodadas: stop no meio; stop+delete com produtores em voo) | demo.e2e | executado |
 | C57 | `git diff --exit-code 1b6685f… -- scripts/code-review` | — | exit 0 (Windows, em `0f7f91b`) |
 | C58 | I4-C47 | fixtures-inventory | executado no `npm test` das duas plataformas |
-| C59 | `npm test` | — | ver "Conferência do guia" (as duas execuções acima saíram 1 só por I5-C35) |
+| C59 | `npm test` | — | exit 0 em `eed5658` nas duas plataformas (ver "Conferência do guia"); em `0f7f91b` saiu 1 só por I5-C35 |
 
 Os testes parciais `I5-Cns` do lote anterior continuam na suíte; os checks
 são fechados pelos nomes sem sufixo acima.
+
+## Conferência do guia (commit `eed5658`, com esta evidência registrada)
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, checkout local em `eed5658`, log em `%TEMP%\skill-me-i5-d1-win2-J3tIbf` | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 162 (156 pass, 6 skip, 0 fail), I5-C34 e I5-C35 inclusive |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-d1-xUhv4b` de `git archive eed5658` (sha256 `13e36b89…2243bfd2` igual nos dois lados) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 162 (150 pass, 12 skip, 0 fail), I5-C34 e I5-C35 inclusive |
+| WSL Ubuntu | `node --test --test-skip-pattern="^I5-C35 " "tests/integrations/privacy/*.test.mjs"` | 73 tests, 73 pass, 0 fail, 0 skip |
+
+Os skips são os mesmos listados acima. `git diff --exit-code 1b6685f… --
+scripts/code-review` saiu 0 em `eed5658` (C57). O commit seguinte só acrescenta
+esta seção ao registro.
 
 ## Limites honestos
 
