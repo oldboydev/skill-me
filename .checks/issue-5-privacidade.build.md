@@ -1073,3 +1073,122 @@ falha de capacidade.
   resultado vai ao coordenador.
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+# Valor sensível em bloco multilinha (18/10/2026)
+
+Evidência autoral, não verificação independente nem revisão formal: não conta
+como rodada do Verifier nem tentativa da revisão e não altera tetos. Nenhum
+relatório anterior, `.verified.md`, incidente ou aprovação foi editado. As duas
+tentativas formais e as quatro rodadas independentes estão consumidas; nova
+verificação depende de extensão humana pedida pelo coordenador. Escopo: risco
+relatado pelo autor no lote anterior (`secret: |` com o valor nas linhas
+seguintes passava), que o coordenador autorizou corrigir por omissão no mesmo
+S2/crit. 6. Commits: `f331fb6` (Landing "Valor sensível em bloco multilinha…",
+antes do código), `94493c8` (correção, provas, guia e comandos de prova) e o
+commit desta evidência.
+
+## Natureza do problema e correção
+
+- **Produto**: depois de nome sensível e espaço, `|`/`>` não pertencem à palavra
+  de shell; o valor vazio era tratado como ausência de valor e as linhas
+  seguintes persistiam (`secret: |\n  <valor>`). Com cabeçalho
+  (`Authorization: |`) só o `|` saía. Correção: decisão pura `blockOpener`
+  (indicador `|`/`>` com até dois de dígito/`+`/`-`, espaços e comentário `#`
+  opcionais, terminando a linha, com texto depois da quebra), consultada pelas
+  regras 3 e 5 no início do valor; positiva, `removeValues` devolve `null` pelo
+  mesmo caminho da composição aberta e `sanitizeText` devolve `{ok:false}`; o
+  chamador existente omite o campo com `unsanitizable` (nenhum tipo novo). Só lê
+  o texto já coletado: nenhum YAML interpretado, nenhuma linha seguinte extraída,
+  nenhum arquivo ou caminho aberto. Nomes, separadores e a gramática da palavra
+  não mudaram (mesmos `HEADER_NAME`, `ASSIGNMENT_NAME`, `FLAG_NAME`,
+  `isSensitiveKey`).
+- **Custo**: a última quebra com texto depois é calculada uma vez por passada;
+  procurar o fim da linha a cada nome seria quadrático numa linha longa de
+  `secret: | # …`. Dois casos novos no I5-C14h cobrem isso.
+
+## O que cada prova nova afirma
+
+- **I5-C14i** (policy.unit): 15 entradas recusadas exatamente `{ok:false}` —
+  `secret: |`, `password: >`, aninhado/indentado, alias (`api-key`,
+  `client_secret` entre aspas, `DB_PASSWORD`), `|-`, `>2-`, `|2`, `|+` com
+  comentário, `>-` com tab e comentário, `\r\n`, CR, sem espaço no separador,
+  tab depois do indicador, cabeçalho (`Authorization`, `cookie`) e flag
+  (`--password |`); 7 controles idênticos com `removed:false` (indicador sem
+  linha seguinte, só com a quebra final, nome comum com bloco, `--token | cat`,
+  `password: > /dev/null`, `secret: |x`, pipe/redirecionamento sem nome); 2
+  saídas exatas com `removed:true` (valor na mesma linha seguido de `|` na linha
+  de baixo, `'a|…'`). Fronteira da política: `post_tool_bash` com o bloco no
+  stdout → `tool_response.stdout` ausente, `tool_response.stdout:unsanitizable`,
+  comando preservado, sem canário nem `\u0000`.
+- **I5-C14j** (outputs.cli, CLI real com `fs-probe` e sonda de privacidade):
+  ingest codex-exec e Claude post com `cat config.yml` e saída contendo
+  `password: |` e `token: >- # …` aninhados; os dois eventos persistidos, export
+  só com os dois comandos e o stderr, as duas saídas omitidas com
+  `…:unsanitizable` e `status.counters.contentOmitted.unsanitizable = 2`; nenhum
+  arquivo, stdout, log de sonda, temporário antes do rename ou arquivo escrito
+  com o marcador (nem NUL nos de texto); `stderr` vazio; lock de cada comando;
+  delete aplicado.
+- **I5-C14h**: dois casos novos de 1 MiB numa linha (`secret: |x # ` repetido →
+  `ok:true`; `password: > ` repetido com `\nfim` → `ok:false`, só o último
+  indicador termina a linha). A primeira versão do teste esperava `true` no
+  segundo; o erro era do teste (o último `password: > ` é seguido de quebra e
+  texto, recusa prevista no Landing) e foi corrigido antes do commit `94493c8`.
+- Nenhuma asserção, limite ou critério existente mudou; as 89 provas anteriores
+  do alvo de privacidade passam sem edição (91 com as duas novas).
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-block-win-7Fzfys\`; scratch fora do repositório em
+`%TEMP%\skill-me-i5-block-scratch-NVT0YB\` (só booleanos). Nenhum log contém
+`SKILLMECANARY`.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red.tap.log` | `src/` intacto (cabeça `f331fb6`) | C14i, C14j 2/2 falham: `recusado 0`; marcador no `events-000002.ndjson` após o ingest |
+| `green-new.tap.log` | corrigido, antes da correção do caso do C14h | C14i, C14j passam; C14h `caso 7` (erro do teste, acima) |
+| `compare.log` (scratch) | `sanitize.mjs` de `f331fb6` × corrigido | 18 casos de bloco: antigo `ok:true` com o marcador em 16 (os outros 2 removidos só em parte), corrigido recusa 18/18; 9 controles idênticos ao antigo; 3 limites declarados (`!!str \|`, `secret:` + linha seguinte, `--password<NBSP>`) passam igual nos dois |
+
+## Execuções no commit `94493c8`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, HEAD e árvore limpa conferidos antes e depois (`gate-94493c8/gate.meta`) | `node --test tests/integrations/privacy/*.test.mjs` / `npm test` | 91/91, 0 skip (C34/C35 incluídos); exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 179 (173, 6 skip) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-block-W9KURB`, tar sha256 `8db4123e…efba5951f` e `get-tar-commit-id` = `94493c85…` conferidos no script; stage `skill-me-i5-block-wsl-stage-zNjuZi` | idem | 91/91, 0 skip; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 179 (167, 12 skip) |
+
+Skips iguais aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m).
+Integrações passam de 177 para 179 só pelos dois testes novos.
+
+Preparação WSL: `run-wsl.sh` copiado do stage anterior trocando só o comentário
+e os prefixos (`diff` conferido), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+o script recusa root, outra distro, origem ausente e saída/destino fora do
+padrão antes de copiar ou extrair. Nenhum comando inline no WSL, nada em `/repo`
+ou `/src.tar`; preparação antiga do Verifier6, seu probe, sessões ou
+configurações pessoais não tocados; nenhum modelo, rede de produto, instalação,
+subagente, push ou `review:run`. Nenhum arquivo do repositório editado durante
+os gates; o WSL começou depois do fim do gate Windows. Nenhuma rejeição de
+política nem falha de capacidade.
+
+**Diferença de SHA**: os gates acima rodaram em `94493c8`. O commit desta
+evidência só acrescenta esta seção (`.checks/`); código, testes, guia e checklist
+são idênticos aos do gate. Nele rodaram só I5-C34 e I5-C35, numa invocação com
+seletor (Windows); `npm test` e o alvo completo não foram repetidos nele. A
+futura verificação independente, se autorizada, roda todas as provas na cabeça
+final.
+
+## Riscos e perdas comunicados
+
+- Perdas declaradas no Landing e no guia: o campo inteiro sai também quando a
+  linha seguinte não pertence ao bloco (`password: |\nuser: u`), quando é pipe
+  de shell continuado na linha seguinte e no cabeçalho entre aspas
+  (`'Authorization: |\n…'`, que antes removia até o fecho).
+- Limites declarados, não corrigidos e confirmados iguais antes e depois: tag ou
+  âncora antes do indicador (`secret: !!str |`), valor YAML simples continuado
+  na linha seguinte sem indicador (`secret:` e o valor abaixo — mesmo contrato,
+  vizinho ao corrigido; não ampliado por estar fora do escopo autorizado),
+  `--password<NBSP>valor` (não é separação de argumento para o Bash nem para a
+  regra 5) e nomes que as regras atuais não reconhecem.
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
