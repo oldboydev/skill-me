@@ -732,7 +732,7 @@ test("I5-C14f valor sensível composto: composição aberta omite o campo; NBSP,
   assert.ok(leaks(text).length === 0 && !text.includes("\\u0000"), "registro sem vazamento nem marcador interno");
 });
 
-test("I5-C14i valor sensível em bloco multilinha omite o campo; indicador sem linha seguinte ou com texto na mesma linha segue a regra anterior", () => {
+test("I5-C14i valor sensível em bloco multilinha, na linha seguinte ou depois de tag/âncora omite o campo; indicador sem linha seguinte ou com texto na mesma linha segue a regra anterior", () => {
   // Nome já reconhecido pelas regras 3 e 5 seguido de `|`/`>` no fim da linha.
   refusedCases([
     "secret: |\n  SKILLMECANARYa",
@@ -785,6 +785,59 @@ test("I5-C14i valor sensível em bloco multilinha omite o campo; indicador sem l
   same(field(record, "tool_input.command").value, "cat config.yml", "comando preservado");
   const text = JSON.stringify(record);
   assert.ok(leaks(text).length === 0 && !text.includes("\\u0000"), "registro sem vazamento nem marcador interno");
+
+  // Decisão do coordenador: mesmo guard para o valor na linha seguinte e para
+  // tag/âncora antes do indicador ou do fim da linha.
+  refusedCases([
+    // Valor ausente na linha, com ou sem espaços antes da quebra.
+    "secret:\n  SKILLMECANARYs",
+    "password:   \n    SKILLMECANARYt\n",
+    "db:\n  password:\t\r\n    SKILLMECANARYu\r\n",
+    "secret:\rSKILLMECANARYv",
+    '"client_secret":\n  "SKILLMECANARYw"',
+    "DB_PASSWORD=\nSKILLMECANARYx",
+    "Authorization:\n  Bearer SKILLMECANARYy",
+    "set-cookie: \n  s=SKILLMECANARYz",
+    "--password \n  SKILLMECANARYaa",
+    // Tag/âncora antes do indicador ou do fim da linha.
+    "secret: !!str |\n  SKILLMECANARYab",
+    "token: &a >-\n  SKILLMECANARYac",
+    "secret: !!str &a | # c\n  SKILLMECANARYad",
+    "api-key: &k !<tag:x> |2\r\n  SKILLMECANARYae",
+    "password: !secret\n  SKILLMECANARYaf",
+    "secret: !!str  \n  SKILLMECANARYag",
+    "Authorization: !!str |\n  Bearer SKILLMECANARYah",
+    "--token !x >\n  SKILLMECANARYai",
+  ]);
+  // Controles: valor ausente no fim do texto não inventa conteúdo; nome comum;
+  // tag/âncora seguida de texto na mesma linha segue a regra anterior.
+  exactCases(
+    [
+      "secret:",
+      "secret:\n",
+      "password:   \r\n",
+      "description:\n  texto livre\nnotes: !!str |\n  mais",
+    ].map((text) => [text, text]),
+    false,
+  );
+  exactCases(
+    [
+      // Sem linha depois, a regra anterior só remove a palavra que começa no valor.
+      ["x\nsecret: !!str", `x\nsecret: ${R}`],
+      ["x\nsecret: !!str &a |\n", `x\nsecret: ${R} &a |\n`],
+      ["password: !SKILLMECANARYaj | cat\nfim", `password: ${R} | cat\nfim`],
+      ["secret: SKILLMECANARYal\nuser:\n  u", `secret: ${R}\nuser:\n  u`],
+    ],
+    true,
+  );
+  for (const stdout of ["db:\n  password:\n    SKILLMECANARYam\n", "db:\n  secret: !!str &s |\n    SKILLMECANARYan\n"]) {
+    const blocked = policy("claude", claudePayload("post_tool_bash", { tool_input: { command: "cat config.yml" }, tool_response: { stdout, stderr: "" } }));
+    assert.equal(field(blocked, "tool_response.stdout"), undefined, "valor omitido");
+    assert.ok(blocked.privacy.includes("tool_response.stdout:unsanitizable"));
+    same(field(blocked, "tool_input.command").value, "cat config.yml", "comando preservado");
+    const serialized = JSON.stringify(blocked);
+    assert.ok(leaks(serialized).length === 0 && !serialized.includes("\\u0000"), "registro sem vazamento nem marcador interno");
+  }
 });
 
 test("I5-C14h sanitização de 1 MiB numa linha com muitos valores termina em tempo linear", () => {
@@ -803,6 +856,10 @@ test("I5-C14h sanitização de 1 MiB numa linha com muitos valores termina em te
     // último `password: > ` termina a linha e recusa.
     [fill("secret: |x # ") + "\nfim", true],
     [fill("password: > ") + "\nfim", false],
+    // Tag/âncora: nomes dentro de `!…` não relêem a linha; só a última
+    // `secret: !a &b ` termina a linha e recusa.
+    [fill("password: !password: !x "), true],
+    [fill("secret: !a &b ") + "\nfim", false],
   ];
   cases.forEach(([input, ok], i) => {
     const started = performance.now();

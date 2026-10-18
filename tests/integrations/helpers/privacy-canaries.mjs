@@ -65,6 +65,10 @@ export const COMPOSED_OUTPUT_OUT = "PASSWORD=[removido] ok\nAuthorization: [remo
 // inteiro sai como `unsanitizable`. Só dados; nada é lido nem executado.
 export const BLOCK_COMMAND = "cat config.yml";
 export const BLOCK_OUTPUT = "db:\n  host: localhost\n  password: |\n    SKILLMECANARYblock\n  api:\n    token: >- # rotacionar\n      SKILLMECANARYfolded\n";
+// Mesmo risco, decisão do coordenador: valor na linha seguinte e tag/âncora
+// antes do indicador ou do fim da linha.
+export const NEXT_LINE_OUTPUT = "db:\n  host: localhost\n  password:  \n    SKILLMECANARYnextline\n  user: u\n";
+export const TAGGED_OUTPUT = "db:\n  secret: !!str &s |\n    SKILLMECANARYtagged\n  api_key: !!str\n    SKILLMECANARYtagline\n";
 
 // Texto livre com as cinco categorias entre trechos que podem permanecer.
 export const SECRET_TEXT = [

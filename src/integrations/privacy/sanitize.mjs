@@ -165,22 +165,26 @@ function schemeValue(match, text, quotes) {
   return completeWord(text, stop - match[2].length, stop, quotes);
 }
 
-// Indicador de bloco (`|`/`>`, chomping/indentação simples, comentário) que
-// termina a linha: o valor estaria nas linhas seguintes, e só uma gramática
-// YAML diria onde ele acaba. Só lê o texto; nada é extraído. Linha "Valor
-// sensível em bloco multilinha…" do Landing.
-const BLOCK_INDICATOR = /[|>][0-9+-]{0,2}(?:[ \t]*(?=[\r\n])|[ \t]+#)/y;
+// Valor que só começa na linha seguinte: indicador de bloco (`|`/`>`,
+// chomping/indentação simples, comentário) ou nada até a quebra, com até duas
+// propriedades (tag `!…`, âncora `&…`) antes. Só uma gramática YAML diria onde
+// o valor acaba; só lê o texto, nada é extraído nem interpretado. O limite de
+// duas (tag e âncora de um nó) impede que nomes dentro de `!…` releiam a
+// linha. Linhas "Valor sensível em bloco multilinha…" e "Valor sensível na
+// linha seguinte…" do Landing.
+const NEXT_LINE_VALUE = /(?:[!&][^ \t\r\n]*(?:[ \t]+|(?=[\r\n]))){0,2}(?:[|>][0-9+-]{0,2}(?:[ \t]*(?=[\r\n])|[ \t]+#)|[ \t]*(?=[\r\n]))/y;
 const NO_SAFE_PROJECTION = Symbol("no safe projection");
 
-// Indicador seguido de quebra com texto depois. A última quebra assim é
+// Valor que começa em quebra com texto depois. A última quebra assim é
 // calculada uma vez por passada: procurar o fim da linha a cada nome seria
-// quadrático numa linha longa de `secret: | # …`.
+// quadrático numa linha longa de `secret: | # …`. Valor ausente começa na
+// própria quebra (`at === lastBreak`).
 function blockOpener(text) {
   const end = text.length - (text.endsWith("\r\n") ? 2 : text.endsWith("\n") || text.endsWith("\r") ? 1 : 0);
   const lastBreak = Math.max(text.lastIndexOf("\n", end - 1), text.lastIndexOf("\r", end - 1));
   return (at) => {
-    BLOCK_INDICATOR.lastIndex = at;
-    return at < lastBreak && BLOCK_INDICATOR.test(text);
+    NEXT_LINE_VALUE.lastIndex = at;
+    return at <= lastBreak && NEXT_LINE_VALUE.test(text);
   };
 }
 

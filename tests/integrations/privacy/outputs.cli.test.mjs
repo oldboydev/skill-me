@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 import { EVENT_KIND_FIELDS } from "../../../src/integrations/boundary.mjs";
 import { INTEGRATIONS_CLI, REPO_ROOT, baseEnv, makeScratch, parseReport } from "../helpers/cli.mjs";
 import { runClaudeHandler } from "../helpers/installed-hooks.mjs";
-import { BLOCK_COMMAND, BLOCK_OUTPUT, CANARIES, COMPOSED_COMMAND, COMPOSED_OUTPUT, COMPOSED_OUTPUT_OUT, DELIMITED_COMMAND, DELIMITED_COMMAND_OUT, DELIMITED_OUTPUT, DELIMITED_OUTPUT_OUT, ENCODED_MARKER, ENCODED_QUERY_URL, ENCODED_VALUE_URL, ENCODED_VALUE_URL_OUT, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, ndjson } from "../helpers/privacy-canaries.mjs";
+import { BLOCK_COMMAND, BLOCK_OUTPUT, CANARIES, COMPOSED_COMMAND, COMPOSED_OUTPUT, COMPOSED_OUTPUT_OUT, DELIMITED_COMMAND, DELIMITED_COMMAND_OUT, DELIMITED_OUTPUT, DELIMITED_OUTPUT_OUT, ENCODED_MARKER, ENCODED_QUERY_URL, ENCODED_VALUE_URL, ENCODED_VALUE_URL_OUT, KEY_CANARIES, MARKER, NEXT_LINE_OUTPUT, SECRET_TEXT, TAGGED_OUTPUT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, ndjson } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy } from "../helpers/privacy-store.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
 
@@ -480,71 +480,75 @@ test("I5-C14g valor sensível composto: comando omitido como unsanitizable e sa�
   for (const entry of written) assert.equal(entry.containsMarker, false, path.basename(entry.file));
 });
 
-test("I5-C14j valor sensível em bloco multilinha num resultado textual: campo omitido como unsanitizable, evento preservado, sem chegar a temporários, lock, arquivos, logs nem export", () => {
-  const input = {
-    "codex-exec": [execEvent("item_completed_command", { command: BLOCK_COMMAND, aggregated_output: BLOCK_OUTPUT })],
-    claude: [claudePayload("post_tool_bash", { tool_input: { command: BLOCK_COMMAND }, tool_response: { stdout: BLOCK_OUTPUT, stderr: "" } })],
-  };
-  const root = makeScratch("i5 c14j store");
-  const probeDir = makeScratch("i5 c14j probe");
-  const fsProbeLog = path.join(probeDir, "fs-probe.jsonl");
-  const privacyLog = path.join(probeDir, "privacy-probe.jsonl");
-  const options = {
-    nodeArgs: ["--import", FS_PROBE, "--import", PRIVACY_PROBE],
-    env: baseEnv({ SKILL_ME_TEST_PRIVACY_PROBE_LOG: privacyLog, SKILL_ME_TEST_PRIVACY_PROBE_MARKER: MARKER, SKILL_ME_TEST_FS_PROBE_LOG: fsProbeLog, SKILL_ME_TEST_FS_PROBE_CANARY: MARKER }),
-  };
-  const commands = [];
-  const run = (argv, extra = {}) => {
-    const result = runPrivacy(argv, { ...options, ...extra });
-    commands.push([argv[0], result]);
-    return result;
-  };
-  // Sem diff: a mensagem de falha não pode carregar o marcador; `key` é
-  // binária e só passa pela busca do marcador (ver I5-C14g).
-  const clean = (text, label) => assert.ok(leaks(text).length === 0 && !text.includes("\0") && !text.includes("\\u0000"), label);
+test("I5-C14j valor sensível em bloco multilinha, na linha seguinte ou depois de tag/âncora num resultado textual: campo omitido como unsanitizable, evento preservado, sem chegar a temporários, lock, arquivos, logs nem export", () => {
+  // Uma captura por família, com as mesmas asserções: bloco, valor na linha
+  // seguinte e tag/âncora antes do indicador ou do fim da linha.
+  for (const [family, output] of [["bloco", BLOCK_OUTPUT], ["linha-seguinte", NEXT_LINE_OUTPUT], ["tag-ancora", TAGGED_OUTPUT]]) {
+    const input = {
+      "codex-exec": [execEvent("item_completed_command", { command: BLOCK_COMMAND, aggregated_output: output })],
+      claude: [claudePayload("post_tool_bash", { tool_input: { command: BLOCK_COMMAND }, tool_response: { stdout: output, stderr: "" } })],
+    };
+    const root = makeScratch(`i5 c14j store ${family}`);
+    const probeDir = makeScratch(`i5 c14j probe ${family}`);
+    const fsProbeLog = path.join(probeDir, "fs-probe.jsonl");
+    const privacyLog = path.join(probeDir, "privacy-probe.jsonl");
+    const options = {
+      nodeArgs: ["--import", FS_PROBE, "--import", PRIVACY_PROBE],
+      env: baseEnv({ SKILL_ME_TEST_PRIVACY_PROBE_LOG: privacyLog, SKILL_ME_TEST_PRIVACY_PROBE_MARKER: MARKER, SKILL_ME_TEST_FS_PROBE_LOG: fsProbeLog, SKILL_ME_TEST_FS_PROBE_CANARY: MARKER }),
+    };
+    const commands = [];
+    const run = (argv, extra = {}) => {
+      const result = runPrivacy(argv, { ...options, ...extra });
+      commands.push([argv[0], result]);
+      return result;
+    };
+    // Sem diff: a mensagem de falha não pode carregar o marcador; `key` é
+    // binária e só passa pela busca do marcador (ver I5-C14g).
+    const clean = (text, label) => assert.ok(leaks(text).length === 0 && !text.includes("\0") && !text.includes("\\u0000"), label);
 
-  const id = run(["start", "--root", root, "--content"]).body.capture.id;
-  for (const [agent, entries] of Object.entries(input)) {
-    const result = run(["ingest", "--root", root, "--capture", id, "--agent", agent], { input: ndjson(entries) });
-    assert.equal(result.status, 0, agent);
-    assert.equal(result.body.batch.persisted, entries.length, agent);
-  }
-  for (const file of walkFiles(root)) {
-    const label = `após ingest: ${path.relative(root, file)}`;
-    const text = readFileSync(file, "utf8");
-    if (path.basename(file) === "key") assert.ok(leaks(text).length === 0, label);
-    else clean(text, label);
-  }
+    const id = run(["start", "--root", root, "--content"]).body.capture.id;
+    for (const [agent, entries] of Object.entries(input)) {
+      const result = run(["ingest", "--root", root, "--capture", id, "--agent", agent], { input: ndjson(entries) });
+      assert.equal(result.status, 0, `${family} ${agent}`);
+      assert.equal(result.body.batch.persisted, entries.length, `${family} ${agent}`);
+    }
+    for (const file of walkFiles(root)) {
+      const label = `${family}, após ingest: ${path.relative(root, file)}`;
+      const text = readFileSync(file, "utf8");
+      if (path.basename(file) === "key") assert.ok(leaks(text).length === 0, label);
+      else clean(text, label);
+    }
 
-  const exported = run(["export", "--root", root, "--capture", id]);
-  assert.equal(exported.status, 0);
-  const texts = exported.body.records.flatMap((r) => (r.content?.fields ?? []).filter((f) => f.kind === "text").map((f) => [f.field, f.value]));
-  // As duas saídas com o bloco saem do registro; os comandos e o stderr ficam.
-  assert.deepEqual(texts.sort(), [["item.command", BLOCK_COMMAND], ["tool_input.command", BLOCK_COMMAND], ["tool_response.stderr", ""]]);
-  const withContent = exported.body.records.filter((r) => r.content !== null);
-  assert.equal(withContent.length, 2);
-  for (const record of withContent) assert.ok(record.privacy.some((e) => /^(item\.aggregated_output|tool_response\.stdout):unsanitizable$/.test(e)), "saída omitida como unsanitizable");
-  const statusBody = run(["status", "--root", root, "--capture", id]).body;
-  assert.equal(statusBody.capture.counters.contentOmitted.unsanitizable, 2);
-  run(["stop", "--root", root, "--capture", id]);
-  assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
-  assert.deepEqual(readdirSync(path.join(root, "skill-me-privacy", "captures")), [], "captura apagada");
+    const exported = run(["export", "--root", root, "--capture", id]);
+    assert.equal(exported.status, 0, family);
+    const texts = exported.body.records.flatMap((r) => (r.content?.fields ?? []).filter((f) => f.kind === "text").map((f) => [f.field, f.value]));
+    // As duas saídas com o valor saem do registro; os comandos e o stderr ficam.
+    assert.deepEqual(texts.sort(), [["item.command", BLOCK_COMMAND], ["tool_input.command", BLOCK_COMMAND], ["tool_response.stderr", ""]], family);
+    const withContent = exported.body.records.filter((r) => r.content !== null);
+    assert.equal(withContent.length, 2, family);
+    for (const record of withContent) assert.ok(record.privacy.some((e) => /^(item\.aggregated_output|tool_response\.stdout):unsanitizable$/.test(e)), `${family}: saída omitida como unsanitizable`);
+    const statusBody = run(["status", "--root", root, "--capture", id]).body;
+    assert.equal(statusBody.capture.counters.contentOmitted.unsanitizable, 2, family);
+    run(["stop", "--root", root, "--capture", id]);
+    assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
+    assert.deepEqual(readdirSync(path.join(root, "skill-me-privacy", "captures")), [], `${family}: captura apagada`);
 
-  for (const [name, result] of commands) {
-    clean(result.stdout, `${name} stdout`);
-    assert.equal(result.stderr, "", `${name} stderr`);
+    for (const [name, result] of commands) {
+      clean(result.stdout, `${family}: ${name} stdout`);
+      assert.equal(result.stderr, "", `${family}: ${name} stderr`);
+    }
+    const fsText = readFileSync(fsProbeLog, "utf8");
+    const privacyText = readFileSync(privacyLog, "utf8");
+    clean(fsText, `${family}: log do fs-probe`);
+    clean(privacyText, `${family}: log da sonda de privacidade`);
+    const renamed = fsText.trim().split("\n").map((line) => JSON.parse(line)).filter((o) => o.moment === "before_rename");
+    assert.ok(renamed.filter((o) => /^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/.test(o.file)).length >= 2, `${family}: temporário de dados de cada ingest`);
+    for (const observation of renamed) assert.equal(observation.containsCanary, false, observation.file);
+    const written = privacyText.trim().split("\n").map((line) => JSON.parse(line)).filter((e) => e.op === "closed_written");
+    assert.ok(written.filter((e) => path.basename(e.file) === ".lock").length >= commands.length, `${family}: lock de cada comando`);
+    assert.ok(written.some((e) => e.file.endsWith(".skill-me-tmp")), `${family}: temporários observados`);
+    for (const entry of written) assert.equal(entry.containsMarker, false, path.basename(entry.file));
   }
-  const fsText = readFileSync(fsProbeLog, "utf8");
-  const privacyText = readFileSync(privacyLog, "utf8");
-  clean(fsText, "log do fs-probe");
-  clean(privacyText, "log da sonda de privacidade");
-  const renamed = fsText.trim().split("\n").map((line) => JSON.parse(line)).filter((o) => o.moment === "before_rename");
-  assert.ok(renamed.filter((o) => /^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/.test(o.file)).length >= 2, "temporário de dados de cada ingest");
-  for (const observation of renamed) assert.equal(observation.containsCanary, false, observation.file);
-  const written = privacyText.trim().split("\n").map((line) => JSON.parse(line)).filter((e) => e.op === "closed_written");
-  assert.ok(written.filter((e) => path.basename(e.file) === ".lock").length >= commands.length, "lock de cada comando");
-  assert.ok(written.some((e) => e.file.endsWith(".skill-me-tmp")), "temporários observados");
-  for (const entry of written) assert.equal(entry.containsMarker, false, path.basename(entry.file));
 });
 
 test("I5-C15canários em IDs, nomes e caminhos não aparecem em nenhum canal do debugger", async () => {
