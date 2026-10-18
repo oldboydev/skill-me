@@ -41,18 +41,24 @@ export function checkEnvelopeBudget(envelope) {
 // como `not_identifier`/`too_long` antes da política, e essa lacuna mentiria
 // sobre o motivo. A fronteira da #4 fica intacta; ver Landing "Nome inseguro
 // recusado pela forma v1".
-function unsafeNameFields(draft, eventKind) {
-  return EVENT_KIND_FIELDS[eventKind].filter((name) => {
-    if (!NAME_FIELDS.includes(name) || draft.fieldGaps?.[name] !== undefined) return false;
-    const value = Object.hasOwn(draft.fields, name) ? draft.fields[name] : undefined;
-    return typeof value === "string" && value !== "" && isUnsafeName(value);
+// O valor já copiado no envelope decide sozinho, sem nova leitura: um getter
+// hostil pode responder outra coisa na releitura do rascunho, e só o motivo
+// pode depender dela. Ver Landing "Valor entregue no envelope decide sempre".
+const unsafeNameValue = (value) => typeof value === "string" && value !== "" && isUnsafeName(value);
+
+function unsafeNameFields(envelope, draft) {
+  return EVENT_KIND_FIELDS[envelope.eventKind].filter((name) => {
+    if (!NAME_FIELDS.includes(name)) return false;
+    if (Object.hasOwn(envelope.fields, name) && unsafeNameValue(envelope.fields[name])) return true;
+    if (draft.fieldGaps?.[name] !== undefined) return false;
+    return unsafeNameValue(Object.hasOwn(draft.fields, name) ? draft.fields[name] : undefined);
   });
 }
 
 function sanitizeEnvelope(envelope, draft, key, note) {
   const ids = {};
   for (const [name, value] of Object.entries(envelope.ids)) ids[name] = pseudonym(key, "id", value);
-  const removed = unsafeNameFields(draft, envelope.eventKind);
+  const removed = unsafeNameFields(envelope, draft);
   for (const name of removed) note(`envelope.${name}:sensitive_removed`);
   const fields = Object.fromEntries(Object.entries(envelope.fields).filter(([name]) => !removed.includes(name)));
   const gaps = envelope.gaps.filter((gap) => !removed.includes(gap.slice(0, gap.indexOf(":"))));

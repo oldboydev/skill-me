@@ -284,6 +284,66 @@ test("I5-C11 os 11 campos de nome com caminho, @, ~, drive ou segredo são remov
   }
 });
 
+// Propriedade própria enumerável cujo getter responde, a cada leitura, o próximo
+// item de `answers` (o último se repete) ou lança quando o item é um `Error`.
+// `validDraftShape` não avalia getters de `fields`; `buildEnvelope` faz a
+// primeira leitura e copia o valor para o envelope.
+function alternating(target, name, answers) {
+  let reads = 0;
+  Object.defineProperty(target, name, {
+    enumerable: true,
+    get() {
+      const answer = answers[Math.min(reads, answers.length - 1)];
+      reads += 1;
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
+  });
+  return target;
+}
+
+test("I5-C11b nome hostil que muda entre leituras não escapa: decide o valor entregue no envelope", () => {
+  // CANARIES.token passa em NAME_PATTERN e tem menos de 128 caracteres: a forma
+  // v1 o aceita e só a política pode removê-lo. Rótulos sem eco do canário.
+  for (const [name, eventKind] of Object.entries(NAME_KINDS)) {
+    const draftWith = (fields, fieldGaps) => ({ source: SOURCE, signal: "native_hook", eventKind, nativeEvent: "Synthetic", ids: {}, fields, ...(fieldGaps ? { fieldGaps } : {}) });
+    // O cenário é real: a primeira leitura chega ao envelope.
+    const copied = buildEnvelope(draftWith(alternating({}, name, [CANARIES.token, "Bash"])));
+    assert.equal(copied.ok, true, `${name} rascunho aceito`);
+    assert.ok(JSON.stringify(copied.envelope).includes(MARKER), `${name} token copiado pela forma v1`);
+
+    const cases = [
+      ["token→Bash", draftWith(alternating({}, name, [CANARIES.token, "Bash"]))],
+      ["Bash→token", draftWith(alternating({}, name, ["Bash", CANARIES.token]))],
+      // fieldGaps lido três vezes: validação (motivo válido), buildEnvelope
+      // (ausente: o token é copiado) e de novo (motivo): a política não pode
+      // confiar na releitura para pular o campo.
+      ["fieldGaps alternante", draftWith({ [name]: CANARIES.token }, alternating({}, name, ["absent", undefined, "absent"]))],
+    ];
+    for (const [scenario, draft] of cases) {
+      const label = `${name} ${scenario}`;
+      const result = applyPolicy({ draft, payload: {}, key: KEY, content: false });
+      assert.equal(result.ok, true, label);
+      const { envelope, privacy } = result.record;
+      assert.ok(!(name in envelope.fields), `${label} removido`);
+      assert.deepEqual(privacy.filter((e) => e.startsWith("envelope.")), [`envelope.${name}:sensitive_removed`], label);
+      assert.equal(validateEnvelope(envelope), true, label);
+      assert.deepEqual(leaks(JSON.stringify(result.record)), [], label);
+    }
+
+    // Releitura que lança: com valor entregue comum, o evento inteiro sai como
+    // privacy_failure, sem o envelope já montado; com token entregue, a remoção
+    // não depende da releitura e o campo sai sem vazar.
+    const throwing = draftWith(alternating({}, name, ["Bash", new Error(`falha ${MARKER}x`)]));
+    assert.deepEqual(applyPolicy({ draft: throwing, payload: {}, key: KEY, content: false }), { ok: false, drop: "privacy_failure" }, `${name} Bash→lança`);
+    const tokenThenThrow = applyPolicy({ draft: draftWith(alternating({}, name, [CANARIES.token, new Error(`falha ${MARKER}x`)])), payload: {}, key: KEY, content: false });
+    assert.equal(tokenThenThrow.ok, true, `${name} token→lança`);
+    assert.ok(!(name in tokenThenThrow.record.envelope.fields), `${name} token→lança removido`);
+    assert.deepEqual(tokenThenThrow.record.privacy.filter((e) => e.startsWith("envelope.")), [`envelope.${name}:sensitive_removed`], `${name} token→lança`);
+    assert.deepEqual(leaks(JSON.stringify(tokenThenThrow.record)), [], `${name} token→lança`);
+  }
+});
+
 test("I5-C12 campo path vira só ref, sem nenhum componente original", () => {
   const filePath = "C:\\Users\\SKILLMECANARYuser\\Projeto Ação\\segredo-final.txt";
   const record = policy("claude", claudePayload("pre_tool_bash", { tool_name: "Read", tool_input: { file_path: filePath } }));
