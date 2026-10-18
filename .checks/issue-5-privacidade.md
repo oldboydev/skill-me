@@ -446,3 +446,10 @@ registrada aqui com o commit real.
   Windows) → junção redirecionada; regra 5 por regex única (um nome comum
   engolia `password=` seguinte) → varredura que só consome valor de nome
   sensível; log da sonda por `appendFileSync` (recursão) → fd próprio.
+
+Exceção de verificação V4 (18/10/2026): o proprietário aprovou explicitamente
+“Autorizar a quarta rodada da #5 (Recomendado)” para validar as correções em
+3669463 e seguir à tentativa formal restante/PR se aprovado. Registro literal
+em .checks/issue-5-privacidade.approval.md. Somente esta issue e esta Round 4;
+perfil light, critérios e teto formal de duas tentativas preservados, merge
+humano. Os três relatórios independentes anteriores e o formal permanecem.

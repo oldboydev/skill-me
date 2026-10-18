@@ -316,3 +316,24 @@ explícita, sem apagar arquivos desconhecidos ou seguir links para fora da raiz.
 A #8 reutilizará esse ciclo de vida e acrescentará o caminho real das integrações,
 consulta e acompanhamento. Esta entrega já protege escritas concorrentes no
 armazenamento mínimo; não implementa transporte nem acompanhamento contínuo.
+
+## Exceção V4 — quarta rodada independente da #5 — 18/10/2026
+
+Após as correções da revisão formal e da variante de URL, o coordenador pediu:
+
+> Autoriza, somente para a #5, uma quarta rodada independente para verificar as
+> correções concluídas no commit 3669463 e depois seguir à tentativa formal
+> restante e ao PR se houver aprovação? O teto formal permanece em duas
+> tentativas; merge continua com você.
+
+O proprietário respondeu nesta conversa:
+
+> Autorizar a quarta rodada da #5 (Recomendado)
+
+Esta autorização específica permite a Round 4 do Verifier sobre as correções
+em `3669463f8ce5e3d1824e3ad4e8ce41b7bdade327`, mais este registro de aprovação.
+Os relatórios anteriores permanecem no histórico. Não amplia o perfil light,
+o escopo funcional, o teto formal de duas tentativas ou a autorização de merge.
+Após PASS independente, segue a tentativa formal restante; somente ready
+permite o push e o PR já autorizados. Outras issues não recebem exceção.
+
