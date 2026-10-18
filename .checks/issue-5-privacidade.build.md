@@ -779,3 +779,135 @@ gate Windows. Nenhuma rejeição de política nem falha de capacidade.
   resultado vai ao coordenador (registrá-lo aqui mudaria a cabeça de novo).
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este
   verde é autoral; nova rodada independente depende de decisão do proprietário.
+
+# Correção dos dois P1 da revisão formal — tentativa 2 (18/10/2026)
+
+Evidência autoral, não verificação independente nem revisão formal: não conta
+como rodada do Verifier nem tentativa da revisão e não altera tetos. O relatório
+`.checks/code-review/issue-5/formal-round2-report.json` (`changes_requested`), o
+`.verified.md` e os relatórios anteriores não foram editados. As duas tentativas
+formais e as quatro rodadas independentes estão consumidas; uma nova
+verificação depende de decisão específica do proprietário. Commits: `7a32af6`
+(linha nova do Landing "Delimitação do valor da regra 5 e do userinfo de URL",
+antes do código), `1dbbb3e` (correção, provas, guia e comandos de prova no
+checklist) e o commit desta evidência.
+
+## Natureza de cada achado e correção
+
+- **P1 regra 5** (produto): `ASSIGNMENT_VALUE`/`FLAG_VALUE` paravam em `,`, `;`,
+  `&`, `}` e aspas; `DB_PASSWORD=prefix,SKILLMECANARYdbpass` e `--password
+  prefix,…` saíam `[removido],<sufixo>` com `sensitive_removed`. A mesma
+  delimitação deixava parte do valor com aspas coladas (`a"b"`), separador
+  escapado (`a\,b`, `a\;b`, `a\ b`), `-` inicial em flag e aspa multilinha ou não
+  fechada. Correção: um padrão único `SENSITIVE_VALUE` (substitui os dois) toma a
+  palavra de shell inteira na mesma linha; aspa sem fecho na linha ou `\` no fim
+  dela levam o valor até o fim do texto (falha fechada). Para não reprocessar o
+  texto ao redor das remoções das regras 1–4 (`-H 'Authorization: …' -H …`,
+  `?token=…#frag`), elas gravam um marcador interno NUL — impossível na entrada,
+  que é recusada antes — trocado por `[removido]` logo depois da regra 5. O texto
+  literal `[removido]` da entrada só isenta o valor quando é ele inteiro.
+- **P1 userinfo** (produto): `URL_USERINFO` excluía `@` e parava no primeiro.
+  Correção: a classe da autoridade aceita `@` e o greedy recua até o último `@`
+  antes de `/?#`, espaço, aspa ou `<>`. Nenhuma regex paralela; ordem das regras,
+  nomes sensíveis, `TOKEN_FORMATS`, decodificação de query, chaves de
+  `structured`, `dataBytes`, getters e ciclo de vida inalterados.
+
+## O que cada prova nova afirma
+
+- **I5-C14d** (policy.unit, `sanitizeText` exato, 36 casos `removed:true` + 4
+  controles `removed:false`): os dois cenários do achado; vírgula no início, no fim
+  e várias, em atribuição, flag e `--password=`; valores entre aspas com vírgula e
+  concatenados com aspas; `\,`, `\;`, `\ `; `}`, `]`, `#`; `-`/`--` inicial em
+  flag; JSON compacto e espaçado (perda declarada); aspa não fechada, aspa
+  multilinha na palavra e depois dela, `\` de continuação, aspa de fecho em
+  `bash -lc '…'`; `[removido]` literal seguido de aspa ou vírgula; separadores que
+  delimitam (`;`, `&&`, `|`, `>`, `<`, `()`, tab, quebra de linha, `&`) com o resto
+  intacto; remoções das regras 2–4 com o texto ao redor intacto. Controles:
+  vírgulas e `;` sem nome sensível, aspas e escape sem segredo, valor já
+  `[removido]`. Fronteira da política: comando Bash Claude `DELIMITED_COMMAND` sai
+  exatamente `DELIMITED_COMMAND_OUT` com `sensitive_removed` e sem vazamento.
+- **I5-C17d** (policy.unit, 12 casos + 4 controles): o cenário do achado; vários
+  `@`; usuário vazio, senha vazia e ambos; `%40` no usuário e na senha; URL entre
+  aspas; várias URLs separadas por espaço e coladas por vírgula; `@` no caminho, na
+  query e no fragmento preservado; `ssh://`. Controles: `@` fora da autoridade,
+  `%40` no caminho, `mailto:`, `git@host:`, porta, `https://@host` (userinfo
+  vazio, nada a remover). Fronteira da política com `git clone`.
+- **I5-C14e** (outputs.cli, CLI real com `fs-probe` + sonda de privacidade):
+  `start --content`, ingest codex-exec (comando e saída), Claude (pre/post Bash) e
+  Codex hooks (pre Bash) com `DELIMITED_COMMAND`/`DELIMITED_OUTPUT`; nenhum arquivo
+  da árvore após o ingest, stdout, log de sonda, temporário antes do rename (≥ 3 de
+  dados) ou arquivo escrito (lock de cada comando, temporários) contém o marcador;
+  export com os sete campos de texto exatos e `sensitive_removed` em cada registro
+  com conteúdo; `stderr` vazio; delete aplicado e `captures/` vazio.
+- Rótulos por índice (`caso n`, `controle n`) e comparação sem diff: nenhuma
+  mensagem ecoa canário. Nenhuma asserção, limite ou critério existente mudou.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-formal2-win-ZhWDQ4\` (preservados; todos com
+`grep -c SKILLMECANARY` = 0).
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red.tap.log` | `7a32af6` (antes da correção), testes finais | 3/3 `not ok`: C14e no primeiro arquivo de dados após o ingest (`events-000003.ndjson`), C14d e C17d no `caso 0` (os cenários do achado) |
+| `green.tap.log` | corrigido | 12/12 `ok`: os 3 novos e C4, C14, C14b, C14c, C16b, C17, C17b, C17c, C24 |
+| `red-2.tap.log` | `sanitize.mjs` de `7a32af6` restaurado temporariamente | os mesmos 3 `not ok`; o corrigido voltou em seguida (`cmp` igual a `sanitize.fixed.mjs`) |
+| `red-cases.log` | scratch do autor fora do repo (`scratch/compare.mjs`, só booleanos) | antigo deixa o marcador em 32 dos 36 casos do C14d e 8 dos 12 do C17d; corrigido em 0. Os casos sem marcador no antigo (vírgula final, aspas inteiras, `#`, JSON, e no C17d vazios/`%40` com o marcador antes do primeiro `@`) ficam como cobertura; as saídas exatas do teste também detectam o resto do userinfo que o antigo deixava |
+
+## Execuções no commit `1dbbb3e`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, checkout local, árvore limpa e HEAD `1dbbb3e` conferidos antes e depois (`win-head-before.txt`/`win-head-after.txt`), logs `win-privacy.tap.log`/`win-npm-test.log` no diretório acima | `node --test --test-reporter=tap "tests/integrations/privacy/*.test.mjs"` | 85 tests, 85 pass, 0 fail, 0 skip (C35 e os 3 novos incluídos) |
+| Windows 11 | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 173 (167 pass, 6 skip, 0 fail) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-formal2-FH6KWm` de `git archive 1dbbb3e` (sha256 `1b994ca3…f108fe0e9` igual nos dois lados; `git get-tar-commit-id` = `1dbbb3ef…` conferido no script antes da extração), logs em `%TEMP%\skill-me-i5-formal2-wsl-stage-8OoqPO\` | mesmo alvo de privacidade | 85 tests, 85 pass, 0 fail, 0 skip (C35 e os 3 novos incluídos) |
+| WSL Ubuntu | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 173 (161 pass, 12 skip, 0 fail) |
+
+Skips idênticos aos anteriores, conferidos pelos nomes nos logs: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b Hermes ausente,
+I4-C25g/h/i DACL Windows, I4-C25m macOS). Integrações passam de 170 para 173 só
+pelos três testes novos. Nenhum log contém `SKILLMECANARY`.
+
+Preparação WSL: `run-wsl.sh` em arquivo no stage, derivado do da variante de
+query só com prefixos e comentário trocados (`diff` conferido), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+recusa root, outra distro, origem ausente, saída e destino fora do padrão antes
+de copiar/extrair. Nenhum comando inline no WSL; nenhum `/repo` ou `/src.tar` fora
+do `mktemp`; preparação antiga do Verifier6, seu probe, sessões ou configurações
+pessoais não tocados; nenhum modelo, rede de produto, instalação, subagente ou
+`review:run`. Nenhum arquivo do repositório editado durante os gates; o WSL só
+começou depois do fim do gate Windows. Nenhuma rejeição de política nem falha de
+capacidade.
+
+## Riscos vizinhos comunicados (não corrigidos)
+
+Mesma família de delimitação, fora dos dois achados e das regras alteradas;
+reproduzidos por `scratch/neighbors.mjs` (só booleanos, `neighbors-old.log` e
+`neighbors-fixed.log`), iguais antes e depois desta correção:
+
+- Regra 4: `Bearer abcdefgh12,<sufixo>` sem nome de cabeçalho remove só até a
+  vírgula (a classe de `AUTH_SCHEME` segue o alfabeto de token da RFC 6750).
+- Regra 2: `?password=abc'<sufixo>'` remove o valor da query só até a aspa (a
+  query termina em aspa por desenho, para URLs entre aspas).
+- Regra 3: cabeçalho escrito com espaços escapados e aspa colada
+  (`Authorization:\ Bearer\ abc'<sufixo>'`) remove só até a aspa.
+
+Nos três o valor é delimitado como aspa de fecho, por desenho das regras 2–4;
+mudar isso é decisão nova do coordenador/proprietário.
+
+## Limites honestos
+
+- Perdas da falha fechada (Landing e guia): JSON compacto perde o que segue o
+  valor sem espaço; opção depois de flag sensível sem valor é removida como valor;
+  depois de aspa ambígua o resto do texto sai.
+- Não é parser de shell: sem expansões, heredoc, `$'…'` ou aninhamento de
+  substituições; uma aspa que fecha numa linha seguinte encerra o texto (removido
+  até o fim), não é reconstruída.
+- Userinfo com `/`, `?` ou `#` sem codificação não é reconhecido como userinfo (a
+  autoridade termina neles, como no WHATWG URL).
+- Esta evidência muda o conteúdo lido por C34/C35; o alvo de privacidade e o
+  `npm test` são reexecutados na cabeça desta evidência nas duas plataformas e o
+  resultado vai ao coordenador (registrá-lo aqui mudaria a cabeça de novo).
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
