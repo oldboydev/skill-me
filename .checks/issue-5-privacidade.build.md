@@ -1741,3 +1741,135 @@ real da fonte executada. As seis recusas e os 74 controles permanecem corretos.
 Nenhum teste, asserção, critério ou código de produto foi alterado nesta correção.
 O relatório Round6 preserva a divergência observada antes da correção e as
 execuções próprias Windows/WSL no HEAD e1bd083.
+
+# Revisão formal, tentativa 4: separador escapado e `text` ausente (18/10/2026)
+
+Evidência autoral, não verificação independente nem revisão formal: não conta
+como rodada do Verifier nem tentativa da revisão e não altera tetos. Nenhum
+relatório anterior, `.verified.md`, incidente, aprovação, task, configuração,
+core, store, lifecycle ou matriz foi editado. Escopo: os dois achados da
+revisão formal, tentativa 4 (`changes_requested`, `verification:
+insufficient`, 4 de 10 tentativas), na autorização `157add2`. A rejeição formal
+supersede a classificação anterior do separador escapado como limite (seção
+anterior, "Em aberto…"). Commits: `d561916` (duas linhas do Landing, antes do
+código), `9ca9f62` (correção, provas, guia e comandos de prova do checklist) e o
+commit desta evidência. Nenhum `review:run`, subagente, push, PR ou merge.
+
+## Natureza dos problemas e correções
+
+- **P1 (`sanitize.mjs`)**: num texto serializado de novo,
+  `{\"Authorization\":\"Basic\nYTpi\"}` (`\"` e `\n` literais) ficava intacto:
+  a regra 4 só aceitava separador real e a regra 5 não casa o nome entre `\"`.
+  Conferido no produto intacto (sonda em scratch só com strings sintéticas)
+  que `"Basic\nYTpi"` sob chave comum, `Bearer\tab` e `x\nBasic YTpi` (escape
+  antes do esquema) também passavam; a forma de uma camada
+  `{"Authorization":"Basic\nYTpi"}` já saía pela regra 5. Correção: a regra 4
+  aceita como separador, e como fronteira antes do esquema, um ou mais `\`
+  seguidos de `n`, `r`, `t`, `u000a`, `u000d`, `u0009` ou `u0020`, sem
+  decodificar; o cabeçalho sem aspa cuja linha termina no esquema seguido desses
+  escapes, com credencial depois da quebra real, é recusado (`unsanitizable`).
+  Mesmo alfabeto, mesmo completamento da palavra, mesma contagem.
+- **P2 (`content.mjs`)**: em `item.result.content[]`, entrada `type:"text"` com
+  `text` ausente ou `null` virava `""` (`?? ""`) sem motivo. Correção: lança o
+  mesmo `Unsupported` do tipo errado — conteúdo inteiro do evento `null` com
+  `content:unsupported_content`. `text:""` continua `""`.
+
+## O que cada prova nova afirma
+
+- **I5-C14o** (policy.unit): 116 remoções exatas — 8 caixas × 13 separadores
+  escapados (104) e 12 casos explícitos (forma do achado com `\"`, aninhada com
+  membro seguinte, chave comum com aspas reais e só a string, quatro escapes
+  antes do esquema, uma camada de JSON com o resultado anterior e as três perdas
+  declaradas `Basic\nfim`, `C:\Basic\new`, `Basic\NYTpi`); 4 recusas exatas
+  `{ok:false}`; 42 controles intactos com `removed:false`. Fronteira da política
+  com resultado MCP: valores exatos, `privacy` exata
+  `["item.result.content[].text:sensitive_removed","item.result.content[].text:unsanitizable"]`,
+  ausência de `nYTpi` e `u0020ab` no registro.
+- **I5-C14p** (outputs.cli, CLI real com `fs-probe` e sonda procurando
+  `SKILLMECANARYc14p`): resultado MCP do codex-exec com a forma do achado e
+  `x\nBearer\u0020` + sonda; claude e codex-hooks com `"bAsIc\\nYTpi"` e
+  `BEARER\r\n` + sonda; stderr do claude `Authorization: basic\t\n` + quebra
+  real + sonda. Valores exatos, motivo exato por registro, `contentOmitted` de
+  cada lote e do `status` `{sensitive_removed:3, unsanitizable:1}`; nenhum
+  arquivo, stdout, log de sonda, temporário antes do rename ou arquivo escrito
+  com a sonda ou `nYTpi`; stderr vazio; delete aplicado.
+- **I5-C5b** (policy.unit): nove conteúdos inválidos (`text` ausente, `null`,
+  número, booleano, objeto, array e três listas mistas) → extração exata
+  `{content:null, privacy:["content:unsupported_content"]}` e registro da
+  política sem o argumento-sonda nem o texto válido; quatro controles com
+  conteúdo exato (`[""]`, `["a",""]`, `["ok"]` + entrada de outro tipo, `[]` só
+  com entrada de outro tipo) e `privacy` exata.
+- **I5-C5c** (outputs.cli, sonda `SKILLMECANARYc5c` nos argumentos): quatro
+  eventos inválidos e dois controles pelo ingest/export real; conteúdo exato por
+  registro (`null` ×4, `[""]`, `["ok"]`), motivo exato por registro,
+  `contentOmitted` do lote e do `status` `{unsupported_content:5}`; sonda e
+  texto válido ausentes de arquivos, logs e temporários.
+- **I5-C14h**: dois casos novos de 1 MiB (escape antes e depois do esquema;
+  `Basic` + `\` longo). Medido no código corrigido (Windows): 30 ms e 7 ms; o
+  caso `Bearer` anterior, 27 ms. Sem otimização nova.
+- Contagem do alvo de privacidade: 105 → 109; `test:integrations` 193 → 197.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-f5-win-hItKV5\`; protótipo da regex e sondas só em
+`%TEMP%\skill-me-i5-f5-proto\` (cópia de `git show 25a97ef:…/sanitize.mjs`, só
+strings sintéticas); gate em `%TEMP%\skill-me-i5-f5-tools\gate-win.sh` (cópia do
+gate anterior com só o comentário da linha 2 trocado, `diff` conferido). Sem
+`git stash`, reset ou troca do produto: o RED rodou com `src/` intacto
+(`git diff --exit-code HEAD -- src`, cabeça `d561916`), antes da edição.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red-policy.tap.log` | `src/` intacto, `"^I5-C(5b\|14o\|14h) "` | C5b `extração 0`, C14o `caso 0`; C14h passa; 3 testes, 1 pass, 2 fail |
+| `red-outputs.tap.log` | idem, `"^I5-C(5c\|14p) "` | C14p `codex-exec: contagem do lote`, C5c `contagem exata do lote`; 2 testes, 0 pass, 2 fail |
+| `green-policy.tap.log`, `green-outputs.tap.log` | correção, antes do commit, mesmos seletores | 3/3, 2/2, exit 0 |
+| `green-policy-file.tap.log` | correção, arquivo `policy.unit` inteiro | 34/34, exit 0 |
+
+## Execuções no commit `9ca9f62`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, HEAD e árvore limpa conferidos antes e depois (`gate-9ca9f62/gate.meta`, 18:19:16Z–18:24:35Z) | `node --test tests/integrations/privacy/*.test.mjs` / `npm test` | 109/109, 0 skip (C34/C35 incluídos); exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 197 (191, 6 skip) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-f5final-hLktKT`, tar sha256 `f1755e9c…54eec16` e `get-tar-commit-id` = `9ca9f62f…` conferidos no script; stage `skill-me-i5-f5final-wsl-stage-QP0siL` | idem | 109/109, 0 skip; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 197 (185, 12 skip) |
+
+Skips iguais aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m). C5b,
+C5c, C14o e C14p aparecem como `ok` nos dois logs de privacidade. Nenhum log
+contém `SKILLMECANARY`.
+
+Preparação WSL: `run-wsl.sh` copiado do stage anterior trocando o comentário e
+os prefixos (`diff` conferido: linhas 2, 22, 27 e 29) e acrescentando duas
+guardas `realpath` (saída e destino canônicos), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+o script recusa root, outra distro, origem ausente, saída/destino fora do padrão
+ou não canônicos antes de copiar ou extrair. Nenhum comando inline no WSL, nada
+em `/repo` ou `/src.tar`; preparação antiga do Verifier6, seu probe, sessões ou
+configurações pessoais não tocados; nenhum modelo, rede de produto, instalação,
+subagente, push ou `review:run`. Nenhum arquivo do repositório editado durante
+os gates; o WSL começou depois do fim do gate Windows. Nenhuma rejeição de
+política nem falha de capacidade.
+
+**Diferença de SHA**: os gates acima rodaram em `9ca9f62`. O commit desta
+evidência só acrescenta esta seção (`.checks/`); código, testes, guia e checklist
+são idênticos aos do gate. Nele rodaram só I5-C34 e I5-C35, numa invocação com
+seletor sobre `docs-privacy.test.mjs` (Windows); `npm test` e o alvo completo não
+foram repetidos nele.
+
+## Riscos e perdas comunicados
+
+- Perdas declaradas (falsos positivos, falha fechada): a palavra depois de um
+  escape que segue o esquema sai (`Basic\nfim`, `C:\Basic\new`); a flag `i`
+  aceita `\N`, `\R`, `\T`; em texto serializado numa linha, a palavra de shell
+  completada leva o resto dela (`\",\"x\":1}}`, `\nok"}`). P2: lista mista
+  omite o conteúdo inteiro do evento, inclusive `item.arguments`.
+- Limites declarados: `\x0a`, octal, `%0A`/`%20`, entidades HTML, NBSP e
+  esquemas não listados.
+- **Risco fora destes achados, comunicado ao coordenador e não aceito como
+  resolvido**: nome de cabeçalho ou de atribuição colado depois de um separador
+  escapado não é reconhecido pelas regras 3 e 5 (`x\nCookie: s=abc`,
+  `x\nauth=abc` ficam intactos, conferido no produto intacto;
+  `x\npassword=abc` sai porque o nome lido `npassword` contém `password`). Não
+  corrigido: exige decisão do coordenador.
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
