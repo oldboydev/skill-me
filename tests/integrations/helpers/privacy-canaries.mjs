@@ -51,6 +51,15 @@ export const DELIMITED_COMMAND_OUT = "DB_PASSWORD=[removido] ./deploy.sh --passw
 export const DELIMITED_OUTPUT = "PASSWORD=a\\,SKILLMECANARYesc conectado\nremoto https://:SKILLMECANARYempty@example.test/db e https://example.test/p@x?e=a@b";
 export const DELIMITED_OUTPUT_OUT = "PASSWORD=[removido] conectado\nremoto https://example.test/db e https://example.test/p@x?e=a@b";
 
+// Valor sensível composto (cenário do coordenador após o lote formal2 e riscos
+// vizinhos). Comando com substituição e userinfo com aspa que atravessa espaço:
+// sem projeção segura, o campo inteiro sai como `unsanitizable`. Saída com NBSP
+// na palavra, Digest com aspas internas, query com aspa colada e `Bearer` com
+// vírgula colada: a palavra inteira sai e o resto fica. Só dados; nada é executado.
+export const COMPOSED_COMMAND = "DB_PASSWORD=prefix$(printf SKILLMECANARYcompound) ./deploy.sh && git clone https://u:abc'SKILLMECANARYurl x'@example.test/p";
+export const COMPOSED_OUTPUT = 'PASSWORD=abc SKILLMECANARYnbsp ok\nAuthorization: Digest username="SKILLMECANARYheader", response="SKILLMECANARYresp"\nGET https://example.test/p?password=abc\'SKILLMECANARYsuffix\' 200\nBearer abcdefgh12,SKILLMECANARYbearer fim';
+export const COMPOSED_OUTPUT_OUT = "PASSWORD=[removido] ok\nAuthorization: [removido]\nGET https://example.test/p?password=[removido] 200\nBearer [removido] fim";
+
 // Texto livre com as cinco categorias entre trechos que podem permanecer.
 export const SECRET_TEXT = [
   "início seguro",

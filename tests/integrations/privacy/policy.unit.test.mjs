@@ -628,6 +628,172 @@ test("I5-C17d userinfo de URL sai até o último @ da autoridade; @ em caminho, 
   assert.ok(leaks(JSON.stringify(record)).length === 0, "registro sem vazamento");
 });
 
+// Sem projeção segura: `sanitizeText` recusa e quem chama omite o campo.
+const refusedCases = (inputs) => inputs.forEach((input, i) => same(sanitizeText(input), { ok: false }, `recusado ${i}`));
+
+test("I5-C14f valor sensível composto: composição aberta omite o campo; NBSP, aspa e concatenação coladas saem com a palavra inteira", () => {
+  // Composição que o scanner literal não delimita (só dados; nada é executado).
+  refusedCases([
+    // Cenário do coordenador, em atribuição e flag.
+    "DB_PASSWORD=prefix$(printf SKILLMECANARYcompound) ./run",
+    "mysql --password prefix$(printf SKILLMECANARYa) -h db",
+    "mysql --password $(cat SKILLMECANARYb) -h db",
+    // Crase com espaço; `${…}` com espaço; aninhadas entre aspas.
+    "PASSWORD=`printf SKILLMECANARYc` ls",
+    "--token pre`printf SKILLMECANARYd` ls",
+    "PASSWORD=${missing:-prefix SKILLMECANARYe} ls",
+    'PASSWORD="${x:-"a SKILLMECANARYf"}" ls',
+    'PASSWORD="$(printf "a SKILLMECANARYg")" ls',
+    '"password": "$(printf "SKILLMECANARYh x")", "user": "u"',
+    // ANSI-C com aspa escapada, array, substituição de processo, extglob, `$[`.
+    "PASSWORD=$'a\\' SKILLMECANARYi' ls",
+    "PASSWORD=(a SKILLMECANARYj) ls",
+    "PASSWORD=a<(printf SKILLMECANARYk) ls",
+    "PASSWORD=a@(b|SKILLMECANARYl c) ls",
+    "PASSWORD=$[1 + SKILLMECANARYm] ls",
+    // A mesma composição no valor de query e no cabeçalho entre aspas.
+    "curl https://h/p?token=a$(printf SKILLMECANARYn x) -o f",
+    'curl -H "Authorization: $(printf "SKILLMECANARYo x")" https://h/p',
+    "Authorization: $(cat <<EOF\nSKILLMECANARYp\nEOF\n)\nfim",
+  ]);
+
+  exactCases(
+    [
+      // Espaço não ASCII e CR isolado pertencem à palavra do Bash.
+      ["PASSWORD=abc SKILLMECANARYa ls", `PASSWORD=${R} ls`],
+      ["--password abc SKILLMECANARYb --host db", `--password ${R} --host db`],
+      ["PASSWORD=a　SKILLMECANARYc d ls", `PASSWORD=${R} ls`],
+      ["PASSWORD=a\rSKILLMECANARYd ls", `PASSWORD=${R} ls`],
+      ["PASSWORD=a,SKILLMECANARYe\r\nls", `PASSWORD=${R}\r\nls`],
+      // Composição fechada dentro da palavra: só a palavra sai.
+      ["PASSWORD=${SKILLMECANARYf} ls", `PASSWORD=${R} ls`],
+      ['--password "$(cat SKILLMECANARYg)" -v', `--password ${R} -v`],
+      ["TOKEN=`whoami`SKILLMECANARYh ls", `TOKEN=${R} ls`],
+      // Valor sem fim na linha continua indo até o fim do texto.
+      ["PASSWORD=\"SKILLMECANARYi $(x\nSKILLMECANARYj", `PASSWORD=${R}`],
+      // Regra 2: aspa de abertura, aspa de fecho com concatenação, nome
+      // codificado, valor vazio, `[removido]` literal, NBSP e `\` de escape.
+      ["curl https://h/p?password=abc'SKILLMECANARYsuffix' -o x", `curl https://h/p?password=${R} -o x`],
+      ["curl https://h/p?p%61ssword=abc'SKILLMECANARYk' -o x", `curl https://h/p?p%61ssword=${R} -o x`],
+      ["curl 'https://h/p?token=abc'SKILLMECANARYl -o x", `curl 'https://h/p?token=${R}' -o x`],
+      ["curl https://h/p?t%6fken='SKILLMECANARYm x' -o y", `curl https://h/p?t%6fken=${R} -o y`],
+      [`curl https://h/p?t%6fken=${R}'SKILLMECANARYn' x`, `curl https://h/p?t%6fken=${R} x`],
+      ["curl https://h/p?token=abc SKILLMECANARYo x", `curl https://h/p?token=${R} x`],
+      ["curl https://h/p?token=abc\\ SKILLMECANARYp x", `curl https://h/p?token=${R} x`],
+      ["curl https://h/p?q=ghp%5FSKILLMECANARYq0123456789abcdef'x' -o y", `curl https://h/p?q=${R} -o y`],
+      // JSON compacto: o que a palavra concatena depois da aspa de fecho sai (perda declarada).
+      ['{"url":"https://h/p?access_token=abc","x":"SKILLMECANARYr"}', `{"url":"https://h/p?access_token=${R}"`],
+      // Regra 3: Digest entre aspas do comando e em resultado textual, escapes,
+      // espaço escapado sem aspa e concatenação depois do fecho.
+      [
+        `curl -H 'Authorization: Digest username="SKILLMECANARYs", realm="r", response="SKILLMECANARYt"' https://h/x`,
+        `curl -H 'Authorization: ${R}' https://h/x`,
+      ],
+      ['Authorization: Digest username="SKILLMECANARYu", response="SKILLMECANARYv"\nok', `Authorization: ${R}\nok`],
+      ['curl -H "Authorization: Digest username=\\"SKILLMECANARYw\\", nc=1" -v', `curl -H "Authorization: ${R}" -v`],
+      ["curl -H Authorization:\\ Bearer\\ abc'SKILLMECANARYx' https://h", `curl -H Authorization:${R}`],
+      ["curl -H 'Authorization: Bearer abcdefgh12'SKILLMECANARYy https://h", `curl -H 'Authorization: ${R}' https://h`],
+      ['curl -H "Authorization: Bearer $(gh auth token)" https://h', `curl -H "Authorization: ${R}" https://h`],
+      ['Cookie: a="SKILLMECANARYz\nSKILLMECANARY1"\nfim', `Cookie: ${R}`],
+      ["curl -H 'Authorization: Bearer SKILLMECANARY2\nlinha 2", `curl -H 'Authorization: ${R}`],
+      // Regra 4: concatenação colada ao token sai com ele; prosa depois de espaço fica.
+      ["Bearer abcdefgh12,SKILLMECANARY3 ok", `Bearer ${R} ok`],
+      ["Bearer abcdefgh12 SKILLMECANARY4 ok", `Bearer ${R} ok`],
+      ["Bearer abcdefgh12'SKILLMECANARY5' ok", `Bearer ${R} ok`],
+      ['echo "Bearer abcdefgh12"SKILLMECANARY6 ok', `echo "Bearer ${R}" ok`],
+      ["use Bearer abcdefgh12345, depois SKILLME-fica", `use Bearer ${R} depois SKILLME-fica`],
+      ['{"h":"Bearer abcdefgh12345","n":1}\nfim', `{"h":"Bearer ${R}"\nfim`],
+      ['{"Authorization":"Bearer abcdefgh12345","n":1}\nfim', `{"Authorization":${R}\nfim`],
+    ],
+    true,
+  );
+  // Controles: sem nome sensível, composição e aspas não mudam nada; valor já
+  // removido; texto que só parece composição depois de espaço.
+  exactCases(
+    [
+      'echo "$(date)" ${HOME} `pwd` a,b; ls (x) <(y)',
+      "curl 'https://example.test/p?page=2' -H 'X-Id: a' && echo \"https://example.test\"",
+      '{"homepage":"https://example.test","n":1} {"u":"https://example.test/","m":"a@b"}',
+      "password: (nenhuma)\n--password (x)",
+      `PASSWORD=${R} ls a b`,
+      "Bearer curto, Bearer é prosa",
+    ].map((text) => [text, text]),
+    false,
+  );
+
+  // Fronteira da política: composição → campo omitido `unsanitizable`, sem valor
+  // nem marcador interno; Digest em resultado → só o valor sai.
+  const omitted = policy("claude", claudePayload("post_tool_bash", { tool_input: { command: "DB_PASSWORD=prefix$(printf SKILLMECANARYcompound) ./run" }, tool_response: { stdout: 'Authorization: Digest username="SKILLMECANARYdg"\nok', stderr: "" } }));
+  assert.equal(field(omitted, "tool_input.command"), undefined, "comando composto omitido");
+  assert.ok(omitted.privacy.includes("tool_input.command:unsanitizable"));
+  same(field(omitted, "tool_response.stdout").value, `Authorization: ${R}\nok`, "Digest removido inteiro");
+  assert.ok(omitted.privacy.includes("tool_response.stdout:sensitive_removed"));
+  const text = JSON.stringify(omitted);
+  assert.ok(leaks(text).length === 0 && !text.includes("\\u0000"), "registro sem vazamento nem marcador interno");
+});
+
+test("I5-C14h sanitização de 1 MiB numa linha com muitos valores termina em tempo linear", () => {
+  // Teto largo (5 s; a versão linear leva dezenas de ms): distingue reler a
+  // linha ou a palavra a cada valor (dezenas de segundos) de uma passada só.
+  const MiB = 1024 * 1024;
+  const fill = (unit) => unit.repeat(Math.floor(MiB / unit.length));
+  const cases = [
+    [fill("?password=x#a"), true],
+    [fill("?token=a' "), true],
+    [fill("Bearer abcdefgh12' "), true],
+    ["Authorization: " + "\\".repeat(MiB - 40) + "x\n", true],
+    [fill("-H 'Cookie: a' "), true],
+    [fill("https://u:p@h' "), false],
+  ];
+  cases.forEach(([input, ok], i) => {
+    const started = performance.now();
+    const result = sanitizeText(input);
+    const elapsed = performance.now() - started;
+    assert.equal(result.ok, ok, `caso ${i}`);
+    assert.ok(elapsed < 5000, `caso ${i}: ${Math.round(elapsed)} ms`);
+  });
+});
+
+test("I5-C17e userinfo com aspas, escapes ou vários @ sai inteiro até o último @; autoridade aberta no fim omite o campo; URLs entre aspas ficam", () => {
+  // Autoridade que a palavra de shell continua depois de espaço ou `\`.
+  refusedCases([
+    "git clone https://u:abc'SKILLMECANARYa x'@example.test/p",
+    "git clone https://u:p@x'SKILLMECANARYb y'@example.test/p",
+    "git clone https://u:abc\\ SKILLMECANARYc@example.test/p",
+    "git clone https://u:$(printf SKILLMECANARYd x)@example.test/p",
+    "git clone https://u:`printf SKILLMECANARYe x`@example.test/p",
+  ]);
+  exactCases(
+    [
+      // Cenário do coordenador e variantes fechadas: o userinfo inteiro sai.
+      ["git clone https://u:abc'SKILLMECANARYurl'@example.test/p", "git clone https://example.test/p"],
+      ['git clone https://u:abc"SKILLMECANARYf"@x@example.test/p', "git clone https://example.test/p"],
+      ["git clone https://u:abc\\@SKILLMECANARYg@example.test/p", "git clone https://example.test/p"],
+      ["git clone 'https://u:SKILLMECANARYh@example.test' x", "git clone 'https://example.test' x"],
+      ['"https://u:p@SKILLMECANARYi@example.test/x"', '"https://example.test/x"'],
+      ["https://u:$SKILLMECANARYj@example.test/p", "https://example.test/p"],
+      ["https://u:p SKILLMECANARYk@example.test/p", "https://example.test/p"],
+      // JSON compacto: URL sem caminho seguida de aspas e `@` perde até o `@` (perda declarada).
+      ['{"u":"https://example.test","m":"SKILLMECANARYl@b"}', '{"u":"https://b"}'],
+    ],
+    true,
+  );
+  exactCases(
+    ["git commit -m \"ver https://example.test\"", "echo 'https://example.test' \"https://example.test/a@b\""].map((text) => [text, text]),
+    false,
+  );
+
+  const removed = policy("claude", claudePayload("pre_tool_bash", { tool_input: { command: "git clone https://u:abc'SKILLMECANARYurl'@example.test/p" } }));
+  same(field(removed, "tool_input.command").value, "git clone https://example.test/p", "userinfo entre aspas removido inteiro");
+  assert.ok(removed.privacy.includes("tool_input.command:sensitive_removed"));
+  assert.ok(leaks(JSON.stringify(removed)).length === 0, "registro sem vazamento");
+  const record = policy("claude", claudePayload("pre_tool_bash", { tool_input: { command: "git clone https://u:abc'SKILLMECANARYa x'@example.test/p" } }));
+  assert.equal(field(record, "tool_input.command"), undefined, "comando com userinfo aberto omitido");
+  assert.ok(record.privacy.includes("tool_input.command:unsanitizable"));
+  const text = JSON.stringify(record);
+  assert.ok(leaks(text).length === 0 && !text.includes("\\u0000"), "registro sem vazamento nem marcador interno");
+});
+
 test("I5-C18bloco de chave privada fechado ou não é descartado inteiro; o texto antes permanece (literal)", () => {
   const closed = "antes\n-----BEGIN RSA PRIVATE KEY-----\nMIIabc\nxyz\n-----END RSA PRIVATE KEY-----\ndepois";
   assert.deepEqual(sanitizeText(closed), { ok: true, text: `antes\n${R}\ndepois`, removed: true });

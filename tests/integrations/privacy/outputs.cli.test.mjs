@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 import { EVENT_KIND_FIELDS } from "../../../src/integrations/boundary.mjs";
 import { INTEGRATIONS_CLI, REPO_ROOT, baseEnv, makeScratch, parseReport } from "../helpers/cli.mjs";
 import { runClaudeHandler } from "../helpers/installed-hooks.mjs";
-import { CANARIES, DELIMITED_COMMAND, DELIMITED_COMMAND_OUT, DELIMITED_OUTPUT, DELIMITED_OUTPUT_OUT, ENCODED_MARKER, ENCODED_QUERY_URL, ENCODED_VALUE_URL, ENCODED_VALUE_URL_OUT, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, ndjson } from "../helpers/privacy-canaries.mjs";
+import { CANARIES, COMPOSED_COMMAND, COMPOSED_OUTPUT, COMPOSED_OUTPUT_OUT, DELIMITED_COMMAND, DELIMITED_COMMAND_OUT, DELIMITED_OUTPUT, DELIMITED_OUTPUT_OUT, ENCODED_MARKER, ENCODED_QUERY_URL, ENCODED_VALUE_URL, ENCODED_VALUE_URL_OUT, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, ndjson } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy } from "../helpers/privacy-store.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
 
@@ -406,7 +406,74 @@ test("I5-C14e valor sensível com vírgula/escape e userinfo com vários @ não 
   for (const entry of written) assert.equal(entry.containsMarker, false, path.basename(entry.file));
 });
 
-test("I5-C15 canários em IDs, nomes e caminhos não aparecem em nenhum canal do debugger", async () => {
+test("I5-C14g valor sensível composto: comando omitido como unsanitizable e saída com a palavra inteira removida, sem chegar a temporários, lock, arquivos, logs nem export", () => {
+  const input = {
+    "codex-exec": [execEvent("item_completed_command", { command: COMPOSED_COMMAND, aggregated_output: COMPOSED_OUTPUT })],
+    claude: [
+      claudePayload("pre_tool_bash", { tool_input: { command: COMPOSED_COMMAND } }),
+      claudePayload("post_tool_bash", { tool_input: { command: COMPOSED_COMMAND }, tool_response: { stdout: COMPOSED_OUTPUT, stderr: "" } }),
+    ],
+    "codex-hooks": [codexHookPayload("pre_tool_bash", { tool_input: { command: COMPOSED_COMMAND } })],
+  };
+  const root = makeScratch("i5 c14g store");
+  const probeDir = makeScratch("i5 c14g probe");
+  const fsProbeLog = path.join(probeDir, "fs-probe.jsonl");
+  const privacyLog = path.join(probeDir, "privacy-probe.jsonl");
+  const options = {
+    nodeArgs: ["--import", FS_PROBE, "--import", PRIVACY_PROBE],
+    env: baseEnv({ SKILL_ME_TEST_PRIVACY_PROBE_LOG: privacyLog, SKILL_ME_TEST_PRIVACY_PROBE_MARKER: MARKER, SKILL_ME_TEST_FS_PROBE_LOG: fsProbeLog, SKILL_ME_TEST_FS_PROBE_CANARY: MARKER }),
+  };
+  const commands = [];
+  const run = (argv, extra = {}) => {
+    const result = runPrivacy(argv, { ...options, ...extra });
+    commands.push([argv[0], result]);
+    return result;
+  };
+  // Sem diff: a mensagem de falha não pode carregar o marcador. O marcador
+  // interno (NUL) também não pode sair do sanitizador.
+  const clean = (text, label) => assert.ok(leaks(text).length === 0 && !text.includes("\0") && !text.includes("\\u0000"), label);
+
+  const id = run(["start", "--root", root, "--content"]).body.capture.id;
+  for (const [agent, entries] of Object.entries(input)) {
+    const result = run(["ingest", "--root", root, "--capture", id, "--agent", agent], { input: ndjson(entries) });
+    assert.equal(result.status, 0, agent);
+    assert.equal(result.body.batch.persisted, entries.length, agent);
+  }
+  for (const file of walkFiles(root)) clean(readFileSync(file, "utf8"), `após ingest: ${path.relative(root, file)}`);
+
+  const exported = run(["export", "--root", root, "--capture", id]);
+  assert.equal(exported.status, 0);
+  const texts = exported.body.records.flatMap((r) => (r.content?.fields ?? []).filter((f) => f.kind === "text").map((f) => [f.field, f.value]));
+  // Os quatro comandos compostos saem do registro; só as saídas ficam.
+  assert.deepEqual(texts.map(([name]) => name).sort(), ["item.aggregated_output", "tool_response.stderr", "tool_response.stdout"]);
+  for (const [name, value] of texts) if (name !== "tool_response.stderr") assert.ok(value === COMPOSED_OUTPUT_OUT, `${name} só a palavra de cada valor removida`);
+  const withContent = exported.body.records.filter((r) => r.content !== null);
+  assert.equal(withContent.length, 4);
+  for (const record of withContent) assert.ok(record.privacy.some((e) => /^(item|tool_input)\.command:unsanitizable$/.test(e)), "comando omitido como unsanitizable");
+  const statusBody = run(["status", "--root", root, "--capture", id]).body;
+  assert.equal(statusBody.capture.counters.contentOmitted.unsanitizable, 4);
+  run(["stop", "--root", root, "--capture", id]);
+  assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
+  assert.deepEqual(readdirSync(path.join(root, "skill-me-privacy", "captures")), [], "captura apagada");
+
+  for (const [name, result] of commands) {
+    clean(result.stdout, `${name} stdout`);
+    assert.equal(result.stderr, "", `${name} stderr`);
+  }
+  const fsText = readFileSync(fsProbeLog, "utf8");
+  const privacyText = readFileSync(privacyLog, "utf8");
+  clean(fsText, "log do fs-probe");
+  clean(privacyText, "log da sonda de privacidade");
+  const renamed = fsText.trim().split("\n").map((line) => JSON.parse(line)).filter((o) => o.moment === "before_rename");
+  assert.ok(renamed.filter((o) => /^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/.test(o.file)).length >= 3, "temporário de dados de cada ingest");
+  for (const observation of renamed) assert.equal(observation.containsCanary, false, observation.file);
+  const written = privacyText.trim().split("\n").map((line) => JSON.parse(line)).filter((e) => e.op === "closed_written");
+  assert.ok(written.filter((e) => path.basename(e.file) === ".lock").length >= commands.length, "lock de cada comando");
+  assert.ok(written.some((e) => e.file.endsWith(".skill-me-tmp")), "temporários observados");
+  for (const entry of written) assert.equal(entry.containsMarker, false, path.basename(entry.file));
+});
+
+test("I5-C15canários em IDs, nomes e caminhos não aparecem em nenhum canal do debugger", async () => {
   // Cada uma das cinco categorias ocupa, em entradas próprias, todo papel de
   // ID, nome e caminho que os quatro contratos fornecem. `expect` diz o que a
   // política precisa ter visto (ID aceito e pseudonimizado, nome removido com

@@ -123,6 +123,23 @@ valor (`,"user":"u"}`); depois de `--password` sem valor, a opção seguinte; em
 userinfo (`https://u:a@b@host` vira `https://host`); `@` no caminho, na query ou no
 fragmento fica.
 
+Só espaço, tab e quebra de linha separam palavras: um espaço não ASCII (NBSP) ou
+um CR isolado dentro do valor não o encerra. O mesmo vale para o valor de um
+parâmetro de URL sensível, de um cabeçalho sensível e de `Bearer`/`Basic`: o que a
+palavra concatena colado a ele (`?password=abc'…'`, `Bearer abc…,resto`) sai
+junto, e só a aspa que fecha o texto ao redor permanece. Um cabeçalho escrito
+dentro de aspas (`-H 'Authorization: Digest username="…", …'`) tem como valor tudo
+até o fecho dessa aspa; sem aspas, até o fim da linha. O debugger nunca executa
+nem expande o texto: quando o valor depois de um nome sensível usa uma composição
+do shell que não se delimita só lendo o texto — substituição `$(…)` ou crase,
+`${…}` com espaço, `$'…'`, array `NOME=(…)`, `<(…)` — ou a URL tem aspa ou `\`
+que atravessa um espaço antes do `@`, o campo inteiro é omitido com
+`unsanitizable`. Isso perde comandos comuns, como `export TOKEN=$(gh auth token)`
+ou `--password $(cat arquivo)`, mesmo quando o texto não contém o segredo. Em JSON
+compacto, o que vem colado depois do valor sai junto, e uma URL sem caminho
+seguida de aspas e `@` perde o texto até esse `@`. A contagem de aspas é feita na
+linha, sem um parser de shell: um apóstrofo anterior pode inverter a leitura.
+
 A detecção por padrões não é garantia universal: um segredo em texto livre, de
 formato desconhecido ou sem nome que o identifique pode passar. A decodificação
 de URL tem uma camada só (`%255F` não vira `_`) e vale só para valores de

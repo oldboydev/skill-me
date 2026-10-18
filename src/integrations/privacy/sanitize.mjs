@@ -28,25 +28,32 @@ function isSensitiveQueryName(name) {
 }
 
 const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----|$)/g;
-// Autoridade até `/?#`, espaço, aspa ou `<>`; o host não contém `@`, então o
-// userinfo vai até o último `@` dela (`u:a@b@host`).
-const URL_USERINFO = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/?#"'<>]+@/g;
+// Autoridade (grupo 2, só lida) até `/?#`, espaço, tab, quebra de linha ou
+// `<>`; o host não contém `@`, então o userinfo casado vai até o último `@`
+// dela (`u:a@b@host`). Aspas e `\` fazem parte dela como da palavra de shell.
+const URL_USERINFO = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)(?=([^ \t\n/?#<>]*))(?:[^ \t\n/?#<>]+@)?/g;
 const QUERY_PARAM = /([?&])([^=&#\s"'<>]+)=([^&#\s"'<>]*)/g;
-const HEADER_LINE = /\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)([ \t]*:[ \t]*)[^\r\n"']+/gi;
-const AUTH_SCHEME = /\b(Bearer|bearer|Basic)[ \t]+[A-Za-z0-9._~+/=-]{8,}/g;
+// Aspa logo antes do nome: o cabeçalho é o conteúdo dela (`-H 'Authorization: …'`).
+const HEADER_NAME = /(["']?)\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)([ \t]*:[ \t]*)/gi;
+const AUTH_SCHEME = /\b(Bearer|bearer|Basic)[ \t]+([A-Za-z0-9._~+/=-]{8,})/g;
 // Nome + separador sem o valor: o valor só é consumido quando o nome é
 // sensível, para que `foo:password=x` não esconda a segunda atribuição.
 const ASSIGNMENT_NAME = /(["']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1([ \t]*[:=][ \t]*)/g;
 const FLAG_NAME = /(^|[\s"'(])(--?)([A-Za-z][A-Za-z0-9_.-]{0,63})[ \t]+/g;
 // Valor = palavra de shell na mesma linha: vírgula, `}`, `-` inicial e
-// separador escapado pertencem a ela (`DB_PASSWORD=a,b`). Aspa sem fecho na
-// linha ou `\` no fim dela não dizem se o valor acaba (fecho do texto ao redor
-// ou continuação): o valor vai até o fim do texto, como a chave privada sem END.
-const SENSITIVE_VALUE = /(?:"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|\\.|[^\s"'\\;&|<>()])*(?:["'\\][\s\S]*)?/y;
-// Remoção das regras 1–4 até a regra 5 terminar: o trecho delas acaba em aspa,
-// `#`, `&` ou espaço por desenho e o que segue é texto ao redor, não valor. NUL
-// nunca vem da entrada (recusada antes), então não se confunde com o texto
-// `[removido]` que a própria entrada traga.
+// separador escapado pertencem a ela (`DB_PASSWORD=a,b`). Só espaço, tab,
+// quebra de linha e os operadores a encerram: o Bash não separa palavras em
+// NBSP nem em CR isolado, e `\s` deixaria o sufixo. Aspa sem fecho na linha ou
+// `\` no fim dela não dizem se o valor acaba (fecho do texto ao redor ou
+// continuação): o valor vai até o fim do texto, como a chave privada sem END.
+const QUOTED = /"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'/;
+const QUOTED_AT = new RegExp(QUOTED.source, "y");
+const SENSITIVE_VALUE = new RegExp(String.raw`(?:${QUOTED.source}|\\.|\r(?!\n)|[^ \t\r\n"'\\;&|<>()])*(?:["'\\][\s\S]*)?`, "y");
+const LINE_REST = /(?:\r(?!\n)|[^\r\n])*/y;
+// Valor das regras 1–4 já completado até o fim da palavra: a regra 5 não o
+// reprocessa. Não diz que o texto ao redor foi saneado. NUL nunca vem da
+// entrada (recusada antes), então não se confunde com o texto `[removido]`
+// que a própria entrada traga.
 const PENDING_REMOVED = "\0";
 const TOKEN_FORMATS = [
   /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}/g,
@@ -76,38 +83,180 @@ function isUnsafeQueryValue(value) {
 
 const HOME_PREFIXES =[/[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s"'<>|:*?]+/gi, /\/(?:home|Users)\/[^/\s"'<>]+/g];
 
-function removeSensitiveValues(text, namePattern, nameGroup) {
+const count = (text, part) => text.split(part).length - 1;
+
+// Varredura de trás para frente: `/\\*$/` tentaria cada posição de uma
+// sequência longa de `\` (quadrático numa entrada de 1 MiB).
+function endsInEscape(text, start = 0, end = text.length) {
+  let at = end;
+  while (at > start && text[at - 1] === "\\") at -= 1;
+  return (end - at) % 2 === 1;
+}
+
+// Mesma aspa desde o início da linha até `end` (exclusivo). Contagem, não
+// parser: um apóstrofo anterior inverte a leitura (limite do Landing). As
+// consultas de uma passada vêm em ordem crescente; recontar a linha a cada
+// valor seria quadrático numa linha longa com muitos valores.
+function quoteCounter(text) {
+  let at = 0;
+  let double = 0;
+  let single = 0;
+  return (end, quote) => {
+    if (end < at) [at, double, single] = [0, 0, 0];
+    for (; at < end; at += 1) {
+      if (text[at] === "\n") [double, single] = [0, 0];
+      else if (text[at] === '"') double += 1;
+      else if (text[at] === "'") single += 1;
+    }
+    return quote === '"' ? double : single;
+  };
+}
+
+function wordEnd(text, from) {
+  SENSITIVE_VALUE.lastIndex = from;
+  return from + SENSITIVE_VALUE.exec(text)[0].length;
+}
+
+// Composição que o shell lê além de [start, end): `$'…'` (aspa escapada),
+// crase ímpar, `$(`/`${`/`$[` sem fecho, ou palavra que para antes de `(`,
+// `<(` ou `>(`. Só lê o texto; nada é expandido nem executado. Trecho que vai
+// até o fim do texto não deixa sobra. Linha "Valor sensível composto…" do Landing.
+function leavesWordOpen(text, start, end, stop = end) {
+  if (end === text.length) return false;
+  const span = text.slice(start, end);
+  const next = text[stop] === "<" || text[stop] === ">" ? text[stop + 1] : text[stop];
+  return (
+    next === "(" ||
+    span.includes("$'") ||
+    count(span, "`") % 2 === 1 ||
+    count(span, "(") > count(span, ")") ||
+    count(span, "${") > count(span, "}") ||
+    count(span, "$[") > count(span, "]")
+  );
+}
+
+// Regras 2 e 4: [start, stop) é o que a gramática da regra delimita; a palavra
+// de shell pode continuar depois. `\` final escapa o próximo caractere; aspa
+// de fecho (contagem ímpar na linha) fica e o que a palavra concatena depois
+// dela sai junto; aspa de abertura e outro caractere da palavra saem junto.
+function completeWord(text, start, stop, quotes) {
+  let from = stop;
+  let quote = "";
+  if (endsInEscape(text, start, stop)) from = stop - 1;
+  else if ((text[stop] === '"' || text[stop] === "'") && quotes(stop, text[stop]) % 2 === 1) {
+    from = stop + 1;
+    quote = text[stop];
+  }
+  const end = wordEnd(text, from);
+  return end === from ? { start, end: stop, keep: "", stop: from } : { start, end, keep: quote, stop: end };
+}
+
+// Regra 2, valor de query de nome sensível ou com token codificado: `&` e `#`
+// encerram o valor pela gramática de URL (o fragmento fica).
+function queryValue(match, text, quotes) {
+  const [whole, , name, value] = match;
+  if (!isSensitiveQueryName(name) && !isUnsafeQueryValue(value)) return null;
+  const stop = match.index + whole.length;
+  return text[stop] === "#" || text[stop] === "&" ? { start: stop - value.length, end: stop, keep: "", stop } : completeWord(text, stop - value.length, stop, quotes);
+}
+
+function schemeValue(match, text, quotes) {
+  const stop = match.index + match[0].length;
+  return completeWord(text, stop - match[2].length, stop, quotes);
+}
+
+// Regra 3: com aspa antes do nome, o valor vai até o fecho dela (aspas
+// internas do outro tipo, como `Digest username="…"`, são do valor) e a
+// concatenação depois do fecho sai junto; sem fecho na linha, até o fim do
+// texto. Sem aspa, até o fim da linha, ou do texto se ela deixar aspa aberta.
+function headerValue(match, text) {
+  const start = match.index + match[0].length;
+  if (match[1] !== "") {
+    QUOTED_AT.lastIndex = match.index;
+    const quoted = QUOTED_AT.exec(text);
+    const end = wordEnd(text, match.index);
+    const close = quoted === null ? -1 : match.index + quoted[0].length - 1;
+    return end === close + 1 ? { start, end: close, keep: "", stop: end } : { start, end, keep: quoted === null ? "" : match[1], stop: end };
+  }
+  LINE_REST.lastIndex = start;
+  const line = LINE_REST.exec(text)[0];
+  const open = count(line, '"') % 2 === 1 || count(line, "'") % 2 === 1 || endsInEscape(line);
+  const end = open ? text.length : start + line.length;
+  return { start, end, keep: "", stop: end };
+}
+
+// Regra 5: o valor é a palavra inteira depois do separador. Valor vazio depois
+// de espaço é ausência de valor (`password: (x)`); colado ao separador, um `(`
+// seguinte é composição (`NOME=(…)`). Valor que começa no marcador já foi
+// completado pelas regras 1–4: pular antes de varrer a palavra evita relê-la
+// a cada nome numa linha longa.
+function assignedValue(match, text, nameGroup) {
+  const name = match[nameGroup];
+  if (!isSensitiveKey(name)) return { skip: match.index + match[0].indexOf(name) + name.length };
+  const start = match.index + match[0].length;
+  if (text[start] === PENDING_REMOVED) return { skip: start };
+  const end = wordEnd(text, start);
+  return end === start && /[ \t]$/.test(match[0]) ? { skip: start } : { start, end, keep: "", stop: end };
+}
+
+// Troca cada valor que `locate` devolve pelo marcador interno. Valor que já
+// começa no marcador ou é exatamente `[removido]` não conta de novo; trecho
+// com composição aberta deixa o texto sem projeção segura (`null`).
+function removeValues(text, pattern, locate) {
   let out = "";
   let copied = 0;
   let removed = false;
-  namePattern.lastIndex = 0;
-  for (let match = namePattern.exec(text); match !== null; match = namePattern.exec(text)) {
-    const name = match[nameGroup];
-    const nameEnd = match.index + match[0].indexOf(name) + name.length;
-    if (!isSensitiveKey(name)) {
-      namePattern.lastIndex = nameEnd;
+  const quotes = quoteCounter(text);
+  pattern.lastIndex = 0;
+  for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
+    const found = locate(match, text, quotes);
+    if (found === null) continue;
+    if ("skip" in found) {
+      pattern.lastIndex = found.skip;
       continue;
     }
-    const valueStart = match.index + match[0].length;
-    SENSITIVE_VALUE.lastIndex = valueStart;
-    const value = SENSITIVE_VALUE.exec(text);
-    if (value[0] === "" || value[0].startsWith(PENDING_REMOVED) || value[0] === REMOVED || value[0] === `"${REMOVED}"`) {
-      namePattern.lastIndex = Math.max(valueStart, nameEnd);
+    const value = text.slice(found.start, found.end);
+    if (value.startsWith(PENDING_REMOVED) || value === REMOVED || value === `"${REMOVED}"`) {
+      pattern.lastIndex = found.start;
       continue;
     }
-    out += text.slice(copied, valueStart) + REMOVED;
-    copied = valueStart + value[0].length;
+    if (leavesWordOpen(text, found.start, found.end, found.stop)) return null;
+    if (value === "") {
+      pattern.lastIndex = found.start;
+      continue;
+    }
+    out += text.slice(copied, found.start) + PENDING_REMOVED + found.keep;
+    copied = found.end;
     removed = true;
-    namePattern.lastIndex = copied;
+    pattern.lastIndex = found.end;
   }
   return { text: out + text.slice(copied), removed };
 }
 
-// Texto não bem formado (surrogate isolado) ou com NUL não tem projeção
-// segura: quem chama omite o campo com `unsanitizable`.
+// Regra 2, userinfo: a autoridade só é a da palavra inteira se não ficar
+// aberta no fim (aspa dela com contagem ímpar na linha, `\` final, composição).
+function userinfoIsOpen(text, start, authority, quotes) {
+  const end = start + authority.length;
+  if (end === text.length) return false;
+  return endsInEscape(authority) || ['"', "'"].some((quote) => authority.includes(quote) && quotes(end, quote) % 2 === 1) || leavesWordOpen(text, start, end);
+}
+
+// Regras 2 (valor de query) a 5, na ordem do Landing.
+const VALUE_RULES = [
+  [QUERY_PARAM, queryValue],
+  [HEADER_NAME, headerValue],
+  [AUTH_SCHEME, schemeValue],
+  [ASSIGNMENT_NAME, (match, text) => assignedValue(match, text, 2)],
+  [FLAG_NAME, (match, text) => assignedValue(match, text, 3)],
+];
+
+// Texto não bem formado (surrogate isolado), com NUL ou com um valor sensível
+// sem fim seguro não tem projeção segura: quem chama omite o campo com
+// `unsanitizable`.
 export function sanitizeText(text) {
   if (typeof text !== "string" || !text.isWellFormed() || text.includes("\0")) return { ok: false };
   let removed = false;
+  let open = false;
   const replace = (pattern, replacer) => {
     text = text.replace(pattern, (...args) => {
       const out = replacer(...args);
@@ -115,17 +264,17 @@ export function sanitizeText(text) {
       return out;
     });
   };
-  const isRemoved = (value) => value === REMOVED || value === `"${REMOVED}"`;
 
   replace(PRIVATE_KEY_BLOCK, () => PENDING_REMOVED);
-  replace(URL_USERINFO, (_, scheme) => scheme);
-  replace(QUERY_PARAM, (match, sep, name, value) =>
-    value !== "" && !isRemoved(value) && (isSensitiveQueryName(name) || isUnsafeQueryValue(value)) ? `${sep}${name}=${PENDING_REMOVED}` : match,
-  );
-  replace(HEADER_LINE, (_, name, sep) => `${name}${sep}${PENDING_REMOVED}`);
-  replace(AUTH_SCHEME, (match, scheme) => `${scheme} ${PENDING_REMOVED}`);
-  for (const [namePattern, nameGroup] of [[ASSIGNMENT_NAME, 2], [FLAG_NAME, 3]]) {
-    const scanned = removeSensitiveValues(text, namePattern, nameGroup);
+  const quotes = quoteCounter(text);
+  replace(URL_USERINFO, (match, scheme, authority, offset, input) => {
+    if (userinfoIsOpen(input, offset + scheme.length, authority, quotes)) open = true;
+    return scheme;
+  });
+  if (open) return { ok: false };
+  for (const [pattern, locate] of VALUE_RULES) {
+    const scanned = removeValues(text, pattern, locate);
+    if (scanned === null) return { ok: false };
     text = scanned.text;
     removed ||= scanned.removed;
   }
