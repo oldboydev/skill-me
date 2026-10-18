@@ -2006,3 +2006,110 @@ foram repetidos nele.
   HTML, NBSP e esquemas não listados. Não é garantia universal.
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+# Par nome/valor em `structured` (revisão formal, tentativa 5; 18/10/2026)
+
+Achado P1 `content.mjs:130` da tentativa formal 5 (`formal-round5-report.json`,
+AC2): com `--content`, `item.arguments` = `{"headers":[{"name":"Cookie","value":"session=…"}]}`
+mantinha o valor, porque a projeção sanitizava `name` e `value` como strings
+isoladas. Linha "Par nome/valor em `structured`" do Landing em `ed1ffec`,
+antes do código; correção, testes, guia e Proof em `948e7f4`.
+
+## Natureza do problema e correção
+
+- `project` julga chaves, não valores de membros irmãos: `Cookie` sem `:` não
+  aciona a regra 3, e `session=…` sob a chave comum `value` não aciona a regra 5.
+- Correção em `content.mjs`: as entradas de cada objeto são capturadas uma vez por
+  `Object.entries`; se algum membro `name`/`key` (qualquer caixa ASCII) tem valor
+  string que `isSensitiveKey` reconhece, todo membro `value` (qualquer caixa) desse
+  objeto sai inteiro com `sensitive_removed`, conta como membro visitado e não é
+  descido. Sem leitura nova de getter, sem cópia das regras de nome, sem tipo,
+  motivo, parser ou dependência novos. `__proto__`, profundidade 8, 128 membros,
+  orçamento 8192 e exclusões anteriores não mudam.
+
+## O que cada prova nova afirma
+
+- **I5-C16e** (`policy.unit`): forma do achado pela política inteira → `{"headers":[{"name":"Cookie"}]}`
+  e `privacy` `["item.arguments:sensitive_removed"]`, sem `session=` nem marcador;
+  14 nomes sensíveis (`Cookie`/`cookie`/`COOKIE`, `Set-Cookie`, `set_cookie`,
+  `Authorization`/`AUTHORIZATION`, `Proxy-Authorization`, `X-Api-Key`,
+  `x-auth-token`, `auth`, `password`, `client_secret`, `api_key`); valor antes do
+  nome; `Name`/`Value`, `NAME`/`VALUE`, `key`/`value`, `Key`/`Value`; vizinhos
+  preservados; dois membros de valor; basta um nome sensível; nome com texto
+  sanitizado no mesmo objeto (uma entrada `privacy`); raiz, aninhado, array em
+  array e sob `__proto__` vindo de `JSON.parse`; oito tipos de valor (`""`,
+  `null`, número, booleano, objeto, array, subárvore de profundidade 10 e array de
+  138 itens, não descidos) — projeção e `privacy` exatas. 10 controles intactos
+  com `privacy` vazia (nome comum, nome vazio, valor vazio sob nome comum, só o
+  nome, nome array/objeto/número, outras chaves de nome e de valor, nome e valor em
+  objetos diferentes). Getter: `name` responderia `Cookie` e depois `Accept`;
+  valor descartado e uma leitura de cada membro. 126 + par = 128 cabe; 129 →
+  `{content:null, privacy:["content:unsanitizable"]}`.
+- **I5-C16f** (`outputs.cli`): quatro eventos `mcp_tool_call` pelo ingest real
+  `--agent codex-exec` com sonda longa `SKILLMECANARYc16f…` (≥ 148 caracteres):
+  forma do achado, raiz `VALUE`/`NAME` com subárvore, `key`/`value` aninhado com
+  par comum ao lado, e controle nome comum/vazio. `persisted` 4; `contentOmitted`
+  do lote e do `status` exatamente `{sensitive_removed:3}`; export com conteúdo
+  exato por registro e motivo exato (`[]` só no controle); nenhum arquivo do
+  store, stdout, log do fs-probe, log da sonda de privacidade, temporário antes do
+  rename ou arquivo escrito contém `SKILLMECANARY` nem `session=`; stderr vazio;
+  delete aplicado.
+- Nenhum teste, asserção, título ou seletor existente alterado ou removido.
+  Contagem do alvo de privacidade: 111 → 113; `test:integrations` 199 → 201.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-f7-win-RzCK4l\`. Sem `git stash`, reset, pop ou
+troca do produto: o RED rodou com `src/` intacto (`git diff --exit-code HEAD -- src`,
+cabeça `ed1ffec`), depois de escrever os testes e antes da edição do produto.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red-policy.tap.log` | `src/` intacto, `"^I5-C16e "` | 1 teste, 0 pass, 1 fail: `achado: só o valor sai` |
+| `red-outputs.tap.log` | `src/` intacto, `"^I5-C16f "` | 1 teste, 0 pass, 1 fail: `contagem exata do lote` |
+| `green-policy.tap.log`, `green-outputs.tap.log` | correção, antes do commit, mesmos seletores | 1/1, 1/1, exit 0 |
+| `green-policy-file.tap.log` | correção, arquivo `policy.unit` inteiro | 36/36, exit 0 |
+
+## Execuções no commit `948e7f4`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, HEAD e árvore limpa conferidos antes e depois (`gate-948e7f4/gate.meta`, 19:17:17Z–19:23:05Z) | `node --test tests/integrations/privacy/*.test.mjs` / `npm test` | 113/113, 0 skip (C34/C35 incluídos); exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 201 (195, 6 skip); total 640, 627 pass, 13 skip, 0 fail |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-f7final-PGDB6a`, tar sha256 `83ba2be0…4713c4676c` e `get-tar-commit-id` = `948e7f4d…` conferidos no script; stage `skill-me-i5-f7final-wsl-stage-3JWdOI` | idem | 113/113, 0 skip; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 201 (189, 12 skip); total 640, 627 pass, 13 skip, 0 fail |
+
+Skips iguais aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m). C16e,
+C16f, C34 e C35 aparecem como `ok` nos dois logs de privacidade. Nenhum log
+contém `SKILLMECANARY`.
+
+Preparação: `gate-win.sh` em `%TEMP%\skill-me-i5-f7-tools\` copiado do anterior
+trocando só o comentário da linha 2; `run-wsl.sh` copiado do stage anterior
+trocando o comentário da linha 2 e os prefixos (`f6final` → `f7final`; `diff`
+conferido: linhas 2, 23, 29 e 31), com a guarda `uid` = 1000 antes de qualquer
+mutação, chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`.
+Nenhum comando inline no WSL, nada em `/repo` ou `/src.tar`; preparação antiga do
+Verifier6, seu probe, stages e logs anteriores, sessões ou configurações pessoais
+não tocados; nenhum modelo, rede de produto, instalação, subagente, push ou
+`review:run`; só processos próprios. Nenhum arquivo do repositório editado
+durante os gates; o WSL começou depois do fim do gate Windows. Nenhuma rejeição
+de política nem falha de capacidade.
+
+**Diferença de SHA**: os gates acima rodaram em `948e7f4`. O commit desta
+evidência só acrescenta esta seção (`.checks/`); código, testes, guia e checklist
+são idênticos aos do gate. Nele rodaram só I5-C34 e I5-C35, numa invocação com
+seletor sobre `docs-privacy.test.mjs` (Windows); `npm test` e o alvo completo não
+foram repetidos nele.
+
+## Riscos e perdas comunicados
+
+- Perdas declaradas (falso positivo, falha fechada): valor sob nome que só
+  contém uma palavra sensível (`{"name":"token_count","value":3}`), como já
+  ocorre com chaves; valor vazio sob nome sensível também sai, como `{"cookie":""}`.
+- Limites declarados: nome com outro texto (`"Cookie:"`, `" Cookie"`), par em
+  array de tupla (`[["Cookie","s=…"]]`), outras chaves de nome ou de valor
+  (`header`, `names`, `val`, `values`) e nome e valor em objetos diferentes; o
+  valor nessas formas passa só pelo sanitizador de texto. Não é garantia universal.
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
