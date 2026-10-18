@@ -531,7 +531,89 @@ test("I5-C16c chave própria __proto__ vinda de JSON.parse fica como propriedade
   same(over.privacy.filter((e) => !e.startsWith("envelope.")), ["content:unsanitizable"], "estouro por membros");
 });
 
-test("I5-C17b parâmetro de query com nome sensível codificado tem o valor removido; o nome fica como veio", () => {
+test("I5-C16e par nome/valor em structured: nome sensível no membro name/key descarta o membro value com sensitive_removed, em qualquer ordem, caixa, posição e tipo; nome comum, nome vazio e formas fora do par ficam", () => {
+  const extract = (args) => extractContent({ contract: CONTRACT_OF["codex-exec"], nativeEvent: "item.completed", payload: execEvent("item_completed_mcp_tool_call", { arguments: args, result: null }), key: KEY });
+  const removed = ["item.arguments:sensitive_removed"];
+  const check = (label, args, expected, privacy) => {
+    const extracted = extract(args);
+    assert.ok(extracted.content !== null, `${label}: conteúdo mantido`);
+    same(extracted.content.fields, [{ field: "item.arguments", role: "args", kind: "structured", value: expected }], `${label}: projeção exata`);
+    same(extracted.privacy, privacy, `${label}: privacy exata`);
+    assert.ok(!JSON.stringify(extracted).includes(MARKER), `${label}: sem canário`);
+  };
+
+  // Forma do achado, pela política inteira.
+  const reported = policy("codex-exec", JSON.parse(JSON.stringify(execEvent("item_completed_mcp_tool_call", { arguments: { headers: [{ name: "Cookie", value: "session=SKILLMECANARYcookie" }] }, result: null }))));
+  same(field(reported, "item.arguments").value, { headers: [{ name: "Cookie" }] }, "achado: só o valor sai");
+  same(reported.privacy.filter((e) => !e.startsWith("envelope.")), removed, "achado: motivo exato");
+  assert.ok(!JSON.stringify(reported).includes(MARKER) && !JSON.stringify(reported).includes("session="), "achado: sem o valor no registro");
+
+  // Nomes sensíveis já definidos por isSensitiveKey, em várias caixas e grafias.
+  const names = ["Cookie", "cookie", "COOKIE", "Set-Cookie", "set_cookie", "Authorization", "AUTHORIZATION", "Proxy-Authorization", "X-Api-Key", "x-auth-token", "auth", "password", "client_secret", "api_key"];
+  for (const name of names) {
+    assert.equal(isSensitiveKey(name), true, `pré-condição: ${name} sensível`);
+    check(`nome ${name}`, { headers: [{ name, value: `s=${MARKER}${name}` }] }, { headers: [{ name }] }, removed);
+  }
+  // Ordem dos membros, caixa das chaves do par, `key` no lugar de `name`, membros vizinhos.
+  check("valor antes do nome", { headers: [{ value: `s=${MARKER}o`, name: "Cookie" }] }, { headers: [{ name: "Cookie" }] }, removed);
+  check("Name/Value", { h: [{ Name: "Cookie", Value: `${MARKER}c` }] }, { h: [{ Name: "Cookie" }] }, removed);
+  check("NAME/VALUE", { h: [{ VALUE: `${MARKER}c`, NAME: "authorization" }] }, { h: [{ NAME: "authorization" }] }, removed);
+  check("key/value", { params: [{ key: "X-Api-Key", value: `${MARKER}k` }, { key: "page", value: "2" }] }, { params: [{ key: "X-Api-Key" }, { key: "page", value: "2" }] }, removed);
+  check("Key/Value", { tags: [{ Key: "Password", Value: `${MARKER}p` }] }, { tags: [{ Key: "Password" }] }, removed);
+  check("vizinhos ficam", { cookies: [{ name: "Cookie", value: `${MARKER}v`, domain: "example.test", path: "/", secure: true }] }, { cookies: [{ name: "Cookie", domain: "example.test", path: "/", secure: true }] }, removed);
+  check("dois membros de valor", { h: [{ name: "Cookie", Value: `${MARKER}a`, value: `${MARKER}b`, q: 1 }] }, { h: [{ name: "Cookie", q: 1 }] }, removed);
+  check("basta um nome sensível", { h: [{ name: "Accept", key: "Cookie", value: `${MARKER}k` }] }, { h: [{ name: "Accept", key: "Cookie" }] }, removed);
+  check("nome sanitizado e par", { h: [{ name: "Cookie", value: `${MARKER}c`, note: `password=${MARKER}n` }] }, { h: [{ name: "Cookie", note: `password=${R}` }] }, removed);
+  // Posições: raiz, aninhado, array dentro de array, sob __proto__ vindo de JSON.parse.
+  check("raiz", { name: "Cookie", value: `${MARKER}r`, q: "x" }, { name: "Cookie", q: "x" }, removed);
+  check("aninhado", { req: { opts: { header: { name: "Set-Cookie", value: `${MARKER}n` } } } }, { req: { opts: { header: { name: "Set-Cookie" } } } }, removed);
+  check("array em array", { l: [[{ name: "Cookie", value: `${MARKER}a` }], "fim"] }, { l: [[{ name: "Cookie" }], "fim"] }, removed);
+  const proto = extract(JSON.parse(`{"__proto__":{"name":"Cookie","value":"${MARKER}p"},"q":"x"}`));
+  assert.ok(JSON.stringify(proto.content.fields[0].value) === '{"__proto__":{"name":"Cookie"},"q":"x"}', "sob __proto__: projeção exata");
+  same(proto.privacy, removed, "sob __proto__: privacy exata");
+  // Tipos do valor: todos descartados, sem descer na subárvore (funda ou larga).
+  let deep = `${MARKER}fundo`;
+  for (let i = 0; i < CONTENT_LIMITS.maxDepth + 2; i += 1) deep = { d: deep };
+  const wide = Array.from({ length: CONTENT_LIMITS.maxMembers + 10 }, () => MARKER);
+  for (const [label, value] of [["string vazia", ""], ["null", null], ["número", 7], ["booleano", true], ["objeto", { session: `${MARKER}o`, n: 1 }], ["array", [`${MARKER}a`, 2]], ["objeto fundo", deep], ["array largo", wide]]) {
+    check(`valor ${label}`, { h: [{ name: "Cookie", value }] }, { h: [{ name: "Cookie" }] }, removed);
+  }
+
+  // Controles: nome comum, nome vazio, valor vazio, só o nome, formas fora do par.
+  const controls = [
+    ["nome comum", { headers: [{ name: "Accept", value: "text/html" }] }],
+    ["nome vazio", { headers: [{ name: "", value: "v" }] }],
+    ["valor vazio sob nome comum", { headers: [{ name: "Accept", value: "" }] }],
+    ["só o nome", { headers: [{ name: "Cookie" }] }],
+    ["nome em array", { headers: [{ name: ["Cookie"], value: "v" }] }],
+    ["nome objeto", { headers: [{ name: { n: "Cookie" }, value: "v" }] }],
+    ["nome número", { headers: [{ name: 7, value: "v" }] }],
+    ["outra chave de nome", { headers: [{ header: "Cookie", value: "v" }, { names: "Cookie", value: "v" }] }],
+    ["outra chave de valor", { headers: [{ name: "Cookie", val: "v", values: ["v"] }] }],
+    ["nome e valor em objetos diferentes", { headers: [{ name: "Cookie" }, { value: "v" }], n: { name: "Cookie", data: { value: "v" } } }],
+  ];
+  for (const [label, args] of controls) check(label, args, args, []);
+
+  // A decisão usa as entradas já capturadas: cada getter é lido uma vez e um
+  // nome que mudaria na segunda leitura não reabre o valor.
+  const reads = { name: 0, value: 0 };
+  const hostile = {};
+  Object.defineProperty(hostile, "name", { enumerable: true, get: () => (reads.name++ === 0 ? "Cookie" : "Accept") });
+  Object.defineProperty(hostile, "value", { enumerable: true, get: () => (reads.value++, `${MARKER}getter`) });
+  check("getter lido uma vez", { headers: [hostile] }, { headers: [{ name: "Cookie" }] }, removed);
+  same(reads, { name: 1, value: 1 }, "uma leitura por membro");
+
+  // O valor descartado conta como um membro visitado: 126 + nome + valor = 128.
+  const members = (count) => Object.fromEntries(Array.from({ length: count }, (_, i) => [`m${i}`, i]));
+  const fits = extract({ ...members(CONTENT_LIMITS.maxMembers - 2), name: "Cookie", value: wide });
+  assert.ok(fits.content !== null, "128 membros com o par cabem");
+  same(fits.content.fields[0].value, { ...members(CONTENT_LIMITS.maxMembers - 2), name: "Cookie" }, "membros comuns intactos");
+  same(fits.privacy, removed, "128: privacy exata");
+  const over = extract({ ...members(CONTENT_LIMITS.maxMembers - 1), name: "Cookie", value: "x" });
+  same(over, { content: null, privacy: ["content:unsanitizable"] }, "129 membros estouram");
+});
+
+test("I5-C17bparâmetro de query com nome sensível codificado tem o valor removido; o nome fica como veio", () => {
   const cases = [
     ["?t%6fken=", "https://example.test/p?t%6fken=SKILLMECANARYa", `https://example.test/p?t%6fken=${R}`],
     ["%74%6F%6B%65%6E", "https://h/p?%74%6F%6B%65%6E=SKILLMECANARYb&x=1", `https://h/p?%74%6F%6B%65%6E=${R}&x=1`],

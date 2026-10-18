@@ -104,7 +104,16 @@ Objetos (argumentos MCP) passam por projeção: chave sensível (`password`,
 subárvore inteira; chave fora de `[A-Za-z0-9_.-]{1,64}` é omitida; chave com
 formato de token conhecido sai com o membro inteiro (`sensitive_removed`), sem ser
 reescrita. Uma chave `__proto__`, `constructor` ou `prototype` é um membro comum:
-continua no conteúdo como chave própria, sem alterar o objeto. Texto passa por regras fixas: bloco de chave privada removido inteiro;
+continua no conteúdo como chave própria, sem alterar o objeto. Num par nome/valor,
+um objeto cujo membro `name` ou `key` (em qualquer caixa) traz um nome sensível
+pela mesma regra das chaves (`Cookie`, `Set-Cookie`, `Authorization`,
+`X-Api-Key`…) perde o membro `value` inteiro, em qualquer ordem e com qualquer
+tipo (`sensitive_removed`): `{"name":"Cookie","value":"session=…"}` vira
+`{"name":"Cookie"}`. Isso também remove o valor sob um nome que só contém uma
+palavra sensível (`token_count`). Nome com outro texto (`Cookie:`), outras chaves
+de nome ou de valor, pares em array (`["Cookie","…"]`) e nome e valor em objetos
+diferentes não são reconhecidos; o valor nessas formas passa só pelas regras de
+texto. Texto passa por regras fixas: bloco de chave privada removido inteiro;
 userinfo e parâmetros sensíveis de URL, com o nome do parâmetro reconhecido também
 em codificação percentual (`t%6fken`, uma camada; escape inválido conta como
 sensível); valores de `Authorization`, `Cookie`, `Set-Cookie`,

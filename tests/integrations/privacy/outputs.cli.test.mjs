@@ -1096,3 +1096,52 @@ test("I5-C16d chave própria __proto__ em argumentos MCP pelo ingest/export real
   assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
   check(clean, 1);
 });
+
+test("I5-C16f par nome/valor com nome sensível em argumentos MCP pelo ingest/export real sai sem o valor, com sensitive_removed; nome comum fica; nada chega a temporários, lock, arquivos, logs nem export", () => {
+  // Sonda longa procurada em todo arquivo, log e temporário; `session=` é o
+  // prefixo do valor do achado, conferido pelo contexto.
+  const marker = "SKILLMECANARYc16f";
+  const probe = (tag) => `${marker}${tag}${"0123456789abcdef".repeat(8)}`;
+  const events = [
+    // Forma do achado.
+    { headers: [{ name: "Cookie", value: `session=${probe("cookie")}` }] },
+    // Valor antes do nome, caixa das chaves, raiz e subárvore de valor.
+    { VALUE: { nested: [`session=${probe("root")}`] }, NAME: "set-cookie", note: "ok" },
+    // `key` no lugar de `name`, aninhado, com um par comum ao lado.
+    { req: { params: [{ key: "X-Api-Key", value: probe("key") }, { key: "page", value: "2" }] } },
+    // Controles: nome comum e nome vazio.
+    { headers: [{ name: "Accept", value: "text/html" }, { name: "", value: "v" }] },
+  ].map((args) => execEvent("item_completed_mcp_tool_call", { arguments: args, result: null }));
+  const expected = [
+    { headers: [{ name: "Cookie" }] },
+    { NAME: "set-cookie", note: "ok" },
+    { req: { params: [{ key: "X-Api-Key" }, { key: "page", value: "2" }] } },
+    { headers: [{ name: "Accept", value: "text/html" }, { name: "", value: "v" }] },
+  ];
+  const clean = (text, label) => assert.ok(!text.includes("SKILLMECANARY") && !text.includes("session="), label);
+  const { root, run, check } = probedCapture("c16f", marker);
+
+  const id = run(["start", "--root", root, "--content"]).body.capture.id;
+  const ingested = run(["ingest", "--root", root, "--capture", id, "--agent", "codex-exec"], { input: ndjson(events) });
+  assert.equal(ingested.status, 0);
+  assert.equal(ingested.body.batch.persisted, events.length);
+  assert.ok(isDeepStrictEqual(ingested.body.batch.contentOmitted, { sensitive_removed: 3 }), "contagem exata do lote");
+  for (const file of walkFiles(root)) clean(readFileSync(file, "latin1"), `após ingest: ${path.relative(root, file)}`);
+
+  const exported = run(["export", "--root", root, "--capture", id]);
+  assert.equal(exported.status, 0);
+  const records = exported.body.records;
+  assert.equal(records.length, events.length);
+  const content = (value) => ({ contentVersion: 1, tool: "mcp_tool_call", fields: [{ field: "item.arguments", role: "args", kind: "structured", value }] });
+  assert.ok(isDeepStrictEqual(records.map((r) => r.content), expected.map(content)), "conteúdo exato por registro");
+  assert.ok(
+    isDeepStrictEqual(records.map((r) => r.privacy.filter((e) => !e.startsWith("envelope."))), [["item.arguments:sensitive_removed"], ["item.arguments:sensitive_removed"], ["item.arguments:sensitive_removed"], []]),
+    "motivo exato por registro",
+  );
+  const status = run(["status", "--root", root, "--capture", id]);
+  assert.ok(isDeepStrictEqual(status.body.capture.counters.contentOmitted, { sensitive_removed: 3 }), "contagem exata no status");
+  run(["stop", "--root", root, "--capture", id]);
+  assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
+  assert.deepEqual(readdirSync(path.join(root, "skill-me-privacy", "captures")), [], "captura apagada");
+  check(clean, 1);
+});

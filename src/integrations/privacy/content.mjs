@@ -90,6 +90,13 @@ function cleanText(value, target, tally) {
 // segredo" do Landing).
 const OMIT = Symbol("omit");
 const keyCarriesSecret = (key) => sanitizeText(key).removed;
+// Par nome/valor (`{"name":"Cookie","value":"…"}`, `key` no lugar de
+// `name`): o nome sensível está no valor de um membro, não na chave, e
+// `isSensitiveKey` o julga como julgaria a chave. Linha "Par nome/valor em
+// `structured`" do Landing.
+const NAME_MEMBER = /^(?:name|key)$/i;
+const VALUE_MEMBER = /^value$/i;
+const namesSensitiveValue = (entries) => entries.some(([key, child]) => NAME_MEMBER.test(key) && typeof child === "string" && isSensitiveKey(child));
 function project(value, depth, target, tally) {
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value) ? value : OMIT;
@@ -112,8 +119,12 @@ function project(value, depth, target, tally) {
   // `Object.fromEntries` cria cada membro como propriedade própria, como o
   // `JSON.parse` da entrada: `out[key] = …` acionaria o setter herdado de
   // `__proto__`, e o membro sumiria ou viraria o protótipo do resultado.
+  // A decisão do par usa as entradas já lidas, as mesmas projetadas abaixo:
+  // reler `name` depois de um getter abriria a leitura alternada (C11).
+  const entries = Object.entries(value);
+  const dropValue = namesSensitiveValue(entries);
   const members = [];
-  for (const [key, child] of Object.entries(value)) {
+  for (const [key, child] of entries) {
     tally.visit();
     if (isSensitiveKey(key)) {
       tally.note(target, "sensitive_removed");
@@ -123,7 +134,7 @@ function project(value, depth, target, tally) {
       tally.note(target, "unsanitizable");
       continue;
     }
-    if (keyCarriesSecret(key)) {
+    if (keyCarriesSecret(key) || (dropValue && VALUE_MEMBER.test(key))) {
       tally.note(target, "sensitive_removed");
       continue;
     }
