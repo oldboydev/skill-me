@@ -4,16 +4,17 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { claudeHookDraft } from "../../../src/integrations/adapters/claude.mjs";
 import { codexExecDraft } from "../../../src/integrations/adapters/codex-exec.mjs";
 import { codexHookDraft } from "../../../src/integrations/adapters/codex-hooks.mjs";
 import { hermesDraft } from "../../../src/integrations/adapters/hermes.mjs";
 import { ENVELOPE_LIMITS, buildEnvelope, validateEnvelope } from "../../../src/integrations/boundary.mjs";
-import { CONTENT_TABLE, extractContent } from "../../../src/integrations/privacy/content.mjs";
+import { CONTENT_LIMITS, CONTENT_TABLE, extractContent } from "../../../src/integrations/privacy/content.mjs";
 import { applyPolicy, checkEnvelopeBudget } from "../../../src/integrations/privacy/policy.mjs";
-import { sanitizeText } from "../../../src/integrations/privacy/sanitize.mjs";
+import { isSensitiveKey, sanitizeText } from "../../../src/integrations/privacy/sanitize.mjs";
 import { loadFixture } from "../helpers/fixtures.mjs";
-import { CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks } from "../helpers/privacy-canaries.mjs";
+import { CANARIES, ENCODED_QUERY_URL, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks } from "../helpers/privacy-canaries.mjs";
 
 const KEY = Buffer.alloc(32, 7);
 const OTHER_KEY = Buffer.alloc(32, 9);
@@ -395,6 +396,73 @@ test("I5-C17 URL com userinfo e parâmetro sensível (literal)", () => {
   assert.equal(field(record, "tool_input.command").value, `git clone https://host/p?token=${R}&page=2`);
   assert.ok(record.privacy.includes("tool_input.command:sensitive_removed"));
   assert.deepEqual(sanitizeText("https://host/p?page=2"), { ok: true, text: "https://host/p?page=2", removed: false });
+});
+
+// Comparação sem diff: o valor real pode conter o canário e não pode ir para a
+// mensagem de falha nem para os campos actual/expected do relatório TAP.
+const same = (actual, expected, label) => assert.ok(isDeepStrictEqual(actual, expected), label);
+
+test("I5-C16b chave de structured com formato de token sai inteira com sensitive_removed, sem descer na subárvore", () => {
+  const keys = Object.entries(KEY_CANARIES);
+  for (const [name, key] of keys) {
+    // Pré-condição: só a detecção de formato reconhece a chave.
+    assert.ok(/^[A-Za-z0-9_.-]{1,64}$/.test(key), `${name} cabe no padrão de chave`);
+    assert.equal(isSensitiveKey(key), false, `${name} sem palavra sensível`);
+    assert.equal(sanitizeText(key).removed, true, `${name} reconhecido pelo sanitizador`);
+  }
+  // Subárvores que estourariam profundidade ou membros se fossem visitadas.
+  let deep = "fundo";
+  for (let i = 0; i < CONTENT_LIMITS.maxDepth + 2; i += 1) deep = { d: deep };
+  const wide = Array.from({ length: CONTENT_LIMITS.maxMembers + 10 }, (_, i) => i);
+  for (const [name, key] of keys) {
+    const args = {
+      [key]: "ok",
+      q: "fica",
+      ghp_curto: 1,
+      nested: { level2: { [key]: deep, keep: true }, list: [{ [key]: wide, keep: 2 }, "item"] },
+    };
+    const extracted = extractContent({ contract: CONTRACT_OF["codex-exec"], nativeEvent: "item.completed", payload: execEvent("item_completed_mcp_tool_call", { arguments: args, result: null }), key: KEY });
+    assert.ok(extracted.content !== null, `${name} conteúdo mantido`);
+    same(extracted.privacy, ["item.arguments:sensitive_removed"], `${name} privacy exata`);
+    same(extracted.content.fields, [{ field: "item.arguments", role: "args", kind: "structured", value: { q: "fica", ghp_curto: 1, nested: { level2: { keep: true }, list: [{ keep: 2 }, "item"] } } }], `${name} projeção exata`);
+    const text = JSON.stringify(extracted);
+    assert.ok(!text.includes(MARKER) && !text.includes(R), `${name} sem chave nem marcador de remoção como chave`);
+  }
+  // A chave descartada conta como um membro visitado: 127 + 1 cabe em 128.
+  const members = Object.fromEntries(Array.from({ length: CONTENT_LIMITS.maxMembers - 1 }, (_, i) => [`m${i}`, i]));
+  const limit = policy("codex-exec", execEvent("item_completed_mcp_tool_call", { arguments: { ...members, [KEY_CANARIES.github]: wide }, result: null }));
+  assert.ok(limit.content !== null && field(limit, "item.arguments") !== undefined, "127 membros + chave descartada cabem");
+  same(field(limit, "item.arguments").value, members, "membros comuns intactos");
+  const over = policy("codex-exec", execEvent("item_completed_mcp_tool_call", { arguments: { ...members, extra: 1, [KEY_CANARIES.github]: 1 }, result: null }));
+  assert.equal(over.content, null, "129 membros estouram");
+  same(over.privacy.filter((e) => !e.startsWith("envelope.")), ["content:unsanitizable"], "estouro por membros");
+  assert.ok(leaks(JSON.stringify([limit, over])).length === 0, "limite de membros sem vazamento");
+});
+
+test("I5-C17b parâmetro de query com nome sensível codificado tem o valor removido; o nome fica como veio", () => {
+  const cases = [
+    ["?t%6fken=", "https://example.test/p?t%6fken=SKILLMECANARYa", `https://example.test/p?t%6fken=${R}`],
+    ["%74%6F%6B%65%6E", "https://h/p?%74%6F%6B%65%6E=SKILLMECANARYb&x=1", `https://h/p?%74%6F%6B%65%6E=${R}&x=1`],
+    ["maiúscula %4B", "https://h/p?to%4Ben=SKILLMECANARYc", `https://h/p?to%4Ben=${R}`],
+    ["Kelvin UTF-8", "https://h/p?to%E2%84%AAen=SKILLMECANARYd", `https://h/p?to%E2%84%AAen=${R}`],
+    [
+      "mistos",
+      "https://h/p?page=2&api%5Fkey=SKILLMECANARYe&q=ok&Pass%77ord=SKILLMECANARYf&client%2Dsecret=SKILLMECANARYg&p%61ge=3",
+      `https://h/p?page=2&api%5Fkey=${R}&q=ok&Pass%77ord=${R}&client%2Dsecret=${R}&p%61ge=3`,
+    ],
+    // Escape inválido: o nome não é classificável e o valor sai (falha fechada).
+    ["escape inválido", "https://h/p?t%zzoken=SKILLMECANARYh&page=2", `https://h/p?t%zzoken=${R}&page=2`],
+    ["UTF-8 incompleto", "https://h/p?a%E0=SKILLMECANARYi&page=2", `https://h/p?a%E0=${R}&page=2`],
+  ];
+  for (const [label, input, expected] of cases) same(sanitizeText(input), { ok: true, text: expected, removed: true }, label);
+  // Controles: nome comum codificado, palavra sensível só no valor e valor já removido.
+  for (const control of ["https://h/p?p%61ge=2&q=t%6fken", "https://h/p?q=100%25&sort=asc", `https://h/p?t%6fken=${R}`]) {
+    assert.deepEqual(sanitizeText(control), { ok: true, text: control, removed: false });
+  }
+  const record = policy("claude", claudePayload("pre_tool_bash", { tool_input: { command: `curl '${ENCODED_QUERY_URL}'` } }));
+  same(field(record, "tool_input.command").value, `curl 'https://example.test/p?t%6fken=${R}&page=2'`, "comando com URL codificada");
+  assert.ok(record.privacy.includes("tool_input.command:sensitive_removed"));
+  assert.ok(leaks(JSON.stringify(record)).length === 0, "registro sem vazamento");
 });
 
 test("I5-C18 bloco de chave privada fechado ou não é descartado inteiro; o texto antes permanece (literal)", () => {

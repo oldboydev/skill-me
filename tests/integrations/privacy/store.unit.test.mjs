@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { runPrivacyCommand } from "../../../src/integrations/privacy/command.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
+import { PRIVACY_LIMITS } from "../../../src/integrations/privacy/lifecycle.mjs";
 import { appendRecords, StoreError } from "../../../src/integrations/privacy/store.mjs";
 import { makeScratch } from "../helpers/cli.mjs";
 import { appendSanitized, recordLineBytes, sanitizedRecord, startIn } from "../helpers/privacy-store.mjs";
@@ -188,6 +189,75 @@ test("I5-S-bounded controle ou segmento maior que o limite é recusado sem ler o
   assert.equal(start.exitCode, 3);
   assert.deepEqual(start.body.error, { code: "store_invalid" });
   assert.ok(marker.bytesRead.get("store.json") <= '{"skillMePrivacyStore":1}'.length + 1, `lidos ${marker.bytesRead.get("store.json")}`);
+});
+
+// Sonda de orçamento: registra cada arquivo aberto e cada teto pedido a
+// `readBounded`. Teto acima do limite da captura nunca chega ao leitor real
+// (que alocaria `maxBytes + 1`): devolve null, como um arquivo maior faria.
+function budgetIo() {
+  const opened = [];
+  const budgets = [];
+  const real = createStoreIo({
+    async openFile(file, flags) {
+      opened.push(path.basename(file));
+      const { open } = await import("node:fs/promises");
+      return open(file, flags);
+    },
+  });
+  const io = {
+    ...real,
+    async readBounded(file, maxBytes) {
+      budgets.push([path.basename(file), maxBytes]);
+      return maxBytes > PRIVACY_LIMITS.maxBytes ? null : real.readBounded(file, maxBytes);
+    },
+  };
+  return { io, opened, budgets };
+}
+
+test("I5-S-databytes state.json com dataBytes acima de 8 MiB é capture_invalid antes de abrir o segmento", async () => {
+  const root = makeScratch("i5 databytes");
+  const id = await startIn(root);
+  await appendSanitized(root, id, 2);
+  const dir = captureDir(root, id);
+  const original = readState(root, id);
+  const withBytes = (dataBytes) => writeFileSync(path.join(dir, "state.json"), JSON.stringify({ ...original, dataBytes }));
+  const run = (argv, io) => runPrivacyCommand({ argv: [argv[0], "--root", root, "--capture", id, ...argv.slice(1)], io });
+
+  // Exatamente o limite: estado válido, export lê o segmento com esse teto.
+  withBytes(PRIVACY_LIMITS.maxBytes);
+  const status = await run(["status"]);
+  assert.equal(status.exitCode, 0);
+  assert.equal(status.body.capture.dataBytes, 8388608);
+  const atLimit = budgetIo();
+  // O segmento real tem menos bytes que o declarado: recusa depois de ler.
+  assert.deepEqual((await run(["export"], atLimit.io)).body.error, { code: "capture_invalid" });
+  assert.ok(atLimit.opened.includes(original.dataFile), "segmento aberto no limite");
+  assert.deepEqual(atLimit.budgets.find(([name]) => name === original.dataFile), [original.dataFile, 8388608]);
+
+  for (const dataBytes of [PRIVACY_LIMITS.maxBytes + 1, 1024 * 1024 * 1024]) {
+    withBytes(dataBytes);
+    const before = snapshotTree(root);
+    for (const argv of [["export"], ["status"], ["stop"], ["delete", "--apply"]]) {
+      const probe = budgetIo();
+      const result = await run(argv, probe.io);
+      assert.equal(result.exitCode, 3, `${dataBytes} ${argv[0]}`);
+      assert.deepEqual(result.body.error, { code: "capture_invalid" }, `${dataBytes} ${argv[0]}`);
+      assert.ok(!probe.opened.includes(original.dataFile), `${dataBytes} ${argv[0]} não abre o segmento`);
+      assert.ok(probe.budgets.every(([, max]) => max <= 64 * 1024), `${dataBytes} ${argv[0]} tetos ${JSON.stringify(probe.budgets)}`);
+    }
+    const append = budgetIo();
+    await rejects(appendRecords({ root, id, io: append.io, batch: { records: [sanitizedRecord(3)], malformed: 0, dropped: {}, contentOmitted: {} } }), "capture_invalid");
+    assert.ok(!append.opened.includes(original.dataFile), `${dataBytes} append não abre o segmento`);
+    assert.deepEqual(snapshotTree(root), before, `${dataBytes} árvore intacta`);
+  }
+
+  // Estado restaurado: os demais campos eram válidos. (Os registros manuais de
+  // appendSanitized não têm envelope v1, então o controle é o status; o export
+  // restaurado é provado no I5-S-databytes-cli com registros do ingest.)
+  withBytes(original.dataBytes);
+  const restored = await run(["status"]);
+  assert.equal(restored.exitCode, 0);
+  assert.equal(restored.body.capture.dataBytes, original.dataBytes);
 });
 
 test("I5-S-record o storage recusa o que não é registro v1 sem gravar nada", async () => {

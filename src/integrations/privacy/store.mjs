@@ -212,6 +212,9 @@ function isValidState(state, id) {
     (state.state === "active" ? state.endedAt === null : isIso(state.endedAt)) &&
     (state.dataFile === null ? state.dataBytes === 0 : DATA_FILE_PATTERN.test(state.dataFile)) &&
     isCount(state.dataBytes) &&
+    // `dataBytes` é o teto de leitura e alocação do segmento: acima do limite
+    // da captura, nenhuma admissão o produziria e o estado não é nosso.
+    state.dataBytes <= PRIVACY_LIMITS.maxBytes &&
     counters !== null &&
     typeof counters === "object" &&
     isDeepStrictEqual(Object.keys(counters).sort(), COUNTER_KEYS) &&

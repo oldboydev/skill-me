@@ -4,10 +4,11 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { EVENT_KIND_FIELDS } from "../../../src/integrations/boundary.mjs";
 import { INTEGRATIONS_CLI, REPO_ROOT, baseEnv, makeScratch, parseReport } from "../helpers/cli.mjs";
 import { runClaudeHandler } from "../helpers/installed-hooks.mjs";
-import { CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, ndjson } from "../helpers/privacy-canaries.mjs";
+import { CANARIES, ENCODED_QUERY_URL, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, ndjson } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy } from "../helpers/privacy-store.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
 
@@ -196,6 +197,83 @@ test("I5-C14 canários das cinco categorias em conteúdo não aparecem em nenhum
   assert.ok(written.some((e) => e.file.endsWith(".skill-me-tmp")), "temporários observados");
   for (const entry of written) assert.equal(entry.containsMarker, false, entry.file);
   assert.ok(!existsSync(path.join(root, "skill-me-privacy", "captures", captures[0])));
+});
+
+test("I5-C14b token como chave de argumentos MCP e nome de query codificado não chegam a temporários, lock, arquivos nem export", () => {
+  const R = "[removido]";
+  const tokenKeys = Object.values(KEY_CANARIES);
+  const args = { q: "fica", nested: { keep: true, list: [{ keep: 2 }] } };
+  tokenKeys.forEach((key, i) => {
+    args[key] = "ok";
+    args.nested[key] = { d: { d: "sub" } };
+    args.nested.list[0][key] = [i];
+  });
+  const command = `curl '${ENCODED_QUERY_URL}'`;
+  const commandOut = `curl 'https://example.test/p?t%6fken=${R}&page=2'`;
+  const input = {
+    "codex-exec": [execEvent("item_completed_mcp_tool_call", { arguments: args, result: null }), execEvent("item_completed_command", { command, aggregated_output: ENCODED_QUERY_URL })],
+    claude: [claudePayload("pre_tool_bash", { tool_input: { command } }), claudePayload("post_tool_bash", { tool_input: { command }, tool_response: { stdout: ENCODED_QUERY_URL, stderr: "" } })],
+    "codex-hooks": [codexHookPayload("pre_tool_bash", { tool_input: { command } })],
+  };
+
+  const root = makeScratch("i5 c14b store");
+  const probeDir = makeScratch("i5 c14b probe");
+  const fsProbeLog = path.join(probeDir, "fs-probe.jsonl");
+  const privacyLog = path.join(probeDir, "privacy-probe.jsonl");
+  const options = {
+    nodeArgs: ["--import", FS_PROBE, "--import", PRIVACY_PROBE],
+    env: baseEnv({ SKILL_ME_TEST_PRIVACY_PROBE_LOG: privacyLog, SKILL_ME_TEST_PRIVACY_PROBE_MARKER: MARKER, SKILL_ME_TEST_FS_PROBE_LOG: fsProbeLog, SKILL_ME_TEST_FS_PROBE_CANARY: MARKER }),
+  };
+  const commands = [];
+  const run = (argv, extra = {}) => {
+    const result = runPrivacy(argv, { ...options, ...extra });
+    commands.push([argv[0], result]);
+    return result;
+  };
+  const id = run(["start", "--root", root, "--content"]).body.capture.id;
+  for (const [agent, entries] of Object.entries(input)) {
+    const result = run(["ingest", "--root", root, "--capture", id, "--agent", agent], { input: ndjson(entries) });
+    assert.equal(result.status, 0, agent);
+    assert.equal(result.body.batch.persisted, entries.length, agent);
+  }
+  // Sem diff: a mensagem de falha não pode carregar o marcador.
+  const clean = (text, label) => assert.ok(leaks(text).length === 0, label);
+  for (const file of walkFiles(root)) clean(readFileSync(file, "utf8"), `após ingest: ${path.relative(root, file)}`);
+
+  // O caso chegou aos campos certos: projeção exata e URL com só o valor removido.
+  const exported = run(["export", "--root", root, "--capture", id]);
+  assert.equal(exported.status, 0);
+  const fieldsOf = (record) => record.content?.fields ?? [];
+  const mcp = exported.body.records.find((r) => fieldsOf(r).some((f) => f.field === "item.arguments"));
+  assert.ok(mcp, "registro do mcp_tool_call");
+  assert.ok(isDeepStrictEqual(fieldsOf(mcp).find((f) => f.field === "item.arguments").value, { q: "fica", nested: { keep: true, list: [{ keep: 2 }] } }), "projeção sem as chaves-token");
+  assert.ok(mcp.privacy.includes("item.arguments:sensitive_removed"));
+  const texts = exported.body.records.flatMap((r) => fieldsOf(r).filter((f) => f.kind === "text").map((f) => [f.field, f.value]));
+  assert.deepEqual(texts.map(([name]) => name).sort(), ["item.aggregated_output", "item.command", "tool_input.command", "tool_input.command", "tool_input.command", "tool_response.stderr", "tool_response.stdout"].sort());
+  for (const [name, value] of texts) {
+    if (name.endsWith("command")) assert.ok(value === commandOut, `${name} só o valor do parâmetro removido`);
+    if (name === "item.aggregated_output" || name === "tool_response.stdout") assert.ok(value === `https://example.test/p?t%6fken=${R}&page=2`, name);
+  }
+  const status = run(["status", "--root", root, "--capture", id]);
+  assert.ok(status.body.capture.counters.contentOmitted.sensitive_removed >= 6, "remoções contadas");
+  run(["stop", "--root", root, "--capture", id]);
+  assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
+
+  for (const [name, result] of commands) {
+    clean(result.stdout, `${name} stdout`);
+    assert.equal(result.stderr, "", `${name} stderr`);
+  }
+  const fsText = readFileSync(fsProbeLog, "utf8");
+  const privacyText = readFileSync(privacyLog, "utf8");
+  clean(fsText, "log do fs-probe");
+  clean(privacyText, "log da sonda de privacidade");
+  const renamed = fsText.trim().split("\n").map((line) => JSON.parse(line)).filter((o) => o.moment === "before_rename");
+  assert.ok(renamed.filter((o) => /^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/.test(o.file)).length >= 3, "temporário de dados de cada ingest");
+  for (const observation of renamed) assert.equal(observation.containsCanary, false, observation.file);
+  const written = privacyText.trim().split("\n").map((line) => JSON.parse(line)).filter((e) => e.op === "closed_written");
+  assert.ok(written.filter((e) => path.basename(e.file) === ".lock").length >= commands.length, "lock de cada comando");
+  assert.ok(written.some((e) => e.file.endsWith(".skill-me-tmp")), "temporários observados");
+  for (const entry of written) assert.equal(entry.containsMarker, false, path.basename(entry.file));
 });
 
 test("I5-C15 canários em IDs, nomes e caminhos não aparecem em nenhum canal do debugger", async () => {

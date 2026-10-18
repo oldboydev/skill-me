@@ -15,6 +15,23 @@ export const CANARIES = Object.freeze({
   privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nSKILLMECANARYkeyAAAA\nBBBBSKILLMECANARY\n-----END OPENSSH PRIVATE KEY-----",
 });
 
+// Formatos de token do sanitizador usados como CHAVE de objeto: todos cabem em
+// `^[A-Za-z0-9_.-]{1,64}$` e nenhum contém palavra de `isSensitiveKey`, então só
+// a detecção de formato os reconhece (achado P1 da revisão formal, tentativa 1).
+export const KEY_CANARIES = Object.freeze({
+  github: "ghp_SKILLMECANARY0123456789abcdefgh",
+  githubPat: "github_pat_SKILLMECANARY_0123456789ab",
+  openai: "sk-SKILLMECANARY0123456789ab",
+  slack: "xoxb-SKILLMECANARY01",
+  aws: "AKIASKILLMECANARY123",
+  gitlab: "glpat-SKILLMECANARY0123456789",
+  google: "AIzaSKILLMECANARY0123456789abcdefghijkl",
+  jwt: "eyJSKILLMECANARY.eyJhbGciOi.c2lnbmF0dXJl",
+});
+
+// Nome de parâmetro sensível em codificação percentual normal (`t%6fken` = token).
+export const ENCODED_QUERY_URL = "https://example.test/p?t%6fken=SKILLMECANARYquery&page=2";
+
 // Texto livre com as cinco categorias entre trechos que podem permanecer.
 export const SECRET_TEXT = [
   "início seguro",

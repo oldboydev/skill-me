@@ -14,6 +14,19 @@ export function isSensitiveKey(name) {
   return EXACT_SENSITIVE.has(normalized) || SENSITIVE_PARTS.some((part) => normalized.includes(part));
 }
 
+// Nome de parâmetro de query: vale o nome como veio e sua forma decodificada
+// (uma camada, a codificação normal de URL: `t%6fken` é `token`). Escape
+// inválido não é classificável e conta como sensível (falha fechada).
+function isSensitiveQueryName(name) {
+  if (isSensitiveKey(name)) return true;
+  if (!name.includes("%")) return false;
+  try {
+    return isSensitiveKey(decodeURIComponent(name));
+  } catch {
+    return true;
+  }
+}
+
 const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----|$)/g;
 const URL_USERINFO = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/?#@"'<>]+@/g;
 const QUERY_PARAM = /([?&])([^=&#\s"'<>]+)=([^&#\s"'<>]*)/g;
@@ -80,7 +93,7 @@ export function sanitizeText(text) {
 
   replace(PRIVATE_KEY_BLOCK, () => REMOVED);
   replace(URL_USERINFO, (_, scheme) => scheme);
-  replace(QUERY_PARAM, (match, sep, name, value) => (value !== "" && !isRemoved(value) && isSensitiveKey(name) ? `${sep}${name}=${REMOVED}` : match));
+  replace(QUERY_PARAM, (match, sep, name, value) => (value !== "" && !isRemoved(value) && isSensitiveQueryName(name) ? `${sep}${name}=${REMOVED}` : match));
   replace(HEADER_LINE, (_, name, sep) => `${name}${sep}${REMOVED}`);
   replace(AUTH_SCHEME, (match, scheme) => `${scheme} ${REMOVED}`);
   for (const [namePattern, valuePattern, nameGroup] of [[ASSIGNMENT_NAME, ASSIGNMENT_VALUE, 2], [FLAG_NAME, FLAG_VALUE, 3]]) {

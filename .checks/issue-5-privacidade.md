@@ -202,16 +202,16 @@ Proof: `node --test --test-name-pattern="^I5-C13 " tests/integrations/privacy/po
 ### S2 — impedir que entradas brutas alcancem saídas persistíveis · 12 arquivos · 83 KB · ~21k
 
 **C14** - Canários das cinco categorias (token, cabeçalho, URL com credencial, password, chave privada) em conteúdo, com e sem opt-in, não aparecem em nenhum canal do debugger: relatório de hook Claude/Codex, relatório do ingest Hermes, relatório do wrapper, stdout/stderr de cada comando `privacy`, arquivos de dados, `state.json`, `.lock`, temporários (observados pelo `fs-probe` antes do rename) e export
-Proof: `node --test --test-name-pattern="^I5-C14 " tests/integrations/privacy/outputs.cli.test.mjs`
+Proof: `node --test --test-name-pattern="^I5-C14 |^I5-C14b " tests/integrations/privacy/outputs.cli.test.mjs` (C14b: token como chave MCP e nome de query codificado, achados P1 da revisão formal, tentativa 1)
 
 **C15** - Os mesmos canários colocados em IDs, nomes (`toolName`, `skillName`) e caminhos (`cwd`, `file_path`, `transcript_path`) também não aparecem em nenhum desses canais
 Proof: `node --test --test-name-pattern="^I5-C15 " tests/integrations/privacy/outputs.cli.test.mjs`
 
 **C16** - Subárvore sob chave sensível (aninhada a profundidade 3, variações `API-Key`, `db_password`, `Set-Cookie`) é descartada inteira com `sensitive_removed`
-Proof: `node --test --test-name-pattern="^I5-C16 " tests/integrations/privacy/policy.unit.test.mjs`
+Proof: `node --test --test-name-pattern="^I5-C16 |^I5-C16b " tests/integrations/privacy/policy.unit.test.mjs` (C16b: chave com formato de token)
 
 **C17** - `https://user:pw@host/p?token=x&page=2` sai como `https://host/p?token=[removido]&page=2` (literal)
-Proof: `node --test --test-name-pattern="^I5-C17 " tests/integrations/privacy/policy.unit.test.mjs`
+Proof: `node --test --test-name-pattern="^I5-C17 |^I5-C17b " tests/integrations/privacy/policy.unit.test.mjs` (C17b: nome de parâmetro codificado)
 
 **C18** - Bloco de chave privada multilinha (fechado e não fechado) é descartado inteiro; o texto antes dele permanece (literal)
 Proof: `node --test --test-name-pattern="^I5-C18 " tests/integrations/privacy/policy.unit.test.mjs`
@@ -325,6 +325,7 @@ Proof: `node --test --test-name-pattern="^I5-C51 " tests/integrations/privacy/li
 **C52** - Decisão de admissão: 500 eventos aceitos, o 501º e os seguintes `capture_event_limit`; exatamente 8 388 608 bytes aceito, 1 byte acima `capture_byte_limit`
 Proof: `node --test --test-name-pattern="^I5-C52 " tests/integrations/privacy/lifecycle.unit.test.mjs`
 Proof: `node --test --test-name-pattern="^I5-C52b " tests/integrations/privacy/store.cli.test.mjs` (510 linhas pelo CLI: persisted 500, dropped 10)
+Proof: `node --test --test-name-pattern="^I5-S-databytes |^I5-S-bounded " tests/integrations/privacy/store.unit.test.mjs` e `node --test --test-name-pattern="^I5-S-databytes-cli " tests/integrations/privacy/store.cli.test.mjs` (`dataBytes` do estado: 8 388 608 aceito, 8 388 609 e 1 GiB `capture_invalid` sem abrir o segmento; achado P2 da revisão formal, tentativa 1)
 
 **C53** - Para um lote misto conhecido, `status` traz `accepted`, `persisted`, `malformed` e `dropped` por motivo com valores exatos, e `accepted ≥ persisted`
 Proof: `node --test --test-name-pattern="^I5-C53 " tests/integrations/privacy/store.cli.test.mjs`

@@ -84,7 +84,12 @@ function cleanText(value, target, tally) {
 
 // Projeção tipada de `structured`: chave sensível descarta a subárvore,
 // chave fora do padrão omite o membro, folha string passa pelo sanitizador.
+// A própria chave também passa por ele: uma chave com formato de token sai
+// com o membro inteiro, sem descer. Nunca é reescrita — duas chaves viradas
+// `[removido]` colidiriam (linha "Chave de `structured` com formato de
+// segredo" do Landing).
 const OMIT = Symbol("omit");
+const keyCarriesSecret = (key) => sanitizeText(key).removed;
 function project(value, depth, target, tally) {
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value) ? value : OMIT;
@@ -113,6 +118,10 @@ function project(value, depth, target, tally) {
     }
     if (!OBJECT_KEY.test(key)) {
       tally.note(target, "unsanitizable");
+      continue;
+    }
+    if (keyCarriesSecret(key)) {
+      tally.note(target, "sensitive_removed");
       continue;
     }
     const projected = project(child, depth + 1, target, tally);

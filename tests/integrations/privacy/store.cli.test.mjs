@@ -844,6 +844,53 @@ test("I5-C40 ingest não inicia processo nem abre arquivo fora de <root>/skill-m
   assert.deepEqual(entries.filter((e) => e.op.startsWith("child_process.") || e.op === "network"), []);
 });
 
+test("I5-S-databytes-cli state.json com dataBytes acima de 8 MiB sai capture_invalid pelo CLI sem abrir o segmento", () => {
+  const root = makeScratch("i5 databytes cli");
+  const id = runPrivacy(["start", "--root", root]).body.capture.id;
+  assert.equal(ingest(root, id, "claude", [claudePayload("pre_tool_bash"), claudePayload("post_tool_bash")]).status, 0);
+  const original = readState(root, id);
+  assert.ok(original.dataFile !== null && original.dataBytes > 0, "segmento existente");
+  const statePath = path.join(captureDir(root, id), "state.json");
+  const withBytes = (dataBytes) => writeFileSync(statePath, JSON.stringify({ ...original, dataBytes }));
+  const segmentOpens = (log) => probeLog(log).filter((e) => e.op === "open" && path.basename(e.file) === original.dataFile);
+  const probeDir = makeScratch("i5 databytes cli probe");
+  const probed = (name) => {
+    const log = path.join(probeDir, `${name}.jsonl`);
+    return { log, options: { nodeArgs: ["--import", PRIVACY_PROBE], env: baseEnv({ SKILL_ME_TEST_PRIVACY_PROBE_LOG: log }) } };
+  };
+
+  withBytes(8388608);
+  const status = runPrivacy(["status", "--root", root, "--capture", id]);
+  assert.equal(status.status, 0);
+  assert.equal(status.body.capture.dataBytes, 8388608);
+  const atLimit = probed("limit");
+  const exported = exportOf(root, id, atLimit.options);
+  assert.equal(exported.status, 3);
+  assert.deepEqual(exported.body.error, { code: "capture_invalid" }, "segmento menor que o declarado");
+  assert.ok(segmentOpens(atLimit.log).length > 0, "no limite o segmento é aberto");
+
+  for (const dataBytes of [8388609, 1073741824]) {
+    withBytes(dataBytes);
+    const before = snapshotTree(root);
+    const runs = [
+      ["export", (options) => exportOf(root, id, options)],
+      ["status", (options) => runPrivacy(["status", "--root", root, "--capture", id], options)],
+      ["ingest", (options) => ingest(root, id, "claude", [claudePayload("pre_tool_bash")], options)],
+    ];
+    for (const [name, invoke] of runs) {
+      const probe = probed(`${dataBytes}-${name}`);
+      const result = invoke(probe.options);
+      assert.equal(result.status, 3, `${dataBytes} ${name}`);
+      assert.deepEqual(result.body, { schemaVersion: 1, command: name, status: "error", error: { code: "capture_invalid" } }, `${dataBytes} ${name}`);
+      assertClosedOutput(result, root);
+      assert.deepEqual(segmentOpens(probe.log), [], `${dataBytes} ${name} não abre o segmento`);
+    }
+    assert.deepEqual(snapshotTree(root), before, `${dataBytes} árvore intacta`);
+  }
+  withBytes(original.dataBytes);
+  assert.equal(exportOf(root, id).body.records.length, 2, "estado restaurado volta a exportar");
+});
+
 test("I5-C42 captura stopped ou disabled recusa ingest com capture_not_active e árvore idêntica", () => {
   const root = makeScratch("i5 c42");
   for (const action of ["stop", "disable"]) {

@@ -92,9 +92,12 @@ argumentos ou resultados.
 
 Objetos (argumentos MCP) passam por projeção: chave sensível (`password`,
 `token`, `secret`, `api-key`, `authorization`, `cookie` e semelhantes) descarta a
-subárvore inteira; chave fora de `[A-Za-z0-9_.-]{1,64}` é omitida. Texto passa
-por regras fixas: bloco de chave privada removido inteiro; userinfo e parâmetros
-sensíveis de URL; valores de `Authorization`, `Cookie`, `Set-Cookie`,
+subárvore inteira; chave fora de `[A-Za-z0-9_.-]{1,64}` é omitida; chave com
+formato de token conhecido sai com o membro inteiro (`sensitive_removed`), sem ser
+reescrita. Texto passa por regras fixas: bloco de chave privada removido inteiro;
+userinfo e parâmetros sensíveis de URL, com o nome do parâmetro reconhecido também
+em codificação percentual (`t%6fken`, uma camada; escape inválido conta como
+sensível); valores de `Authorization`, `Cookie`, `Set-Cookie`,
 `X-Api-Key`; `Bearer`/`Basic`; atribuições e flags com nome sensível; formatos
 conhecidos de token (GitHub, OpenAI, Slack, AWS, GitLab, Google, JWT); prefixo de
 diretório pessoal vira `<home>`. Cada valor removido vira `[removido]`.
