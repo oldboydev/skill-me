@@ -217,7 +217,7 @@ Proof: `node --test --test-name-pattern="^I5-C17 |^I5-C17b " tests/integrations/
 Proof: `node --test --test-name-pattern="^I5-C17c " tests/integrations/privacy/policy.unit.test.mjs` (C17c: valor de parâmetro codificado com formato de token, malformado e controles)
 
 **C18** - Bloco de chave privada multilinha (fechado e não fechado) é descartado inteiro; o texto antes dele permanece (literal)
-Proof: `node --test --test-name-pattern="^I5-C18 " tests/integrations/privacy/policy.unit.test.mjs`
+Proof: `node --test --test-name-pattern="^I5-C18bloco " tests/integrations/privacy/policy.unit.test.mjs`
 
 **C19** - String com surrogate isolado ou NUL e chave de objeto fora do padrão são omitidas com `unsanitizable`
 Proof: `node --test --test-name-pattern="^I5-C19 " tests/integrations/privacy/policy.unit.test.mjs`
