@@ -96,7 +96,26 @@ const keyCarriesSecret = (key) => sanitizeText(key).removed;
 // `structured`" do Landing.
 const NAME_MEMBER = /^(?:name|key)$/i;
 const VALUE_MEMBER = /^value$/i;
-const namesSensitiveValue = (entries) => entries.some(([key, child]) => NAME_MEMBER.test(key) && typeof child === "string" && isSensitiveKey(child));
+// Rótulo de cabeçalho (`"Cookie:"`, `" Cookie"`): só espaço/tab nas pontas e
+// um `:` final. Laço, não expressão: `\s*:?\s*$` retrocede de forma
+// quadrática numa sequência longa de espaços (linha "Tupla nome/valor e
+// rótulo…" do Landing).
+const isBlank = (char) => char === " " || char === "\t";
+function headerLabel(text) {
+  let start = 0;
+  let end = text.length;
+  while (start < end && isBlank(text[start])) start += 1;
+  while (end > start && isBlank(text[end - 1])) end -= 1;
+  if (end > start && text[end - 1] === ":") {
+    end -= 1;
+    while (end > start && isBlank(text[end - 1])) end -= 1;
+  }
+  return text.slice(start, end);
+}
+const isSensitiveLabel = (child) => typeof child === "string" && isSensitiveKey(headerLabel(child));
+const namesSensitiveValue = (entries) => entries.some(([key, child]) => NAME_MEMBER.test(key) && isSensitiveLabel(child));
+// Tupla `["Cookie", valor]`: exatamente dois elementos, rótulo no primeiro.
+const isSensitiveTuple = (elements) => elements.length === 2 && isSensitiveLabel(elements[0]);
 function project(value, depth, target, tally) {
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value) ? value : OMIT;
@@ -108,9 +127,17 @@ function project(value, depth, target, tally) {
   }
   if (depth + 1 > CONTENT_LIMITS.maxDepth) throw new OverLimit();
   if (isArray) {
+    // Uma só iteração captura os elementos; a decisão da tupla e a projeção
+    // usam a mesma cópia, sem reler um índice (C11).
+    const elements = [...value];
+    const dropSecond = isSensitiveTuple(elements);
     const out = [];
-    for (const element of value) {
+    for (const [index, element] of elements.entries()) {
       tally.visit();
+      if (dropSecond && index === 1) {
+        tally.note(target, "sensitive_removed");
+        continue;
+      }
       const projected = project(element, depth + 1, target, tally);
       if (projected !== OMIT) out.push(projected);
     }

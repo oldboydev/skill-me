@@ -110,10 +110,15 @@ pela mesma regra das chaves (`Cookie`, `Set-Cookie`, `Authorization`,
 `X-Api-Key`…) perde o membro `value` inteiro, em qualquer ordem e com qualquer
 tipo (`sensitive_removed`): `{"name":"Cookie","value":"session=…"}` vira
 `{"name":"Cookie"}`. Isso também remove o valor sob um nome que só contém uma
-palavra sensível (`token_count`). Nome com outro texto (`Cookie:`), outras chaves
-de nome ou de valor, pares em array (`["Cookie","…"]`) e nome e valor em objetos
-diferentes não são reconhecidos; o valor nessas formas passa só pelas regras de
-texto. Texto passa por regras fixas: bloco de chave privada removido inteiro;
+palavra sensível (`token_count`). O nome vale também com espaços ou tabs nas
+pontas e um `:` final (`"Cookie:"`, `" Cookie"`, `"Cookie : "`). Um array de
+exatamente dois elementos cujo primeiro é um nome sensível assim (`["Cookie","…"]`)
+perde o segundo elemento inteiro (`sensitive_removed`): `[["Cookie","session=…"]]`
+vira `[["Cookie"]]`; uma lista de dois itens que começa por um nome sensível
+(`["Cookie","Accept"]`) também perde o segundo. O nome sai como veio. Nome com
+outro texto (`Cookie::`, `Cookie=`, quebra de linha, NBSP), arrays de outro
+tamanho, outras chaves de nome ou de valor e nome e valor em objetos diferentes
+não são reconhecidos; o valor nessas formas passa só pelas regras de texto. Texto passa por regras fixas: bloco de chave privada removido inteiro;
 userinfo e parâmetros sensíveis de URL, com o nome do parâmetro reconhecido também
 em codificação percentual (`t%6fken`, uma camada; escape inválido conta como
 sensível); valores de `Authorization`, `Cookie`, `Set-Cookie`,
