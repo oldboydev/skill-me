@@ -911,3 +911,165 @@ mudar isso é decisão nova do coordenador/proprietário.
   resultado vai ao coordenador (registrá-lo aqui mudaria a cabeça de novo).
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+# Valor sensível composto ou de delimitação ambígua (18/10/2026)
+
+Evidência autoral, não verificação independente nem revisão formal: não conta
+como rodada do Verifier nem tentativa da revisão e não altera tetos. Nenhum
+relatório anterior, `.verified.md`, incidente ou aprovação foi editado. As duas
+tentativas formais e as quatro rodadas independentes estão consumidas; nova
+verificação depende de extensão humana pedida pelo coordenador. Escopo: cenário
+comunicado pelo coordenador depois do lote formal2 (`prefix$(printf …)`, crases
+e `${…}` com espaço) e os três riscos vizinhos daquele lote, autorizados no mesmo
+S2/crit. 6. Commits: `f744162` (Landing "Valor sensível composto…", antes do
+código), `2dd410d` (Landing: userinfo fechado com aspas removido, aberto omitido —
+escolha surgida ao trabalhar os casos, registrada antes do código), `53f3f00`
+(correção, provas, guia, comandos de prova e a linha "Tempo linear do
+sanitizador", escrita depois da primeira versão do código e rotulada assim),
+`7b3ebf4` (correção de um defeito do próprio teste I5-C14g, abaixo) e o commit
+desta evidência.
+
+## Natureza de cada problema e correção
+
+- **Composição aberta** (produto): `SENSITIVE_VALUE` parava em `(` e em espaço;
+  `DB_PASSWORD=prefix$(printf …)` removia `prefix$` e entregava
+  `(printf <marcador>)` com `sensitive_removed`; o mesmo com crase com espaço,
+  `${x:-a b}`, `$'…\'…'`, `<(…)`, extglob, `$[…]` e array `NOME=(…)` (valor
+  vazio: nada era removido). Correção: decisão pura `leavesWordOpen` sobre o
+  trecho removido (só lê o texto; nada é expandido nem executado); trecho aberto
+  que não vai até o fim do texto faz `sanitizeText` devolver `{ok:false}` e o
+  chamador existente omite o campo com `unsanitizable` (nenhum tipo novo).
+- **NBSP e CR isolado** (produto): `\s` encerrava a palavra em NBSP e outros
+  espaços Unicode, o Bash não. A palavra termina só em espaço, tab, `\n`/`\r\n`
+  e operadores.
+- **Regras 2–4 completadas até o fim da palavra** (os três riscos vizinhos): a
+  query parava na aspa e o marcador interno fazia a regra 5 pular o resto
+  (`?password=abc'<sufixo>'`); `Bearer abcdefgh12,<sufixo>`; cabeçalho com aspas
+  internas (`Digest username="…"`) e `Authorization:\ Bearer\ abc'…'`.
+  Correção: `completeWord` completa a palavra com o mesmo `SENSITIVE_VALUE`
+  (aspa de abertura ou de fecho pela contagem na linha, `\` final, caractere
+  colado); cabeçalho com aspa antes do nome vai até o fecho dela, sem aspa até o
+  fim da linha. Uma gramática só para a palavra: `QUOTED` é compartilhado por
+  `SENSITIVE_VALUE` e `QUOTED_AT`.
+- **Userinfo** (risco vizinho): a autoridade excluía aspas e `\`, e com elas
+  antes do `@` nada saía. Agora fazem parte dela: fechada, tudo até o último `@`
+  sai; aberta no fim (aspa ímpar na linha, `\` final, composição) → omitido.
+- **Marcador interno**: só evita reprocessar uma palavra já completada; nunca
+  sai de `sanitizeText` (trocado antes das regras 6–7; a recusa não devolve
+  texto). NUL da entrada continua recusado antes de qualquer regra.
+- **Custo quadrático** (achado por medida durante o lote): a primeira versão
+  desta correção recontava a linha a cada valor e usava `/\\*$/`; `644544f` já
+  levava 93 s em `?password=x#a` × 1 MiB, porque a regra 5 relia a palavra a
+  partir do marcador a cada nome. A correção está nas mesmas linhas
+  reestruturadas: contagem incremental por passada, `\` final contado de trás
+  para frente e a regra 5 pulando o marcador antes de varrer a palavra.
+- **Defeito do teste I5-C14g** (`7b3ebf4`): a busca do NUL também varria o
+  arquivo `key` (32 bytes aleatórios, ~12% de chance de ter 0x00). Falhou uma vez
+  no gate WSL de `53f3f00` (`após ingest: …/key`); 40 execuções locais do teste
+  daquele commit: 5 falhas, todas em `key`; 40 do corrigido: 40 aprovações. O
+  NUL passa a ser procurado só nos arquivos de texto; o marcador continua
+  procurado em todos, `key` inclusive. Nenhuma asserção sobre saída foi relaxada.
+
+## O que cada prova nova afirma
+
+- **I5-C14f** (policy.unit): 17 entradas recusadas exatamente `{ok:false}` — o
+  cenário do coordenador em atribuição e flag, `$(cat …)`, crase com espaço,
+  `${…}` com espaço, aninhadas entre aspas, JSON com `$(…)`, `$'…\'…'`, array,
+  `<(…)`, extglob, `$[…]`, query e cabeçalho entre aspas com `$(…)`, heredoc;
+  33 saídas exatas com `removed:true` — NBSP, U+3000/U+2007, CR isolado e `\r\n`
+  preservado, composição fechada (`${…}`, `"$(…)"`, crases pares), aspa sem fecho
+  até o fim do texto, regra 2 (aspa de abertura, fecho com concatenação, nome
+  codificado, valor vazio, `[removido]` literal seguido de texto, NBSP, `\`,
+  token codificado, JSON), regra 3 (Digest em comando e em resultado, escapes,
+  espaço escapado, concatenação, `$(gh auth token)` fechado, aspa ímpar, aspa sem
+  fecho), regra 4 (vírgula, NBSP, aspa de abertura, aspa de fecho, prosa, JSON
+  com e sem nome sensível); 6 controles idênticos com `removed:false`. Fronteira
+  da política: comando composto ausente do registro com
+  `tool_input.command:unsanitizable`, Digest do stdout removido inteiro, sem
+  canário e sem `\u0000`.
+- **I5-C17e** (policy.unit): 5 autoridades abertas recusadas (aspa com espaço,
+  inclusive com `@` antes, `\ `, `$(…)`, crase); 8 saídas exatas (cenário do
+  coordenador `u:abc'…'@`, vários `@` com aspas, `\@`, URL entre aspas, `$VAR`,
+  NBSP, JSON compacto com perda declarada); 2 controles; fronteira da política
+  para removido e para omitido.
+- **I5-C14h** (policy.unit): seis entradas de 1 MiB numa linha terminam abaixo de
+  5 s cada, com o `ok` esperado (teto largo; não é meta de desempenho).
+- **I5-C14g** (outputs.cli, CLI real com `fs-probe` e sonda de privacidade):
+  ingest codex-exec, Claude pre/post e Codex hooks com comando composto e saída
+  com NBSP, Digest, query com aspa e `Bearer` com vírgula; os quatro comandos
+  ausentes do export com `…command:unsanitizable` e
+  `status.counters.contentOmitted.unsanitizable = 4`; saídas exatamente
+  `COMPOSED_OUTPUT_OUT`; nenhum arquivo, stdout, log de sonda, temporário antes do
+  rename ou arquivo escrito com o marcador (nem NUL nos de texto); `stderr` vazio;
+  delete aplicado.
+- Nenhuma asserção, limite ou critério existente mudou; as 85 provas anteriores
+  do alvo de privacidade passam sem edição.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-composed-win-zsA1PE\`; scratch do autor fora do
+repositório em `%TEMP%\skill-me-i5-composed-scratch-Ofh9C6\` (só booleanos e
+tempos). Nenhum log contém `SKILLMECANARY`.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red.tap.log` | `src/` intacto (cabeça `2dd410d`) | C14f, C17e, C14g 3/3 `not ok`: `recusado 0` (cenário do coordenador), `recusado 0` (userinfo aberto), primeiro arquivo de dados após o ingest |
+| `red-2.tap.log` | `sanitize.mjs` de `644544f` restaurado temporariamente (`cmp` igual ao corrigido depois) | C14f, C17e, C14g, C14h 4/4 `not ok`; C14h `caso 0: 91700 ms` |
+| `green.tap.log` | corrigido | alvo de privacidade 89/89 |
+| `compare2.log`/`compare3.log` (scratch) | `644544f` × corrigido nos casos das provas e 15 sondas | antigo deixa o marcador em 16/17 recusados, 22/29 removidos, 5/5 e 4/8 do C17e; corrigido em 0, recusa exatamente os casos previstos, nunca devolve NUL. `cases.mjs`/`compare.log` ficaram preservados mas são inválidos: o heredoc do shell perdeu os `\\`; `cases2.mjs`, escrito sem shell, é o válido |
+| `timing-naive.log`, `timing-linear-new.log`, `timing-old.log` (scratch) | 1 MiB numa linha | `644544f`: `?password=x#a` 93 s; primeira versão: `?token=a' ` 125 s, `Bearer …' ` 25 s, `\` longo sem término no tempo; final: ≤ 80 ms em todos |
+| `flake-old.log`/`flake-fixed.log` | I5-C14g × 40 | teste de `53f3f00`: 5 falhas em `key`; corrigido: 0 |
+
+## Execuções
+
+| Plataforma | Cabeça | Comando | Resultado |
+| --- | --- | --- | --- |
+| Windows 11 — Node 24.21.0, árvore limpa e HEAD conferidos antes e depois | `53f3f00` | alvo de privacidade / `npm test` | 89/89; exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 177 (171, 6 skip) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-composed-TLHGzB`, tar sha256 `def5b3c7…c4fa1badb` e `get-tar-commit-id` conferidos no script; stage `skill-me-i5-composed-wsl-stage-MTBt1B` | `53f3f00` | idem | 89/89; `npm test` exit 1 — integrações 177 (164, **1 fail: I5-C14g em `key`**, 12 skip); demais iguais à linha abaixo. Levou ao `7b3ebf4` |
+| Windows 11, idem | `7b3ebf4` | idem | 89/89; exit 0 — 6/6, 16/16, doctor 417 (410, 7 skip), integrações 177 (171, 6 skip) |
+| WSL Ubuntu — uid 1000, `/tmp/skill-me-i5-composed-clniSu`, sha256 `aac06a47…69cf15cc`, commit conferido; stage `skill-me-i5-composed-wsl-stage-wMXlRh` | `7b3ebf4` | idem | 89/89; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 177 (165, 12 skip) |
+
+Skips idênticos aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m).
+Integrações passam de 173 para 177 só pelos quatro testes novos.
+
+Preparação WSL: `run-wsl.sh` copiado do stage formal2 trocando só o comentário e
+os dois prefixos (`diff` conferido; o segundo stage recebeu cópia `cmp`-igual),
+chamado com `MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+o script recusa root, outra distro, origem ausente e saída/destino fora do
+padrão antes de copiar ou extrair. Nenhum comando inline no WSL, nada em `/repo`
+ou `/src.tar`; preparação antiga do Verifier6, seu probe, sessões ou
+configurações pessoais não tocados; nenhum modelo, rede de produto, instalação,
+subagente, push ou `review:run`. Nenhum arquivo do repositório editado durante
+os gates; o WSL só começou depois do fim do gate Windows de cada cabeça. Os
+dois retornos temporários de arquivo do repositório (RED com o sanitizador de
+`644544f` e o teste de `53f3f00` para o experimento de 40 execuções) ocorreram
+fora de gates e foram conferidos com `cmp`. Nenhuma rejeição de política nem
+falha de capacidade.
+
+## Riscos e perdas comunicados
+
+- Perdas declaradas no Landing e no guia: campo inteiro omitido em composição
+  aberta — inclusive comandos comuns sem o segredo no texto, como
+  `export TOKEN=$(gh auth token)` e `--password $(cat arquivo)`, e `'…$(…)…'`
+  literal entre aspas simples; JSON compacto perde o que segue a aspa de fecho;
+  URL sem caminho seguida de aspas e `@` perde o texto até esse `@`; prosa com
+  vírgula colada ao token perde a vírgula; cabeçalho sem aspa antes do nome perde
+  o resto da linha; apóstrofo colado ao host omite o campo.
+- A contagem de aspas na linha não é parser: um apóstrofo anterior pode ler uma
+  aspa de abertura como fecho e deixar o texto depois do próximo espaço; URL
+  dentro de aspas abertas antes dela, com espaço e outro `@` adiante, não é
+  reconhecida como aberta.
+- Fora do escopo, não corrigido, igual antes e depois: bloco YAML
+  (`secret: |` com o valor nas linhas seguintes) passa, porque o `|` depois de
+  espaço é ausência de valor na gramática da palavra; `--password<NBSP>valor`
+  não é uma flag para o Bash nem para a regra 5 e passa sem detecção.
+- `keyCarriesSecret` (chaves de `structured`) lê só `removed`; uma chave nunca
+  chega a `{ok:false}`, porque o padrão `^[A-Za-z0-9_.-]{1,64}$` exclui todo
+  caractere que cria ambiguidade. Não alterado.
+- Esta evidência muda o conteúdo lido por C34/C35; o alvo de privacidade e o
+  `npm test` são reexecutados na cabeça desta evidência nas duas plataformas e o
+  resultado vai ao coordenador.
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
