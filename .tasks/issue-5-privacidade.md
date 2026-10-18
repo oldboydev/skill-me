@@ -19,7 +19,8 @@ A #4 está encerrada; #8 depende expressamente da política da #5, #7 depende de
 Nenhuma issue aberta está Ready e o Project não define prioridade para elas.
 
 20 critérios em 4 fatias · decisões técnicas abaixo delegadas pela issue ·
-0 questões bloqueantes. U1 resolvida pela aprovação literal registrada abaixo.
+U1 resolvida. D1 bloqueia apenas a coleta de resultados textuais; armazenamento
+e ciclo de vida independentes continuam autorizados.
 
 Base local e remota conferida em 17/10/2026:
 `1b6685fe97862ac1a2d2cff1e4d9f0e1f09a6a27`, árvore limpa antes deste plano.
@@ -294,6 +295,7 @@ para a #5: a autorização registrada na #4 não foi generalizada.
 | # | Kind | Question | Until answered |
 | --- | --- | --- | --- |
 | U1 | resolved — 17/10/2026 | Armazenamento mínimo na #5, reutilizável pela #8 | Aprovado literalmente pelo proprietário, conforme Sources. Critérios 13–20 fecham o recorte; #8 mantém transporte entre processos, consulta/acompanhamento e núcleo completo. |
+| D1 | blocks — conteúdo textual | O critério 3 exclui instruções de skills inclusive no opt-in, mas shell/MCP pode imprimir esse texto sem revelar a origem. Permitir resultados textuais sanitizados no opt-in, omitindo origens reconhecidas como SKILL.md e declarando o limite, ou omitir todo resultado textual? | Escolha enviada ao proprietário; recomendação pela primeira opção, sem presumir resposta. A coleta dependente aguarda. Armazenamento/lifecycle usam registros sintéticos já sanitizados em suas provas independentes. A checklist C7 marca essa dependência e nenhum critério foi relaxado. |
 
 Recorte aprovado de U1: comando local recebe somente fixtures/entrada
 explícita, sanitiza antes de escrever e permite ao usuário controlar sua captura
