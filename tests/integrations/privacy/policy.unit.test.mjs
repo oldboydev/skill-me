@@ -732,7 +732,7 @@ test("I5-C14f valor sensível composto: composição aberta omite o campo; NBSP,
   assert.ok(leaks(text).length === 0 && !text.includes("\\u0000"), "registro sem vazamento nem marcador interno");
 });
 
-test("I5-C14i valor sensível em bloco multilinha, na linha seguinte ou depois de tag/âncora omite o campo; indicador sem linha seguinte ou com texto na mesma linha segue a regra anterior", () => {
+test("I5-C14i valor sensível em bloco multilinha, na linha seguinte, depois de tag/âncora ou de comentário omite o campo; indicador sem linha seguinte ou com texto na mesma linha segue a regra anterior", () => {
   // Nome já reconhecido pelas regras 3 e 5 seguido de `|`/`>` no fim da linha.
   refusedCases([
     "secret: |\n  SKILLMECANARYa",
@@ -809,8 +809,7 @@ test("I5-C14i valor sensível em bloco multilinha, na linha seguinte ou depois d
     "Authorization: !!str |\n  Bearer SKILLMECANARYah",
     "--token !x >\n  SKILLMECANARYai",
   ]);
-  // Controles: valor ausente no fim do texto não inventa conteúdo; nome comum;
-  // tag/âncora seguida de texto na mesma linha segue a regra anterior.
+  // Controles: valor ausente no fim do texto não inventa conteúdo; nome comum.
   exactCases(
     [
       "secret:",
@@ -824,13 +823,60 @@ test("I5-C14i valor sensível em bloco multilinha, na linha seguinte ou depois d
     [
       // Sem linha depois, a regra anterior só remove a palavra que começa no valor.
       ["x\nsecret: !!str", `x\nsecret: ${R}`],
-      ["x\nsecret: !!str &a |\n", `x\nsecret: ${R} &a |\n`],
-      ["password: !SKILLMECANARYaj | cat\nfim", `password: ${R} | cat\nfim`],
       ["secret: SKILLMECANARYal\nuser:\n  u", `secret: ${R}\nuser:\n  u`],
     ],
     true,
   );
-  for (const stdout of ["db:\n  password:\n    SKILLMECANARYam\n", "db:\n  secret: !!str &s |\n    SKILLMECANARYan\n"]) {
+
+  // Decisão do coordenador (linha "Tag/âncora seguida de texto na mesma linha e
+  // comentário antes da quebra"): propriedade seguida de texto na mesma linha e
+  // comentário antes da quebra recusam, em atribuição `:`/`=`, cabeçalho e flag.
+  refusedCases([
+    // Tag ou âncora seguida do valor, com e sem linha depois.
+    "secret: !!str SKILLMECANARYao",
+    "secret: &a SKILLMECANARYap",
+    "x\nsecret: !!str SKILLMECANARYaq\nfim",
+    "db:\n  password: &p SKILLMECANARYar\n  user: u",
+    // As duas propriedades, nas duas ordens; tab; nome entre aspas; alias de nome.
+    "secret: &a !!str SKILLMECANARYas",
+    "token: !!str &t SKILLMECANARYat\n",
+    "api-key:\t!<tag:x>\tSKILLMECANARYau",
+    '"client_secret": !!str "SKILLMECANARYav"',
+    "DB_PASSWORD: !x SKILLMECANARYaw\r\nfim",
+    // Mais de duas propriedades antes do fim da linha; `!` sozinho.
+    "secret: !a &b !c\n  SKILLMECANARYax",
+    "secret: ! SKILLMECANARYay",
+    // Mesmo início depois de `=`, de cabeçalho e de flag.
+    "PASSWORD=!x SKILLMECANARYaz",
+    "Authorization: !!str Bearer SKILLMECANARYba",
+    "--token &k SKILLMECANARYbb",
+  ]);
+  refusedCases([
+    // Comentário antes da quebra, com o valor na linha seguinte.
+    "secret: # comentario\n  SKILLMECANARYbc",
+    "db:\n  password: #x\r\n    SKILLMECANARYbd\r\n",
+    "token:\t# c\rSKILLMECANARYbe",
+    '"client_secret": # c\n  "SKILLMECANARYbf"',
+    "Authorization: # c\n  Bearer SKILLMECANARYbg",
+    "--password # c\n  SKILLMECANARYbh",
+    "secret: !!str # c\n  SKILLMECANARYbi",
+  ]);
+  // Mudança registrada no Landing: controles que seguiam a regra anterior
+  // (só a palavra da tag saía) agora recusam exatamente.
+  refusedCases(["password: !SKILLMECANARYaj | cat\nfim", "x\nsecret: !!str &a |\n"]);
+  // Controles: propriedade no fim do texto ou só com espaços depois, `&`
+  // sozinho, `#` colado ao separador, comentário sem linha depois, alias.
+  exactCases(
+    [
+      ["x\nsecret: !!str   ", `x\nsecret: ${R}   `],
+      ["PASSWORD=#x\nls", `PASSWORD=${R}\nls`],
+      ["secret: # c", `secret: ${R} c`],
+      ["secret: *a\nfim", `secret: ${R}\nfim`],
+    ],
+    true,
+  );
+  exactCases(["--token & ls", "secret: &a", "notes: !!str texto\nkey: # c\n  livre"].map((text) => [text, text]), false);
+  for (const stdout of ["db:\n  password:\n    SKILLMECANARYam\n", "db:\n  secret: !!str &s |\n    SKILLMECANARYan\n", "db:\n  secret: !!str SKILLMECANARYbj\n  user: u\n", "db:\n  token: &t SKILLMECANARYbk\n", "db:\n  password: # c\n    SKILLMECANARYbl\n"]) {
     const blocked = policy("claude", claudePayload("post_tool_bash", { tool_input: { command: "cat config.yml" }, tool_response: { stdout, stderr: "" } }));
     assert.equal(field(blocked, "tool_response.stdout"), undefined, "valor omitido");
     assert.ok(blocked.privacy.includes("tool_response.stdout:unsanitizable"));
@@ -856,10 +902,16 @@ test("I5-C14h sanitização de 1 MiB numa linha com muitos valores termina em te
     // último `password: > ` termina a linha e recusa.
     [fill("secret: |x # ") + "\nfim", true],
     [fill("password: > ") + "\nfim", false],
-    // Tag/âncora: nomes dentro de `!…` não relêem a linha; só a última
-    // `secret: !a &b ` termina a linha e recusa.
-    [fill("password: !password: !x "), true],
+    // Tag/âncora seguida de texto na mesma linha: recusa já no primeiro nome
+    // (antes `ok:true`; mudança registrada no Landing).
+    [fill("password: !password: !x "), false],
     [fill("secret: !a &b ") + "\nfim", false],
+    // Nomes dentro da mesma sequência `&…` sem texto depois: a sequência não é
+    // varrida de novo a cada nome.
+    [fill("&secret:"), true],
+    [fill("&secret:") + "\nfim", false],
+    // Comentário: só lido quando há quebra depois, e então recusa.
+    [fill("secret: # ") + "\nfim", false],
   ];
   cases.forEach(([input, ok], i) => {
     const started = performance.now();

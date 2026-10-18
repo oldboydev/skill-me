@@ -148,11 +148,14 @@ linha seguinte não pertence ao bloco. `|` ou `>` seguidos de texto na mesma lin
 (`--token | cat`) seguem a regra anterior. O mesmo vale quando o nome sensível
 termina a linha sem valor (`secret:` e o valor abaixo, também `PASSWORD=` no
 fim da linha) e quando até duas tags ou âncoras vêm antes do indicador
-ou do fim da linha (`secret: !!str |`, `token: &a >-`, `secret: !!str`). Nome
-sensível sem valor no fim do texto não muda nada. Não são reconhecidos: tag ou
-âncora seguida do valor na mesma linha (`secret: !!str valor`, `secret: &a valor`),
-comentário sem indicador (`secret: # c` e o valor abaixo) e `--password` seguido
-de NBSP.
+ou do fim da linha (`secret: !!str |`, `token: &a >-`, `secret: !!str`). Também
+omite o campo inteiro um valor que começa em tag ou âncora seguida de outro texto
+na mesma linha (`secret: !!str valor`, `secret: &a valor`, `password: !x | cat`,
+inclusive depois de `=` e de flag: `PASSWORD=!x ls`) e um comentário depois de
+espaço que termina a linha com texto abaixo (`secret: # c` e o valor abaixo,
+`--password # c` e outra linha). Nome sensível sem valor no fim do texto, tag no
+fim do texto, `&` sozinho (`--token & ls`) e `#` colado ao separador
+(`PASSWORD=#x`) não mudam. Não é reconhecido `--password` seguido de NBSP.
 
 A detecção por padrões não é garantia universal: um segredo em texto livre, de
 formato desconhecido ou sem nome que o identifique pode passar. A decodificação

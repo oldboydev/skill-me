@@ -69,6 +69,11 @@ export const BLOCK_OUTPUT = "db:\n  host: localhost\n  password: |\n    SKILLMEC
 // antes do indicador ou do fim da linha.
 export const NEXT_LINE_OUTPUT = "db:\n  host: localhost\n  password:  \n    SKILLMECANARYnextline\n  user: u\n";
 export const TAGGED_OUTPUT = "db:\n  secret: !!str &s |\n    SKILLMECANARYtagged\n  api_key: !!str\n    SKILLMECANARYtagline\n";
+// Decisão seguinte do coordenador, uma saída por família: tag e âncora seguidas
+// do valor na mesma linha e comentário antes do valor na linha seguinte.
+export const SAME_LINE_TAG_OUTPUT = "db:\n  host: localhost\n  secret: !!str SKILLMECANARYsametag\n  user: u\n";
+export const SAME_LINE_ANCHOR_OUTPUT = "db:\n  host: localhost\n  api_key: &k SKILLMECANARYsameanchor\n  user: u\n";
+export const COMMENT_OUTPUT = "db:\n  host: localhost\n  password: # rotacionar\n    SKILLMECANARYcomment\n  user: u\n";
 
 // Texto livre com as cinco categorias entre trechos que podem permanecer.
 export const SECRET_TEXT = [

@@ -166,23 +166,45 @@ function schemeValue(match, text, quotes) {
 }
 
 // Valor que só começa na linha seguinte: indicador de bloco (`|`/`>`,
-// chomping/indentação simples, comentário) ou nada até a quebra, com até duas
-// propriedades (tag `!…`, âncora `&…`) antes. Só uma gramática YAML diria onde
-// o valor acaba; só lê o texto, nada é extraído nem interpretado. O limite de
-// duas (tag e âncora de um nó) impede que nomes dentro de `!…` releiam a
-// linha. Linhas "Valor sensível em bloco multilinha…" e "Valor sensível na
-// linha seguinte…" do Landing.
-const NEXT_LINE_VALUE = /(?:[!&][^ \t\r\n]*(?:[ \t]+|(?=[\r\n]))){0,2}(?:[|>][0-9+-]{0,2}(?:[ \t]*(?=[\r\n])|[ \t]+#)|[ \t]*(?=[\r\n]))/y;
+// chomping/indentação simples, comentário), comentário depois de espaço ou
+// nada até a quebra, com até duas propriedades (tag `!…`, âncora `&…`) antes.
+// Só uma gramática YAML diria onde o valor acaba; só lê o texto, nada é
+// extraído nem interpretado. O limite de duas (tag e âncora de um nó) impede
+// que nomes dentro de `!…` releiam a linha. Linhas "Valor sensível em bloco
+// multilinha…", "Valor sensível na linha seguinte…" e "Tag/âncora seguida de
+// texto…" do Landing.
+const NEXT_LINE_VALUE = /(?:[!&][^ \t\r\n]*(?:[ \t]+|(?=[\r\n]))){0,2}(?:[|>][0-9+-]{0,2}(?:[ \t]*(?=[\r\n])|[ \t]+#)|[ \t]*(?:(?<=[ \t])#[^\r\n]*)?(?=[\r\n]))/y;
+// Propriedade seguida de texto na mesma linha: pular a tag/âncora para achar o
+// valor seria interpretar o nó YAML. `&` sozinho é o operador de shell.
+const PROPERTY_START = /!|&(?=[^ \t\r\n])/y;
+const PROPERTY_REST = /[^ \t\r\n]*/y;
+const TEXT_AFTER_PROPERTY = /[ \t]+[^ \t\r\n]/y;
 const NO_SAFE_PROJECTION = Symbol("no safe projection");
 
-// Valor que começa em quebra com texto depois. A última quebra assim é
-// calculada uma vez por passada: procurar o fim da linha a cada nome seria
-// quadrático numa linha longa de `secret: | # …`. Valor ausente começa na
-// própria quebra (`at === lastBreak`).
+// Valor que começa em quebra com texto depois ou em propriedade com texto
+// depois na mesma linha. A última quebra assim é calculada uma vez por
+// passada: procurar o fim da linha a cada nome seria quadrático numa linha
+// longa de `secret: | # …`. Valor ausente começa na própria quebra
+// (`at === lastBreak`). As consultas vêm em ordem crescente; um nome dentro da
+// sequência da propriedade anterior (`&secret:&secret:…`) reusa o resultado
+// dela em vez de varrê-la de novo.
 function blockOpener(text) {
   const end = text.length - (text.endsWith("\r\n") ? 2 : text.endsWith("\n") || text.endsWith("\r") ? 1 : 0);
   const lastBreak = Math.max(text.lastIndexOf("\n", end - 1), text.lastIndexOf("\r", end - 1));
+  let propertyEnd = -1;
+  let textAfterProperty = false;
   return (at) => {
+    PROPERTY_START.lastIndex = at;
+    if (PROPERTY_START.test(text)) {
+      if (at >= propertyEnd) {
+        PROPERTY_REST.lastIndex = at;
+        PROPERTY_REST.test(text);
+        propertyEnd = PROPERTY_REST.lastIndex;
+        TEXT_AFTER_PROPERTY.lastIndex = propertyEnd;
+        textAfterProperty = TEXT_AFTER_PROPERTY.test(text);
+      }
+      if (textAfterProperty) return true;
+    }
     NEXT_LINE_VALUE.lastIndex = at;
     return at <= lastBreak && NEXT_LINE_VALUE.test(text);
   };
