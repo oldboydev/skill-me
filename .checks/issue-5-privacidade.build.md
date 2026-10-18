@@ -7,7 +7,8 @@ Nenhum Verifier, review:run, push ou PR foi executado por este autor.
 
 ## Escopo deste lote
 
-Commits: `48d4643` (Landing do lote, antes do código) e `0ab38fb` (código e testes).
+Commits: `48d4643` (Landing do lote, antes do código), `0ab38fb` (código e testes),
+`3a78c1e` (evidência) e `af7e16f` (correção da leitura limitada, abaixo).
 
 - `src/integrations/privacy/lifecycle.mjs` — decisões puras: transições,
   admissão (500 eventos / 8 388 608 bytes), retenção.
@@ -47,6 +48,31 @@ inline ao `wsl.exe`, que expandiu `$D` vazio e criou `/src.tar`, `/repo` e uma
 pasta vazia em `/tmp` como root. Os três foram conferidos (hash do tar,
 conteúdo do archive, horário da criação) e removidos; nenhum outro caminho foi
 tocado. As execuções válidas usam script em arquivo no distro `Ubuntu`.
+
+## Correção — leitura limitada (observação do coordenador)
+
+Origem: `.checks/code-review/issue-5/content-decision.md` (observação de código,
+não teste nem Verifier; D1 continua sem resposta e o arquivo não amplia escopo).
+Confirmado por leitura: `readSmallFile` fazia `io.readFile` e só depois comparava
+o tamanho; o segmento anterior em `appendRecords` também era lido inteiro.
+
+Método: teste `I5-S-bounded` (store.unit) com `createStoreIo({ openFile })`
+instrumentado que soma os bytes lidos pelo handle; arquivos crescidos por
+`truncateSync` para 4 MiB (sem conteúdo real, sem risco à máquina).
+- RED em `3a78c1e` (Windows): `not ok — Missing expected rejection.` — o
+  segmento de 4 MiB foi lido inteiro e aceito.
+- GREEN em `af7e16f`: segmento maior que `dataBytes` → `capture_invalid` lendo
+  ≤ `dataBytes + 1`; `state.json` de 4 MiB → exit 3 `capture_invalid` lendo
+  ≤ 65 537 bytes; `store.json` de 4 MiB → exit 3 `store_invalid` lendo ≤ 26 bytes.
+  Recusa de links e não regulares preservada (`lstat` antes; fd conferido pelo
+  adaptador do doctor). Nenhuma camada nova: reúso de `readSnapshot`.
+
+| Plataforma (`af7e16f`) | Comando | Resultado |
+| --- | --- | --- |
+| Windows | `node --test "tests/integrations/privacy/*.test.mjs"` | 24/24 pass |
+| Windows | `npm test` | exit 0 — 6/6; 16/16; doctor 417 (410 + 7 skip); integrações 112 (106 + 6 skip) |
+| WSL Ubuntu, `/tmp/skill-me-i5-storage-AIWjks`, tar `502cf42f…7950` igual | privacy | 24/24 pass |
+| WSL Ubuntu | `npm test` | exit 0 — 6/6; 16/16; doctor 417 (416 + 1 skip); integrações 112 (100 + 12 skip, os mesmos da #4) |
 
 ## Provas por check
 
