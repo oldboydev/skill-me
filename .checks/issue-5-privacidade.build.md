@@ -1192,3 +1192,136 @@ final.
   regra 5) e nomes que as regras atuais não reconhecem.
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+# Valor sensível na linha seguinte ou depois de tag/âncora (18/10/2026)
+
+Evidência autoral, não verificação independente nem revisão formal: não conta
+como rodada do Verifier nem tentativa da revisão e não altera tetos. Nenhum
+relatório anterior, `.verified.md`, incidente ou aprovação foi editado. As duas
+tentativas formais e as quatro rodadas independentes continuam consumidas; nova
+verificação depende de extensão humana pedida pelo coordenador. Escopo: decisão
+do coordenador de que `secret:` com o valor na linha seguinte e `secret: !!str |`
+(ou âncora antes do indicador) são o mesmo risco S2/crit. 6 da seção anterior;
+a indicação anterior do autor de que eram limites fora do escopo fica histórica e
+superada. Commits: `13a0752` (Landing "Valor sensível na linha seguinte ou
+depois de tag/âncora", antes do código), `e8444f2` (correção no Landing, antes
+do código: a primeira redação dizia que `secret: &a valor` tinha a palavra
+removida; o controle escrito para isso mostrou que o valor persiste — vira
+limite declarado e comunicado), `7168e4d` (correção, provas, guia e comandos de
+prova) e o commit desta evidência.
+
+## Natureza do problema e correção
+
+- **Produto**: o guard `blockOpener` da seção anterior só reconhecia o indicador
+  `|`/`>` logo no início do valor. Com o valor ausente na linha
+  (`secret:\n  <valor>`, também `PASSWORD=`, cabeçalho e flag), o valor vazio era
+  ausência de valor e a linha seguinte persistia; com tag/âncora
+  (`secret: !!str |\n  <valor>`) só a palavra `!!str` saía (com `&a` nada saía,
+  `&` encerra a palavra) e o bloco persistia. Correção cirúrgica no mesmo guard:
+  a expressão (`NEXT_LINE_VALUE`, antes `BLOCK_INDICATOR`) aceita até duas
+  propriedades `!…`/`&…` antes do indicador e também o fim da linha sem
+  indicador; como o valor ausente começa na própria quebra, a comparação com a
+  última quebra com texto depois passou de `<` para `<=`. Mesmo caminho
+  `NO_SAFE_PROJECTION` → `{ok:false}` → `unsanitizable`; mesmos `HEADER_NAME`,
+  `ASSIGNMENT_NAME`, `FLAG_NAME` e `isSensitiveKey`. Nenhum YAML interpretado,
+  nenhuma tag ou âncora resolvida, nenhuma linha seguinte extraída, nenhum
+  caminho aberto.
+- **Custo**: a última quebra continua calculada uma vez por passada; o limite de
+  duas propriedades impede que nomes dentro de `!…` releiam a linha. Dois casos
+  novos no I5-C14h.
+
+## O que cada prova nova afirma
+
+- **I5-C14i** (policy.unit, título ampliado; as asserções anteriores ficam):
+  17 entradas novas recusadas exatamente `{ok:false}` — valor ausente com e sem
+  espaços/tab antes da quebra, `\r\n`, CR, nome entre aspas, `DB_PASSWORD=`,
+  `Authorization:`, `set-cookie:`, `--password ` no fim da linha; `!!str |`,
+  `&a >-`, `!!str &a | # c`, `&k !<tag:x> |2` com `\r\n`, `!secret` e `!!str  `
+  no fim da linha, cabeçalho e flag com tag; 4 controles idênticos com
+  `removed:false` (`secret:`, `secret:\n`, `password:   \r\n` sem linha depois,
+  nome comum com valor abaixo e tag+bloco); 4 saídas exatas com `removed:true`
+  (`!!str` e `!!str &a |\n` no fim do texto só com a palavra removida, como antes;
+  `password: !… | cat`; valor na mesma linha seguido de `user:` com valor
+  abaixo). Fronteira da política para as duas famílias: `post_tool_bash` →
+  `tool_response.stdout` ausente, `tool_response.stdout:unsanitizable`, comando
+  preservado, sem canário nem `\u0000`.
+- **I5-C14j** (outputs.cli, CLI real com `fs-probe` e sonda de privacidade): o
+  corpo existente passou a rodar uma captura por família (`bloco`,
+  `linha-seguinte`, `tag-ancora`) com as mesmas asserções, cada mensagem com o
+  nome da família; em cada uma: os dois eventos persistidos, export só com os
+  dois comandos e o stderr, as duas saídas omitidas com `…:unsanitizable`,
+  `status.counters.contentOmitted.unsanitizable = 2` exato, nenhum arquivo,
+  stdout, log de sonda, temporário antes do rename ou arquivo escrito com o
+  marcador (nem NUL nos de texto), `stderr` vazio, lock de cada comando, delete
+  aplicado.
+- **I5-C14h**: `password: !password: !x ` repetido em 1 MiB → `ok:true`;
+  `secret: !a &b ` repetido com `\nfim` → `ok:false`. Gate Windows: 647 ms para
+  o teste inteiro (dez entradas).
+- Nenhuma asserção, limite ou critério existente removido ou enfraquecido; a
+  contagem do alvo de privacidade continua 91 (provas novas dentro de C14h/i/j).
+- **Erro de teste corrigido antes do commit `7168e4d`**: a primeira versão
+  esperava `x\nsecret: !!str` e `x\nsecret: !!str &a |\n` intactos; sem linha
+  depois, a regra anterior (inalterada) remove a palavra `!!str`. Passaram para
+  as saídas exatas com `removed:true`. O código não mudou por isso.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-nextline-win-UAEsdl\`; scratch fora do repositório
+em `%TEMP%\skill-me-i5-nextline-scratch-2eI6za\`; ferramentas em
+`%TEMP%\skill-me-i5-nextline-tools\` (`compare.mjs`, `gate-win.sh`). Nenhum log
+contém `SKILLMECANARY`.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red.tap.log` | `src/` intacto (cabeça `e8444f2`, testes novos) | C14h `caso 9`, C14i `recusado 0` (primeiro caso novo), C14j família `linha-seguinte`: marcador em `events-000002.ndjson` após o ingest |
+| `red-c14j-linha-seguinte.tap.log`, `red-c14j-tag-ancora.tap.log` (scratch) | cópia do tar de `7168e4d` com o `sanitize.mjs` antigo e o laço do C14j reduzido a uma família | as duas falham: marcador em `events-000002.ndjson` após o ingest |
+| `compare.log` (scratch) | `sanitize.mjs` antigo × corrigido | 17 casos das duas famílias: antigo `ok:true` em 17 (marcador no texto em 14; nos outros 3 outra regra já removia), corrigido recusa 17/17; 8 controles idênticos; 4 limites declarados idênticos nos dois |
+| `green-full*.tap.log` | versões intermediárias | `green-full.tap.log`: C14i `recusado 0` (comparação `<` com a quebra, corrigida para `<=`); `green-full-2`: C14i `controle 3` (erro do teste, acima); `green-full-3/4`: 91/91 |
+
+## Execuções no commit `7168e4d`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, HEAD e árvore limpa conferidos antes e depois (`gate-7168e4d/gate.meta`) | `node --test tests/integrations/privacy/*.test.mjs` / `npm test` | 91/91, 0 skip (C34/C35 incluídos); exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 179 (173, 6 skip) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-nextline-pOMTNq`, tar sha256 `1c62732b…ae7351314` e `get-tar-commit-id` = `7168e4d4…` conferidos no script; stage `skill-me-i5-nextline-wsl-stage-PrV2G2` | idem | 91/91, 0 skip; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 179 (167, 12 skip) |
+
+Skips iguais aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m).
+
+Preparação WSL: `run-wsl.sh` copiado do stage anterior trocando só o comentário
+e os prefixos (`diff` conferido: linhas 2, 22, 27 e 29), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+o script recusa root, outra distro, origem ausente e saída/destino fora do
+padrão antes de copiar ou extrair. Nenhum comando inline no WSL, nada em `/repo`
+ou `/src.tar`; preparação antiga do Verifier6, seu probe, sessões ou
+configurações pessoais não tocados; nenhum modelo, rede de produto, instalação,
+subagente, push ou `review:run`. Nenhum arquivo do repositório editado durante
+os gates; o WSL começou depois do fim do gate Windows. Nenhuma rejeição de
+política nem falha de capacidade.
+
+**Diferença de SHA**: os gates acima rodaram em `7168e4d`. O commit desta
+evidência só acrescenta esta seção (`.checks/`); código, testes, guia e checklist
+são idênticos aos do gate. Nele rodaram só I5-C34 e I5-C35, numa invocação com
+seletor sobre `docs-privacy.test.mjs` (Windows); `npm test` e o alvo completo não
+foram repetidos nele.
+
+## Riscos e perdas comunicados
+
+- Perdas declaradas no Landing e no guia (falha fechada): o campo inteiro sai
+  também quando a linha seguinte não é o valor (`password:\nuser: u`), em
+  atribuição de shell vazia (`PASSWORD=\nls`), flag sensível com espaço no fim da
+  linha e `&`/`!` de shell logo depois do nome no fim da linha; três casos que
+  outra regra já removia sem vazar passaram a omitir o campo.
+- **Risco observado, fora deste reparo, comunicado ao coordenador**: tag ou
+  âncora seguida do valor na mesma linha — `secret: !!str <valor>` remove só a
+  tag; `secret: &a <valor>` não remove nada (o `&` encerra a palavra). O valor
+  persiste nos dois, igual antes e depois (`compare.log`, limites 0 e 1).
+  Declarado no Landing e no guia; não corrigido por não estar entre as duas
+  variantes autorizadas.
+- Outros limites declarados, iguais antes e depois: comentário sem indicador
+  (`secret: # c` com o valor abaixo), mais de duas propriedades, nomes que as
+  regras atuais não reconhecem, `--password<NBSP>valor` (limite da gramática de
+  flag do Bash).
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
