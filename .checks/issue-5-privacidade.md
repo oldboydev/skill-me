@@ -372,3 +372,17 @@ Bloqueios e pontos para o coordenador/proprietário antes do build:
   pode passar com implementação errada; nenhuma falha é injetada sistematicamente.
   Plataformas: só as executadas entram em `.checks/issue-5-privacidade.build.md`;
   WSL em cópia `/tmp` com identidade conferida; I4-C19 depende de Hermes local.
+
+Lote de armazenamento (Claude, sem D1), fronteira traçada pelo coordenador e
+não pela fatia: dentro de S4, antes do ingest.
+
+- **Onde a fronteira caiu:** commits `48d4643` (Landing) e `0ab38fb` (código).
+  Fechados: C2, C36, C37, C38, C41, C44, C45, C46, C49, C51, C52 (puro). Parciais
+  na camada de armazenamento (`I5-Cns`): C30, C32, C42, C43, C47, C48, C50,
+  C52b, C53, C54. Todo o resto pendente; detalhe em `.checks/issue-5-privacidade.build.md`.
+- **Decidido no meio do build:** nada novo do proprietário; D1 continua aberta.
+  O coordenador restringiu este lote ao storage/lifecycle, sem política,
+  ingest, export, guia ou demo. Escolhas técnicas viraram linhas do Landing.
+- **Abandonado:** reutilizar `install/io.mjs#writeExclusive` (modo 0666 e ACL do
+  instalador; ver Landing). Nenhum stub de ingest/export: o próximo lote deve
+  chamar `appendRecords` com a saída de `applyPolicy` e acrescentar as rotas.
