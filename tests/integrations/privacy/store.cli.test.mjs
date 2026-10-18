@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -7,12 +8,13 @@ import { test } from "node:test";
 import { validateEnvelope } from "../../../src/integrations/boundary.mjs";
 import { runPrivacyCommand } from "../../../src/integrations/privacy/command.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
-import { INTEGRATIONS_CLI, REPO_ROOT, baseEnv, makeScratch, runIntegrations } from "../helpers/cli.mjs";
+import { INTEGRATIONS_CLI, REPO_ROOT, baseEnv, makeScratch, parseReport, runIntegrations } from "../helpers/cli.mjs";
 import { fixtureCase, loadFixture } from "../helpers/fixtures.mjs";
 import { runClaudeHandler } from "../helpers/installed-hooks.mjs";
 import { CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, ndjson } from "../helpers/privacy-canaries.mjs";
 import { appendSanitized, runPrivacy, startIn } from "../helpers/privacy-store.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
+import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
 
 const FS_PROBE = pathToFileURL(path.join(REPO_ROOT, "tests", "integrations", "helpers", "fs-probe.mjs")).href;
 const PRIVACY_PROBE = pathToFileURL(path.join(REPO_ROOT, "tests", "integrations", "helpers", "privacy-probe.mjs")).href;
@@ -513,15 +515,62 @@ test("I5-C3 variáveis herdadas e configurações de agente no cwd não ativam c
   const root = makeScratch("i5 c3");
   const start = runPrivacy(["start", "--root", root], { env, cwd });
   assert.equal(start.body.capture.content, false);
-  const result = ingest(root, start.body.capture.id, "claude", [claudePayload("pre_tool_bash"), claudePayload("post_tool_bash")], { env, cwd });
-  assert.deepEqual(result.body.batch.contentOmitted, { content_disabled: 2 });
-  for (const record of exportOf(root, start.body.capture.id, { env, cwd }).body.records) {
-    assert.equal(record.content, null);
-    assert.deepEqual(record.privacy, ["content:content_disabled"]);
+  const id = start.body.capture.id;
+
+  // `privacy ingest` dos quatro agentes, só eventos de ferramenta: cada um conta content_disabled.
+  const perAgent = {
+    claude: [claudePayload("pre_tool_bash"), claudePayload("post_tool_bash")],
+    "codex-hooks": [codexHookPayload("pre_tool_bash"), codexHookPayload("post_tool_bash")],
+    "codex-exec": [execEvent("item_completed_command"), execEvent("item_completed_mcp_tool_call"), execEvent("item_completed_file_change")],
+    hermes: [hermesRecord("pre_tool_call"), hermesRecord("post_tool_call")],
+  };
+  let total = 0;
+  for (const [agent, entries] of Object.entries(perAgent)) {
+    const result = ingest(root, id, agent, entries, { env, cwd });
+    assert.equal(result.status, 0, agent);
+    assert.equal(result.body.batch.persisted, entries.length, agent);
+    assert.deepEqual(result.body.batch.contentOmitted, { content_disabled: entries.length }, agent);
+    total += entries.length;
   }
-  const hookRun = await runClaudeHandler({ command: process.execPath, args: [INTEGRATIONS_CLI, "hook", "--agent", "claude"] }, claudePayload("pre_tool_bash"), { env, cwd });
-  assert.equal(hookRun.report.counters.privacy.content_disabled, 1);
-  assert.ok(!hookRun.fd3.includes("SKILLME-CANARY"));
+  const exported = exportOf(root, id, { env, cwd });
+  assert.equal(exported.body.capture.content, false);
+  assert.equal(exported.body.records.length, total);
+  for (const record of exported.body.records) {
+    assert.equal(record.content, null);
+    assert.deepEqual(record.privacy, ["content:content_disabled"], record.envelope.source.contract);
+  }
+  const status = runPrivacy(["status", "--root", root, "--capture", id], { env, cwd });
+  assert.equal(status.body.capture.content, false);
+  assert.deepEqual(status.body.capture.counters.contentOmitted, { content_disabled: 9 });
+
+  // Hooks Claude e Codex, ingest Hermes e wrapper Codex sob o mesmo ambiente e cwd.
+  const zero = (count) => ({ content_disabled: count, unsupported_content: 0, unsanitizable: 0, sensitive_removed: 0, content_truncated: 0, privacy_failure: 0 });
+  const envelopeOnly = (events) => events.every((event) => validateEnvelope(event) && !("content" in event));
+  for (const [agent, payload] of [["claude", claudePayload("pre_tool_bash")], ["codex", codexHookPayload("post_tool_bash")]]) {
+    const hookRun = await runClaudeHandler({ command: process.execPath, args: [INTEGRATIONS_CLI, "hook", "--agent", agent] }, payload, { env, cwd });
+    assert.equal(hookRun.status, 0, agent);
+    assert.equal(hookRun.stdout, "", agent);
+    assert.equal(hookRun.report.events.length, 1, agent);
+    assert.ok(envelopeOnly(hookRun.report.events), agent);
+    assert.deepEqual(hookRun.report.counters.privacy, zero(1), agent);
+  }
+  const hermes = spawnSync(process.execPath, [INTEGRATIONS_CLI, "ingest", "--agent", "hermes"], {
+    input: ndjson([hermesRecord("pre_tool_call"), hermesRecord("post_tool_call"), hermesRecord("on_session_start")]),
+    env: { ...env, SKILL_ME_OBSERVER_REPORT_FD: "3" },
+    cwd,
+    stdio: ["pipe", "pipe", "pipe", "pipe"],
+  });
+  assert.equal(hermes.status, 0);
+  const hermesReport = parseReport(hermes.output[3].toString("utf8"));
+  assert.equal(hermesReport.events.length, 3);
+  assert.ok(envelopeOnly(hermesReport.events));
+  assert.deepEqual(hermesReport.counters.privacy, zero(2));
+  const steps = ["thread_started", "item_completed_command", "item_completed_mcp_tool_call", "item_completed_file_change", "turn_completed"].map((name) => ({ stdout: JSON.stringify(execEvent(name)) }));
+  const wrapped = await runWrapper({ args: ["p"], env: { ...env, FAKE_CODEX_SCENARIO: writeScenario(cwd, "c3", steps) }, cwd });
+  assert.equal(wrapped.status, 0);
+  assert.equal(wrapped.report.events.length, 6, "5 eventos + process_exit");
+  assert.ok(envelopeOnly(wrapped.report.events));
+  assert.deepEqual(wrapped.report.counters.privacy, zero(3));
 });
 
 test("I5-C4b com --content o CLI real grava args e results sanitizados para claude, codex-hooks e codex-exec", () => {

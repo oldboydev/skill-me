@@ -238,22 +238,43 @@ const NAME_KINDS = {
 };
 
 test("I5-C11 os 11 campos de nome com caminho, @, ~, drive ou segredo são removidos com sensitive_removed", () => {
-  // `~` já é recusado pela fronteira da #4 (`not_identifier`) e nunca chega à política.
-  const unsafe = ["dir/arquivo", "C:segredo", "C:/x", "alice@example.test", CANARIES.token, "Authorization: Bearer SKILLMECANARYname", "sk-abcdefghijklmnopqrstuvwxyz"];
+  // `~segredo` e os canários com `=`, `?` ou quebra de linha são recusados pela
+  // forma v1 (`not_identifier`) antes da política; o motivo publicado continua
+  // sendo o de privacidade (Landing "Nome inseguro recusado pela forma v1").
+  // Rótulos por índice: a mensagem de falha não ecoa o canário.
+  const unsafe = [
+    "dir/arquivo",
+    "C:segredo",
+    "C:/x",
+    "alice@example.test",
+    "~segredo",
+    CANARIES.token,
+    "Authorization: Bearer SKILLMECANARYname",
+    "sk-abcdefghijklmnopqrstuvwxyz",
+    CANARIES.password,
+    CANARIES.privateKey,
+    `${"a".repeat(127)}/x`,
+  ];
   assert.equal(Object.keys(NAME_KINDS).length, 11);
   for (const [name, eventKind] of Object.entries(NAME_KINDS)) {
-    for (const value of unsafe) {
+    for (const [index, value] of unsafe.entries()) {
+      const label = `${name}#${index}`;
       const draft = { source: SOURCE, signal: "native_hook", eventKind, nativeEvent: "Synthetic", ids: {}, fields: { [name]: value } };
       const result = applyPolicy({ draft, payload: {}, key: KEY, content: false });
-      assert.equal(result.ok, true, `${name}=${value}`);
+      assert.equal(result.ok, true, label);
       const { envelope, privacy } = result.record;
-      assert.ok(!(name in envelope.fields), `${name}=${value} removido`);
-      assert.ok(privacy.includes(`envelope.${name}:sensitive_removed`), `${name}=${value}`);
-      assert.ok(!envelope.gaps.some((g) => g.startsWith(`${name}:`)), "não vira lacuna v1");
-      assert.equal(validateEnvelope(envelope), true);
-      assert.equal(leaks(JSON.stringify(result.record)).length, 0, `${name}=${value}`);
-      assert.ok(!JSON.stringify(result.record).includes(value), `${name}=${value}`);
+      assert.ok(!(name in envelope.fields), `${label} removido`);
+      assert.deepEqual(privacy.filter((e) => e.startsWith("envelope.")), [`envelope.${name}:sensitive_removed`], label);
+      assert.ok(!envelope.gaps.some((g) => g.startsWith(`${name}:`)), `${label} não vira lacuna v1`);
+      assert.equal(validateEnvelope(envelope), true, label);
+      assert.equal(leaks(JSON.stringify(result.record)).length, 0, label);
+      assert.ok(!JSON.stringify(result.record).includes(value), label);
     }
+    // Recusado só pela forma, sem critério de privacidade: lacuna v1, nenhum motivo de privacidade.
+    const shapeOnly = { source: SOURCE, signal: "native_hook", eventKind, nativeEvent: "Synthetic", ids: {}, fields: { [name]: "Bash;echo" } };
+    const shaped = applyPolicy({ draft: shapeOnly, payload: {}, key: KEY, content: false }).record;
+    assert.ok(shaped.envelope.gaps.includes(`${name}:not_identifier`), `${name} forma`);
+    assert.ok(!shaped.privacy.some((e) => e.startsWith("envelope.")), `${name} forma sem privacy`);
     for (const value of ["Bash", "mcp__docs__search", "third-party-skill", "Explore"]) {
       const draft = { source: SOURCE, signal: "native_hook", eventKind, nativeEvent: "Synthetic", ids: {}, fields: { [name]: value } };
       const { record } = applyPolicy({ draft, payload: {}, key: KEY, content: false });

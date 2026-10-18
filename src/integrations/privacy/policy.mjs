@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { ENVELOPE_LIMITS, buildEnvelope } from "../boundary.mjs";
+import { ENVELOPE_LIMITS, EVENT_KIND_FIELDS, buildEnvelope } from "../boundary.mjs";
 import { extractContent, pseudonym } from "./content.mjs";
 import { isUnsafeName } from "./sanitize.mjs";
 
@@ -36,15 +36,27 @@ export function checkEnvelopeBudget(envelope) {
   return Buffer.byteLength(JSON.stringify(envelope), "utf8") > ENVELOPE_LIMITS.maxEnvelopeBytes ? "envelope_oversize" : null;
 }
 
-function sanitizeEnvelope(envelope, key, note) {
+// O motivo vem do valor do rascunho, não só do envelope aceito: a forma v1
+// recusa alguns nomes inseguros (`~…`, canários com `=`/`?`/quebra de linha)
+// como `not_identifier`/`too_long` antes da política, e essa lacuna mentiria
+// sobre o motivo. A fronteira da #4 fica intacta; ver Landing "Nome inseguro
+// recusado pela forma v1".
+function unsafeNameFields(draft, eventKind) {
+  return EVENT_KIND_FIELDS[eventKind].filter((name) => {
+    if (!NAME_FIELDS.includes(name) || draft.fieldGaps?.[name] !== undefined) return false;
+    const value = Object.hasOwn(draft.fields, name) ? draft.fields[name] : undefined;
+    return typeof value === "string" && value !== "" && isUnsafeName(value);
+  });
+}
+
+function sanitizeEnvelope(envelope, draft, key, note) {
   const ids = {};
   for (const [name, value] of Object.entries(envelope.ids)) ids[name] = pseudonym(key, "id", value);
-  const fields = {};
-  for (const [name, value] of Object.entries(envelope.fields)) {
-    if (NAME_FIELDS.includes(name) && isUnsafeName(value)) note(`envelope.${name}:sensitive_removed`);
-    else fields[name] = value;
-  }
-  return { ...envelope, ids, fields };
+  const removed = unsafeNameFields(draft, envelope.eventKind);
+  for (const name of removed) note(`envelope.${name}:sensitive_removed`);
+  const fields = Object.fromEntries(Object.entries(envelope.fields).filter(([name]) => !removed.includes(name)));
+  const gaps = envelope.gaps.filter((gap) => !removed.includes(gap.slice(0, gap.indexOf(":"))));
+  return { ...envelope, ids, fields, gaps };
 }
 
 // -> { ok: false, drop } | { ok: true, record }. `drop` e as entradas de
@@ -58,7 +70,7 @@ export function applyPolicy({ draft, payload, key, content }) {
   try {
     const built = buildEnvelope(draft);
     if (!built.ok) return { ok: false, drop: built.reason === "oversize" ? "envelope_oversize" : "invalid_event" };
-    envelope = sanitizeEnvelope(built.envelope, key, note);
+    envelope = sanitizeEnvelope(built.envelope, draft, key, note);
   } catch {
     return { ok: false, drop: "privacy_failure" };
   }

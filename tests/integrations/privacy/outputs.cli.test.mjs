@@ -4,6 +4,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
+import { EVENT_KIND_FIELDS } from "../../../src/integrations/boundary.mjs";
 import { INTEGRATIONS_CLI, REPO_ROOT, baseEnv, makeScratch, parseReport } from "../helpers/cli.mjs";
 import { runClaudeHandler } from "../helpers/installed-hooks.mjs";
 import { CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, ndjson } from "../helpers/privacy-canaries.mjs";
@@ -198,61 +199,152 @@ test("I5-C14 canários das cinco categorias em conteúdo não aparecem em nenhum
 });
 
 test("I5-C15 canários em IDs, nomes e caminhos não aparecem em nenhum canal do debugger", async () => {
-  const claudeIds = {
-    session_id: CANARIES.header,
-    prompt_id: CANARIES.token,
-    tool_use_id: CANARIES.url,
-    agent_id: CANARIES.password,
-    cwd: `/home/x/${CANARIES.token}`,
-    transcript_path: `C:\\Users\\${CANARIES.token}\\t.jsonl`,
+  // Cada uma das cinco categorias ocupa, em entradas próprias, todo papel de
+  // ID, nome e caminho que os quatro contratos fornecem. `expect` diz o que a
+  // política precisa ter visto (ID aceito e pseudonimizado, nome removido com
+  // sensitive_removed, caminho virado ref): sem isso a ausência do canário
+  // poderia vir de uma entrada que nunca chegou ao papel. Rótulos por
+  // categoria: nenhuma mensagem ecoa o canário.
+  const CATEGORIES = Object.keys(CANARIES);
+  assert.deepEqual(CATEGORIES, ["token", "header", "url", "password", "privateKey"]);
+  const inPath = (value) => `/home/x/${value}/f.txt`;
+  const cases = { claude: [], codex: [], exec: [], hermes: [] };
+  for (const category of CATEGORIES) {
+    const v = CANARIES[category];
+    const claudeIds = { session_id: v, prompt_id: v, tool_use_id: v, cwd: inPath(v), transcript_path: `C:\\Users\\${v}\\t.jsonl` };
+    const ids = ["sessionId", "promptId", "toolUseId"];
+    cases.claude.push(
+      { category, payload: claudePayload("pre_tool_bash", { ...claudeIds, tool_name: v, tool_input: { command: "ls" } }), ids, names: ["toolName"] },
+      { category, payload: claudePayload("pre_tool_bash", { ...claudeIds, tool_name: "Read", tool_input: { file_path: inPath(v) } }), ids, names: [], path: "tool_input.file_path" },
+      { category, payload: claudePayload("pre_tool_skill", { ...claudeIds, tool_input: { skill: v } }), ids, names: ["skillName"] },
+      { category, payload: claudePayload("expansion_slash_command", { session_id: v, prompt_id: v, cwd: inPath(v), command_name: v, command_source: v }), ids: ["sessionId", "promptId"], names: ["skillName", "commandSource"] },
+      { category, payload: claudePayload("expansion_mcp_prompt", { session_id: v, prompt_id: v, cwd: inPath(v), command_name: v, command_source: v }), ids: ["sessionId", "promptId"], names: ["commandName", "commandSource"] },
+      { category, payload: claudePayload("subagent_start", { session_id: v, agent_id: v, cwd: inPath(v), agent_type: v }), ids: ["sessionId", "agentId"], names: ["agentType"] },
+    );
+    cases.codex.push({ category, payload: codexHookPayload("pre_tool_bash", { session_id: v, turn_id: v, tool_use_id: v, cwd: inPath(v), tool_name: v }), ids: ["sessionId", "turnId", "toolUseId"], names: ["toolName"] });
+    cases.exec.push(
+      { category, payload: { type: "thread.started", thread_id: v }, ids: ["threadId"], names: [] },
+      { category, payload: execEvent("item_completed_mcp_tool_call", { id: v, server: v, tool: v }), ids: ["itemId"], names: ["toolName", "mcpServer"] },
+      { category, payload: execEvent("item_completed_file_change", { id: v, changes: [{ path: inPath(v), kind: "add" }] }), ids: ["itemId"], names: [], path: "item.changes[].path" },
+    );
+    cases.hermes.push(
+      { category, payload: hermesRecord("pre_tool_call", { session_id: v, tool_call_id: v, task_id: v, tool_name: v }), ids: ["sessionId", "taskId", "toolCallId"], names: ["toolName"] },
+      { category, payload: hermesRecord("on_skill_lifecycle", { session_id: v, task_id: v, skill_name: v }), ids: ["sessionId", "taskId"], names: ["skillName"] },
+    );
+  }
+  for (const [agent, list] of Object.entries(cases)) assert.deepEqual([...new Set(list.map((c) => c.category))], CATEGORIES, agent);
+
+  const assertIds = (envelope, item, label) => {
+    for (const name of item.ids) assert.match(envelope.ids[name] ?? "", PSEUDONYM, `${label} ${name}`);
+    for (const name of item.names) {
+      assert.ok(EVENT_KIND_FIELDS[envelope.eventKind].includes(name), `${label} ${name} pertence ao evento`);
+      assert.ok(!(name in envelope.fields), `${label} ${name}`);
+    }
+    assert.ok(!envelope.gaps.some((gap) => item.names.some((name) => gap.startsWith(`${name}:`))), `${label} nome sem lacuna v1`);
   };
-  const claude = [
-    claudePayload("pre_tool_bash", { ...claudeIds, tool_name: CANARIES.token, tool_input: { command: "ls" } }),
-    claudePayload("pre_tool_bash", { ...claudeIds, tool_name: "Read", tool_input: { file_path: `/home/x/${CANARIES.token}/${CANARIES.url}` } }),
-    claudePayload("pre_tool_skill", { ...claudeIds, tool_input: { skill: CANARIES.header } }),
-    claudePayload("expansion_slash_command", { ...claudeIds, command_name: CANARIES.token, command_source: CANARIES.header }),
-    claudePayload("subagent_start", { ...claudeIds, agent_type: CANARIES.header }),
-  ];
-  const codex = [codexHookPayload("pre_tool_bash", { session_id: CANARIES.token, turn_id: CANARIES.header, tool_use_id: CANARIES.url, cwd: CANARIES.url, tool_name: CANARIES.header })];
-  const exec = [
-    { type: "thread.started", thread_id: CANARIES.token },
-    execEvent("item_completed_mcp_tool_call", { id: CANARIES.url, server: CANARIES.header, tool: CANARIES.token }),
-    execEvent("item_completed_file_change", { id: CANARIES.header, changes: [{ path: `/home/x/${CANARIES.token}`, kind: "add" }] }),
-  ];
-  const hermes = [hermesRecord("pre_tool_call", { session_id: CANARIES.token, tool_call_id: CANARIES.url, tool_name: CANARIES.header }), hermesRecord("on_skill_lifecycle", { skill_name: CANARIES.header, task_id: CANARIES.password })];
+  const sensitive = (item) => item.names.length;
 
-  for (const [agent, payloads] of [["claude", claude], ["codex", codex]]) {
-    for (const payload of payloads) {
-      const run = await hook(agent, payload);
-      for (const channel of [run.stdout, run.stderr, run.fd3]) assert.deepEqual(leaks(channel), [], `${agent} ${payload.hook_event_name}`);
-      assert.equal(run.report.events.length, 1, "evento aceito, com o valor tratado");
+  // Relatórios dos hooks (um processo por entrada), do ingest Hermes e do wrapper, sem captura.
+  for (const [agent, list] of [["claude", cases.claude], ["codex", cases.codex]]) {
+    for (const item of list) {
+      const label = `${agent} ${item.payload.hook_event_name} ${item.category}`;
+      const run = await hook(agent, item.payload);
+      for (const channel of [run.stdout, run.stderr, run.fd3]) assert.deepEqual(leaks(channel), [], label);
+      assert.equal(run.report.events.length, 1, label);
+      assertIds(run.report.events[0], item, label);
+      assert.equal(run.report.counters.privacy.sensitive_removed, sensitive(item), label);
     }
   }
-  const ingested = hermesIngest(hermes);
-  assert.deepEqual(leaks(ingested.fd3), []);
-  assert.equal(ingested.report.events.length, 2);
+  const ingested = hermesIngest(cases.hermes.map((c) => c.payload));
+  for (const channel of [ingested.stdout, ingested.stderr, ingested.fd3]) assert.deepEqual(leaks(channel), [], "ingest hermes");
+  assert.equal(ingested.report.events.length, cases.hermes.length);
+  cases.hermes.forEach((item, i) => assertIds(ingested.report.events[i], item, `hermes ${item.category}`));
+  assert.equal(ingested.report.counters.privacy.sensitive_removed, cases.hermes.reduce((sum, c) => sum + sensitive(c), 0));
   const dir = makeScratch("i5 c15 wrapper");
-  const wrapped = await wrapper(dir, "c15", exec);
-  assert.deepEqual(leaks(JSON.stringify(wrapped.report)), []);
-  assert.equal(wrapped.report.events.length, exec.length + 1);
+  const wrapped = await wrapper(dir, "c15", cases.exec.map((c) => c.payload));
+  assert.equal(wrapped.status, 0);
+  assert.deepEqual(leaks(JSON.stringify(wrapped.report)), [], "relatório do wrapper");
+  assert.deepEqual(leaks(wrapped.stderr), [], "stderr do wrapper (o filho não escreve stderr)");
+  assert.equal(wrapped.report.events.length, cases.exec.length + 1);
+  cases.exec.forEach((item, i) => assertIds(wrapped.report.events[i], item, `wrapper ${item.category}`));
+  assert.equal(wrapped.report.counters.privacy.sensitive_removed, cases.exec.reduce((sum, c) => sum + sensitive(c), 0));
 
+  // Comandos privacy com e sem opt-in: stdout/stderr, árvore final, export e,
+  // pelas sondas da C14, lock e temporários observados antes do rename.
   const root = makeScratch("i5 c15 store");
+  const probeDir = makeScratch("i5 c15 probe");
+  const fsProbeLog = path.join(probeDir, "fs-probe.jsonl");
+  const privacyLog = path.join(probeDir, "privacy-probe.jsonl");
+  const probed = (withFsProbe) => ({
+    nodeArgs: [...(withFsProbe ? ["--import", FS_PROBE] : []), "--import", PRIVACY_PROBE],
+    env: baseEnv({
+      SKILL_ME_TEST_PRIVACY_PROBE_LOG: privacyLog,
+      SKILL_ME_TEST_PRIVACY_PROBE_MARKER: MARKER,
+      ...(withFsProbe ? { SKILL_ME_TEST_FS_PROBE_LOG: fsProbeLog, SKILL_ME_TEST_FS_PROBE_CANARY: MARKER } : {}),
+    }),
+  });
+  const commands = [];
+  const run = (args, options = {}, withFsProbe = false) => {
+    const result = runPrivacy(args, { ...probed(withFsProbe), ...options });
+    commands.push([args[0], result]);
+    return result;
+  };
+  const byAgent = [["claude", cases.claude], ["codex-hooks", cases.codex], ["codex-exec", cases.exec], ["hermes", cases.hermes]];
+  const captures = [];
   for (const optIn of [[], ["--content"]]) {
-    const id = runPrivacy(["start", "--root", root, ...optIn]).body.capture.id;
-    const outputs = [];
-    for (const [agent, payloads] of [["claude", claude], ["codex-hooks", codex], ["codex-exec", exec], ["hermes", hermes]]) {
-      const result = runPrivacy(["ingest", "--root", root, "--capture", id, "--agent", agent], { input: ndjson(payloads) });
-      assert.equal(result.status, 0, result.stdout);
-      assert.equal(result.body.batch.persisted, payloads.length, agent);
-      outputs.push(result);
+    const mode = optIn.join("") || "sem opt-in";
+    const id = run(["start", "--root", root, ...optIn]).body.capture.id;
+    captures.push(id);
+    const all = [];
+    for (const [agent, list] of byAgent) {
+      const result = run(["ingest", "--root", root, "--capture", id, "--agent", agent], { input: ndjson(list.map((c) => c.payload)) }, true);
+      assert.equal(result.status, 0, `${mode} ${agent}`);
+      assert.equal(result.body.batch.persisted, list.length, `${mode} ${agent}`);
+      all.push(...list);
     }
-    outputs.push(runPrivacy(["export", "--root", root, "--capture", id]), runPrivacy(["status", "--root", root, "--capture", id]));
-    for (const result of outputs) {
-      assert.deepEqual(leaks(result.stdout), []);
-      assert.equal(result.stderr, "");
-    }
-    assertNoLeakInTree(root, optIn.join("") || "sem opt-in");
+    assertNoLeakInTree(root, `${mode} após ingest`);
+    const exported = run(["export", "--root", root, "--capture", id]);
+    assert.equal(exported.status, 0, mode);
+    assert.equal(exported.body.records.length, all.length, mode);
+    exported.body.records.forEach((record, i) => {
+      const item = all[i];
+      const label = `${mode} ${record.envelope.source.contract} ${item.category}`;
+      assertIds(record.envelope, item, label);
+      for (const name of item.names) assert.ok(record.privacy.includes(`envelope.${name}:sensitive_removed`), `${label} ${name}`);
+      if (item.path && optIn.length > 0) {
+        const ref = record.content?.fields.find((f) => f.field === item.path);
+        assert.ok(ref, `${label} caminho virou ref`);
+        for (const value of ref.refs ?? [ref.ref]) assert.match(value, PSEUDONYM, label);
+      }
+    });
+    run(["status", "--root", root, "--capture", id]);
+    run(["stop", "--root", root, "--capture", id], {}, true);
+    run(["disable", "--root", root, "--capture", id], {}, true);
+    run(["delete", "--root", root, "--capture", id]);
   }
+  run(["prune", "--root", root]);
+  for (const id of captures) assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
+  for (const [command, result] of commands) {
+    assert.deepEqual(leaks(result.stdout), [], `${command} stdout`);
+    assert.equal(result.stderr, "", `${command} stderr`);
+  }
+  for (const id of captures) assert.ok(!existsSync(path.join(root, "skill-me-privacy", "captures", id)));
+
+  // As sondas viram os temporários e o lock de cada ingest; nenhum continha o
+  // marcador. Os logs só têm nomes, booleanos e caminhos do scratch.
+  const fsText = readFileSync(fsProbeLog, "utf8");
+  const privacyText = readFileSync(privacyLog, "utf8");
+  assert.deepEqual(leaks(fsText), [], "log do fs-probe");
+  assert.deepEqual(leaks(privacyText), [], "log da sonda de privacidade");
+  const fsObservations = fsText.trim().split("\n").map((line) => JSON.parse(line));
+  const renamed = fsObservations.filter((o) => o.moment === "before_rename");
+  assert.ok(renamed.filter((o) => /^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/.test(o.file)).length >= byAgent.length * 2, "temporário de dados de cada ingest");
+  assert.ok(renamed.filter((o) => /^state\.json\.[0-9a-f]{8}\.skill-me-tmp$/.test(o.file)).length >= byAgent.length * 2, "temporário de estado de cada ingest");
+  for (const observation of fsObservations) assert.equal(observation.containsCanary, false, `${observation.file} ${observation.moment}`);
+  const written = privacyText.trim().split("\n").map((line) => JSON.parse(line)).filter((e) => e.op === "closed_written");
+  assert.ok(written.filter((e) => path.basename(e.file) === ".lock").length >= commands.length, "lock de cada comando");
+  assert.ok(written.some((e) => e.file.endsWith(".skill-me-tmp")), "temporários observados");
+  for (const entry of written) assert.equal(entry.containsMarker, false, path.basename(entry.file));
 });
 
 test("I5-C26 relatório v2 traz a contagem exata dos seis códigos para um lote misto", async () => {
