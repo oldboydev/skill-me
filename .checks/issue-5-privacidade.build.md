@@ -672,3 +672,110 @@ Windows. Nenhuma rejeição de política nem falha de capacidade.
 - Perfil `light`: nenhuma falha injetada sistematicamente fora dos cenários
   enumerados. Este verde é autoral; uma nova rodada independente depende de
   decisão humana específica.
+
+# Variante: token codificado em valor de query (18/10/2026)
+
+Evidência autoral, não verificação independente nem revisão formal: não conta
+como rodada do Verifier nem tentativa da revisão e não altera tetos. Relatórios
+formais e `.verified.md` não foram editados. Origem: o lote formal1 registrou
+como limite que `?q=ghp%5F…` guardava um token codificado em valor de query; o
+coordenador comunicou o risco e decidiu corrigir a variante na mesma entrega,
+dentro da sanitização de URL/token já aprovada (critérios 5/6, S2, AC2/AC3).
+Commits: `eaf78ea` (linha do Landing, antes do código), `2a8760d` (correção,
+provas, guia e comandos de prova) e o commit desta evidência.
+
+## Correção
+
+`sanitize.mjs`, regra 2: com nome não sensível, valor não vazio, ainda não
+`[removido]` e contendo `%`, `isUnsafeQueryValue` decodifica uma camada
+(`decodeURIComponent`) só para decidir e aplica `hasTokenFormat`, que percorre o
+próprio `TOKEN_FORMATS` da regra 6 (sem regex paralela; `search` não altera o
+`lastIndex` usado depois pelo `replace`). Formato encontrado → o valor inteiro
+vira `[removido]`, o nome fica como veio. Escape inválido → valor removido
+(falha fechada; a exceção é engolida, sem cópia em erro/log). Valor sem `%` não é
+decodificado; valor bem formado sem token fica literal na forma codificada. Sem
+nova decodificação, sem regras 3–5 sobre o decodificado e sem alcance fora dos
+pares `[?&]nome=valor` que a regra 2 já casa. As três correções formais e as
+anteriores ficam intactas (C14b, C16b, C17b, S-databytes no verde abaixo).
+
+## O que cada prova nova afirma
+
+- **I5-C17c** (policy.unit, `sanitizeText` exato): `ghp` com `_` como `%5F` e
+  `%5f`; valor inteiro codificado; prefixo `ghp_` codificado; texto útil com
+  `%20` antes do token; token entre `%22`; cada formato de `KEY_CANARIES`
+  (GitHub, GitHub PAT, OpenAI, Slack, AWS, GitLab, Google, JWT) com um separador
+  ou letra codificado entre `page=2` e `sort=asc`; `q` genérico entre `page`,
+  `sort`, `redirect=https%3A%2F%2F…` e `lang=pt%2Dbr` com um segundo valor
+  inteiro codificado; nome e valor codificados; malformados (`…%zz`, `100%`,
+  `%E0abc`) → `{ok:true, text:<exato>, removed:true}`. Controles com
+  `removed:false` e texto idêntico: `100%25`, `caf%C3%A9` + redirect codificado,
+  `ghp%5Fcurto`, `+` como espaço e valor vazio, valor já `[removido]`, limite de
+  uma camada `ghp%255F…` e prefixo colado `abcghp%5F…` (mesmo lookbehind do
+  literal, conferido). Fronteira da política: comando Bash Claude com
+  `ENCODED_VALUE_URL` sai exatamente com os dois valores removidos, com
+  `tool_input.command:sensitive_removed`, sem marcador literal nem codificado.
+- **I5-C14c** (outputs.cli, CLI real com `fs-probe` + sonda de privacidade):
+  duas passadas, uma com as sondas procurando `SKILLMECANARY` e outra
+  procurando sua forma inteira em `%XX` (as sondas aceitam um marcador por vez);
+  `start --content`, ingest codex-exec (`command_execution` com comando e saída),
+  Claude (pre/post Bash) e Codex hooks (pre Bash) com a URL de valores
+  codificados; nenhum arquivo da árvore, stdout, log de sonda, temporário antes
+  do rename (≥ 3 de dados) ou arquivo escrito (lock de cada comando,
+  temporários) contém o marcador literal ou codificado; export com os sete
+  campos de texto exatos (`page`, `sort`, `lang` literais) e `sensitive_removed`
+  em cada registro com conteúdo; `stderr` vazio; delete aplicado.
+- Nenhuma asserção, limite ou critério existente foi alterado; controles sem
+  segredo e truncamento após sanitização (C24) continuam no verde.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-encval-win-iDx8aU\` (preservados).
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red.tap.log` | `eaf78ea` (antes da correção), testes finais (não mudaram depois) | 2/2 `not ok`: C14c no primeiro arquivo de dados após o ingest (`events-000003.ndjson`), C17c no primeiro caso (`ghp com _ codificado`); 0 ocorrências do marcador |
+| `green.tap.log` | `2a8760d` | 7/7 `ok` (C14b, C14c, C16b, C17, C17b, C17c, C24); 0 ocorrências do marcador |
+
+## Execuções no commit `2a8760d`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, checkout local, árvore limpa antes e depois, HEAD conferido antes e depois, logs `win-privacy.tap.log`/`win-npm-test.log` no diretório acima | `node --test --test-reporter=tap "tests/integrations/privacy/*.test.mjs"` | 82 tests, 82 pass, 0 fail, 0 skip (C35 e os 2 novos incluídos) |
+| Windows 11 | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 170 (164 pass, 6 skip, 0 fail) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-encval-ethT23` de `git archive 2a8760d` (sha256 `9b097c95…84ded0e9e` igual nos dois lados; `git get-tar-commit-id` = `2a8760d8…` conferido no script antes da extração), logs em `%TEMP%\skill-me-i5-encval-wsl-stage-FDADlF\` | mesmo alvo de privacidade | 82 tests, 82 pass, 0 fail, 0 skip (C35 e os 2 novos incluídos) |
+| WSL Ubuntu | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 170 (158 pass, 12 skip, 0 fail) |
+
+Skips idênticos aos do lote formal1 (linhas `﹣` comparadas por `diff` no WSL;
+Windows conferido pelos nomes): Windows doctor 7 (POSIX symlink/FIFO),
+integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1 (`hermes_cli.PYD`),
+integrações 12 (I4-C18–23/C37/C44b Hermes ausente, I4-C25g/h/i DACL Windows,
+I4-C25m macOS). Integrações passam de 168 para 170 só pelos dois testes novos.
+Nenhum log contém `SKILLMECANARY`.
+
+Preparação WSL: `run-wsl.sh` em arquivo no stage, derivado do lote formal1 só
+com prefixos e comentário trocados (diff conferido), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+recusa root, outra distro, origem ausente, saída e destino fora do padrão antes
+de copiar/extrair. Nenhum comando inline no WSL; nenhum `/repo` ou `/src.tar`;
+preparação antiga do Verifier6, seu probe, sessões ou configurações pessoais não
+tocados; nenhum modelo, rede de produto, subagente ou `review:run`. Nenhum
+arquivo do repositório editado durante os gates; o WSL começou depois do fim do
+gate Windows. Nenhuma rejeição de política nem falha de capacidade.
+
+## Limites honestos
+
+- Supersede o segundo item dos limites do lote formal1 ("valor de query
+  codificado com formato de token não é decodificado"), que fica como histórico:
+  agora uma camada é examinada nos valores de query.
+- Uma camada só: `%255F` não vira `_` (controle em C17c). Sem decodificação de
+  texto codificado fora dos pares da regra 2, e sem as regras 3–5 (cabeçalho,
+  `Bearer`, atribuição) sobre o valor decodificado: só os formatos da regra 6.
+- Valor removido inteiro, inclusive o texto útil ao redor do token; valor
+  malformado sem segredo (`q=100%`) também é perdido (falha fechada).
+- Prefixo colado sem separador (`abcghp%5F…`) não é reconhecido, como no texto
+  literal. Detecção por padrões continua sem garantia universal.
+- Esta evidência muda o conteúdo lido por C34/C35; o alvo de privacidade e o
+  `npm test` são reexecutados na cabeça desta evidência nas duas plataformas e o
+  resultado vai ao coordenador (registrá-lo aqui mudaria a cabeça de novo).
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este
+  verde é autoral; nova rodada independente depende de decisão do proprietário.
