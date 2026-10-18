@@ -452,8 +452,9 @@ function storeReportVariants(t) {
       { label: "prefixo \\\\?\\", report: (ctx) => `\\\\?\\${state(ctx)}` },
       { label: "ponto final no nome", report: (ctx) => `${state(ctx)}.` },
       { label: "fluxo ::$DATA", report: (ctx) => `${state(ctx)}::$DATA` },
-      // Fluxo nomeado da própria pasta do store: a árvore não o mostra, só o arquivo criado.
-      { label: "fluxo nomeado da pasta do store", report: (ctx) => `${storeDir(ctx.root)}:diagnóstico.ndjson` },
+      // Fluxo nomeado da própria pasta do store: a árvore não o mostra, só o
+      // arquivo criado. Em maiúsculas, porque o realpath da pasta-mãe não toca no nome final.
+      { label: "fluxo nomeado da pasta do store, em maiúsculas", report: (ctx) => path.join(ctx.root, "SKILL-ME-PRIVACY:diagnóstico.ndjson") },
       {
         label: "nome curto 8.3 do store",
         report: (ctx) => {
