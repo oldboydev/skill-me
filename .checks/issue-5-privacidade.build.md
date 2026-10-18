@@ -1647,7 +1647,7 @@ evidência. Nenhum `review:run`, subagente, push, PR ou merge.
 
 ## O que cada prova nova afirma
 
-- **I5-C14m** (policy.unit): 165 entradas removidas exatamente — 8 caixas
+- **I5-C14m** (policy.unit): 163 entradas removidas exatamente — 8 caixas
   (`Basic`, `basic`, `BASIC`, `bAsIc`, `Bearer`, `bearer`, `BEARER`, `BeArEr`) × 11
   credenciais (1 a 8 caracteres, `YQ==`, `Og==`, `=`) e × 8 separadores (tab, LF,
   CRLF, CR, ` \n  `, `\t\r\n\t`, linha em branco, ` \r\n \r\n `), com esquema e
@@ -1731,3 +1731,13 @@ foram repetidos nele.
   esquemas não listados e formatos desconhecidos.
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+## Precisão editorial após o Verifier Round6
+
+O Verifier independente em e1bd083 confirmou 163 remoções exatas em C14m:
+8 grafias × 11 credenciais + 8 grafias × 8 separadores + 11 casos explícitos.
+O recibo autoral havia somado 165; o número acima foi corrigido para a contagem
+real da fonte executada. As seis recusas e os 74 controles permanecem corretos.
+Nenhum teste, asserção, critério ou código de produto foi alterado nesta correção.
+O relatório Round6 preserva a divergência observada antes da correção e as
+execuções próprias Windows/WSL no HEAD e1bd083.
