@@ -1873,3 +1873,136 @@ foram repetidos nele.
   corrigido: exige decisão do coordenador.
 - Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
   é autoral; não é aprovação independente nem formal.
+
+# Nome sensível depois de separador escapado e entre aspas escapadas (18/10/2026)
+
+Evidência autoral de um novo autor Claude, não verificação independente nem
+revisão formal: não conta como rodada do Verifier nem tentativa da revisão e não
+altera tetos (quatro tentativas formais usadas de 10). Escopo: decisão expressa
+do coordenador — `x\nCookie: s=abc` e `x\nauth=abc` são o mesmo separador
+escapado e os mesmos nomes de AC2/critério 6, não um limite documentado — na
+autorização `157add2`. Supersede o "Risco fora destes achados…" da seção
+anterior. Commits: `be1c520` (linha do Landing, antes do código), `6cef159`
+(correção, provas, guia e comandos de prova do checklist) e o commit desta
+evidência. Nenhum relatório anterior, `.verified.md`, incidente, aprovação,
+task, configuração, core, content, store ou lifecycle foi editado. Nenhum
+`review:run`, subagente, instalação, `npx`, formatter, push, PR ou merge.
+
+## Natureza do problema e correção
+
+- Texto serializado de novo traz o separador escrito como escape (`\n`, `\t`,
+  `\u000a`… com `\` literal). As regras 3 e 5 exigiam fronteira de palavra
+  antes do nome, e o `n`/`t`/`0` do escape colava nele: `x\nCookie: s=abc`
+  (`nCookie`), `x\nauth=abc` (`nauth`, não sensível) e `x\n--password abc`
+  (`n` antes de `--`) ficavam intactos; `x\npassword=abc` só saía porque
+  `npassword` contém `password`. A forma F1 reserializada com o nome entre
+  aspas escapadas (`{\"Cookie\":\"s=abc\"}`, `{\"auth\":\"abc\"}`) também ficava.
+  Conferido no produto intacto pelo RED abaixo.
+- Correção em `sanitize.mjs`, reutilizando a gramática do separador escapado da
+  regra 4 (uma constante, `ESCAPE_BODY`/`ESCAPED_SEPARATOR`, agora antes das
+  regras 3–5; o hex aceita `A`/`D` maiúsculos, o que a flag `i` já fazia na
+  regra 4): o fim de um separador escapado vale como fronteira antes do nome
+  nas regras 3, 5 de atribuição e 5 de flag; nome comum lido a partir da letra
+  do escape é relido depois dele; separador escapado entre flag e valor; nome
+  de atribuição entre `\"` com a mesma sequência de `\` dos dois lados. Sem
+  decodificar, parser, tipo, motivo, esquema ou dependência novos.
+
+## O que cada prova nova ou alterada afirma
+
+- **I5-C14q** (policy.unit): 267 remoções exatas — 12 separadores escapados ×
+  (6 nomes de cabeçalho + 6 de atribuição com `=` e com `:` + 3 flags) = 252 e 15
+  casos explícitos (os dois relatados sozinhos e em JSON numa linha, separador
+  escapado entre flag e valor ×2, sete formas entre aspas escapadas inclusive
+  segunda serialização, duas perdas declaradas `C:\new\nauth=1` e
+  `--password\nabc`); 4 recusas exatas `{ok:false}` depois do nome (bloco com
+  quebra real, composição aberta em flag e em nome entre `\"`, cabeçalho que
+  termina no esquema); 16 controles intactos com `removed:false` (sem `\`, nome
+  comum, `x\n=abc`, `x-auth=abc`, outros escapes e codificações, `\N` maiúsculo
+  na atribuição — limite declarado). Fronteira da política com resultado MCP:
+  valores exatos, `privacy` exata `["item.result.content[].text:sensitive_removed"]`,
+  ausência de `s=abc` e `auth=abc` no registro.
+- **I5-C14r** (outputs.cli, CLI real com `fs-probe` e sonda `SKILLMECANARYc14r`):
+  resultado MCP do codex-exec com `x\nCookie: s=abc`, nome entre `\"` com a sonda
+  e nome comum; claude e codex-hooks com `x\nauth=abc` e `x\t--token` + sonda;
+  stderr do claude `x\nauth: |` + quebra real + sonda. Valores exatos, motivo
+  exato por registro, `contentOmitted` de cada lote e do `status`
+  `{sensitive_removed:3, unsanitizable:1}`; nenhum arquivo, stdout, log de sonda,
+  temporário antes do rename ou arquivo escrito com a sonda, `s=abc` ou
+  `auth=abc`; stderr vazio; delete aplicado.
+- **Mudança de resultados anteriores** (registrada na linha do Landing antes do
+  código): com o nome entre `\"` reconhecido, `{\"Authorization\":\"Basic\nYTpi\"}`
+  passa de `{\"Authorization\":\"Basic\n[removido]` a `{\"Authorization\":[removido]`
+  em C14o, na fronteira da política dele e em C14p, e
+  `{\"headers\":{\"Authorization\":\"bearer\tab\",\"x\":1}}` a
+  `{\"headers\":{\"Authorization\":[removido]` em C14o. Mais texto removido, a
+  mesma contagem (um `sensitive_removed` por campo); nenhuma outra asserção,
+  tolerância, skip ou controle foi alterado.
+- **I5-C14h**: cinco casos novos de 1 MiB, só os caminhos novos com risco de
+  varredura repetida — nome comum relido depois do escape, nome entre aspas
+  escapadas, flag com separador escapado, `\` longo antes de aspa e antes de
+  nome. Medido no código corrigido (Windows): 41, 52, 83, 10 e 10 ms; o caso
+  `Bearer` anterior, 29 ms. Sem otimização nova nem teto novo.
+- Contagem do alvo de privacidade: 109 → 111; `test:integrations` 197 → 199.
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-f6-win-66ybS6\`; protótipo e sondas só em
+`%TEMP%\skill-me-i5-f6-proto\` (cópia de `git show 7f34027:…/sanitize.mjs`, só
+strings sintéticas); gate em `%TEMP%\skill-me-i5-f6-tools\gate-win.sh` (cópia do
+gate anterior com só o comentário da linha 2 trocado, `diff` conferido). Sem
+`git stash`, reset, pop ou troca do produto: o RED rodou com `src/` intacto
+(`git diff --exit-code HEAD -- src`, cabeça `be1c520`), antes da edição.
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red-policy.tap.log` | `src/` intacto, `"^I5-C(14o\|14q\|14h) "` | C14o `caso 104` (primeiro resultado alterado), C14q `caso 0`; C14h passa; 3 testes, 1 pass, 2 fail |
+| `red-outputs.tap.log` | idem, `"^I5-C(14p\|14r) "` | C14p `só as credenciais saíram…`, C14r `codex-exec: contagem do lote`; 2 testes, 0 pass, 2 fail |
+| `green-policy.tap.log`, `green-outputs.tap.log` | correção, antes do commit, mesmos seletores | 3/3, 2/2, exit 0 |
+| `green-policy-file.tap.log` | correção, arquivo `policy.unit` inteiro | 35/35, exit 0 |
+
+## Execuções no commit `6cef159`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, HEAD e árvore limpa conferidos antes e depois (`gate-6cef159/gate.meta`, 18:37:27Z–18:43:08Z) | `node --test tests/integrations/privacy/*.test.mjs` / `npm test` | 111/111, 0 skip (C34/C35 incluídos); exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 199 (193, 6 skip) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-f6final-BNprIo`, tar sha256 `64647251…9b80aae5` e `get-tar-commit-id` = `6cef159e…` conferidos no script; stage `skill-me-i5-f6final-wsl-stage-GxbDLP` | idem | 111/111, 0 skip; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 199 (187, 12 skip) |
+
+Skips iguais aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m). C14o,
+C14p, C14q, C14r, C14h, C34 e C35 aparecem como `ok` nos dois logs de
+privacidade. Nenhum log contém `SKILLMECANARY`.
+
+Preparação WSL: `run-wsl.sh` copiado do stage anterior trocando o comentário da
+linha 2 e os prefixos (`f5final` → `f6final`) e acrescentando a guarda explícita
+`uid` = 1000 antes de qualquer mutação (`diff` conferido: linhas 2, 18, 23, 29 e
+31), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+o script recusa root, uid diferente de 1000, outra distro, origem ausente,
+saída/destino fora do padrão ou não canônicos, hash ou commit do tar diferentes
+antes de copiar ou extrair. Nenhum comando inline no WSL, nada em `/repo` ou
+`/src.tar`; preparação antiga do Verifier6, seu probe, stages e logs anteriores,
+sessões ou configurações pessoais não tocados; nenhum modelo, rede de produto,
+instalação, subagente, push ou `review:run`; só processos próprios. Nenhum
+arquivo do repositório editado durante os gates; o WSL começou depois do fim do
+gate Windows. Nenhuma rejeição de política nem falha de capacidade.
+
+**Diferença de SHA**: os gates acima rodaram em `6cef159`. O commit desta
+evidência só acrescenta esta seção (`.checks/`); código, testes, guia e checklist
+são idênticos aos do gate. Nele rodaram só I5-C34 e I5-C35, numa invocação com
+seletor sobre `docs-privacy.test.mjs` (Windows); `npm test` e o alvo completo não
+foram repetidos nele.
+
+## Riscos e perdas comunicados
+
+- Perdas declaradas (falsos positivos, falha fechada): componente de caminho
+  Windows que começa pela letra de um escape (`C:\new\nauth=1`); a palavra
+  depois de `--nome-sensível` seguido de `\n` escapado sai, embora a quebra real
+  não separe flag e valor; em texto numa linha, a palavra de shell leva o resto
+  do JSON serializado (`{\"auth\":[removido]`).
+- Limites declarados: `\N`/`\R`/`\T` maiúsculos só contam na regra 3 (flag
+  `i`), não na atribuição nem na flag; aspas escapadas com quantidade diferente
+  de `\` nos dois lados; nome entre `\'`; `\x0a`, octal, `%0A`/`%20`, entidades
+  HTML, NBSP e esquemas não listados. Não é garantia universal.
+- Perfil `light`: nenhuma falha injetada fora dos cenários enumerados. Este verde
+  é autoral; não é aprovação independente nem formal.
