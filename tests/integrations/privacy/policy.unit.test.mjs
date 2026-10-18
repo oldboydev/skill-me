@@ -14,7 +14,7 @@ import { CONTENT_LIMITS, CONTENT_TABLE, extractContent } from "../../../src/inte
 import { applyPolicy, checkEnvelopeBudget } from "../../../src/integrations/privacy/policy.mjs";
 import { isSensitiveKey, sanitizeText } from "../../../src/integrations/privacy/sanitize.mjs";
 import { loadFixture } from "../helpers/fixtures.mjs";
-import { CANARIES, ENCODED_QUERY_URL, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks } from "../helpers/privacy-canaries.mjs";
+import { CANARIES, ENCODED_MARKER, ENCODED_QUERY_URL, ENCODED_VALUE_URL, ENCODED_VALUE_URL_OUT, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, percentEncodeAll } from "../helpers/privacy-canaries.mjs";
 
 const KEY = Buffer.alloc(32, 7);
 const OTHER_KEY = Buffer.alloc(32, 9);
@@ -465,7 +465,59 @@ test("I5-C17b parâmetro de query com nome sensível codificado tem o valor remo
   assert.ok(leaks(JSON.stringify(record)).length === 0, "registro sem vazamento");
 });
 
-test("I5-C18 bloco de chave privada fechado ou não é descartado inteiro; o texto antes permanece (literal)", () => {
+test("I5-C17c valor de query com formato de token em uma camada de percent encoding é removido inteiro; nome e demais parâmetros ficam literais", () => {
+  const ghp = "ghp_SKILLMECANARY0123456789abcdefgh";
+  const enc1 = (text, ch) => text.replace(ch, `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+  const cases = [
+    ["ghp com _ codificado", `https://h/p?q=${enc1(ghp, "_")}&page=2`, `https://h/p?q=${R}&page=2`],
+    ["ghp com %5f minúsculo", `https://h/p?q=ghp%5fSKILLMECANARY0123456789abcdefgh`, `https://h/p?q=${R}`],
+    ["valor inteiro codificado", `https://h/p?q=${percentEncodeAll(ghp)}&page=2`, `https://h/p?q=${R}&page=2`],
+    ["prefixo do token codificado", `https://h/p?q=%67%68%70%5FSKILLMECANARY0123456789abcdefgh`, `https://h/p?q=${R}`],
+    ["texto útil antes do token", `https://h/p?q=deploy%20com%20${enc1(ghp, "_")}&page=2`, `https://h/p?q=${R}&page=2`],
+    ["token entre aspas codificadas", `https://h/p?msg=%22${enc1(ghp, "_")}%22`, `https://h/p?msg=${R}`],
+    // Cada formato existente do detector, com um separador ou letra codificado.
+    ...Object.entries(KEY_CANARIES).map(([name, token]) => {
+      const ch = { github: "_", githubPat: "_", openai: "-", slack: "-", aws: "A", gitlab: "-", google: "A", jwt: "." }[name];
+      return [`formato ${name}`, `https://h/p?page=2&v=${enc1(token, ch)}&sort=asc`, `https://h/p?page=2&v=${R}&sort=asc`];
+    }),
+    [
+      "parâmetro genérico q entre parâmetros úteis",
+      `https://h/s?page=2&q=${enc1(ghp, "_")}&sort=asc&redirect=https%3A%2F%2Fok.test%2Fx&lang=pt%2Dbr&k=${percentEncodeAll("sk-SKILLMECANARY0123456789ab")}`,
+      `https://h/s?page=2&q=${R}&sort=asc&redirect=https%3A%2F%2Fok.test%2Fx&lang=pt%2Dbr&k=${R}`,
+    ],
+    // Nome sensível codificado continua pela linha anterior do Landing.
+    ["nome e valor codificados", `https://h/p?t%6fken=${enc1(ghp, "_")}&page=2`, `https://h/p?t%6fken=${R}&page=2`],
+    // Valor malformado não é classificável: sai inteiro (falha fechada).
+    ["malformado com token", `https://h/p?q=${enc1(ghp, "_")}%zz&page=2`, `https://h/p?q=${R}&page=2`],
+    ["% final", "https://h/p?q=100%&page=2", `https://h/p?q=${R}&page=2`],
+    ["UTF-8 incompleto", "https://h/p?q=%E0abc&page=2", `https://h/p?q=${R}&page=2`],
+  ];
+  for (const [label, input, expected] of cases) same(sanitizeText(input), { ok: true, text: expected, removed: true }, label);
+
+  // Controles sem segredo: texto útil literal, na forma codificada, removed:false.
+  const controls = [
+    "https://h/p?q=100%25&sort=asc",
+    "https://h/p?q=caf%C3%A9&redirect=https%3A%2F%2Fok.test%2Fp%3Fx%3D1&lang=pt%2Dbr",
+    "https://h/p?q=ghp%5Fcurto&page=2",
+    "https://h/p?q=deploy+sem+segredo&page=",
+    `https://h/p?q=${R}&page=2`,
+    // Limite de uma camada: `%255F` decodifica para `%5F`, não para `_`.
+    "https://h/p?q=ghp%255Fabcdefghij0123456789ABCDEFGHIJ",
+    // Prefixo colado sem separador: mesmo lookbehind da regra 6 no texto literal.
+    "https://h/p?q=abcghp%5Fabcdefghij0123456789ABCDEFGHIJ",
+  ];
+  for (const control of controls) assert.deepEqual(sanitizeText(control), { ok: true, text: control, removed: false });
+  assert.deepEqual(sanitizeText("abcghp_abcdefghij0123456789ABCDEFGHIJ").removed, false, "mesmo lookbehind no literal");
+
+  // Fronteira da política: comando com a URL e campo exato, sem o marcador codificado.
+  const record = policy("claude", claudePayload("pre_tool_bash", { tool_input: { command: `curl '${ENCODED_VALUE_URL}'` } }));
+  same(field(record, "tool_input.command").value, `curl '${ENCODED_VALUE_URL_OUT}'`, "comando com só os valores removidos");
+  assert.ok(record.privacy.includes("tool_input.command:sensitive_removed"));
+  const text = JSON.stringify(record);
+  assert.ok(leaks(text).length === 0 && !text.includes(ENCODED_MARKER), "registro sem vazamento literal nem codificado");
+});
+
+test("I5-C18bloco de chave privada fechado ou não é descartado inteiro; o texto antes permanece (literal)", () => {
   const closed = "antes\n-----BEGIN RSA PRIVATE KEY-----\nMIIabc\nxyz\n-----END RSA PRIVATE KEY-----\ndepois";
   assert.deepEqual(sanitizeText(closed), { ok: true, text: `antes\n${R}\ndepois`, removed: true });
   const open = "antes -----BEGIN PRIVATE KEY-----\nMIIabc\nmais linhas sem fim";

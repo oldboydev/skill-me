@@ -48,7 +48,23 @@ const TOKEN_FORMATS = [
   /(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{35}/g,
   /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g,
 ];
-const HOME_PREFIXES = [/[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s"'<>|:*?]+/gi, /\/(?:home|Users)\/[^/\s"'<>]+/g];
+const hasTokenFormat = (text) => TOKEN_FORMATS.some((pattern) => text.search(pattern) !== -1);
+
+// Valor de query com nome não sensível: a regra 6 só vê o texto literal, e
+// `ghp%5F…` esconde o token atrás de uma camada normal de URL. Decodifica uma
+// camada só para decidir, com o mesmo detector; nunca a aplica ao texto nem
+// redecodifica. Escape inválido não é classificável (falha fechada). Linha
+// "Valor de parâmetro de query codificado…" do Landing.
+function isUnsafeQueryValue(value) {
+  if (!value.includes("%")) return false;
+  try {
+    return hasTokenFormat(decodeURIComponent(value));
+  } catch {
+    return true;
+  }
+}
+
+const HOME_PREFIXES =[/[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s"'<>|:*?]+/gi, /\/(?:home|Users)\/[^/\s"'<>]+/g];
 
 function removeSensitiveValues(text, namePattern, valuePattern, nameGroup) {
   let out = "";
@@ -93,7 +109,9 @@ export function sanitizeText(text) {
 
   replace(PRIVATE_KEY_BLOCK, () => REMOVED);
   replace(URL_USERINFO, (_, scheme) => scheme);
-  replace(QUERY_PARAM, (match, sep, name, value) => (value !== "" && !isRemoved(value) && isSensitiveQueryName(name) ? `${sep}${name}=${REMOVED}` : match));
+  replace(QUERY_PARAM, (match, sep, name, value) =>
+    value !== "" && !isRemoved(value) && (isSensitiveQueryName(name) || isUnsafeQueryValue(value)) ? `${sep}${name}=${REMOVED}` : match,
+  );
   replace(HEADER_LINE, (_, name, sep) => `${name}${sep}${REMOVED}`);
   replace(AUTH_SCHEME, (match, scheme) => `${scheme} ${REMOVED}`);
   for (const [namePattern, valuePattern, nameGroup] of [[ASSIGNMENT_NAME, ASSIGNMENT_VALUE, 2], [FLAG_NAME, FLAG_VALUE, 3]]) {

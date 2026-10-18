@@ -204,6 +204,7 @@ Proof: `node --test --test-name-pattern="^I5-C13 " tests/integrations/privacy/po
 
 **C14** - Canários das cinco categorias (token, cabeçalho, URL com credencial, password, chave privada) em conteúdo, com e sem opt-in, não aparecem em nenhum canal do debugger: relatório de hook Claude/Codex, relatório do ingest Hermes, relatório do wrapper, stdout/stderr de cada comando `privacy`, arquivos de dados, `state.json`, `.lock`, temporários (observados pelo `fs-probe` antes do rename) e export
 Proof: `node --test --test-name-pattern="^I5-C14 |^I5-C14b " tests/integrations/privacy/outputs.cli.test.mjs` (C14b: token como chave MCP e nome de query codificado, achados P1 da revisão formal, tentativa 1)
+Proof: `node --test --test-name-pattern="^I5-C14c " tests/integrations/privacy/outputs.cli.test.mjs` (C14c: valor de query com token percent-encoded, literal e inteiro codificado, com as sondas procurando cada forma)
 
 **C15** - Os mesmos canários colocados em IDs, nomes (`toolName`, `skillName`) e caminhos (`cwd`, `file_path`, `transcript_path`) também não aparecem em nenhum desses canais
 Proof: `node --test --test-name-pattern="^I5-C15 " tests/integrations/privacy/outputs.cli.test.mjs`
@@ -213,6 +214,7 @@ Proof: `node --test --test-name-pattern="^I5-C16 |^I5-C16b " tests/integrations/
 
 **C17** - `https://user:pw@host/p?token=x&page=2` sai como `https://host/p?token=[removido]&page=2` (literal)
 Proof: `node --test --test-name-pattern="^I5-C17 |^I5-C17b " tests/integrations/privacy/policy.unit.test.mjs` (C17b: nome de parâmetro codificado)
+Proof: `node --test --test-name-pattern="^I5-C17c " tests/integrations/privacy/policy.unit.test.mjs` (C17c: valor de parâmetro codificado com formato de token, malformado e controles)
 
 **C18** - Bloco de chave privada multilinha (fechado e não fechado) é descartado inteiro; o texto antes dele permanece (literal)
 Proof: `node --test --test-name-pattern="^I5-C18 " tests/integrations/privacy/policy.unit.test.mjs`

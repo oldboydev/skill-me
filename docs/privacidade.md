@@ -102,8 +102,19 @@ sensível); valores de `Authorization`, `Cookie`, `Set-Cookie`,
 conhecidos de token (GitHub, OpenAI, Slack, AWS, GitLab, Google, JWT); prefixo de
 diretório pessoal vira `<home>`. Cada valor removido vira `[removido]`.
 
+O valor de um parâmetro de URL também é examinado com uma camada de codificação
+percentual: se `?q=ghp%5F…` (ou o valor inteiro codificado) contém um formato de
+token da lista acima, o valor inteiro vira `[removido]`; o nome e os demais
+parâmetros ficam como vieram. Valor com escape inválido (`%zz`, `%` no fim)
+também é removido, por não ser classificável. Valor sem token continua na forma
+codificada original. Antes desta correção, um token assim codificado no valor
+passava (limitação registrada na revisão formal, tentativa 1, e corrigida na
+mesma entrega).
+
 A detecção por padrões não é garantia universal: um segredo em texto livre, de
-formato desconhecido ou sem nome que o identifique pode passar. Por isso o
+formato desconhecido ou sem nome que o identifique pode passar. A decodificação
+de URL tem uma camada só (`%255F` não vira `_`) e vale só para valores de
+parâmetros de query; fora deles, texto codificado não é decodificado. Por isso o
 conteúdo é opt-in, por captura, e restrito à matriz acima.
 
 ## Limites e perdas

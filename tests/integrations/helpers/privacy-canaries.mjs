@@ -32,6 +32,17 @@ export const KEY_CANARIES = Object.freeze({
 // Nome de parâmetro sensível em codificação percentual normal (`t%6fken` = token).
 export const ENCODED_QUERY_URL = "https://example.test/p?t%6fken=SKILLMECANARYquery&page=2";
 
+// Percent encoding de todo caractere (`%XX` maiúsculo), para canário cujo
+// marcador não aparece literal no texto.
+export const percentEncodeAll = (text) => [...Buffer.from(text, "utf8")].map((b) => `%${b.toString(16).toUpperCase().padStart(2, "0")}`).join("");
+export const ENCODED_MARKER = percentEncodeAll(MARKER);
+
+// Valores de query não sensíveis pelo nome com token em uma camada de percent
+// encoding: underscore codificado e valor inteiro codificado (variante do
+// lote formal1). Só o valor sai; os demais parâmetros ficam literais.
+export const ENCODED_VALUE_URL = `https://example.test/search?page=2&q=ghp%5FSKILLMECANARYvalue0123456789abcd&sort=asc&k=${percentEncodeAll("sk-SKILLMECANARYfull0123456789ab")}&lang=pt%2Dbr`;
+export const ENCODED_VALUE_URL_OUT = "https://example.test/search?page=2&q=[removido]&sort=asc&k=[removido]&lang=pt%2Dbr";
+
 // Texto livre com as cinco categorias entre trechos que podem permanecer.
 export const SECRET_TEXT = [
   "início seguro",
