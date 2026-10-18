@@ -423,3 +423,17 @@ comandos) ≈ 18k, fixtures e testes da #4 afetados ≈ 25k, helpers ≈ 10k. O 
 (S1–S3 e o que falta de S4) é escrita sobre o que já foi lido: cabe no lote de
 150k. Se não couber, a fronteira é uma fatia inteira com provas verdes,
 registrada aqui com o commit real.
+
+- **Onde a fronteira caiu:** sem handoff — o lote D1 fechou S1–S4 inteiros:
+  `99df1c9` (Landing), `7da1ada` (código e testes), `0f7f91b` (guia) e o commit
+  da evidência. C1–C59 com prova executada em Windows e WSL; detalhe e limites
+  em `.checks/issue-5-privacidade.build.md`. Falta o Verifier (coordenador).
+- **Decidido no meio do build:** nada novo do proprietário além de D1. Escolhas
+  técnicas viraram linhas do Landing antes do código (D1 vigente, módulos,
+  eventos com conteúdo, entradas `privacy`, `path_list`, tipo fora da matriz,
+  orçamento, membros, regra 5, envelope, fases e resposta do ingest, export,
+  observação, sondas, canários, guia, testes da #4 que mudam).
+- **Abandonado:** sonda que movia a pasta do store com o lock aberto (falha no
+  Windows) → junção redirecionada; regra 5 por regex única (um nome comum
+  engolia `password=` seguinte) → varredura que só consome valor de nome
+  sensível; log da sonda por `appendFileSync` (recursão) → fd próprio.
