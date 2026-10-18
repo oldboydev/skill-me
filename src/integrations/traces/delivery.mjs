@@ -54,23 +54,34 @@ const lineBytes = (records) => records.reduce((sum, record) => sum + Buffer.byte
 // Uma operação do store até `deadlineAt`. Só o lock ocupado é tentado de novo:
 // o store o recusa antes de qualquer mutação, então nada foi gravado. Qualquer
 // outra falha — inclusive uma que chegue depois do commit, com a confirmação
-// perdida — encerra a tentativa sem reenviar. Uma operação ainda em curso no
-// prazo é abandonada: o agente não espera o disco. O motivo do abandono é
-// `delivery_timeout`, ou `lock_present` se o prazo se foi disputando o lock (a
-// última tentativa cortada não muda a causa).
+// perdida — encerra a tentativa sem reenviar. Uma tentativa ainda em curso no
+// prazo é abandonada: o agente não espera o disco. Se ela já tinha o lock, o
+// motivo é `delivery_timeout` e a confirmação é incerta (o commit pode terminar
+// depois). Se não tinha, o motivo é o da tentativa anterior — `lock_present` se o
+// prazo se foi disputando o lock — e ela não grava mais nada: o lock obtido
+// depois do prazo é devolvido sem mutação (`onLock` lança dentro do store).
 async function untilDeadline(operation, deadlineAt, clock) {
   let code = "delivery_timeout";
   for (;;) {
     const remaining = deadlineAt - clock();
     if (remaining <= 0) return { ok: false, code };
     let timer;
+    let locked = false;
+    let abandoned = false;
+    const onLock = () => {
+      if (abandoned) throw new Error("tentativa abandonada no prazo");
+      locked = true;
+    };
     const outcome = await Promise.race([
-      operation().then(
+      operation(onLock).then(
         (value) => ({ ok: true, value }),
         (error) => ({ ok: false, code: codeOf(error) }),
       ),
       new Promise((resolve) => {
-        timer = setTimeout(() => resolve({ ok: false, code }), remaining);
+        timer = setTimeout(() => {
+          abandoned = true;
+          resolve({ ok: false, code: locked ? "delivery_timeout" : code });
+        }, remaining);
       }),
     ]);
     clearTimeout(timer);
@@ -147,7 +158,7 @@ export function createCaptureDelivery({ root, id, agent, io = createStoreIo(), c
       const sent = batch;
       batch = null;
       const result = sent.ingest.result();
-      const outcome = await untilDeadline(() => appendRecords({ root, id, batch: toStoreBatch(result), io }), sent.deadlineAt, clock);
+      const outcome = await untilDeadline((onLock) => appendRecords({ root, id, batch: toStoreBatch(result), io, onLock }), sent.deadlineAt, clock);
       if (outcome.ok) {
         const admitted = result.records.slice(0, outcome.value.admitted);
         counts.committed += sent.entries;
@@ -165,7 +176,7 @@ export function createCaptureDelivery({ root, id, agent, io = createStoreIo(), c
     opening ??= (async () => {
       phase = "opening";
       const deadlineAt = (waiting[0]?.readAt ?? clock()) + ATTEMPT_MS;
-      const outcome = await untilDeadline(() => openCaptureForIngest({ root, id, io }), deadlineAt, clock);
+      const outcome = await untilDeadline((onLock) => openCaptureForIngest({ root, id, io, onLock }), deadlineAt, clock);
       if (!outcome.ok) return close(outcome.code);
       capture = { key: outcome.value.key, content: outcome.value.content };
       usage = { ...outcome.value.usage };

@@ -13,7 +13,7 @@ import { CAPTURE_REPORT_ENV, appendDeliveryReport, deliveryReportFile, deliveryR
 import { REPO_ROOT, baseEnv, makeScratch, runIntegrations, runIntegrationsJson } from "../helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers, runClaudeHandler, runCodexHandler } from "../helpers/installed-hooks.mjs";
 import { MARKER, claudePayload, codexHookPayload, execEvent, hermesRecord } from "../helpers/privacy-canaries.mjs";
-import { ISO_MS, TRACES_PROBE, boundEnv, captureDir, capturesDir, exportOf, expectedPseudonym, privacyOk, runHermesIngest, runHook, startCapture, statusOf, storeDir } from "../helpers/traces.mjs";
+import { ISO_MS, TRACES_PROBE, boundEnv, captureDir, capturesDir, exportOf, expectedPseudonym, privacyOk, runHermesIngest, runHook, startCapture, statusOf, storeDir, waitUntil } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
 
@@ -561,4 +561,145 @@ test("T8-C16 delivery failure neutrality: SKILL_ME_CAPTURE_REPORT dentro do stor
   assert.deepEqual(privacyOk(["prune", "--root", root]).failed, []);
   assert.equal(privacyOk(["delete", "--root", root, "--capture", closed, "--apply"]).deleted, true);
   assert.ok(!existsSync(captureDir(root, closed)));
+});
+
+// io do store em processo com um roteiro: `busy` (1-based) são as criações do
+// `.lock` que falham com EEXIST sem tocar no disco; `stall(file, kind, stats)`
+// devolve uma promessa que segura aquela operação (ou null para seguir).
+// `lockUnlinks` conta as liberações reais do lock.
+function scriptedIo({ busy = [], stall = () => null }) {
+  const real = createStoreIo();
+  const stats = { lockCreations: 0, lockUnlinks: 0 };
+  const isLock = (file) => path.basename(file) === ".lock";
+  return {
+    stats,
+    io: {
+      ...real,
+      async writeExclusive(file, data) {
+        if (isLock(file) && busy.includes(++stats.lockCreations)) throw Object.assign(new Error("EEXIST simulado"), { code: "EEXIST" });
+        await stall(file, "write", stats);
+        return real.writeExclusive(file, data);
+      },
+      async readBounded(file, maxBytes) {
+        await stall(file, "read", stats);
+        return real.readBounded(file, maxBytes);
+      },
+      async unlink(file) {
+        await real.unlink(file);
+        if (isLock(file)) stats.lockUnlinks += 1;
+      },
+    },
+  };
+}
+
+const gate = () => {
+  let open;
+  const promise = new Promise((resolve) => (open = resolve));
+  return { promise, open };
+};
+const isSegmentTemp = (file) => /^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/.test(path.basename(file));
+
+// Uma entrada do Claude entregue em processo; devolve o tempo da entrada ao fim da tentativa.
+async function deliverOne(delivery, toolUseId) {
+  const payload = claudePayload("pre_tool_bash", { tool_use_id: toolUseId });
+  const started = performance.now();
+  delivery.submit(claudeHookDraft(payload), payload);
+  await delivery.settle();
+  return performance.now() - started;
+}
+
+test("T8-C16 delivery failure neutrality: commit cortado no prazo depois de obter o lock na repetição sai como delivery_timeout, e a confirmação é incerta", async (t) => {
+  // Cenário da revisão: o commit encontra o lock ocupado, a repetição obtém o
+  // lock e o disco para no segmento. Criação 1 do lock = abertura, 2 = commit ocupado, 3 = repetição.
+  const root = scratch("t8 c16 prazo commit");
+  const id = startCapture(root);
+  const disk = gate();
+  const commit = scriptedIo({ busy: [2], stall: (file, kind) => (kind === "write" && isSegmentTemp(file) ? disk.promise : null) });
+  const delivery = createCaptureDelivery({ root, id, agent: "claude", io: commit.io });
+  const elapsed = await deliverOne(delivery, "prazo-commit");
+  assert.deepEqual(delivery.report(), { bound: true, code: "delivery_timeout", entries: 1, committed: 0, persisted: 0, lost: 1 });
+  assert.ok(elapsed <= DELIVERY_DEADLINE_MS, `commit parado: ${Math.round(elapsed)} ms`);
+  t.diagnostic(`em processo, lock obtido na repetição e disco parado: ${Math.round(elapsed)} ms da entrada ao abandono`);
+  assert.equal(commit.stats.lockCreations, 3, "a repetição obteve o lock");
+  // Liberado o disco, o commit que já tinha o lock termina: a entrada contada
+  // como perdida está gravada uma vez — por isso o código não afirma o lock ocupado.
+  disk.open();
+  await waitUntil(() => commit.stats.lockUnlinks === 2, { label: "commit abandonado terminar" });
+  assert.deepEqual(exportOf(root, id).records.map((r) => r.envelope.ids.toolUseId), [expectedPseudonym(root, id, "prazo-commit")]);
+  assertSegmentConsistent(root, id, "commit depois do prazo");
+});
+
+test("T8-C16 delivery failure neutrality: abertura cortada no prazo depois de obter o lock na repetição sai como delivery_timeout", async () => {
+  // Criação 1 do lock ocupada, 2 obtida; a leitura do state.json sob o lock para.
+  const root = scratch("t8 c16 prazo abertura");
+  const id = startCapture(root);
+  const read = gate();
+  let stateReads = 0;
+  const opening = scriptedIo({
+    busy: [1],
+    stall: (file, kind) => (kind === "read" && path.basename(file) === "state.json" && ++stateReads === 1 ? read.promise : null),
+  });
+  const before = snapshotTree(captureDir(root, id));
+  const delivery = createCaptureDelivery({ root, id, agent: "claude", io: opening.io });
+  assert.ok((await deliverOne(delivery, "prazo-abertura")) <= DELIVERY_DEADLINE_MS);
+  assert.deepEqual(delivery.report(), { bound: true, code: "delivery_timeout", entries: 1, committed: 0, persisted: 0, lost: 1 });
+  assert.deepEqual([opening.stats.lockCreations, stateReads], [2, 1], "a repetição obteve o lock e parou na leitura");
+  read.open();
+  await waitUntil(() => opening.stats.lockUnlinks === 1, { label: "abertura abandonada terminar" });
+  assert.deepEqual(snapshotTree(captureDir(root, id)), before, "abertura só lê");
+});
+
+test("T8-C16 delivery failure neutrality: tentativa cortada no prazo antes de obter o lock sai como lock_present e, obtido o lock depois, não grava nada", async () => {
+  // Criação 1 do lock = abertura; 2 = commit ocupado; a 3 (repetição) fica parada
+  // até depois do prazo, antes de existir o lock.
+  const root = scratch("t8 c16 prazo sem lock");
+  const id = startCapture(root);
+  const lockDisk = gate();
+  const contended = scriptedIo({
+    busy: [2],
+    stall: (file, kind, stats) => (kind === "write" && path.basename(file) === ".lock" && stats.lockCreations === 3 ? lockDisk.promise : null),
+  });
+  const before = snapshotTree(captureDir(root, id));
+  const delivery = createCaptureDelivery({ root, id, agent: "claude", io: contended.io });
+  assert.ok((await deliverOne(delivery, "prazo-sem-lock")) <= DELIVERY_DEADLINE_MS);
+  assert.deepEqual(delivery.report(), { bound: true, code: "lock_present", entries: 1, committed: 0, persisted: 0, lost: 1 });
+  assert.equal(contended.stats.lockCreations, 3, "a repetição estava em curso no prazo");
+  // Liberado o disco, a tentativa abandonada obtém o lock e o devolve sem mutação.
+  lockDisk.open();
+  await waitUntil(() => contended.stats.lockUnlinks === 2, { label: "tentativa abandonada liberar o lock" });
+  assert.deepEqual(snapshotTree(captureDir(root, id)), before, "lock_present: nada gravado depois do prazo");
+  assert.ok(!existsSync(path.join(storeDir(root), ".lock")), "lock liberado");
+  assert.equal(statusOf(root, id).counters.persisted, 0);
+});
+
+test("T8-C16 delivery failure neutrality: no hook real, lock obtido na repetição e disco parado aparecem como delivery_timeout no diagnóstico, sem prender o agente", async (t) => {
+  const base = scratch("t8 c16 prazo hook");
+  const root = path.join(base, "capturas ação");
+  mkdirSync(root);
+  const id = startCapture(root);
+  const reportFile = path.join(base, "diagnóstico de entrega.ndjson");
+  const before = snapshotTree(captureDir(root, id));
+  // Criação 1 do lock = abertura; 2 = commit, ocupado; 3 = repetição, obtida; o segmento não termina.
+  const run = await runHook("claude", claudePayload("pre_tool_bash"), {
+    env: boundEnv(root, id, { [CAPTURE_REPORT_ENV]: reportFile, SKILL_ME_TEST_TRACES_BUSY_LOCK: "2", SKILL_ME_TEST_TRACES_STALL_SEGMENT: "1" }),
+    nodeArgs: ["--import", TRACES_PROBE],
+    writeAfterMs: 500,
+  });
+  const elapsed = run.closedAt - run.stdinClosedAt;
+  assert.deepEqual([run.status, run.stdout, run.stderr], [0, "", ""]);
+  assert.ok(elapsed <= DELIVERY_DEADLINE_MS + PROCESS_EXIT_ALLOWANCE_MS, `hook: ${Math.round(elapsed)} ms do fim do stdin à saída`);
+  t.diagnostic(`hook com lock obtido na repetição e disco parado: ${Math.round(elapsed)} ms do fim do stdin à saída do processo`);
+  const delivery = lostAll("delivery_timeout", 1);
+  assert.deepEqual(run.report.delivery, delivery);
+  const lines = diagnostics(reportFile);
+  assert.equal(lines.length, 1);
+  assertDiagnostic(lines[0], { agent: "claude", capture: id, delivery }, "diagnóstico");
+  for (const value of [root, base, MARKER, claudePayload("pre_tool_bash").session_id, "Error", "    at "]) assert.ok(!readFileSync(reportFile, "utf8").includes(value), `vazou ${value}`);
+  // O processo saiu com o commit parado e o lock tomado (limite do guia); removido o
+  // lock, a captura está como antes, sem temporário.
+  const lock = path.join(storeDir(root), ".lock");
+  assert.ok(existsSync(lock), "lock do processo que saiu no meio do commit");
+  rmSync(lock);
+  assert.deepEqual(snapshotTree(captureDir(root, id)), before);
+  assert.equal(statusOf(root, id).counters.persisted, 0);
 });

@@ -134,6 +134,9 @@ async function assertUnchanged(ctx) {
 
 // Lock exclusivo da raiz, sem espera: ocupado → conflito sem mutação, e nunca
 // removido por outro processo. Só sai se ainda tiver os bytes que gravamos.
+// `ctx.onLock`, quando houver, é chamado quando o lock passa a ser desta
+// operação, antes de qualquer leitura ou mutação; se lançar, a operação
+// desiste sem mudar nada.
 async function withLock(ctx, fn) {
   const lockPath = path.join(ctx.storeDir, LOCK_FILE);
   const bytes = Buffer.from(JSON.stringify({ lockVersion: 1, pid: process.pid, nonce: randomBytes(8).toString("hex") }));
@@ -146,6 +149,7 @@ async function withLock(ctx, fn) {
   let failure = null;
   let result;
   try {
+    ctx.onLock?.();
     await assertUnchanged(ctx);
     result = await fn();
   } catch (error) {
@@ -328,10 +332,11 @@ export function readCaptureStatus({ root, id, io = createStoreIo() }) {
 
 // Fase 1 do ingest: estado e chave lidos sob o lock e liberados antes do
 // stdin (Landing "Ingest — fases"). A chave só sai deste módulo para a
-// política, em memória; nunca para uma resposta.
-export function openCaptureForIngest({ root, id, io = createStoreIo() }) {
+// política, em memória; nunca para uma resposta. `onLock`: ver withLock (a
+// entrega da #8 distingue assim uma tentativa cortada com ou sem o lock).
+export function openCaptureForIngest({ root, id, io = createStoreIo(), onLock }) {
   return storeOp(async () => {
-    const ctx = await openExisting(root, io);
+    const ctx = { ...(await openExisting(root, io)), onLock };
     return withLock(ctx, async () => {
       const { dir, state } = await readCapture(ctx, id);
       if (state.state !== "active") throw new StoreError("capture_not_active");
@@ -466,12 +471,13 @@ const dataFileName = (sequence) => `events-${String(sequence).padStart(6, "0")}.
 // saíram de applyPolicy. O storage não sanitiza nem deriva contadores do
 // conteúdo: soma os do chamador e decide só a admissão por limite. O arquivo
 // de dados é reescrito inteiro num novo segmento (anterior + admitidos) e o
-// state.json é o commit; o segmento anterior sai depois.
-export async function appendRecords({ root, id, batch, io = createStoreIo() }) {
+// state.json é o commit; o segmento anterior sai depois. `onLock`: ver
+// openCaptureForIngest.
+export async function appendRecords({ root, id, batch, io = createStoreIo(), onLock }) {
   assertBatch(batch);
   const lines = batch.records.map((record) => JSON.stringify(record) + "\n");
   return storeOp(async () => {
-    const ctx = await openExisting(root, io);
+    const ctx = { ...(await openExisting(root, io)), onLock };
     return withLock(ctx, async () => {
       const { dir, state } = await readCapture(ctx, id);
       if (state.state !== "active") throw new StoreError("capture_not_active");

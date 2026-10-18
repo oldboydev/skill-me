@@ -10,6 +10,14 @@
 // SKILL_ME_TEST_TRACES_LOST_CONFIRMATION=<n>: o n-ésimo `unlink` do `.lock`
 // acontece de verdade e depois lança EIO — o commit e a liberação do lock
 // ocorreram, mas quem chamou só vê a falha (confirmação perdida).
+//
+// SKILL_ME_TEST_TRACES_BUSY_LOCK=<n>: a n-ésima criação exclusiva do `.lock`
+// falha com EEXIST sem tocar no disco, como se outro processo o tivesse
+// naquele instante; a seguinte é real.
+//
+// SKILL_ME_TEST_TRACES_STALL_SEGMENT=1: a criação exclusiva do temporário de
+// um segmento (`events-*.skill-me-tmp`) nunca termina — disco parado depois de
+// o processo obter o lock.
 import { existsSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
@@ -31,6 +39,21 @@ if (gateDir) {
       const deadline = Date.now() + 30_000;
       while (!existsSync(path.join(gateDir, "go")) && Date.now() < deadline) await sleep(10);
     }
+    return realOpen(file, flags, mode);
+  };
+}
+
+const busyAt = Number(env.SKILL_ME_TEST_TRACES_BUSY_LOCK ?? 0);
+const stallSegment = env.SKILL_ME_TEST_TRACES_STALL_SEGMENT === "1";
+const isSegmentTemp = (file) => typeof file === "string" && /^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/.test(path.basename(file));
+
+if (busyAt > 0 || stallSegment) {
+  const realOpen = fsp.open;
+  let creations = 0;
+  fsp.open = async function contendedOpen(file, flags, mode) {
+    const exclusive = typeof flags === "string" && flags.includes("x");
+    if (exclusive && isLock(file) && ++creations === busyAt) throw Object.assign(new Error("EEXIST injetado pelo teste"), { code: "EEXIST" });
+    if (exclusive && stallSegment && isSegmentTemp(file)) return new Promise(() => {});
     return realOpen(file, flags, mode);
   };
 }
