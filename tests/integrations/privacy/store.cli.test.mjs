@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Readable } from "node:stream";
@@ -362,6 +362,152 @@ test("I5-C49 delete recusa link/junção, subdiretório e arquivo alheio sem apa
   assert.equal(viaLink.status, 4);
   assert.deepEqual(viaLink.body.error, { code: "link_refused" });
   assert.equal(runPrivacy(["start", "--root", linkedRoot]).body.error.code, "link_refused");
+});
+
+// `io` que registra cada operação de disco do storage com o caminho alvo.
+function recordingIo() {
+  const real = createStoreIo();
+  const calls = [];
+  const io = {};
+  for (const [name, fn] of Object.entries(real)) {
+    io[name] = (...args) => {
+      calls.push([name, ...args.filter((arg) => typeof arg === "string")]);
+      return fn(...args);
+    };
+  }
+  return { io, calls };
+}
+
+test("I5-C49b pasta .deleting-<id> inesperada junto da captura ativa ou parada: delete e prune recusam foreign_entry sem ler nem apagar nenhuma das duas", async () => {
+  const root = makeScratch("i5 c49b");
+  const captures = path.join(storeDir(root), "captures");
+  const active = await startIn(root);
+  await appendSanitized(root, active, 2);
+  const stopped = await startIn(root);
+  await appendSanitized(root, stopped, 1);
+  assert.equal(runPrivacy(["stop", "--root", root, "--capture", stopped]).status, 0);
+  const foreign = (id) => path.join(captures, `.deleting-${id}`);
+  for (const id of [active, stopped]) {
+    mkdirSync(foreign(id));
+    writeFileSync(path.join(foreign(id), "key"), `arquivo alheio ${id}`);
+  }
+  const before = snapshotTree(root);
+  const unchanged = (label) => {
+    assert.deepEqual(snapshotTree(root), before, `${label}: árvore idêntica, inclusive mtime`);
+    for (const id of [active, stopped]) assert.equal(readFileSync(path.join(foreign(id), "key"), "utf8"), `arquivo alheio ${id}`, label);
+  };
+  const refused = (command, fields = {}) => ({ schemaVersion: 1, command, status: "error", ...fields, error: { code: "foreign_entry" } });
+
+  // delete prévia e --apply, pelo CLI, para a ativa e a parada.
+  for (const id of [active, stopped]) {
+    for (const apply of [[], ["--apply"]]) {
+      const result = runPrivacy(["delete", "--root", root, "--capture", id, ...apply]);
+      assert.equal(result.status, 4, `delete ${apply.join("")}`);
+      assert.deepEqual(result.body, refused("delete"), `delete ${apply.join("")}: sem entries nem deleted`);
+      assertClosedOutput(result, root);
+    }
+  }
+  unchanged("delete pelo CLI");
+
+  // prune prévia e --apply: CLI (relógio real) e API com relógio que venceria a parada.
+  const pruneBody = (applied) => refused("prune", { applied, selected: [active, stopped].sort(), deleted: [], failed: [active, stopped].sort().map((capture) => ({ capture, code: "foreign_entry" })) });
+  for (const apply of [[], ["--apply"]]) {
+    const result = runPrivacy(["prune", "--root", root, ...apply]);
+    assert.equal(result.status, 4, `prune ${apply.join("")}`);
+    assert.deepEqual(result.body, pruneBody(apply.length > 0));
+    assertClosedOutput(result, root);
+  }
+  unchanged("prune pelo CLI");
+
+  // API em processo: nenhuma operação dentro de nenhuma das duas pastas, além
+  // do lstat dos dois nomes; nenhuma mutação além do próprio .lock.
+  const later = () => Date.now() + 30 * DAY_MS;
+  const runs = [
+    ...[active, stopped].flatMap((id) => [["delete", "--root", root, "--capture", id], ["delete", "--root", root, "--capture", id, "--apply"]]),
+    ["prune", "--root", root],
+    ["prune", "--root", root, "--apply"],
+  ];
+  for (const argv of runs) {
+    const { io, calls } = recordingIo();
+    const result = await runPrivacyCommand({ argv, now: later, io });
+    assert.equal(result.exitCode, 4, argv.join(" "));
+    assert.deepEqual(result.body, argv[0] === "delete" ? refused("delete") : pruneBody(argv.includes("--apply")), argv.join(" "));
+    const lock = path.join(storeDir(root), ".lock");
+    for (const [op, file] of calls) {
+      if (["unlink", "rename", "rmdir", "mkdir", "writeExclusive"].includes(op)) assert.equal(file, lock, `${argv.join(" ")}: ${op} só no lock`);
+      for (const id of [active, stopped]) {
+        for (const dir of [foreign(id), path.join(captures, id)]) {
+          if (file === dir) assert.equal(op, "lstat", `${argv.join(" ")}: ${op} na pasta`);
+          assert.ok(!file.startsWith(dir + path.sep), `${argv.join(" ")}: ${op} dentro da pasta`);
+        }
+      }
+    }
+    for (const id of argv[0] === "delete" ? [argv[4]] : [active, stopped]) {
+      for (const dir of [foreign(id), path.join(captures, id)]) assert.ok(calls.some(([op, file]) => op === "lstat" && file === dir), `${argv.join(" ")}: os dois nomes conferidos`);
+    }
+  }
+  unchanged("API");
+
+  // A ativa sem a pasta inesperada volta ao contrato anterior; a parada é apagada.
+  rmSync(foreign(active), { recursive: true });
+  rmSync(foreign(stopped), { recursive: true });
+  assert.deepEqual(runPrivacy(["delete", "--root", root, "--capture", active, "--apply"]).body.error, { code: "capture_active" });
+  const deleted = runPrivacy(["delete", "--root", root, "--capture", stopped, "--apply"]);
+  assert.deepEqual(deleted.body, { schemaVersion: 1, command: "delete", status: "ok", capture: stopped, applied: true, deleted: true });
+  assert.deepEqual(readdirSync(captures), [active]);
+
+  // `.deleting-<id>` como junção ao lado da captura continua link_refused, sem atravessar.
+  const outside = makeScratch("i5 c49b fora");
+  writeFileSync(path.join(outside, "key"), "fora da raiz");
+  symlinkSync(outside, foreign(active), "junction");
+  for (const apply of [[], ["--apply"]]) assert.deepEqual(runPrivacy(["delete", "--root", root, "--capture", active, ...apply]).body.error, { code: "link_refused" });
+  assert.equal(readFileSync(path.join(outside, "key"), "utf8"), "fora da raiz");
+  assert.ok(existsSync(path.join(captureDir(root, active), "key")), "a captura ativa continua com a chave");
+});
+
+test("I5-C51b retomada legítima: só a pasta em exclusão — com chave e estado, só com state.json ou já sem state.json (vazia) — é concluída por delete e por prune", async () => {
+  const root = makeScratch("i5 c51b");
+  const captures = path.join(storeDir(root), "captures");
+  const failing = (name) => {
+    const real = createStoreIo();
+    return {
+      ...real,
+      async unlink(file) {
+        if (path.basename(file) === name) throw Object.assign(new Error("EIO injetado"), { code: "EIO" });
+        return real.unlink(file);
+      },
+      async rmdir(dir) {
+        if (name === "rmdir") throw Object.assign(new Error("EIO injetado"), { code: "EIO" });
+        return real.rmdir(dir);
+      },
+    };
+  };
+  const partial = async (name) => {
+    const id = await startIn(root);
+    await appendSanitized(root, id, 1);
+    assert.equal(runPrivacy(["stop", "--root", root, "--capture", id]).status, 0);
+    const result = await runPrivacyCommand({ argv: ["delete", "--root", root, "--capture", id, "--apply"], io: failing(name) });
+    assert.equal(result.exitCode, 5);
+    assert.deepEqual(result.body.error, { code: "partial_delete" });
+    assert.ok(!existsSync(captureDir(root, id)));
+    return id;
+  };
+  const stateLeft = await partial("state.json");
+  assert.deepEqual(readdirSync(path.join(captures, `.deleting-${stateLeft}`)), ["state.json"]);
+  const empty = await partial("rmdir");
+  assert.deepEqual(readdirSync(path.join(captures, `.deleting-${empty}`)), []);
+  const viaPrune = await partial("key");
+  const active = await startIn(root);
+
+  const preview = runPrivacy(["delete", "--root", root, "--capture", empty]);
+  assert.deepEqual(preview.body, { schemaVersion: 1, command: "delete", status: "ok", capture: empty, applied: false, entries: [] });
+  for (const id of [stateLeft, empty]) {
+    assert.deepEqual(runPrivacy(["delete", "--root", root, "--capture", id, "--apply"]).body, { schemaVersion: 1, command: "delete", status: "ok", capture: id, applied: true, deleted: true });
+  }
+  const pruned = runPrivacy(["prune", "--root", root, "--apply"]);
+  assert.deepEqual(pruned.body, { schemaVersion: 1, command: "prune", status: "ok", applied: true, selected: [viaPrune], deleted: [viaPrune], failed: [] });
+  assert.deepEqual(readdirSync(captures), [active], "só a captura ativa normal fica");
+  assert.deepEqual(runPrivacy(["delete", "--root", root, "--capture", active]).body.error, { code: "capture_active" });
 });
 
 test("I5-C50s a chave nunca aparece no status e sai com a captura", async () => {

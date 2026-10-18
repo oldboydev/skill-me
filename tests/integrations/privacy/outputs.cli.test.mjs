@@ -775,3 +775,120 @@ test("I5-C33 o wrapper repassa canário nativo do filho enquanto o relatório do
   assert.ok(run.report, "relatório do debugger presente");
   assert.deepEqual(leaks(JSON.stringify(run.report)), [], "relatório sem canário");
 });
+
+// Captura `--content` pelo CLI real com fs-probe e sonda de privacidade
+// procurando `marker`; `check` confere stdout dos comandos e os dois logs.
+function probedCapture(label, marker) {
+  const root = makeScratch(`i5 ${label} store`);
+  const probeDir = makeScratch(`i5 ${label} probe`);
+  const fsProbeLog = path.join(probeDir, "fs-probe.jsonl");
+  const privacyLog = path.join(probeDir, "privacy-probe.jsonl");
+  const options = {
+    nodeArgs: ["--import", FS_PROBE, "--import", PRIVACY_PROBE],
+    env: baseEnv({ SKILL_ME_TEST_PRIVACY_PROBE_LOG: privacyLog, SKILL_ME_TEST_PRIVACY_PROBE_MARKER: marker, SKILL_ME_TEST_FS_PROBE_LOG: fsProbeLog, SKILL_ME_TEST_FS_PROBE_CANARY: marker }),
+  };
+  const commands = [];
+  const run = (argv, extra = {}) => {
+    const result = runPrivacy(argv, { ...options, ...extra });
+    commands.push([argv[0], result]);
+    return result;
+  };
+  const check = (clean, ingests) => {
+    for (const [name, result] of commands) {
+      clean(result.stdout, `${name} stdout`);
+      assert.equal(result.stderr, "", `${name} stderr`);
+    }
+    const fsText = readFileSync(fsProbeLog, "utf8");
+    const privacyText = readFileSync(privacyLog, "utf8");
+    clean(fsText, "log do fs-probe");
+    clean(privacyText, "log da sonda de privacidade");
+    const renamed = fsText.trim().split("\n").map((line) => JSON.parse(line)).filter((o) => o.moment === "before_rename");
+    assert.ok(renamed.filter((o) => /^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/.test(o.file)).length >= ingests, "temporário de dados de cada ingest");
+    for (const observation of renamed) assert.equal(observation.containsCanary, false, observation.file);
+    const written = privacyText.trim().split("\n").map((line) => JSON.parse(line)).filter((e) => e.op === "closed_written");
+    assert.ok(written.filter((e) => path.basename(e.file) === ".lock").length >= commands.length, "lock de cada comando");
+    assert.ok(written.some((e) => e.file.endsWith(".skill-me-tmp")), "temporários observados");
+    for (const entry of written) assert.equal(entry.containsMarker, false, path.basename(entry.file));
+  };
+  return { root, run, check };
+}
+
+test("I5-C14l credencial curta depois de Basic/Bearer num resultado textual sai com sensitive_removed e não chega a temporários, lock, arquivos, logs nem export", () => {
+  const R = "[removido]";
+  // `Basic YTpi` (`a:b`) e `Bearer ab`: credenciais sintéticas curtas do achado.
+  const output = "GET /api Basic YTpi 200\nBearer ab fim";
+  const outputOut = `GET /api Basic ${R} 200\nBearer ${R} fim`;
+  const command = "curl -s https://example.test/api";
+  const input = {
+    "codex-exec": [execEvent("item_completed_command", { command, aggregated_output: output })],
+    claude: [claudePayload("post_tool_bash", { tool_input: { command }, tool_response: { stdout: output, stderr: "" } })],
+    "codex-hooks": [codexHookPayload("post_tool_bash", { tool_input: { command }, tool_response: { output } })],
+  };
+  // Sem diff: a mensagem de falha não pode carregar a credencial.
+  const clean = (text, label) => assert.ok(!text.includes("YTpi") && !text.includes("Bearer ab"), label);
+  const { root, run, check } = probedCapture("c14l", "Basic YTpi");
+
+  const id = run(["start", "--root", root, "--content"]).body.capture.id;
+  for (const [agent, entries] of Object.entries(input)) {
+    const result = run(["ingest", "--root", root, "--capture", id, "--agent", agent], { input: ndjson(entries) });
+    assert.equal(result.status, 0, agent);
+    assert.equal(result.body.batch.persisted, entries.length, agent);
+    assert.ok(isDeepStrictEqual(result.body.batch.contentOmitted, { sensitive_removed: 1 }), `${agent}: contagem do lote`);
+  }
+  for (const file of walkFiles(root)) clean(readFileSync(file, "latin1"), `após ingest: ${path.relative(root, file)}`);
+
+  const exported = run(["export", "--root", root, "--capture", id]);
+  assert.equal(exported.status, 0);
+  const texts = exported.body.records.flatMap((r) => (r.content?.fields ?? []).filter((f) => f.kind === "text").map((f) => [f.field, f.value]));
+  assert.ok(
+    isDeepStrictEqual(texts.sort(), [
+      ["item.aggregated_output", outputOut],
+      ["item.command", command],
+      ["tool_input.command", command],
+      ["tool_input.command", command],
+      ["tool_response.output", outputOut],
+      ["tool_response.stderr", ""],
+      ["tool_response.stdout", outputOut],
+    ]),
+    "só as credenciais saíram dos três resultados",
+  );
+  const omissions = exported.body.records.map((r) => r.privacy.filter((e) => !e.startsWith("envelope."))).sort();
+  assert.ok(isDeepStrictEqual(omissions, [["item.aggregated_output:sensitive_removed"], ["tool_response.output:sensitive_removed"], ["tool_response.stdout:sensitive_removed"]]), "motivo exato por registro");
+  const status = run(["status", "--root", root, "--capture", id]);
+  assert.ok(isDeepStrictEqual(status.body.capture.counters.contentOmitted, { sensitive_removed: 3 }), "contagem exata no status");
+  run(["stop", "--root", root, "--capture", id]);
+  assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
+  assert.deepEqual(readdirSync(path.join(root, "skill-me-privacy", "captures")), [], "captura apagada");
+  check(clean, 3);
+});
+
+test("I5-C16d chave própria __proto__ em argumentos MCP pelo ingest/export real fica como membro próprio, mascarado por dentro e sem perda silenciosa", () => {
+  const R = "[removido]";
+  const args = JSON.parse('{"__proto__":{"q":"DB_PASSWORD=SKILLMECANARYproto","ok":"fica"},"n":{"__proto__":"valor comum"},"l":[{"__proto__":"v"}],"q":"x"}');
+  const expected = `{"__proto__":{"q":"DB_PASSWORD=${R}","ok":"fica"},"n":{"__proto__":"valor comum"},"l":[{"__proto__":"v"}],"q":"x"}`;
+  const input = ndjson([execEvent("item_completed_mcp_tool_call", { arguments: args, result: null })]);
+  assert.ok(input.includes('"arguments":{"__proto__":{"q":'), "pré-condição: a linha JSONL traz a chave própria");
+  const clean = (text, label) => assert.ok(leaks(text).length === 0, label);
+  const { root, run, check } = probedCapture("c16d", MARKER);
+
+  const id = run(["start", "--root", root, "--content"]).body.capture.id;
+  const ingested = run(["ingest", "--root", root, "--capture", id, "--agent", "codex-exec"], { input });
+  assert.equal(ingested.status, 0);
+  assert.equal(ingested.body.batch.persisted, 1);
+  assert.ok(isDeepStrictEqual(ingested.body.batch.contentOmitted, { sensitive_removed: 1 }), "só a remoção do valor sensível conta");
+  for (const file of walkFiles(root)) clean(readFileSync(file, "latin1"), `após ingest: ${path.relative(root, file)}`);
+
+  const exported = run(["export", "--root", root, "--capture", id]);
+  assert.equal(exported.status, 0);
+  assert.ok(exported.stdout.includes(`"value":${expected}`), "export serializa o membro");
+  const [record] = exported.body.records;
+  const value = record.content.fields.find((f) => f.field === "item.arguments").value;
+  assert.ok(Object.hasOwn(value, "__proto__") && Object.hasOwn(value.n, "__proto__") && Object.hasOwn(value.l[0], "__proto__"), "chaves próprias na raiz, aninhada e no array");
+  assert.ok(JSON.stringify(value) === expected, "valor exato");
+  assert.ok(isDeepStrictEqual(record.privacy.filter((e) => !e.startsWith("envelope.")), ["item.arguments:sensitive_removed"]), "motivo exato");
+  const status = run(["status", "--root", root, "--capture", id]);
+  assert.ok(isDeepStrictEqual(status.body.capture.counters.contentOmitted, { sensitive_removed: 1 }), "contagem exata no status");
+  run(["stop", "--root", root, "--capture", id]);
+  assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
+  check(clean, 1);
+});

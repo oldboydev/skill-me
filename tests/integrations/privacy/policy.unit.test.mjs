@@ -439,6 +439,60 @@ test("I5-C16b chave de structured com formato de token sai inteira com sensitive
   assert.ok(leaks(JSON.stringify([limit, over])).length === 0, "limite de membros sem vazamento");
 });
 
+test("I5-C16c chave própria __proto__ vinda de JSON.parse fica como propriedade própria do objeto comum projetado, sem trocar protótipo", () => {
+  // Entrada real da fronteira: `JSON.parse` cria `__proto__` como chave própria
+  // (um literal JS acionaria o setter antes da projeção).
+  const cases = [
+    ["raiz string", '{"__proto__":"valor comum","q":"x"}', '{"__proto__":"valor comum","q":"x"}', []],
+    ["raiz objeto", '{"__proto__":{"a":1,"b":"t"},"q":"x"}', '{"__proto__":{"a":1,"b":"t"},"q":"x"}', []],
+    ["aninhado", '{"n":{"__proto__":"v","k":2}}', '{"n":{"__proto__":"v","k":2}}', []],
+    ["em array", '{"l":[{"__proto__":{"z":[1,"w"]}},"fim"]}', '{"l":[{"__proto__":{"z":[1,"w"]}},"fim"]}', []],
+    [
+      "sensível dentro",
+      '{"__proto__":{"password":"SKILLMECANARYp","q":"DB_PASSWORD=SKILLMECANARYq","ok":"fica"}}',
+      `{"__proto__":{"q":"DB_PASSWORD=${R}","ok":"fica"}}`,
+      ["item.arguments:sensitive_removed"],
+    ],
+    ["constructor/prototype", '{"constructor":"c","prototype":{"x":1},"__proto__":null}', '{"constructor":"c","prototype":{"x":1},"__proto__":null}', []],
+  ];
+  const objects = (value) => (value !== null && typeof value === "object" ? [value, ...Object.values(value).flatMap(objects)] : []);
+  for (const [label, json, expected, privacy] of cases) {
+    const args = JSON.parse(json);
+    const line = JSON.stringify(execEvent("item_completed_mcp_tool_call", { arguments: args, result: null }));
+    assert.ok(line.includes('"__proto__":'), `${label}: pré-condição, a linha JSONL tem a chave`);
+    const payload = JSON.parse(line);
+    assert.ok(objects(payload.item.arguments).some((o) => Object.hasOwn(o, "__proto__")), `${label}: pré-condição, chave própria depois de JSON.parse`);
+    const extracted = extractContent({ contract: CONTRACT_OF["codex-exec"], nativeEvent: "item.completed", payload, key: KEY });
+    const value = extracted.content.fields[0].value;
+    assert.ok(JSON.stringify(value) === expected, `${label}: serialização exata`);
+    same(extracted.privacy, privacy, `${label}: privacy exata`);
+    for (const object of objects(value)) {
+      assert.equal(Object.getPrototypeOf(object), Array.isArray(object) ? Array.prototype : Object.prototype, `${label}: protótipo comum`);
+    }
+    // O membro é próprio e relido como próprio por `JSON.parse` (export).
+    const reparsed = JSON.parse(JSON.stringify(extracted.content));
+    assert.ok(JSON.stringify(reparsed.fields[0].value) === expected, `${label}: releitura exata`);
+    assert.ok(!JSON.stringify(extracted).includes(MARKER), `${label}: sem vazamento`);
+  }
+  const rootString = extractContent({ contract: CONTRACT_OF["codex-exec"], nativeEvent: "item.completed", payload: execEvent("item_completed_mcp_tool_call", { arguments: JSON.parse('{"__proto__":{"a":1}}'), result: null }), key: KEY }).content.fields[0].value;
+  assert.ok(Object.hasOwn(rootString, "__proto__"), "chave própria no resultado");
+  assert.deepEqual(Object.keys(rootString), ["__proto__"]);
+  assert.equal(rootString.a, undefined, "o valor não virou protótipo");
+  assert.equal({}.a, undefined, "protótipo global intacto");
+  assert.equal(Object.hasOwn(Object.prototype, "a"), false);
+
+  // Pela política inteira: membro mantido e contado como qualquer outro (128/129).
+  const record = policy("codex-exec", JSON.parse(JSON.stringify(execEvent("item_completed_mcp_tool_call", { arguments: JSON.parse('{"__proto__":"valor comum","q":"x"}'), result: null }))));
+  assert.ok(JSON.stringify(field(record, "item.arguments").value) === '{"__proto__":"valor comum","q":"x"}', "política preserva o membro");
+  same(record.privacy.filter((e) => !e.startsWith("envelope.")), [], "sem omissão");
+  const members = (count) => JSON.parse(`{${Array.from({ length: count - 1 }, (_, i) => `"m${i}":${i}`).join(",")},"__proto__":"v"}`);
+  const fits = policy("codex-exec", execEvent("item_completed_mcp_tool_call", { arguments: members(CONTENT_LIMITS.maxMembers), result: null }));
+  assert.ok(Object.hasOwn(field(fits, "item.arguments").value, "__proto__"), "128 membros com __proto__ cabem");
+  const over = policy("codex-exec", execEvent("item_completed_mcp_tool_call", { arguments: members(CONTENT_LIMITS.maxMembers + 1), result: null }));
+  assert.equal(over.content, null, "129 membros estouram");
+  same(over.privacy.filter((e) => !e.startsWith("envelope.")), ["content:unsanitizable"], "estouro por membros");
+});
+
 test("I5-C17b parâmetro de query com nome sensível codificado tem o valor removido; o nome fica como veio", () => {
   const cases = [
     ["?t%6fken=", "https://example.test/p?t%6fken=SKILLMECANARYa", `https://example.test/p?t%6fken=${R}`],
@@ -716,7 +770,8 @@ test("I5-C14f valor sensível composto: composição aberta omite o campo; NBSP,
       '{"homepage":"https://example.test","n":1} {"u":"https://example.test/","m":"a@b"}',
       "password: (nenhuma)\n--password (x)",
       `PASSWORD=${R} ls a b`,
-      "Bearer curto, Bearer é prosa",
+      // `Bearer curto, Bearer é prosa` foi controle até a revisão formal 3; o
+      // resultado novo exato está no I5-C14k (Landing "Credencial curta…").
     ].map((text) => [text, text]),
     false,
   );
@@ -730,6 +785,59 @@ test("I5-C14f valor sensível composto: composição aberta omite o campo; NBSP,
   assert.ok(omitted.privacy.includes("tool_response.stdout:sensitive_removed"));
   const text = JSON.stringify(omitted);
   assert.ok(leaks(text).length === 0 && !text.includes("\\u0000"), "registro sem vazamento nem marcador interno");
+});
+
+test("I5-C14k credencial curta depois de Bearer/bearer/Basic (1 a 8 caracteres, padding) é removida; esquema sem valor e grafias fora da regra não mudam", () => {
+  // `YTpi` é `a:b` em base64: credencial Basic sintética do achado.
+  exactCases(
+    [
+      ["Basic YTpi", `Basic ${R}`],
+      // Comprimentos 1 a 8 nas três grafias atuais (8 já era removido).
+      ["Bearer a", `Bearer ${R}`],
+      ["bearer ab", `bearer ${R}`],
+      ["Basic abc", `Basic ${R}`],
+      ["Bearer YTpi", `Bearer ${R}`],
+      ["bearer abcde", `bearer ${R}`],
+      ["Basic abcdef", `Basic ${R}`],
+      ["Bearer abcdefg", `Bearer ${R}`],
+      ["bearer abcdefgh", `bearer ${R}`],
+      // Padding e alfabeto inteiro do token68.
+      ["Basic YQ==", `Basic ${R}`],
+      ["Basic Og==", `Basic ${R}`],
+      ["Bearer =", `Bearer ${R}`],
+      ["Bearer a.b~c+d/e-f_g", `Bearer ${R}`],
+      ["Basic\tYTpi", `Basic\t${R}`],
+      // No texto ao redor, com a palavra de shell inteira.
+      ["GET /x Basic YTpi 200", `GET /x Basic ${R} 200`],
+      ["Basic YTpi e Bearer ab fim", `Basic ${R} e Bearer ${R} fim`],
+      ["Basic YTpi,resto ok", `Basic ${R} ok`],
+      ["Basic YTpi\nlinha", `Basic ${R}\nlinha`],
+      ['{"h":"Basic YTpi","n":1}\nfim', `{"h":"Basic ${R}"\nfim`],
+      // Controle anterior mudado pela decisão (era texto intacto).
+      ["Bearer curto, Bearer é prosa", `Bearer ${R} Bearer é prosa`],
+      // Falsos positivos declarados: a palavra seguinte em prosa sai.
+      ["Basic auth", `Basic ${R}`],
+      ["use Bearer token aqui", `use Bearer ${R} aqui`],
+    ],
+    true,
+  );
+  // Palavra que para antes de `(`: composição aberta, campo omitido (perda declarada).
+  refusedCases(["Bearer tokens(s) ok", "Basic a(b) ok"]);
+  // Fora da regra: esquema sem valor na linha, primeiro caractere fora do
+  // alfabeto, outras grafias, esquema colado e outros esquemas.
+  exactCases(
+    ["Basic", "Bearer   ", "Basic\nfim", "Basic \nfim", "Basic é", "Basic (x)", 'Basic "x"', "basic YTpi", "BASIC YTpi", "BEARER ab", "xBasic a", "Token abc", "Digest ab"].map((text) => [text, text]),
+    false,
+  );
+
+  // Fronteira da política: o valor curto sai com `sensitive_removed`; a palavra
+  // aberta omite só o seu campo com `unsanitizable`.
+  const record = policy("claude", claudePayload("post_tool_bash", { tool_input: { command: "ls" }, tool_response: { stdout: "GET /api Basic YTpi 200\nBearer ab fim", stderr: "Bearer tokens(s) ok" } }));
+  same(field(record, "tool_response.stdout").value, `GET /api Basic ${R} 200\nBearer ${R} fim`, "stdout com as duas credenciais removidas");
+  assert.equal(field(record, "tool_response.stderr"), undefined, "stderr omitido");
+  same(record.privacy, ["tool_response.stdout:sensitive_removed", "tool_response.stderr:unsanitizable"], "privacy exata");
+  const text = JSON.stringify(record);
+  assert.ok(!text.includes("YTpi") && !text.includes("Bearer ab ") && !text.includes("tokens(s)") && !text.includes("\\u0000"), "registro sem a credencial nem marcador interno");
 });
 
 test("I5-C14i valor sensível em bloco multilinha, na linha seguinte, depois de tag/âncora ou de comentário omite o campo; indicador sem linha seguinte ou com texto na mesma linha segue a regra anterior", () => {

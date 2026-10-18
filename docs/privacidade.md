@@ -53,7 +53,10 @@ Retenção: não há daemon. Rode `privacy prune --root <diretório>` para ver a
 prévia e `privacy prune --root <diretório> --apply` para remover as capturas
 encerradas cuja idade alcançou o prazo; capturas ativas nunca são removidas.
 `delete` também mostra uma prévia e só apaga com `--apply`; arquivos alheios,
-links e junções são recusados em vez de apagados.
+links e junções são recusados em vez de apagados. Uma exclusão interrompida deixa
+`captures/.deleting-<id>`, que um novo `delete --apply` ou `prune --apply`
+conclui; se essa pasta existe junto da própria `captures/<id>`, os dois comandos
+recusam com `foreign_entry` sem ler nem apagar nenhuma das duas.
 
 Saída: um JSON por execução em stdout, stderr vazio. Códigos: 0 concluído;
 2 uso inválido; 3 estado ou formato inválido ou ausente; 4 conflito, lock ocupado
@@ -94,13 +97,22 @@ Objetos (argumentos MCP) passam por projeção: chave sensível (`password`,
 `token`, `secret`, `api-key`, `authorization`, `cookie` e semelhantes) descarta a
 subárvore inteira; chave fora de `[A-Za-z0-9_.-]{1,64}` é omitida; chave com
 formato de token conhecido sai com o membro inteiro (`sensitive_removed`), sem ser
-reescrita. Texto passa por regras fixas: bloco de chave privada removido inteiro;
+reescrita. Uma chave `__proto__`, `constructor` ou `prototype` é um membro comum:
+continua no conteúdo como chave própria, sem alterar o objeto. Texto passa por regras fixas: bloco de chave privada removido inteiro;
 userinfo e parâmetros sensíveis de URL, com o nome do parâmetro reconhecido também
 em codificação percentual (`t%6fken`, uma camada; escape inválido conta como
 sensível); valores de `Authorization`, `Cookie`, `Set-Cookie`,
 `X-Api-Key`; `Bearer`/`Basic`; atribuições e flags com nome sensível; formatos
 conhecidos de token (GitHub, OpenAI, Slack, AWS, GitLab, Google, JWT); prefixo de
 diretório pessoal vira `<home>`. Cada valor removido vira `[removido]`.
+
+Depois de `Bearer`, `bearer` ou `Basic` e de espaço, qualquer valor não vazio no
+alfabeto de token (letras, dígitos, `._~+/=-`, padding incluído) é removido, por
+mais curto que seja: `Basic YTpi` vira `Basic [removido]`. Isso também remove a
+palavra seguinte em prosa (`Basic auth`, `Bearer token`), e uma palavra que para
+antes de `(` (`Bearer tokens(s)`) omite o campo inteiro com `unsanitizable`.
+Outras grafias (`basic`, `BEARER`), outros esquemas e um valor na linha seguinte
+ao esquema não são reconhecidos.
 
 O valor de um parâmetro de URL também é examinado com uma camada de codificação
 percentual: se `?q=ghp%5F…` (ou o valor inteiro codificado) contém um formato de

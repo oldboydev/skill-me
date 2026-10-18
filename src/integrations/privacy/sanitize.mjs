@@ -35,7 +35,10 @@ const URL_USERINFO = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)(?=([^ \t\n/?#<>]*))(?:[^ 
 const QUERY_PARAM = /([?&])([^=&#\s"'<>]+)=([^&#\s"'<>]*)/g;
 // Aspa logo antes do nome: o cabeçalho é o conteúdo dela (`-H 'Authorization: …'`).
 const HEADER_NAME = /(["']?)\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)([ \t]*:[ \t]*)/gi;
-const AUTH_SCHEME = /\b(Bearer|bearer|Basic)[ \t]+([A-Za-z0-9._~+/=-]{8,})/g;
+// Sem mínimo de comprimento: token68 tem um caractere ou mais, e `Basic YTpi`
+// (`a:b`) já é credencial. Custa a palavra seguinte em prosa (`Basic auth`);
+// linha "Credencial curta depois de `Bearer`/`Basic`" do Landing.
+const AUTH_SCHEME = /\b(Bearer|bearer|Basic)[ \t]+([A-Za-z0-9._~+/=-]+)/g;
 // Nome + separador sem o valor: o valor só é consumido quando o nome é
 // sensível, para que `foo:password=x` não esconda a segunda atribuição.
 const ASSIGNMENT_NAME = /(["']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1([ \t]*[:=][ \t]*)/g;

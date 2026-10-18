@@ -109,7 +109,10 @@ function project(value, depth, target, tally) {
     }
     return out;
   }
-  const out = {};
+  // `Object.fromEntries` cria cada membro como propriedade própria, como o
+  // `JSON.parse` da entrada: `out[key] = …` acionaria o setter herdado de
+  // `__proto__`, e o membro sumiria ou viraria o protótipo do resultado.
+  const members = [];
   for (const [key, child] of Object.entries(value)) {
     tally.visit();
     if (isSensitiveKey(key)) {
@@ -125,9 +128,9 @@ function project(value, depth, target, tally) {
       continue;
     }
     const projected = project(child, depth + 1, target, tally);
-    if (projected !== OMIT) out[key] = projected;
+    if (projected !== OMIT) members.push([key, projected]);
   }
-  return out;
+  return Object.fromEntries(members);
 }
 
 // Valor nativo do campo da linha: `undefined` = ausente; contêiner ou valor

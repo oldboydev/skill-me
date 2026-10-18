@@ -480,12 +480,18 @@ async function inspectEntries(io, dir) {
 }
 
 // Alvo da exclusão: a pasta em exclusão (retomada) ou a captura encerrada.
+// As duas juntas não saem do fluxo do produto (o rename tira `<id>`): nenhuma
+// é escolhida nem lida, só os nomes passam por lstat. Linha "Pasta em
+// exclusão coexistindo com a captura" do Landing.
 async function deletionTarget(ctx, id) {
   if ((await capturesDirKind(ctx)) === "missing") throw new StoreError("capture_not_found");
   const deleting = path.join(ctx.capturesDir, DELETING_PREFIX + id);
   const kind = await entryKind(ctx.io, deleting);
   if (kind === "link") throw new StoreError("link_refused");
-  if (kind === "dir") return { dir: deleting, resumed: true };
+  if (kind === "dir") {
+    if ((await entryKind(ctx.io, path.join(ctx.capturesDir, id))) !== "missing") throw new StoreError("foreign_entry");
+    return { dir: deleting, resumed: true };
+  }
   if (kind !== "missing") throw new StoreError("foreign_entry");
   const { dir, state } = await readCapture(ctx, id);
   if (state.state === "active") throw new StoreError("capture_active");
