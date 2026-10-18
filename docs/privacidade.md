@@ -140,6 +140,15 @@ compacto, o que vem colado depois do valor sai junto, e uma URL sem caminho
 seguida de aspas e `@` perde o texto até esse `@`. A contagem de aspas é feita na
 linha, sem um parser de shell: um apóstrofo anterior pode inverter a leitura.
 
+Um nome sensível seguido de um indicador de bloco no fim da linha (`secret: |`,
+`password: >-`, `token: |2 # comentário`), com texto nas linhas seguintes, também
+omite o campo inteiro com `unsanitizable`: o valor estaria nessas linhas e o
+debugger não interpreta YAML para saber onde ele acaba. O campo sai mesmo quando a
+linha seguinte não pertence ao bloco. `|` ou `>` seguidos de texto na mesma linha
+(`--token | cat`) seguem a regra anterior. Uma tag ou âncora antes do indicador
+(`secret: !!str |`), um valor continuado na linha seguinte sem indicador
+(`secret:` e o valor abaixo) e `--password` seguido de NBSP não são reconhecidos.
+
 A detecção por padrões não é garantia universal: um segredo em texto livre, de
 formato desconhecido ou sem nome que o identifique pode passar. A decodificação
 de URL tem uma camada só (`%255F` não vira `_`) e vale só para valores de

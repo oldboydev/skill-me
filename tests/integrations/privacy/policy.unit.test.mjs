@@ -732,6 +732,61 @@ test("I5-C14f valor sensível composto: composição aberta omite o campo; NBSP,
   assert.ok(leaks(text).length === 0 && !text.includes("\\u0000"), "registro sem vazamento nem marcador interno");
 });
 
+test("I5-C14i valor sensível em bloco multilinha omite o campo; indicador sem linha seguinte ou com texto na mesma linha segue a regra anterior", () => {
+  // Nome já reconhecido pelas regras 3 e 5 seguido de `|`/`>` no fim da linha.
+  refusedCases([
+    "secret: |\n  SKILLMECANARYa",
+    "password: >\n  SKILLMECANARYb\n",
+    // Aninhado e indentado; alias de nome já reconhecido.
+    "db:\n  host: h\n  password: |\n    SKILLMECANARYc\n  user: u",
+    "  api-key: |-\n    SKILLMECANARYd",
+    '"client_secret": >2-\n  SKILLMECANARYe\n',
+    "DB_PASSWORD: |2\n    SKILLMECANARYf",
+    // Modificador simples, comentário, tab, `\r\n`, CR e sem espaço no separador.
+    "token: |+ # rotacionar\n  SKILLMECANARYg",
+    "secret: >-\t# x\n  SKILLMECANARYh",
+    "x\r\nDB_PASSWORD: >-\r\n  SKILLMECANARYi\r\n",
+    "secret: |\rSKILLMECANARYj",
+    "secret:|\n SKILLMECANARYk",
+    "secret: |\t\n\tSKILLMECANARYl",
+    // Mesmo indicador depois de cabeçalho (regra 3) e de flag (regra 5).
+    "Authorization: |\n  Bearer SKILLMECANARYm",
+    "cookie: >\n  s=SKILLMECANARYn",
+    "--password |\n  SKILLMECANARYo",
+  ]);
+
+  // Controles: indicador sem linha depois; `|`/`>` seguidos de texto na mesma
+  // linha (pipe, redirecionamento); nome não sensível; valor na mesma linha.
+  exactCases(
+    [
+      "secret: |",
+      "password: >-\n",
+      "description: |\n  texto livre\nnotes: >\n  mais texto",
+      "--token | cat\nok",
+      "password: > /dev/null\nok",
+      "secret: |x\nfim",
+      "echo a | grep b > out\nfim",
+    ].map((text) => [text, text]),
+    false,
+  );
+  exactCases(
+    [
+      ["secret: SKILLMECANARYp\n  |\nfim", `secret: ${R}\n  |\nfim`],
+      ["password: 'a|SKILLMECANARYq'\nfim", `password: ${R}\nfim`],
+    ],
+    true,
+  );
+
+  // Fronteira da política: resultado textual de Bash com o bloco → campo
+  // omitido `unsanitizable`, evento e comando preservados, sem valor.
+  const record = policy("claude", claudePayload("post_tool_bash", { tool_input: { command: "cat config.yml" }, tool_response: { stdout: "db:\n  password: |\n    SKILLMECANARYr\n", stderr: "" } }));
+  assert.equal(field(record, "tool_response.stdout"), undefined, "bloco omitido");
+  assert.ok(record.privacy.includes("tool_response.stdout:unsanitizable"));
+  same(field(record, "tool_input.command").value, "cat config.yml", "comando preservado");
+  const text = JSON.stringify(record);
+  assert.ok(leaks(text).length === 0 && !text.includes("\\u0000"), "registro sem vazamento nem marcador interno");
+});
+
 test("I5-C14h sanitização de 1 MiB numa linha com muitos valores termina em tempo linear", () => {
   // Teto largo (5 s; a versão linear leva dezenas de ms): distingue reler a
   // linha ou a palavra a cada valor (dezenas de segundos) de uma passada só.
@@ -744,6 +799,10 @@ test("I5-C14h sanitização de 1 MiB numa linha com muitos valores termina em te
     ["Authorization: " + "\\".repeat(MiB - 40) + "x\n", true],
     [fill("-H 'Cookie: a' "), true],
     [fill("https://u:p@h' "), false],
+    // Indicador de bloco: o fim da linha não é procurado a cada nome; só o
+    // último `password: > ` termina a linha e recusa.
+    [fill("secret: |x # ") + "\nfim", true],
+    [fill("password: > ") + "\nfim", false],
   ];
   cases.forEach(([input, ok], i) => {
     const started = performance.now();

@@ -60,6 +60,12 @@ export const COMPOSED_COMMAND = "DB_PASSWORD=prefix$(printf SKILLMECANARYcompoun
 export const COMPOSED_OUTPUT = 'PASSWORD=abc SKILLMECANARYnbsp ok\nAuthorization: Digest username="SKILLMECANARYheader", response="SKILLMECANARYresp"\nGET https://example.test/p?password=abc\'SKILLMECANARYsuffix\' 200\nBearer abcdefgh12,SKILLMECANARYbearer fim';
 export const COMPOSED_OUTPUT_OUT = "PASSWORD=[removido] ok\nAuthorization: [removido]\nGET https://example.test/p?password=[removido] 200\nBearer [removido] fim";
 
+// Valor sensível em bloco multilinha (risco relatado no lote anterior): resultado
+// textual com `password: |` e `token: >-` aninhados; sem projeção segura, o campo
+// inteiro sai como `unsanitizable`. Só dados; nada é lido nem executado.
+export const BLOCK_COMMAND = "cat config.yml";
+export const BLOCK_OUTPUT = "db:\n  host: localhost\n  password: |\n    SKILLMECANARYblock\n  api:\n    token: >- # rotacionar\n      SKILLMECANARYfolded\n";
+
 // Texto livre com as cinco categorias entre trechos que podem permanecer.
 export const SECRET_TEXT = [
   "início seguro",

@@ -165,12 +165,32 @@ function schemeValue(match, text, quotes) {
   return completeWord(text, stop - match[2].length, stop, quotes);
 }
 
+// Indicador de bloco (`|`/`>`, chomping/indentação simples, comentário) que
+// termina a linha: o valor estaria nas linhas seguintes, e só uma gramática
+// YAML diria onde ele acaba. Só lê o texto; nada é extraído. Linha "Valor
+// sensível em bloco multilinha…" do Landing.
+const BLOCK_INDICATOR = /[|>][0-9+-]{0,2}(?:[ \t]*(?=[\r\n])|[ \t]+#)/y;
+const NO_SAFE_PROJECTION = Symbol("no safe projection");
+
+// Indicador seguido de quebra com texto depois. A última quebra assim é
+// calculada uma vez por passada: procurar o fim da linha a cada nome seria
+// quadrático numa linha longa de `secret: | # …`.
+function blockOpener(text) {
+  const end = text.length - (text.endsWith("\r\n") ? 2 : text.endsWith("\n") || text.endsWith("\r") ? 1 : 0);
+  const lastBreak = Math.max(text.lastIndexOf("\n", end - 1), text.lastIndexOf("\r", end - 1));
+  return (at) => {
+    BLOCK_INDICATOR.lastIndex = at;
+    return at < lastBreak && BLOCK_INDICATOR.test(text);
+  };
+}
+
 // Regra 3: com aspa antes do nome, o valor vai até o fecho dela (aspas
 // internas do outro tipo, como `Digest username="…"`, são do valor) e a
 // concatenação depois do fecho sai junto; sem fecho na linha, até o fim do
 // texto. Sem aspa, até o fim da linha, ou do texto se ela deixar aspa aberta.
-function headerValue(match, text) {
+function headerValue(match, text, _quotes, opensBlock) {
   const start = match.index + match[0].length;
+  if (opensBlock(start)) return NO_SAFE_PROJECTION;
   if (match[1] !== "") {
     QUOTED_AT.lastIndex = match.index;
     const quoted = QUOTED_AT.exec(text);
@@ -190,27 +210,31 @@ function headerValue(match, text) {
 // seguinte é composição (`NOME=(…)`). Valor que começa no marcador já foi
 // completado pelas regras 1–4: pular antes de varrer a palavra evita relê-la
 // a cada nome numa linha longa.
-function assignedValue(match, text, nameGroup) {
+function assignedValue(match, text, nameGroup, opensBlock) {
   const name = match[nameGroup];
   if (!isSensitiveKey(name)) return { skip: match.index + match[0].indexOf(name) + name.length };
   const start = match.index + match[0].length;
   if (text[start] === PENDING_REMOVED) return { skip: start };
+  if (opensBlock(start)) return NO_SAFE_PROJECTION;
   const end = wordEnd(text, start);
   return end === start && /[ \t]$/.test(match[0]) ? { skip: start } : { start, end, keep: "", stop: end };
 }
 
 // Troca cada valor que `locate` devolve pelo marcador interno. Valor que já
 // começa no marcador ou é exatamente `[removido]` não conta de novo; trecho
-// com composição aberta deixa o texto sem projeção segura (`null`).
+// com composição aberta ou valor em bloco deixa o texto sem projeção segura
+// (`null`).
 function removeValues(text, pattern, locate) {
   let out = "";
   let copied = 0;
   let removed = false;
   const quotes = quoteCounter(text);
+  const opensBlock = blockOpener(text);
   pattern.lastIndex = 0;
   for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
-    const found = locate(match, text, quotes);
+    const found = locate(match, text, quotes, opensBlock);
     if (found === null) continue;
+    if (found === NO_SAFE_PROJECTION) return null;
     if ("skip" in found) {
       pattern.lastIndex = found.skip;
       continue;
@@ -246,8 +270,8 @@ const VALUE_RULES = [
   [QUERY_PARAM, queryValue],
   [HEADER_NAME, headerValue],
   [AUTH_SCHEME, schemeValue],
-  [ASSIGNMENT_NAME, (match, text) => assignedValue(match, text, 2)],
-  [FLAG_NAME, (match, text) => assignedValue(match, text, 3)],
+  [ASSIGNMENT_NAME, (match, text, _quotes, opensBlock) => assignedValue(match, text, 2, opensBlock)],
+  [FLAG_NAME, (match, text, _quotes, opensBlock) => assignedValue(match, text, 3, opensBlock)],
 ];
 
 // Texto não bem formado (surrogate isolado), com NUL ou com um valor sensível
