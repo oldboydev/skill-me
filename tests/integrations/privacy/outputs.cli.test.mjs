@@ -430,7 +430,9 @@ test("I5-C14g valor sensível composto: comando omitido como unsanitizable e sa�
     return result;
   };
   // Sem diff: a mensagem de falha não pode carregar o marcador. O marcador
-  // interno (NUL) também não pode sair do sanitizador.
+  // interno (NUL) também não pode sair do sanitizador para um texto; `key` é
+  // binária (32 bytes aleatórios, ~12% de chance de conter 0x00) e só passa
+  // pela busca do marcador.
   const clean = (text, label) => assert.ok(leaks(text).length === 0 && !text.includes("\0") && !text.includes("\\u0000"), label);
 
   const id = run(["start", "--root", root, "--content"]).body.capture.id;
@@ -439,7 +441,12 @@ test("I5-C14g valor sensível composto: comando omitido como unsanitizable e sa�
     assert.equal(result.status, 0, agent);
     assert.equal(result.body.batch.persisted, entries.length, agent);
   }
-  for (const file of walkFiles(root)) clean(readFileSync(file, "utf8"), `após ingest: ${path.relative(root, file)}`);
+  for (const file of walkFiles(root)) {
+    const label = `após ingest: ${path.relative(root, file)}`;
+    const text = readFileSync(file, "utf8");
+    if (path.basename(file) === "key") assert.ok(leaks(text).length === 0, label);
+    else clean(text, label);
+  }
 
   const exported = run(["export", "--root", root, "--capture", id]);
   assert.equal(exported.status, 0);
