@@ -111,6 +111,18 @@ codificada original. Antes desta correção, um token assim codificado no valor
 passava (limitação registrada na revisão formal, tentativa 1, e corrigida na
 mesma entrega).
 
+Depois de um nome sensível (`DB_PASSWORD=`, `"password":`, `--password`), o valor
+removido é a palavra inteira, como o shell a lê na mesma linha: vírgulas, `}`, `-`
+inicial, trechos entre aspas colados e separadores escapados (`\,`, `\;`, `\ `)
+fazem parte dela; espaço, `;`, `&`, `|`, `<`, `>`, `(` e `)` sem escape a
+encerram. Aspa sem fechamento na linha (ou `\` no fim da linha) logo depois do
+nome ou do valor torna o fim incerto, e então o resto do texto também é removido.
+Isso pode remover mais que o segredo: em JSON compacto, o que vem colado depois do
+valor (`,"user":"u"}`); depois de `--password` sem valor, a opção seguinte; em
+`bash -lc 'TOKEN=x'`, a aspa final. Na URL, tudo até o último `@` da autoridade é
+userinfo (`https://u:a@b@host` vira `https://host`); `@` no caminho, na query ou no
+fragmento fica.
+
 A detecção por padrões não é garantia universal: um segredo em texto livre, de
 formato desconhecido ou sem nome que o identifique pode passar. A decodificação
 de URL tem uma camada só (`%255F` não vira `_`) e vale só para valores de

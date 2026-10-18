@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 import { EVENT_KIND_FIELDS } from "../../../src/integrations/boundary.mjs";
 import { INTEGRATIONS_CLI, REPO_ROOT, baseEnv, makeScratch, parseReport } from "../helpers/cli.mjs";
 import { runClaudeHandler } from "../helpers/installed-hooks.mjs";
-import { CANARIES, ENCODED_MARKER, ENCODED_QUERY_URL, ENCODED_VALUE_URL, ENCODED_VALUE_URL_OUT, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, ndjson } from "../helpers/privacy-canaries.mjs";
+import { CANARIES, DELIMITED_COMMAND, DELIMITED_COMMAND_OUT, DELIMITED_OUTPUT, DELIMITED_OUTPUT_OUT, ENCODED_MARKER, ENCODED_QUERY_URL, ENCODED_VALUE_URL, ENCODED_VALUE_URL_OUT, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, ndjson } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy } from "../helpers/privacy-store.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
 
@@ -340,6 +340,70 @@ test("I5-C14c valor de query com token percent-encoded não chega a temporários
     assert.ok(written.some((e) => e.file.endsWith(".skill-me-tmp")), "temporários observados");
     for (const entry of written) assert.equal(entry.containsMarker, false, path.basename(entry.file));
   }
+});
+
+test("I5-C14e valor sensível com vírgula/escape e userinfo com vários @ não chegam a temporários, lock, arquivos, logs nem export", () => {
+  const input = {
+    "codex-exec": [execEvent("item_completed_command", { command: DELIMITED_COMMAND, aggregated_output: DELIMITED_OUTPUT })],
+    claude: [
+      claudePayload("pre_tool_bash", { tool_input: { command: DELIMITED_COMMAND } }),
+      claudePayload("post_tool_bash", { tool_input: { command: DELIMITED_COMMAND }, tool_response: { stdout: DELIMITED_OUTPUT, stderr: "" } }),
+    ],
+    "codex-hooks": [codexHookPayload("pre_tool_bash", { tool_input: { command: DELIMITED_COMMAND } })],
+  };
+  const root = makeScratch("i5 c14e store");
+  const probeDir = makeScratch("i5 c14e probe");
+  const fsProbeLog = path.join(probeDir, "fs-probe.jsonl");
+  const privacyLog = path.join(probeDir, "privacy-probe.jsonl");
+  const options = {
+    nodeArgs: ["--import", FS_PROBE, "--import", PRIVACY_PROBE],
+    env: baseEnv({ SKILL_ME_TEST_PRIVACY_PROBE_LOG: privacyLog, SKILL_ME_TEST_PRIVACY_PROBE_MARKER: MARKER, SKILL_ME_TEST_FS_PROBE_LOG: fsProbeLog, SKILL_ME_TEST_FS_PROBE_CANARY: MARKER }),
+  };
+  const commands = [];
+  const run = (argv, extra = {}) => {
+    const result = runPrivacy(argv, { ...options, ...extra });
+    commands.push([argv[0], result]);
+    return result;
+  };
+  // Sem diff: a mensagem de falha não pode carregar o marcador.
+  const clean = (text, label) => assert.ok(leaks(text).length === 0, label);
+
+  const id = run(["start", "--root", root, "--content"]).body.capture.id;
+  for (const [agent, entries] of Object.entries(input)) {
+    const result = run(["ingest", "--root", root, "--capture", id, "--agent", agent], { input: ndjson(entries) });
+    assert.equal(result.status, 0, agent);
+    assert.equal(result.body.batch.persisted, entries.length, agent);
+  }
+  for (const file of walkFiles(root)) clean(readFileSync(file, "utf8"), `após ingest: ${path.relative(root, file)}`);
+
+  const exported = run(["export", "--root", root, "--capture", id]);
+  assert.equal(exported.status, 0);
+  const texts = exported.body.records.flatMap((r) => (r.content?.fields ?? []).filter((f) => f.kind === "text").map((f) => [f.field, f.value]));
+  assert.deepEqual(texts.map(([name]) => name).sort(), ["item.aggregated_output", "item.command", "tool_input.command", "tool_input.command", "tool_input.command", "tool_response.stderr", "tool_response.stdout"].sort());
+  for (const [name, value] of texts) {
+    if (name.endsWith("command")) assert.ok(value === DELIMITED_COMMAND_OUT, `${name} só valores e userinfo removidos`);
+    if (name === "item.aggregated_output" || name === "tool_response.stdout") assert.ok(value === DELIMITED_OUTPUT_OUT, name);
+  }
+  for (const record of exported.body.records.filter((r) => r.content !== null)) assert.ok(record.privacy.some((e) => e.endsWith(":sensitive_removed")), "remoção registrada");
+  run(["stop", "--root", root, "--capture", id]);
+  assert.equal(run(["delete", "--root", root, "--capture", id, "--apply"]).status, 0);
+  assert.deepEqual(readdirSync(path.join(root, "skill-me-privacy", "captures")), [], "captura apagada");
+
+  for (const [name, result] of commands) {
+    clean(result.stdout, `${name} stdout`);
+    assert.equal(result.stderr, "", `${name} stderr`);
+  }
+  const fsText = readFileSync(fsProbeLog, "utf8");
+  const privacyText = readFileSync(privacyLog, "utf8");
+  clean(fsText, "log do fs-probe");
+  clean(privacyText, "log da sonda de privacidade");
+  const renamed = fsText.trim().split("\n").map((line) => JSON.parse(line)).filter((o) => o.moment === "before_rename");
+  assert.ok(renamed.filter((o) => /^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/.test(o.file)).length >= 3, "temporário de dados de cada ingest");
+  for (const observation of renamed) assert.equal(observation.containsCanary, false, observation.file);
+  const written = privacyText.trim().split("\n").map((line) => JSON.parse(line)).filter((e) => e.op === "closed_written");
+  assert.ok(written.filter((e) => path.basename(e.file) === ".lock").length >= commands.length, "lock de cada comando");
+  assert.ok(written.some((e) => e.file.endsWith(".skill-me-tmp")), "temporários observados");
+  for (const entry of written) assert.equal(entry.containsMarker, false, path.basename(entry.file));
 });
 
 test("I5-C15 canários em IDs, nomes e caminhos não aparecem em nenhum canal do debugger", async () => {

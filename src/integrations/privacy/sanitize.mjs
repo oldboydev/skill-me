@@ -28,16 +28,26 @@ function isSensitiveQueryName(name) {
 }
 
 const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----|$)/g;
-const URL_USERINFO = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/?#@"'<>]+@/g;
+// Autoridade até `/?#`, espaço, aspa ou `<>`; o host não contém `@`, então o
+// userinfo vai até o último `@` dela (`u:a@b@host`).
+const URL_USERINFO = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/?#"'<>]+@/g;
 const QUERY_PARAM = /([?&])([^=&#\s"'<>]+)=([^&#\s"'<>]*)/g;
 const HEADER_LINE = /\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)([ \t]*:[ \t]*)[^\r\n"']+/gi;
 const AUTH_SCHEME = /\b(Bearer|bearer|Basic)[ \t]+[A-Za-z0-9._~+/=-]{8,}/g;
 // Nome + separador sem o valor: o valor só é consumido quando o nome é
 // sensível, para que `foo:password=x` não esconda a segunda atribuição.
 const ASSIGNMENT_NAME = /(["']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1([ \t]*[:=][ \t]*)/g;
-const ASSIGNMENT_VALUE = /"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|[^\s"'&,;}]+/y;
 const FLAG_NAME = /(^|[\s"'(])(--?)([A-Za-z][A-Za-z0-9_.-]{0,63})[ \t]+/g;
-const FLAG_VALUE = /"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|[^\s"'&,;}-][^\s"'&,;}]*/y;
+// Valor = palavra de shell na mesma linha: vírgula, `}`, `-` inicial e
+// separador escapado pertencem a ela (`DB_PASSWORD=a,b`). Aspa sem fecho na
+// linha ou `\` no fim dela não dizem se o valor acaba (fecho do texto ao redor
+// ou continuação): o valor vai até o fim do texto, como a chave privada sem END.
+const SENSITIVE_VALUE = /(?:"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|\\.|[^\s"'\\;&|<>()])*(?:["'\\][\s\S]*)?/y;
+// Remoção das regras 1–4 até a regra 5 terminar: o trecho delas acaba em aspa,
+// `#`, `&` ou espaço por desenho e o que segue é texto ao redor, não valor. NUL
+// nunca vem da entrada (recusada antes), então não se confunde com o texto
+// `[removido]` que a própria entrada traga.
+const PENDING_REMOVED = "\0";
 const TOKEN_FORMATS = [
   /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}/g,
   /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{20,}/g,
@@ -66,7 +76,7 @@ function isUnsafeQueryValue(value) {
 
 const HOME_PREFIXES =[/[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s"'<>|:*?]+/gi, /\/(?:home|Users)\/[^/\s"'<>]+/g];
 
-function removeSensitiveValues(text, namePattern, valuePattern, nameGroup) {
+function removeSensitiveValues(text, namePattern, nameGroup) {
   let out = "";
   let copied = 0;
   let removed = false;
@@ -79,9 +89,9 @@ function removeSensitiveValues(text, namePattern, valuePattern, nameGroup) {
       continue;
     }
     const valueStart = match.index + match[0].length;
-    valuePattern.lastIndex = valueStart;
-    const value = valuePattern.exec(text);
-    if (value === null || value[0] === REMOVED || value[0] === `"${REMOVED}"`) {
+    SENSITIVE_VALUE.lastIndex = valueStart;
+    const value = SENSITIVE_VALUE.exec(text);
+    if (value[0] === "" || value[0].startsWith(PENDING_REMOVED) || value[0] === REMOVED || value[0] === `"${REMOVED}"`) {
       namePattern.lastIndex = Math.max(valueStart, nameEnd);
       continue;
     }
@@ -107,18 +117,19 @@ export function sanitizeText(text) {
   };
   const isRemoved = (value) => value === REMOVED || value === `"${REMOVED}"`;
 
-  replace(PRIVATE_KEY_BLOCK, () => REMOVED);
+  replace(PRIVATE_KEY_BLOCK, () => PENDING_REMOVED);
   replace(URL_USERINFO, (_, scheme) => scheme);
   replace(QUERY_PARAM, (match, sep, name, value) =>
-    value !== "" && !isRemoved(value) && (isSensitiveQueryName(name) || isUnsafeQueryValue(value)) ? `${sep}${name}=${REMOVED}` : match,
+    value !== "" && !isRemoved(value) && (isSensitiveQueryName(name) || isUnsafeQueryValue(value)) ? `${sep}${name}=${PENDING_REMOVED}` : match,
   );
-  replace(HEADER_LINE, (_, name, sep) => `${name}${sep}${REMOVED}`);
-  replace(AUTH_SCHEME, (match, scheme) => `${scheme} ${REMOVED}`);
-  for (const [namePattern, valuePattern, nameGroup] of [[ASSIGNMENT_NAME, ASSIGNMENT_VALUE, 2], [FLAG_NAME, FLAG_VALUE, 3]]) {
-    const scanned = removeSensitiveValues(text, namePattern, valuePattern, nameGroup);
+  replace(HEADER_LINE, (_, name, sep) => `${name}${sep}${PENDING_REMOVED}`);
+  replace(AUTH_SCHEME, (match, scheme) => `${scheme} ${PENDING_REMOVED}`);
+  for (const [namePattern, nameGroup] of [[ASSIGNMENT_NAME, 2], [FLAG_NAME, 3]]) {
+    const scanned = removeSensitiveValues(text, namePattern, nameGroup);
     text = scanned.text;
     removed ||= scanned.removed;
   }
+  text = text.replaceAll(PENDING_REMOVED, REMOVED);
   for (const pattern of TOKEN_FORMATS) replace(pattern, () => REMOVED);
   for (const pattern of HOME_PREFIXES) replace(pattern, () => "<home>");
   return { ok: true, text, removed };

@@ -14,7 +14,7 @@ import { CONTENT_LIMITS, CONTENT_TABLE, extractContent } from "../../../src/inte
 import { applyPolicy, checkEnvelopeBudget } from "../../../src/integrations/privacy/policy.mjs";
 import { isSensitiveKey, sanitizeText } from "../../../src/integrations/privacy/sanitize.mjs";
 import { loadFixture } from "../helpers/fixtures.mjs";
-import { CANARIES, ENCODED_MARKER, ENCODED_QUERY_URL, ENCODED_VALUE_URL, ENCODED_VALUE_URL_OUT, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, percentEncodeAll } from "../helpers/privacy-canaries.mjs";
+import { CANARIES, DELIMITED_COMMAND, DELIMITED_COMMAND_OUT, ENCODED_MARKER, ENCODED_QUERY_URL, ENCODED_VALUE_URL, ENCODED_VALUE_URL_OUT, KEY_CANARIES, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks, percentEncodeAll } from "../helpers/privacy-canaries.mjs";
 
 const KEY = Buffer.alloc(32, 7);
 const OTHER_KEY = Buffer.alloc(32, 9);
@@ -515,6 +515,117 @@ test("I5-C17c valor de query com formato de token em uma camada de percent encod
   assert.ok(record.privacy.includes("tool_input.command:sensitive_removed"));
   const text = JSON.stringify(record);
   assert.ok(leaks(text).length === 0 && !text.includes(ENCODED_MARKER), "registro sem vazamento literal nem codificado");
+});
+
+// Rótulos por índice: a entrada e o valor real podem conter o marcador.
+const exactCases = (cases, removed) =>
+  cases.forEach(([input, expected], i) => same(sanitizeText(input), { ok: true, text: expected, removed }, `${removed ? "caso" : "controle"} ${i}`));
+
+test("I5-C14d valor de nome sensível é a palavra inteira de shell: vírgula, aspas, escapes e '-' inicial saem juntos; separadores reais delimitam", () => {
+  exactCases(
+    [
+      // Os dois cenários do achado.
+      ["DB_PASSWORD=prefix,SKILLMECANARYdbpass", `DB_PASSWORD=${R}`],
+      ["mysql --password prefix,SKILLMECANARYpw -h db", `mysql --password ${R} -h db`],
+      // Vírgula no início, no fim, várias; atribuição e flag.
+      ["PASSWORD=,SKILLMECANARYa ls", `PASSWORD=${R} ls`],
+      ["PASSWORD=SKILLMECANARYb, ls", `PASSWORD=${R} ls`],
+      ["PASSWORD=a,,SKILLMECANARYc,d, --password x,,SKILLMECANARYd,", `PASSWORD=${R} --password ${R}`],
+      ["--password=a,SKILLMECANARYq ls", `--password=${R} ls`],
+      // Entre aspas e concatenado com aspas.
+      ['PASSWORD="a, SKILLMECANARYe" ls', `PASSWORD=${R} ls`],
+      ["--password 'a,SKILLMECANARYf' --verbose", `--password ${R} --verbose`],
+      ['PASSWORD=pre"SKILLMECANARY g"x ls', `PASSWORD=${R} ls`],
+      ['PASSWORD="pre"SKILLMECANARYh,i ls', `PASSWORD=${R} ls`],
+      [`PASSWORD='a'"b"SKILLMECANARYi ls`, `PASSWORD=${R} ls`],
+      // Separador escapado em valor sem aspas.
+      ["PASSWORD=a\\,SKILLMECANARYj ls", `PASSWORD=${R} ls`],
+      ["PASSWORD=a\\;SKILLMECANARYk; ls", `PASSWORD=${R}; ls`],
+      ["PASSWORD=a\\ SKILLMECANARYl ls", `PASSWORD=${R} ls`],
+      // Caracteres que não delimitam palavra de shell.
+      ["PASSWORD=a}SKILLMECANARYm] ls", `PASSWORD=${R} ls`],
+      ["PASSWORD=a#SKILLMECANARYn ls", `PASSWORD=${R} ls`],
+      // '-' inicial no valor de flag: ambíguo com outra opção, sai (falha fechada).
+      ["--password -SKILLMECANARYo --host db", `--password ${R} --host db`],
+      ["--token --SKILLMECANARYp", `--token ${R}`],
+      // JSON: o que segue o valor sem espaço sai junto (perda declarada).
+      ['{"password":"SKILLMECANARYr","user":"u"}', `{"password":${R}`],
+      ['{"password": "a,SKILLMECANARYs", "user": "u"}', `{"password": ${R} "user": "u"}`],
+      // Aspa ou `\` ambíguos: até o fim do texto.
+      ['--password "SKILLMECANARYt sem fechar\nlinha 2', `--password ${R}`],
+      ['PASSWORD="SKILLMECANARYu\nSKILLMECANARYv"\nfim', `PASSWORD=${R}`],
+      ['PASSWORD=a"SKILLMECANARYw\nSKILLMECANARYx"', `PASSWORD=${R}`],
+      ["PASSWORD=a\\\nSKILLMECANARYy\nfim", `PASSWORD=${R}`],
+      ["bash -lc 'export TOKEN=a,SKILLMECANARYz'", `bash -lc 'export TOKEN=${R}`],
+      // O texto `[removido]` da entrada não isenta o resto do valor.
+      [`PASSWORD=${R}'SKILLMECANARYaa' ls`, `PASSWORD=${R} ls`],
+      [`PASSWORD=${R},SKILLMECANARYab`, `PASSWORD=${R}`],
+      // Separadores que delimitam argumentos: o que vem depois fica.
+      ["PASSWORD=a,SKILLMECANARY1; echo ok", `PASSWORD=${R}; echo ok`],
+      ["PASSWORD=a,SKILLMECANARY2 && echo ok", `PASSWORD=${R} && echo ok`],
+      ["PASSWORD=a,SKILLMECANARY3|tee log", `PASSWORD=${R}|tee log`],
+      ["PASSWORD=a,SKILLMECANARY4>out.txt", `PASSWORD=${R}>out.txt`],
+      ["PASSWORD=a,SKILLMECANARY5<in.txt", `PASSWORD=${R}<in.txt`],
+      ["(PASSWORD=a,SKILLMECANARY6)", `(PASSWORD=${R})`],
+      ["PASSWORD=a,SKILLMECANARY7\tls", `PASSWORD=${R}\tls`],
+      ["PASSWORD=a,SKILLMECANARY8\nls a,b", `PASSWORD=${R}\nls a,b`],
+      ["PASSWORD=a,SKILLMECANARY9&ls", `PASSWORD=${R}&ls`],
+      // Remoções das regras 2–4 terminam em aspa/`#`: o texto ao redor fica.
+      [
+        "curl -H 'Authorization: Bearer abcdefgh12345' -H 'X-Id: a,b' https://h/p?token=t1#frag",
+        `curl -H 'Authorization: ${R}' -H 'X-Id: a,b' https://h/p?token=${R}#frag`,
+      ],
+    ],
+    true,
+  );
+  // Controles sem segredo: texto idêntico e removed:false.
+  exactCases(
+    [
+      "ls a,b,c; echo x,y && name=a,b page=1,2 --verbose -x a,b",
+      `echo 'a,b' "c;d" e\\,f`,
+      `PASSWORD=${R}; ls`,
+      `"password": "${R}"\n"user": "u"`,
+    ].map((text) => [text, text]),
+    false,
+  );
+
+  // Fronteira da política: comando Bash com só os valores e o userinfo removidos.
+  const record = policy("claude", claudePayload("pre_tool_bash", { tool_input: { command: DELIMITED_COMMAND } }));
+  same(field(record, "tool_input.command").value, DELIMITED_COMMAND_OUT, "comando com separadores preservados");
+  assert.ok(record.privacy.includes("tool_input.command:sensitive_removed"));
+  assert.ok(leaks(JSON.stringify(record)).length === 0, "registro sem vazamento");
+});
+
+test("I5-C17d userinfo de URL sai até o último @ da autoridade; @ em caminho, query e fragmento fica", () => {
+  exactCases(
+    [
+      ["curl https://u:prefix@SKILLMECANARYpass@example.test/repo", "curl https://example.test/repo"],
+      ["https://SKILLMECANARYa@b@c:d@host:8443/p?x=1", "https://host:8443/p?x=1"],
+      // Usuário ou senha vazios.
+      ["https://SKILLMECANARYuser:@host/p", "https://host/p"],
+      ["https://:SKILLMECANARYpw@host/p", "https://host/p"],
+      ["https://:@SKILLMECANARYx@host", "https://host"],
+      // `@` codificado é texto do userinfo.
+      ["https://u:SKILLMECANARY%40x@host/p", "https://host/p"],
+      ["https://u%40SKILLMECANARY:p%40q@host", "https://host"],
+      ["git clone 'https://u:a@SKILLMECANARYb@host/r.git' && ls", "git clone 'https://host/r.git' && ls"],
+      // Várias URLs, inclusive coladas por vírgula.
+      ["https://a:SKILLMECANARYc@h1/x https://h2/y?e=a@b https://d@SKILLMECANARYe@h3", "https://h1/x https://h2/y?e=a@b https://h3"],
+      ["https://a:b@SKILLMECANARYf@h1,https://c@SKILLMECANARYg@h2/z", "https://h1,https://h2/z"],
+      ["https://u:p@SKILLMECANARYh@host/p?token=SKILLMECANARYi&page=2#a@b", `https://host/p?token=${R}&page=2#a@b`],
+      ["ssh://git@SKILLMECANARYj@host:22/r", "ssh://host:22/r"],
+    ],
+    true,
+  );
+  exactCases(
+    ["https://host/p@x/y?e=a@b#c@d", "https://host/p%40x mailto:a@b.test git@github.com:org/r.git", "https://host:8443/p", "https://@host/p"].map((text) => [text, text]),
+    false,
+  );
+
+  const record = policy("claude", claudePayload("pre_tool_bash", { tool_input: { command: "git clone https://u:prefix@SKILLMECANARYpass@example.test/repo" } }));
+  same(field(record, "tool_input.command").value, "git clone https://example.test/repo", "comando sem userinfo");
+  assert.ok(record.privacy.includes("tool_input.command:sensitive_removed"));
+  assert.ok(leaks(JSON.stringify(record)).length === 0, "registro sem vazamento");
 });
 
 test("I5-C18bloco de chave privada fechado ou não é descartado inteiro; o texto antes permanece (literal)", () => {

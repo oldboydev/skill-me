@@ -43,6 +43,14 @@ export const ENCODED_MARKER = percentEncodeAll(MARKER);
 export const ENCODED_VALUE_URL = `https://example.test/search?page=2&q=ghp%5FSKILLMECANARYvalue0123456789abcd&sort=asc&k=${percentEncodeAll("sk-SKILLMECANARYfull0123456789ab")}&lang=pt%2Dbr`;
 export const ENCODED_VALUE_URL_OUT = "https://example.test/search?page=2&q=[removido]&sort=asc&k=[removido]&lang=pt%2Dbr";
 
+// Delimitação do valor sensível (vírgula e separador escapado dentro do valor)
+// e userinfo com mais de um `@` (achados P1 da revisão formal, tentativa 2).
+// Só os valores e o userinfo saem; os separadores reais e o resto ficam.
+export const DELIMITED_COMMAND = "DB_PASSWORD=prefix,SKILLMECANARYdbpass ./deploy.sh --password prefix,SKILLMECANARYpw && git clone https://u:prefix@SKILLMECANARYpass@example.test/repo; echo ok,fim";
+export const DELIMITED_COMMAND_OUT = "DB_PASSWORD=[removido] ./deploy.sh --password [removido] && git clone https://example.test/repo; echo ok,fim";
+export const DELIMITED_OUTPUT = "PASSWORD=a\\,SKILLMECANARYesc conectado\nremoto https://:SKILLMECANARYempty@example.test/db e https://example.test/p@x?e=a@b";
+export const DELIMITED_OUTPUT_OUT = "PASSWORD=[removido] conectado\nremoto https://example.test/db e https://example.test/p@x?e=a@b";
+
 // Texto livre com as cinco categorias entre trechos que podem permanecer.
 export const SECRET_TEXT = [
   "início seguro",
