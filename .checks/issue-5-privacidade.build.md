@@ -533,3 +533,142 @@ Windows.
   ao coordenador (registrá-lo aqui mudaria a cabeça de novo).
 - Perfil `light`: nenhuma falha injetada sistematicamente fora dos cenários
   enumerados.
+
+# Correção dos achados da revisão formal — tentativa 1 (18/10/2026)
+
+Evidência autoral, não verificação independente nem revisão formal: não conta
+como rodada do Verifier nem tentativa da revisão e não altera tetos. O relatório
+`.checks/code-review/issue-5/formal-round1-report.json` (`changes_requested`) e o
+`.verified.md` não foram editados. Escopo: os três achados bloqueantes do
+relatório e suas provas; nenhuma decisão de produto nova. Commits: `4864e77`
+(três linhas novas do Landing, antes do código), `204d201` (correção, provas,
+guia e comandos de prova no checklist) e o commit desta evidência.
+
+## Natureza de cada achado e correção
+
+- **P1 `content.mjs`** (produto): na projeção `structured`, só o valor passava
+  pelo sanitizador; uma chave como `ghp_…` (cabe em `^[A-Za-z0-9_.-]{1,64}$`, sem
+  palavra de `isSensitiveKey`) era copiada literal para o registro, temporários,
+  segmento e export. Correção: depois das duas checagens existentes, a chave
+  aceita passa pelo próprio `sanitizeText`; se ele remove algo, o membro sai
+  inteiro com `sensitive_removed`, conta como membro visitado e a subárvore não é
+  descida. Nenhuma regex nova; a chave nunca é reescrita (sem colisão em
+  `[removido]`).
+- **P1 `sanitize.mjs`** (produto): a regra 2 classificava o nome de query bruto;
+  `?t%6fken=…` mantinha o valor. Correção: `isSensitiveQueryName` aceita o nome
+  como veio ou `decodeURIComponent(nome)` (uma camada); escape inválido conta
+  como sensível (falha fechada). O nome continua como veio; só o valor vira
+  `[removido]`. A exceção de decodificação é engolida e vira a decisão fechada:
+  nenhuma cópia bruta vai a erro ou log.
+- **P2 `store.mjs`** (produto): `isValidState` aceitava `dataBytes` acima de
+  8 MiB e o export o usava como teto de `readSnapshot` (`Buffer.alloc(max + 1)`).
+  Correção: `dataBytes <= PRIVACY_LIMITS.maxBytes` na validação do estado, então
+  status, ingest, export, append, stop/disable, delete e prune recusam com
+  `capture_invalid` antes de abrir ou alocar o segmento.
+
+## O que cada prova nova afirma
+
+- **I5-C16b** (policy.unit, decisão de `extractContent`): pré-condição de que as
+  oito chaves de `KEY_CANARIES` (GitHub, GitHub PAT, OpenAI, Slack, AWS, GitLab,
+  Google, JWT) cabem no padrão de chave, não são `isSensitiveKey` e são
+  reconhecidas pelo sanitizador; para cada uma, no topo, aninhada em objeto e em
+  objeto dentro de array, com subárvores que estourariam profundidade (10) ou
+  membros (138) se descidas: conteúdo mantido, `privacy` exatamente
+  `["item.arguments:sensitive_removed"]`, projeção exata com os irmãos (`q`,
+  `ghp_curto`, `keep`) e sem chave `[removido]`. Limite: 127 membros + chave
+  descartada cabem em 128; 128 + chave → `content:unsanitizable`.
+- **I5-C17b** (policy.unit): valores exatos de `sanitizeText` para `t%6fken`,
+  `%74%6F%6B%65%6E`, `to%4Ben`, `to%E2%84%AAen` (K Kelvin), parâmetros mistos
+  (`api%5Fkey`, `Pass%77ord`, `client%2Dsecret` removidos; `page`, `q`, `p%61ge`
+  mantidos), escape inválido `t%zzoken` e UTF-8 incompleto `a%E0` (valor removido);
+  controles inalterados com `removed:false` (nome comum codificado, palavra
+  sensível só no valor, `%25`, valor já `[removido]`); comando Bash Claude pela
+  política com só o valor removido e `sensitive_removed`.
+- **I5-C14b** (outputs.cli, CLI real com `fs-probe` + sonda de privacidade):
+  `start --content`, ingest codex-exec (`mcp_tool_call` com as oito chaves-token
+  no topo, aninhadas e em array; `command_execution` com a URL codificada),
+  Claude (pre/post Bash) e Codex hooks (pre Bash); nenhum arquivo da árvore,
+  stdout, log de sonda, temporário observado antes do rename (≥ 3 de dados) ou
+  arquivo escrito (lock de cada comando, temporários) contém o marcador; export
+  com projeção exata, os sete campos de texto esperados e cada URL só com o valor
+  removido; `stderr` vazio em todos os comandos; delete aplicado.
+- **I5-S-databytes** (store.unit, IO injetável que registra aberturas e tetos de
+  `readBounded` e nunca repassa teto acima de 8 MiB ao leitor real): 8 388 608 →
+  status 0 e export abre o segmento com teto 8 388 608 (recusa depois pelo tamanho
+  real menor); 8 388 609 e 1 073 741 824 → export, status, stop e `delete --apply`
+  saem 3 `capture_invalid`, sem abrir o segmento e com todo teto ≤ 64 KiB;
+  `appendRecords` recusa `capture_invalid` sem abrir; árvore idêntica; estado
+  restaurado volta a valer.
+- **I5-S-databytes-cli** (store.cli, sonda de privacidade no processo real):
+  mesmos três valores; export/status/ingest com 8 388 609 e 1 GiB saem 3 com o
+  corpo de erro exato, stdout sem raiz/`Error`/`at `, stderr vazio, nenhuma
+  abertura do segmento e árvore idêntica; no limite o segmento é aberto; estado
+  restaurado exporta os 2 registros.
+- I5-S-bounded, C13, C16, C17, C19, C52/C53 e os contadores permanecem sem
+  mudança de asserção. As falhas usam rótulos sem eco de canário (`assert.ok`
+  sem diff onde o valor real pode conter o marcador).
+
+## RED → GREEN (Windows, Node 24.21.0)
+
+Logs em `%TEMP%\skill-me-i5-formal1-win-0RR1XS\` (preservados).
+
+| Log | Produto | Resultado |
+| --- | --- | --- |
+| `red.tap.log` | `4864e77` (antes da correção), primeira versão dos testes | 5 `not ok` (C14b, C16b, C17b, S-databytes, S-databytes-cli), S-bounded `ok`; 2 linhas ecoavam a palavra-marcador por `deepEqual(leaks…)` — trocado por `assert.ok` sem diff |
+| `red-2.tap.log` | idem | mesmos 5 `not ok`; 0 ocorrências do marcador |
+| `green.tap.log` | corrigido | S-databytes `not ok` por expectativa errada do próprio teste (abaixo); os outros 9 `ok` |
+| `red-final.tap.log` | três módulos de `HEAD` restaurados temporariamente, testes finais | 5 `not ok`: C14b (arquivo de dados), C16b (`github conteúdo mantido`), C17b (`?t%6fken=`), S-databytes (teto 8 388 609 pedido para o segmento), S-databytes-cli (segmento aberto em 8 388 609 — antes de chegar a 1 GiB, sem alocação gigante); módulos corrigidos devolvidos e conferidos por `cmp` |
+| `red-only-content.tap.log`, `red-only-sanitize.tap.log`, `red-only-store.tap.log` | um módulo antigo por vez | cada regressão é detectada isoladamente: content → C14b e C16b; sanitize → C14b e C17b; store → S-databytes e S-databytes-cli |
+| `green-2.tap.log` | corrigido, testes finais | 10/10 `ok` (novos + C13, C16, C17, C19, S-bounded) |
+
+Todos os logs acima, exceto `red.tap.log`, têm `grep -c SKILLMECANARY` = 0.
+
+Expectativa corrigida sem enfraquecer: o I5-S-databytes esperava exportar os
+registros manuais de `appendSanitized` depois de restaurar o estado, mas esses
+registros não têm envelope v1 (o helper declara isso), então o export é
+`capture_invalid` por desenho. O controle do estado restaurado passou a ser
+`status` com o `dataBytes` original; o export restaurado é provado no
+I5-S-databytes-cli com registros do ingest real.
+
+## Execuções no commit `204d201`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, checkout local, árvore limpa, logs `win-privacy.tap.log`/`win-npm-test.log` no diretório acima | `node --test --test-reporter=tap "tests/integrations/privacy/*.test.mjs"` | 80 tests, 80 pass, 0 fail, 0 skip (C35 e os 5 novos incluídos) |
+| Windows 11 | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 168 (162 pass, 6 skip, 0 fail) |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-formal1-yOn8BA` de `git archive 204d201` (sha256 `b7d05782…6d305a46` igual nos dois lados; `git get-tar-commit-id` = `204d2011…` conferido no script antes da extração), logs em `%TEMP%\skill-me-i5-formal1-wsl-stage-H5wmIm\` | mesmo alvo de privacidade | 80 tests, 80 pass, 0 fail, 0 skip (C35 e os 5 novos incluídos) |
+| WSL Ubuntu | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 168 (156 pass, 12 skip, 0 fail) |
+
+Skips idênticos aos anteriores, conferidos nos logs: Windows doctor 7 (POSIX
+symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b Hermes ausente,
+I4-C25g/h/i DACL Windows, I4-C25m macOS). Integrações passam de 163 para 168 só
+pelos cinco testes novos.
+
+Preparação WSL: `run-wsl.sh` em arquivo no stage, derivado do da rodada 2 só
+com prefixos trocados (diff conferido), chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`;
+recusa root, outra distro, origem ausente, saída e destino fora do padrão antes
+de copiar/extrair. Nenhum comando inline no WSL. Nenhum `/repo` ou `/src.tar`;
+preparação antiga do Verifier6, seu probe, sessões ou configurações pessoais não
+tocados; nenhum modelo chamado, nenhuma rede de produto. Nenhum arquivo do
+repositório editado durante os gates; o WSL só começou depois do fim do gate
+Windows. Nenhuma rejeição de política nem falha de capacidade.
+
+## Limites honestos
+
+- Uma camada de decodificação: `t%256fken` (codificação dupla) não é tratado
+  como `token` — limite declarado no Landing e no guia.
+- Valor de query codificado com formato de token (`?q=ghp%5F…`) não é
+  decodificado antes das regras de formato; fora dos três achados, registrado
+  aqui sem correção.
+- Nome com escape inválido perde o valor mesmo sem palavra sensível (falha
+  fechada).
+- Chave de `structured` com formato de token é omitida com o membro; o valor
+  útil sob ela se perde por desenho.
+- Esta evidência muda o conteúdo lido por C34/C35; o alvo de privacidade é
+  reexecutado na cabeça desta evidência e o resultado vai ao coordenador
+  (registrá-lo aqui mudaria a cabeça de novo).
+- Perfil `light`: nenhuma falha injetada sistematicamente fora dos cenários
+  enumerados. Este verde é autoral; uma nova rodada independente depende de
+  decisão humana específica.
