@@ -2298,3 +2298,77 @@ de extrair, tar sha256 `ee8562c0…c573cd80`, cópia em
 - Prova: C49b sob Node 24.11.1 (o runtime que reproduz a CI) passa a verde na
   correção, e sob 24.21.0; depois alvo de privacidade e `npm test` completos em
   Windows e WSL no commit limpo.
+
+## Correção aplicada (`3e3bf3b`)
+
+- Só `tests/integrations/privacy/store.cli.test.mjs`, na etapa final de I5-C49b:
+  cada `.deleting-<id>` alheia sai por `unlinkSync` da `key` e `rmdirSync`, e o
+  `lstat` dos dois nomes precisa dar `ENOENT` antes do CLI. A recusa da ativa
+  passa a afirmar saída 3, corpo exato `{schemaVersion:1, command:"delete",
+  status:"error", error:{code:"capture_active"}}`, saída fechada e árvore
+  idêntica (inclusive mtime); antes só `body.error` era conferido. Import de
+  `rmSync` trocado por `rmdirSync`/`unlinkSync` (não havia outro uso no arquivo).
+- Nada removido ou relaxado: expected `capture_active`, apagamento da parada,
+  `captures/` só com a ativa, coexistência `foreign_entry` com corpo exato e sem
+  operação dentro das pastas, junção `link_refused` e I5-C51b sem mudança.
+  Nenhum título, seletor, checklist, guia ou arquivo de `src/` alterado.
+  Contagens iguais: privacidade 115, `test:integrations` 203. Seletores:
+  `selectors.mjs` (cópia de `skill-me-i5-f8-tools`) → 96 `Proof`, 94 com
+  padrão, 0 sem match.
+
+## RED → GREEN (Windows)
+
+| Log (`%TEMP%\…`) | Árvore | Node | Resultado |
+| --- | --- | --- | --- |
+| `skill-me-i5-f9-red-4h66fJ\c49b-v24.11.1.tap.log` | cópia exata de `3a2bace` | 24.11.1 | 0/1, falha na linha 454 (`foreign_entry`) |
+| `skill-me-i5-f9-red-4h66fJ\c49b-v24.14.0.tap.log`, `…v24.21.0…` | idem | 24.14.0 / 24.21.0 | 1/1 |
+| `skill-me-i5-f9-green-5H8yzZ\c49b-v24.11.1.tap.log` | correção, antes do commit | 24.11.1 | 1/1, exit 0 |
+| `skill-me-i5-f9-green-5H8yzZ\c49b-v24.21.0.tap.log` | idem | 24.21.0 | 1/1, exit 0 |
+| `skill-me-i5-f9-green-5H8yzZ\guard.tap.log` | cópia de `ff7843d` + correção, com a remoção trocada de volta por `rmSync` (`guard-vs-head.diff`) | 24.11.1 | 0/1: `Missing expected exception: pasta inesperada removida antes do CLI` (linha 457) — a pré-condição detecta a remoção sem efeito antes de qualquer chamada ao CLI |
+
+O RED original (`copy-CnEHOk`) ficou intacto; sem stash, reset, pop ou troca do
+repositório. Node 24.11.1 é o binário já presente de `ms-playwright-go\1.57.0`
+e 24.14.0 o de `OpenAI\Codex\bin`, só executados, sem instalação.
+
+## Execuções no commit `3e3bf3b`
+
+| Plataforma | Comando | Resultado |
+| --- | --- | --- |
+| Windows 11 — Node 24.21.0, HEAD e árvore limpa conferidos antes e depois (`%TEMP%\skill-me-i5-f9-win-gate-3e3bf3b\gate.meta`, 20:10:57Z–20:19:23Z) | `node --test tests/integrations/privacy/*.test.mjs` / `npm test` | 115/115, 0 skip (C49b, C34/C35 incluídos); exit 0 — governança 6/6, code-review 16/16, doctor 417 (410, 7 skip), integrações 203 (197, 6 skip); total 642, 629 pass, 13 skip, 0 fail |
+| WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i5-f9final-wpSwjK`, tar sha256 `3b584200…ef8e6522` e `get-tar-commit-id` = `3e3bf3b9…` conferidos no script; stage `skill-me-i5-f9final-wsl-stage-6nGb9g` | idem | 115/115, 0 skip; exit 0 — 6/6, 16/16, doctor 417 (416, 1 skip), integrações 203 (191, 12 skip); total 642, 629 pass, 13 skip, 0 fail |
+
+Skips iguais aos do lote anterior, conferidos pelos nomes: Windows doctor 7
+(POSIX symlink/FIFO), integrações 6 (I4-C15, I4-C25b/j/k/l/m); WSL doctor 1
+(`hermes_cli.PYD`), integrações 12 (I4-C18–23/C37/C44b, I4-C25g/h/i/m). Nenhum
+log contém `SKILLMECANARY`.
+
+Preparação: `gate-win.sh` em `%TEMP%\skill-me-i5-f9-tools-x3qvoj\` copiado de
+`skill-me-i5-f8-tools` trocando só o comentário da linha 2; `run-wsl.sh` copiado
+do stage `f8final` trocando o comentário da linha 2 e os prefixos (`f8final` →
+`f9final`; `diff` conferido: linhas 2, 23, 29 e 31), com a guarda `uid` = 1000
+antes de qualquer mutação, chamado com
+`MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu -- bash -l <script> <tar> <sha> <node_modules> <commit> <saída>`.
+O WSL começou depois do fim do gate Windows. Nenhum comando inline no WSL, nada
+em `/repo` ou `/src.tar`; preparação antiga do Verifier6, stages, scratches e logs
+anteriores, sessões ou configurações pessoais não tocados; nenhum modelo, rede de
+produto, instalação, subagente, push, CI repetida ou `review:run`; só processos
+próprios. Nenhuma rejeição de política nem falha de capacidade.
+
+**Diferença de SHA**: os gates rodaram em `3e3bf3b`. O commit desta evidência só
+acrescenta estas seções (`.checks/`); código, testes, guia e checklist são
+idênticos aos do gate. Nele rodaram só I5-C34 e I5-C35, numa invocação com
+seletor sobre `docs-privacy.test.mjs` (Windows).
+
+## Riscos e limites comunicados
+
+- Node 24.13.0 para Windows não foi executado localmente: a causa da CI é
+  inferida do comportamento idêntico de 24.11.1 (mesmo sintoma, mesma linha,
+  mesmo código) e da correção em 24.14.0; a prova final no runtime da CI é a
+  própria CI, que não foi disparada aqui.
+- Fora do escopo (issue #4), só comunicado: `install-permissions.cli.test.mjs:241`
+  (I4-C25g, Windows) usa `rmSync(control)` sob scratch com `ação`; no Node da CI o
+  arquivo de controle fica, sem afetar as asserções atuais daquele teste.
+- O produto não depende de `rmSync`; um usuário em Node 24.11–24.13 no Windows
+  não é afetado por esta falha.
+- Perfil `light`: este verde é autoral; não é aprovação independente nem formal
+  (Verifier10 e revisão formal 7 pendentes, antes de qualquer push).
