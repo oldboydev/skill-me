@@ -25,6 +25,11 @@
       "profile": "light",
       "maxRounds": 9,
       "approval": "Proprietário autorizou em 13/10/2026: pode fazer as revisoes necessarias. Registro em .checks/issue-3-agent-diagnostics.linux.md; exclusivo da issue #3, preservando histórico."
+    },
+    "5": {
+      "profile": "light",
+      "maxRounds": 10,
+      "approval": "Proprietário autorizou em 18/10/2026: autorizo quantos precisaram para resolver. Registro literal em .checks/issue-5-privacidade.approval.md e .tasks/issue-5-privacidade.md; exclusivo da issue #5, preservando histórico e usando o máximo de 10 suportado pelo motor. Merge permanece humano."
     }
   }
 }
