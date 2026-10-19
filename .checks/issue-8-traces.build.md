@@ -660,3 +660,12 @@ exercitar os ramos POSIX das provas novas.
   processo sair no meio dele, o `.lock` fica, como antes.
 - O fluxo nomeado da pasta do store só existe no Windows; a recusa de
   `pasta:fluxo` só vale lá.
+
+## Exceções autorizadas pelo proprietário — 18/10/2026
+
+O proprietário autorizou nesta conversa duas exceções pontuais para a issue #8:
+uma quarta verificação independente das correções P1/P2 e o push exclusivo da
+branch `codex/issue-8-traces`, sem PR ou merge nessa etapa, para executar
+`workflow_dispatch` na CI macOS antes da segunda e última revisão formal.
+Esta autorização substitui a pendência de ordem registrada acima; não altera
+o teto de duas tentativas de revisão nem autoriza outras publicações.
