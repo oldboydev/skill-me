@@ -21,7 +21,9 @@ vendorizado intocado.
 | `a1365b9` | turno e chamada com escopo de sessão na identidade pública (C2) |
 | `0232720` | registro da verificação independente (orquestrador) |
 | `b440014` | achados P2 da revisão formal: itens do exec em várias sessões (C6/C7) e duplicata de subagente do Hermes (C4) |
-| commit seguinte | C6: a abertura de uma sessão no meio da vida de um item não é colisão; só fase repetida, tipo ou ordem conflitantes |
+| `65d6c5c` | C6: a abertura de uma sessão no meio da vida de um item não é colisão; só fase repetida, tipo ou ordem conflitantes |
+| `b0b00e8` | verificação independente (orquestrador) |
+| commit seguinte | achados P2 da 2ª revisão formal: item do exec sem `itemId` (C6) e cópia idêntica de `resume` (C5) |
 
 ## Decisões de implementação
 
@@ -218,6 +220,36 @@ com duas sessões falha 4.
 tipo/ordem conflitantes). Um único início e um único fim do mesmo `itemId` em torno de um `session_start` não podem ser
 distinguidos de um item de vida longa e permanecem `heuristic`; por isso a atribuição de sessão desses itens nunca é forte.
 
+## Correção dos dois achados P2 da 2ª revisão formal (item sem `itemId` e cópia de `resume`)
+
+A 2ª tentativa formal (HEAD `b0b00e8`) terminou com `changes_requested` e o teto de duas tentativas foi atingido; estes são
+os dois defeitos, corrigidos aqui sem nova revisão. `.checks/issue-6-correlacao.verified.md` fica com o coordenador.
+
+**Achado 1 — C6 (`operations.mjs`).** `item.completed` de `command_execution` com `status: failed`, `exitCode: 7` e **sem** `item.id`
+(`itemId:absent` no envelope) era descartado por `itemOperations` porque `identity.call` é `null`. Agora todo item de ferramenta
+sem `itemId` vira **uma operação própria por registro**: `strength: inconclusive`, `call: null`, `session: null`, com os campos
+observados (`itemType`, `status`, `exitCode`, `toolName`) e a evidência da própria `sequence`. `completed` ⇒ `orphan_result`;
+`started` ⇒ `open` (início preservado, sem par); `updated` ⇒ `open` com a atualização em `updates`; fase desconhecida ⇒
+`ambiguous`/`unknown_phase`. Nunca pareiam entre si nem com um item identificado (o par exigiria identidade, que não existe).
+`coverage.totals.orphanResult` e `inconclusiveOperations` passam a contá-los, e `partial` fica `true`. Itens que não são
+ferramenta (`agent_message` etc.) sem ID continuam só como entrada.
+
+**Achado 2 — C5 (`timeline.mjs`).** `linkNativeSessions` incrementava o segmento antes de `markDuplicates`: `startup`, `resume`,
+cópia idêntica do `resume` e uma ferramenta davam os segmentos 1, 2, 3, 3. A ordem das passagens passou a ser
+`markDuplicates` → `linkNativeSessions` (a identidade completa só depende do envelope), e uma cópia com `duplicateOf` não abre
+segmento: os segmentos ficam 1, 2, 2, 2, e a entrada e a evidência [3] da cópia continuam. Um `resume` realmente diferente
+(por exemplo com outra lacuna) não é duplicata e abre o segmento 3. As regras de identidade nativa e de comparação de duplicatas
+não mudaram.
+
+**RED em `b0b00e8`:** 3 testes novos falharam (C6 ×2, C5 ×1; `T6-C6` 9 pass/2 fail, `T6-C5` 2 pass/1 fail).
+**GREEN:** C5 3/3, C6 11/11, correlação 64/64, `npm run test:integrations` 297 tests, 290 pass, 0 fail, 0 cancelled, 7 skipped.
+O teste contra a implementação errada plausível (pareamento de itens sem ID por chave nula) exige `open`/`orphan_result` separados e
+`exitCode` próprio em cada operação. `docs/traces.md` ganhou as duas frases.
+
+**Limitações.** Um segundo `resume` byte a byte idêntico ao primeiro é, por definição de C4, uma repetição e não abre segmento;
+não há como distingui-lo de uma retomada real sem um campo que o difira. Item sem `itemId` não ganha sessão nem par:
+`started` e `completed` do mesmo item, sem ID, ficam como `open` e `orphan_result` separados.
+
 ## Provas por check
 
 | Check | Teste(s) | Arquivo | Resultado |
@@ -226,8 +258,8 @@ distinguidos de um item de vida longa e permanecem `heuristic`; por isso a atrib
 | C2 | `T6-C2` (7) | idem | 7 pass |
 | C3 | `T6-C3` (3) | idem | 3 pass |
 | C4 | `T6-C4` (6) | idem | 6 pass |
-| C5 | `T6-C5` (2) | idem | 2 pass |
-| C6 | `T6-C6` (9) | `operations.unit.test.mjs` | 9 pass |
+| C5 | `T6-C5` (3) | idem | 3 pass |
+| C6 | `T6-C6` (11) | `operations.unit.test.mjs` | 11 pass |
 | C7 | `T6-C7` (3) | idem | 3 pass |
 | C8 | `T6-C8` (2) | `skills.unit.test.mjs` | 2 pass |
 | C9 | `T6-C9` (2) | idem | 2 pass |
@@ -239,7 +271,7 @@ distinguidos de um item de vida longa e permanecem `heuristic`; por isso a atrib
 | guia | `T6-docs` (2) | `docs.test.mjs` | 2 pass |
 
 Cada comando `Proof:` de `.checks/issue-6-correlacao.md` (C1–C14), executado como escrito, saiu
-com exit 0 e `fail 0`, `skipped 0`; a soma é 59 testes nomeados (C2 tem 7, C4 tem 6, C6 tem 9 e C10 tem 9 depois das correções do Verifier e da revisão), mais 2 do guia = 61 em
+com exit 0 e `fail 0`, `skipped 0`; a soma é 62 testes nomeados (C2 tem 7, C4 tem 6, C5 tem 3, C6 tem 11 e C10 tem 9 depois das correções do Verifier e da revisão), mais 2 do guia = 64 em
 `tests/integrations/correlation/`. As provas de decisão ficam no consumidor puro; a fronteira
 é provada pelo CLI real (C12) e pelo fluxo de fixtures (C14), que compara a API com a resposta
 do CLI (mesmos registros, ordem, vínculos e cobertura) e identifica cada passo como fixture ou
@@ -267,6 +299,9 @@ Cada mutação foi aplicada ao produto, a prova correspondente rodou e o arquivo
 | turno e chamada sem a sessão na chave pública | C2 | 2 falhas |
 | duas sessões do exec tornam todo grupo ambíguo | C6 | 2 falhas (no commit anterior) / 4 falhas (regra atual) |
 | fase repetida sempre `repeated_phase` (ignora `multiple_sessions`) | C6 | 3 falhas |
+| item sem `itemId` com resultado marcado `closed` | C6 | 2 falhas |
+| cópia idêntica de `resume` abre segmento | C5 | falhou |
+| dedupe enfraquecido (identidade completa ignorada) | C4/C5 e demais | 10 falhas |
 | subagente exige sessão para identidade completa | C4 | falhou |
 | subagente sempre com identidade completa | C4 | falhou |
 | pais divergentes pareiam | C10 | falhou |
@@ -277,14 +312,15 @@ Cada mutação foi aplicada ao produto, a prova correspondente rodou e o arquivo
 
 | Plataforma | Comando | Resultado |
 | --- | --- | --- |
-| Windows 11 (local) | `node --test "tests/integrations/correlation/*.test.mjs"` (final) | 61 tests, 61 pass, 0 fail, 0 skipped |
+| Windows 11 (local) | `node --test "tests/integrations/correlation/*.test.mjs"` (final) | 64 tests, 64 pass, 0 fail, 0 skipped |
 | Windows 11 (local) | `npm run test:integrations`, 1ª execução (antes deste registro existir) | 278 tests, 270 pass, 1 fail, 0 cancelled, 7 skipped; a falha era `T6-docs … build.md`, que exige este arquivo |
 | Windows 11 (local) | `npm run test:integrations`, entrega inicial `27b8ae6` | 278 tests, 271 pass, 0 fail, 0 cancelled, 7 skipped (exit 0) |
 | Windows 11 (local) | `npm run test:integrations`, após o P1 (`2c22d3f`) | 281 tests, 274 pass, 0 fail, 0 cancelled, 7 skipped |
 | Windows 11 (local) | `npm run test:integrations`, após C2/C10 do Verifier (`9315253`/`5da7b1a`) | 285 tests, 278 pass, 0 fail, 0 cancelled, 7 skipped |
 | Windows 11 (local) | `npm run test:integrations`, após C2 de turno/chamada (`a1365b9`) | 288 tests, 281 pass, 0 fail, 0 cancelled, 7 skipped |
 | Windows 11 (local) | `npm run test:integrations`, após os P2 da revisão (`b440014`) | 292 tests, 285 pass, 0 fail, 0 cancelled, 7 skipped |
-| Windows 11 (local) | `npm run test:integrations`, **execução final** | 294 tests, 287 pass, 0 fail, 0 cancelled, 7 skipped |
+| Windows 11 (local) | `npm run test:integrations`, após a regra de colisão de itens (`65d6c5c`) | 294 tests, 287 pass, 0 fail, 0 cancelled, 7 skipped |
+| Windows 11 (local) | `npm run test:integrations`, **execução final** | 297 tests, 290 pass, 0 fail, 0 cancelled, 7 skipped |
 | Windows 11 (local, em `27b8ae6`; não reexecutado depois: as correções só tocam `src/integrations/correlation/` e seus testes) | `npm run test:governance` | 6 tests, 6 pass, 0 fail |
 | idem | `npm run test:code-review` | 16 tests, 16 pass, 0 fail, 0 skipped |
 | idem | `npm run test:doctor` | 417 tests, 410 pass, 0 fail, 0 cancelled, 7 skipped (FIFO e links POSIX: `agent-resolution-formal5-2`, `agent-resolution-C2`, `fifo-config-formal8-4` ×2, `fs-adapter-formal8-4` ×3; já existentes, nenhum da #6) |

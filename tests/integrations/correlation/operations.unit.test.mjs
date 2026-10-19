@@ -292,3 +292,43 @@ test("T6-C6 tool pairing: um único início e um único fim do mesmo itemId em t
   const oneSession = tools(correlateTrace(buildTrace([{ src: "codexExec", kind: "session_start", ids: { threadId: "th1" } }, item("item_0", "completed", "command_execution"), item("item_0", "completed", "command_execution")])));
   assert.deepEqual(oneSession.map((op) => [op.state, op.ambiguity]), [["ambiguous", "repeated_phase"]]);
 });
+
+// Achado 1 da revisão formal 2: item do exec sem item.id não pode sumir nem ser pareado.
+const idless = (phase, itemType, extra = {}) => ({ src: "codexExec", kind: "item", native: `item.${phase}`, ids: {}, fields: { phase, itemType, ...extra.fields }, gaps: ["itemId:absent"], at: extra.at });
+
+test("T6-C6 tool pairing: item.completed do exec sem itemId vira operação inconclusive orphan_result com os campos observados, sem chamada inventada, e entra na cobertura", () => {
+  const result = correlateTrace(buildTrace([idless("completed", "command_execution", { fields: { status: "failed", exitCode: 7 } })]));
+  assert.equal(result.entries.length, 1);
+  const [op] = result.operations;
+  assert.equal(result.operations.length, 1, "a observação não é descartada");
+  assert.deepEqual([op.type, op.strength, op.state, op.call, op.session, op.subagent], ["tool", "inconclusive", "orphan_result", null, null, null]);
+  assert.deepEqual([op.start, op.updates, op.result, op.evidence, op.itemType, op.status], [null, [], 1, [1], "command_execution", "failed"]);
+  assert.strictEqual(op.exitCode, 7);
+  assert.deepEqual([op.durationMs, op.elapsedMs, op.durationEvidence], [null, null, null]);
+  assert.deepEqual([result.coverage.totals.orphanResult, result.coverage.totals.inconclusiveOperations, result.coverage.partial], [1, 1, true]);
+});
+
+test("T6-C6 tool pairing: itens do exec sem itemId nunca pareiam entre si nem com itens identificados, e item que não é ferramenta continua só como entrada", () => {
+  const result = correlateTrace(
+    buildTrace([
+      idless("started", "command_execution", { fields: { toolName: "bash" } }),
+      item("item_0", "started", "command_execution"),
+      idless("updated", "mcp_tool_call", { fields: { toolName: "search" } }),
+      item("item_0", "completed", "command_execution", { fields: { exitCode: 0 } }),
+      idless("completed", "command_execution", { fields: { exitCode: 1 } }),
+      idless("completed", "agent_message"),
+      idless("completed", "command_execution", { fields: { exitCode: 2 } }),
+    ]),
+  );
+  assert.deepEqual(tools(result).map(shape), [
+    ["inconclusive", "open", 1, [], null, [1]],
+    ["heuristic", "closed", 2, [], 4, [2, 4]],
+    ["inconclusive", "open", null, [3], null, [3]],
+    ["inconclusive", "orphan_result", null, [], 5, [5]],
+    ["inconclusive", "orphan_result", null, [], 7, [7]],
+  ]);
+  assert.deepEqual(tools(result).map((op) => op.call === null), [true, false, true, true, true]);
+  assert.deepEqual(tools(result).map((op) => op.exitCode), [null, 0, null, 1, 2], "cada exitCode fica na sua operação");
+  assert.ok(!result.operations.some((op) => op.evidence.includes(6)), "agent_message sem id não é operação");
+  assert.deepEqual([result.coverage.totals.orphanResult, result.coverage.totals.open], [2, 2]);
+});

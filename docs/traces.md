@@ -148,7 +148,7 @@ registro precedente só marca `outOfOrder: true`. Uma repetição com identidade
 nativa completa e conteúdo igual continua como entrada própria, com `duplicateOf`
 apontando para a primeira `sequence`, e não cria outra operação. `session` diz a
 qual sessão a entrada pertence e `segment` conta as retomadas (`resume`) da mesma
-sessão.
+sessão; uma cópia idêntica de um `resume` (`duplicateOf`) não abre outro segmento.
 
 **Força do vínculo.** Todo vínculo traz as `sequence` que o sustentam:
 
@@ -159,7 +159,8 @@ sessão.
 | `inconclusive` | sem ID ou com ambiguidade (duas sessões, colisão de `itemId`); nada é ligado |
 
 **Operações** (`operations`): `tool` (par `tool_pre`/`tool_post`, ou os itens do
-`codex exec`), `skill_invocation` (só a ferramenta `Skill` do Claude, com
+`codex exec`; um item sem `itemId` vira uma operação `inconclusive`
+isolada, sem `call`, que nunca pareia com outra), `skill_invocation` (só a ferramenta `Skill` do Claude, com
 `toolUseId`), `skill_evidence` e `subagent`. O estado diz o que foi observado:
 `closed` (início e resultado), `open` (início sem resultado), `orphan_result`
 (resultado sem início), `ambiguous` (itens cujo mesmo `itemId` repete a fase de

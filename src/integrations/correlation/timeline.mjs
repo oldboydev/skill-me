@@ -52,6 +52,8 @@ const isResume = (entry) => entry.eventKind === "session_start" && entry.fields.
 
 // Sessões nomeadas pelo próprio registro são `native`. Uma retomada com ID
 // continua a sessão e abre um segmento novo; sem ID ela não é ligada a nada.
+// Uma cópia idêntica de um resume (`duplicateOf`) não abre segmento: ela repete
+// a mesma retomada, por isso `markDuplicates` roda antes.
 function linkNativeSessions(entries) {
   const segments = new Map();
   for (const entry of entries) {
@@ -59,7 +61,7 @@ function linkNativeSessions(entries) {
     if (key === null) continue;
     entry.session = { key, strength: "native", evidence: [entry.sequence] };
     const current = segments.get(key);
-    entry.segment = current === undefined ? 1 : isResume(entry) ? current + 1 : current;
+    entry.segment = current === undefined ? 1 : isResume(entry) && entry.duplicateOf === null ? current + 1 : current;
     segments.set(key, entry.segment);
   }
 }
@@ -127,9 +129,9 @@ function buildOperations(entries, captureId) {
 export function correlateTrace(trace) {
   const records = [...trace.records].sort((a, b) => a.sequence - b.sequence);
   const entries = records.map((record) => toEntry(trace.capture.id, record));
+  markDuplicates(entries);
   linkNativeSessions(entries);
   linkContextualSessions(entries);
-  markDuplicates(entries);
   markOutOfOrder(entries);
   const operations = buildOperations(entries, trace.capture.id);
   return { timelineVersion: TIMELINE_VERSION, capture: structuredClone(trace.capture), entries, operations, coverage: coverageOf(trace.capture, entries, operations) };

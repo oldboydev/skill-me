@@ -368,3 +368,32 @@ test("T6-C4 duplicates: subagente sem identidade nativa suficiente ou com pais d
   const claudeNoSession = correlateTrace(buildTrace([{ src: "claude", kind: "subagent_start", ids: { agentId: "A" }, fields: { agentType: "Explore" } }, { src: "claude", kind: "subagent_start", ids: { agentId: "A" }, fields: { agentType: "Explore" } }]));
   assert.deepEqual(claudeNoSession.entries.map((e) => e.duplicateOf), [null, null]);
 });
+
+// Achado 2 da revisão formal 2: a cópia idêntica de um resume não abre segmento.
+test("T6-C5 clock and resume: cópia idêntica do resume aponta duplicateOf e não abre segmento; a ferramenta seguinte fica no segmento 2", () => {
+  const session = { sessionId: "s1" };
+  const result = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "session_start", native: "SessionStart", ids: session, fields: { source: "startup" } },
+      { src: "claude", kind: "session_start", native: "SessionStart", ids: session, fields: { source: "resume" } },
+      { src: "claude", kind: "session_start", native: "SessionStart", ids: session, fields: { source: "resume" } },
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: { ...session, toolUseId: "t1" }, fields: { toolName: "Bash" } },
+    ]),
+  );
+  assert.equal(result.entries.length, 4, "a duplicata continua como entrada");
+  assert.deepEqual(result.entries.map((e) => e.duplicateOf), [null, null, 2, null]);
+  assert.deepEqual(result.entries.map((e) => e.segment), [1, 2, 2, 2]);
+  assert.deepEqual(result.entries[2].evidence, [3]);
+  assert.equal(new Set(result.entries.map((e) => e.session.key)).size, 1, "mesma sessão native");
+
+  const distinct = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "session_start", native: "SessionStart", ids: session, fields: { source: "startup" } },
+      { src: "claude", kind: "session_start", native: "SessionStart", ids: session, fields: { source: "resume" } },
+      { src: "claude", kind: "session_start", native: "SessionStart", ids: session, fields: { source: "resume" }, gaps: ["platform:absent"] },
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: { ...session, toolUseId: "t1" }, fields: { toolName: "Bash" } },
+    ]),
+  );
+  assert.deepEqual(distinct.entries.map((e) => e.duplicateOf), [null, null, null, null], "resume diferente não é duplicata");
+  assert.deepEqual(distinct.entries.map((e) => e.segment), [1, 2, 3, 3], "e abre outro segmento");
+});

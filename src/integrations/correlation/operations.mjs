@@ -87,6 +87,34 @@ function itemAmbiguity(group, sessionsInOrigin) {
 
 const lastObserved = (group, name) => group.findLast((entry) => entry.fields[name] !== undefined)?.fields[name] ?? null;
 
+// Item de ferramenta sem `itemId` (a lacuna fica no envelope): é uma observação
+// real, mas sem identidade para parear. Vira uma operação própria `inconclusive`
+// por registro, nunca agrupada com outro item sem ID nem com um item identificado.
+function anonymousItemOperation(entry) {
+  const { phase } = entry.fields;
+  const known = ["started", "updated", "completed"].includes(phase);
+  const start = phase === "started" ? entry : null;
+  const result = phase === "completed" ? entry : null;
+  const shape = toolShape({
+    start,
+    result,
+    updates: phase === "updated" ? [entry] : [],
+    session: null,
+    call: null,
+    subagent: null,
+    itemType: entry.fields.itemType,
+    strength: "inconclusive",
+    state: !known ? "ambiguous" : result === null ? "open" : "orphan_result",
+    toolName: observed(entry.fields, "toolName"),
+    outcome: null,
+    errorType: null,
+    exitCode: observed(entry.fields, "exitCode"),
+    status: observed(entry.fields, "status"),
+    nativeMs: null,
+  });
+  return { ...shape, origin: originOf(entry), ...(known ? {} : { ambiguity: "unknown_phase" }), evidence: sequencesOf(entry) };
+}
+
 function itemOperations(entries) {
   const sessionsByOrigin = new Map();
   for (const entry of entries) {
@@ -99,7 +127,8 @@ function itemOperations(entries) {
     if (entry.eventKind !== "item" || entry.identity.call === null || !TOOL_ITEM_TYPES.has(entry.fields.itemType)) continue;
     groups.set(entry.identity.call, [...(groups.get(entry.identity.call) ?? []), entry]);
   }
-  return [...groups.entries()].map(([call, group]) => {
+  const anonymous = entries.filter((entry) => entry.eventKind === "item" && entry.identity.call === null && TOOL_ITEM_TYPES.has(entry.fields.itemType)).map(anonymousItemOperation);
+  return [...anonymous, ...[...groups.entries()].map(([call, group]) => {
     const origin = `${group[0].source.agent}/${group[0].source.mechanism}`;
     const ambiguity = itemAmbiguity(group, sessionsByOrigin.get(origin)?.size ?? 0);
     const common = { session: group[0].session.key, call, subagent: null, itemType: group[0].fields.itemType };
@@ -123,7 +152,7 @@ function itemOperations(entries) {
       status: lastObserved(group, "status"),
       nativeMs: null,
     });
-  });
+  })];
 }
 
 export function toolOperations(entries) {
