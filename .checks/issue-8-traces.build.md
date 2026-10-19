@@ -1325,24 +1325,38 @@ são os da CI.
 | T8-C15 isolado, alternado 30 vezes | 24.13.0 | `full-base` × rodada 6 | 0 falhas em 30 nas duas |
 | `npm test`, Hermes presente | 24.21.0 | rodada 6 | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 233 (226 pass, 0 fail, 7 skip) |
 | S1: integrações como S0 | 24.13.0 | rodada 6 | 233 tests, 218 pass, 0 fail, 15 skip, 365 s; entrega mais lenta de C1 63 ms e de C2 75 ms, 2 flushes, nenhuma falha; T8-C9 7,7 s (no S0, 5,7 s: aqui o flush é barato, e a diferença entre execuções é ruído de carga, não efeito medido) |
+| CI `workflow_dispatch` [39210999796](https://github.com/oldboydev/skill-me/actions/runs/39210999796) | 24.13.0 | `bfc6301756567e308f17ab916b01ca6f9fddfb14` | success: governança 6/6 e code-review 16/16 em Ubuntu, macOS e Windows; doctor 417 (416 pass, 1 skip) em Ubuntu/macOS e 417 (410 pass, 7 skip) em Windows; integrações 233 (221 pass, 12 skip) em Ubuntu, 233 (219 pass, 14 skip) em macOS e 233 (218 pass, 15 skip) em Windows; 0 fail nos três jobs |
+
+Nos logs dessa CI, C1 e C2 registraram uma linha de tempo cada. A entrega mais
+lenta em Ubuntu levou 28/28 ms, em macOS 18/21 ms e em Windows 38/33 ms; as
+linhas mostram apenas os flushes de `segmento.tmp` e `state.json.tmp`, sem
+falha de operação. O job Windows completou em 5m30s. Este resultado prova o
+commit da mudança de produto; não elimina o `EPERM` transitório observado nos
+ensaios locais e registrado na [issue #8](https://github.com/oldboydev/skill-me/issues/8#issuecomment-6261276945).
+
+Após acrescentar a CI a este registro, o `Proof:` de T8-C20 falhou duas vezes
+no sandbox local ao criar a captura temporária (`start: io_failure`); o mesmo
+comando, com acesso à pasta temporária do Windows, executou 2 tests, 2 pass,
+0 fail, 0 skip. A falha de acesso do sandbox não altera o resultado da CI nem
+foi tratada como prova verde.
 
 T8-C20, a única prova que lê este arquivo, rodou de novo pelo seu `Proof:`
 depois da última edição desta seção: 2 tests, 2 pass, 0 fail (Node 24.21.0).
 
-Não executados nesta rodada: WSL Ubuntu e macOS (a mudança de produto vale nas
-três plataformas: no POSIX o lock também deixa de receber `fsync`), a CI (fica
-com o proprietário) e Claude, Codex ou Hermes reais com modelo.
+Não executados localmente nesta rodada: WSL Ubuntu, macOS e Claude, Codex ou
+Hermes reais com modelo. Ubuntu e macOS foram executados pela CI acima.
 
 ### Limites e achados fora do escopo
 
-- **CI não reexecutada.** Na próxima execução, conferir no job Windows `tests
-  233`, 0 fail e 15 skip, e ler as linhas `ℹ entrega mais lenta` de C1 e C2
-  nos três jobs. Se C1 ou C2 falharem de novo por prazo, a mensagem diz a
+- **Limite da CI.** A execução em `bfc6301` passou nas três plataformas, mas
+  uma execução verde não prova ausência de falha rara por carga do disco ou
+  `EPERM`. Se C1 ou C2 falharem de novo por prazo, a mensagem agora diz a
   operação e o tipo de arquivo; a decisão seguinte é do proprietário: um ciclo
   de lock por hook em vez de dois (cerca de 40 operações a menos; muda a API do
-  store e a numeração de locks das provas de C16), isolar da concorrência da CI
-  os arquivos T8 sensíveis a tempo, ou aceitar o risco com limite declarado.
-  Nada disso foi feito; 750 ms, reserva e asserções seguem como estão.
+  store e a numeração de locks das provas de C16), isolar os arquivos T8
+  sensíveis a tempo da concorrência da CI, ou aceitar o risco com limite
+  declarado. Nada disso foi feito; 750 ms, reserva e asserções seguem como
+  estão.
 - **Achado, comunicado sem correção: `EPERM` na criação do lock no Windows.**
   Com o lock recém-apagado por outro processo, a criação `wx` falha às vezes
   com `EPERM` (31 em 4 000 sob carga; 2 em 20 000 ociosa, com o flush de
