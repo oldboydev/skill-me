@@ -24,6 +24,12 @@ const sameParent = (a, b) => a.ids.parentSessionId === undefined || b.ids.parent
 
 const sessionKey = (captureId, entry, name) => (typeof entry.ids[name] === "string" ? keyFor(captureId, entry.source, "session", entry.ids[name]) : null);
 
+// O pai explícito vem do início ou, se só o fim o nomeia, do fim; nos hooks, é a
+// sessão do próprio evento. Pais explícitos em conflito nunca chegam aqui juntos
+// (`sameParent` os separa).
+const parentOf = (captureId, { start, result }, anchor) =>
+  [start, result].filter(Boolean).map((entry) => sessionKey(captureId, entry, "parentSessionId")).find((key) => key !== null) ?? anchor.identity.session;
+
 export function subagentOperations(entries, captureId) {
   return pairCalls({
     entries,
@@ -39,7 +45,7 @@ export function subagentOperations(entries, captureId) {
       state: callState(pair),
       origin: originOf(anchor),
       subagent: refOf(captureId, anchor),
-      parentSession: sessionKey(captureId, anchor, "parentSessionId") ?? anchor.identity.session,
+      parentSession: parentOf(captureId, pair, anchor),
       childSession: sessionKey(captureId, anchor, "childSessionId"),
       agentType: result?.fields.agentType ?? start?.fields.agentType ?? null,
       childRole: result?.fields.childRole ?? start?.fields.childRole ?? null,

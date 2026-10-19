@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { correlateTrace } from "../../../src/integrations/correlation/timeline.mjs";
-import { buildTrace } from "./helpers/trace-builder.mjs";
+import { keyFor } from "../../../src/integrations/correlation/identity.mjs";
+import { CAPTURE_A, SOURCES, buildTrace } from "./helpers/trace-builder.mjs";
 
 // Prova C10 da issue #6: subagente só se liga a pai e filho por IDs
 // explícitos; papel ou tipo iguais não unem nada nem atribuem ferramentas.
@@ -181,7 +182,14 @@ test("T6-C10 subagent relations: o mesmo pai no início e no fim pareia e atribu
 
   const noParentOnStop = subagents(correlateTrace(buildTrace([hermesStart("p1"), hermesStop(null)])));
   assert.deepEqual(noParentOnStop.map(view), [["native", "closed", 1, 2, [1, 2]]]);
-  assert.equal(noParentOnStop[0].parentSession !== null, true, "o pai vem do início");
+  const parentKey = (parent) => keyFor(CAPTURE_A, SOURCES.hermes, "session", parent);
+  assert.equal(noParentOnStop[0].parentSession, parentKey("p1"), "o pai vem do início");
   const noParentOnStart = subagents(correlateTrace(buildTrace([hermesStart(null), hermesStop("p2")])));
   assert.deepEqual(noParentOnStart.map(view), [["native", "closed", 1, 2, [1, 2]]]);
+  assert.equal(noParentOnStart[0].parentSession, parentKey("p2"), "o pai vem do fim quando só ele o nomeia");
+  assert.equal(noParentOnStart[0].childSession, keyFor(CAPTURE_A, SOURCES.hermes, "session", "c"));
+  const neither = subagents(correlateTrace(buildTrace([hermesStart(null), hermesStop(null)])));
+  assert.deepEqual([neither.length, neither[0].state, neither[0].parentSession], [1, "closed", null], "sem pai em nenhum lado, nada é inventado");
+  const conflict = subagents(correlateTrace(buildTrace([hermesStart("p1"), hermesStop("p2")])));
+  assert.deepEqual(conflict.map((op) => [op.state, op.parentSession]), [["open", parentKey("p1")], ["orphan_result", parentKey("p2")]], "pais em conflito continuam separados");
 });

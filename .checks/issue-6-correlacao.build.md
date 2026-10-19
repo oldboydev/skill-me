@@ -16,7 +16,8 @@ vendorizado intocado.
 | `0d8237e` | guia `docs/traces.md` (seção "Timeline e cobertura") e `docs/agent-observation.md` |
 | `27b8ae6` | prova do guia (`docs.test.mjs`) e este registro |
 | `2c22d3f` | correção do P1 do Verifier: subagente de hook não pareia entre sessões |
-| commit seguinte | correção dos achados de C2 (chave pública do subagente) e C10 (pais divergentes) |
+| `9315253` | correção dos achados de C2 (chave pública do subagente) e C10 (pais divergentes) |
+| commit seguinte | `parentSession` do par subagente lido também do fim quando só ele nomeia o pai |
 
 ## Decisões de implementação
 
@@ -119,8 +120,16 @@ escondendo a contradição. O pareamento agora exige `parentSessionId` igual qua
 saem `open` (evidência [1]) e `orphan_result` (evidência [3] no teste, que intercala uma ferramenta). Uma sessão filha
 reivindicada por pais em conflito não atribui suas ferramentas a nenhum dos subagentes. Mesmo pai pareia e atribui as
 ferramentas da sessão filha. Se um lado não traz o pai, a ausência não prova divergência e o par se forma, o mesmo
-critério de C6 para turno e subagente; essa é uma escolha conservadora declarada, e o pai exposto é o do início, ou o do
-fim se o início não o trouxe.
+critério de C6 para turno e subagente; essa é uma escolha conservadora declarada.
+
+**Correção posterior (`parentSession` do par).** A frase anterior desta seção dizia que o pai exposto vinha do início ou do
+fim, mas o código só lia o início: com `subagent_start` sem `parentSessionId` e `subagent_stop` com p2, o par saía
+`native closed` com `parentSession: null`. Agora `parentSession` vem do início, ou do fim quando só ele nomeia o pai, e nos
+hooks cai no ID de sessão do evento; sem pai em nenhum lado continua `null` (nada é inventado). RED no HEAD `9315253`
+(`T6-C10`: obtido `null`, esperada a chave de p2); GREEN: C10 9/9, correlação 52/52, `npm run test:integrations` 285 tests, 278
+pass, 0 fail, 7 skipped (totais inalterados: o teste existente ganhou asserções, não casos). Mutação (ler o pai só do início)
+falha em C10. Pais em conflito seguem separados (`open` com o pai do início, `orphan_result` com o do fim) e o mesmo pai
+segue pareando.
 
 **RED no HEAD `2c22d3f`:** 3 falhas (2 de C2, 1 de C10); o teste de pais coincidentes/ausentes já passava e serve de
 controle. **GREEN:** C2 4/4, C10 9/9, correlação 52/52, `npm run test:integrations` 285 tests, 278 pass, 0 fail, 7 skipped.
