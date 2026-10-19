@@ -1,6 +1,6 @@
 # Issue #6 — verificação independente da timeline
 
-**Veredito atual: PASS — C1–C14 (14/14)** no HEAD `65d6c5c353e00b0abee433594e2d3e81c92bd12d`. A verificação atual está ao fim deste documento. A quarta rodada abaixo é mantida como histórico; foi autorizada pelo proprietário nesta conversa em 19/10/2026, após três rodadas com achados corrigidos. Perfil `light`; Verifier independente do autor Claude. Diff da quarta rodada de `cc74be7952e28bc6427450beb88e1adb0907df5e` a `a1365b9ab8a0e1d331646a1986c535fc8a8c659b`.
+**Veredito atual: PASS — C1–C14 (14/14)** no HEAD de produto `c731d05`. A verificação atual está ao fim deste documento. As rodadas anteriores abaixo são mantidas como histórico. A quarta foi autorizada pelo proprietário nesta conversa em 19/10/2026, após três rodadas com achados corrigidos. Perfil `light`; Verifier independente do autor Claude. Diff da quarta rodada de `cc74be7952e28bc6427450beb88e1adb0907df5e` a `a1365b9ab8a0e1d331646a1986c535fc8a8c659b`.
 
 O Verifier leu a [issue #6](https://github.com/oldboydev/skill-me/issues/6), seus sete critérios de aceite, `AGENTS.md`, o plano, a checklist, o registro do build e o diff. Os sete critérios estão cobertos por C1–C14, sem contradição encontrada. `CONTRIBUTING.md` não existe neste checkout. A árvore estava limpa; `git diff --check` saiu 0. `package.json` continua `private: true`, e o core vendorizado de revisão não mudou.
 
@@ -35,7 +35,7 @@ O `turn_end` de Claude em C11 é sintético, pois o adaptador não o emite. O c�
 
 Um início Hermes com `subagentId` e `childSessionId` expõe a chave do primeiro em `entries.identity.subagent`, enquanto o fim e a operação usam a do segundo. Ambos os IDs permanecem em `entries.ids`; a operação usa o `childSessionId` explícito, cita início/fim em `evidence` e só atribui ferramentas da sessão filha. O Verifier registrou isso como alias observado, sem quebra demonstrada de C2/C10.
 
-## Verificação independente após correções da revisão formal
+## Verificação independente após a primeira revisão formal
 
 **Veredito: PASS — C1–C14 (14/14).** Perfil `light`; Verifier independente do autor Claude; HEAD `65d6c5c353e00b0abee433594e2d3e81c92bd12d`; diff `cc74be7952e28bc6427450beb88e1adb0907df5e..HEAD`. A issue #6 e os dois comentários OWNER foram lidos no GitHub: os sete critérios de aceite seguem o escopo do plano, e o proprietário autorizou as rodadas adicionais de Verifier após a primeira revisão formal. Foram lidos `AGENTS.md`, `verify.md`, plano, checklist, evidência de build, verificação anterior como histórico, contratos v1, fontes alteradas e diff. `CONTRIBUTING.md` não existe neste checkout.
 
@@ -61,3 +61,30 @@ Um início Hermes com `subagentId` e `childSessionId` expõe a chave do primeiro
 **Revisão dos dois achados formais:** C6 preserva início, resultado, status, `exitCode` e `elapsedMs` quando duas sessões Codex têm `itemId` distintos mesmo com vidas sobrepostas (`operations.unit.test.mjs:245–265`), sem atribuir sessão nativa. Um início/fim únicos atravessando `session_start` fica heurístico (`:268–279`); fase repetida ou tipo misto ficam ambíguos (`:219–241,281–293`). C4 reconhece duplicata Hermes com `childSessionId` explícito sem `sessionId`, aponta `duplicateOf` e não cria segunda operação (`timeline.unit.test.mjs:348–357`); sem ID e com pais diferentes não deduplica (`:360–369`). C13 e `T6-docs` agora simulam ambiguidade por início repetido do mesmo `itemId`, não apenas abertura de outra sessão (`coverage.unit.test.mjs:55–65`, `docs.test.mjs:32–44`); `docs/traces.md:165–167` descreve a mesma regra.
 
 **Limites:** esta rodada `light` não requer injeção independente de falhas; as mutações RED/GREEN e a suíte de integração ampla em `.checks/issue-6-correlacao.build.md` são evidência do autor, não comandos atribuídos ao Verifier. O `turn_end` Claude de C11 é sintético; E/S de C12 foi injetada em `runPrivacyCommand`; C14 usa fixtures e não executa modelo real. Sem ID de sessão nas linhas Codex, o reuso de `itemId` que só apresenta um início e um fim não pode ser distinguido de uma chamada longa e permanece `heuristic`; a atribuição de sessão nunca vira nativa. O alias Hermes `subagentId`/`childSessionId` no início, já registrado na seção histórica, permanece observável nos IDs originais e não mostrou quebra de C2/C10.
+
+## Verificação independente após a segunda revisão formal
+
+**Veredito: PASS — C1–C14 (14/14), sete critérios de aceite.** Verifier independente em leitura, perfil `light`, HEAD de produto `c731d05`, diff `cc74be7..HEAD`. O Verifier leu issue #6 e comentários, `AGENTS.md`, plano, checklist, evidência de build, contratos e diff; não editou arquivos. A árvore estava limpa e `git diff --check` passou.
+
+**Prova executada:** `node --test "tests/integrations/correlation/*.test.mjs"` em uma chamada com permissão para as fixtures temporárias: **64 testes, 64 pass, 0 fail, 0 skip**. Uma primeira chamada em sandbox restrito teve 58 passes e seis falhas em `startCapture` com `io_failure`, antes das asserções C12/C14; com acesso ao diretório temporário, a repetição passou integralmente. Os testes do autor em `.checks/issue-6-correlacao.build.md`, inclusive a suíte ampla, não são atribuídos ao Verifier.
+
+| Check | Testes | Asserção decisiva no HEAD | Resultado |
+| --- | ---: | --- | --- |
+| C1 | 2 | `timeline.unit.test.mjs:19` exige versão 1, ordem `[1,2,3]`, evidência por sequência e vazio | PASS |
+| C2 | 7 | `timeline.unit.test.mjs:304` exige chaves distintas de turno e chamada entre sessões | PASS |
+| C3 | 3 | `timeline.unit.test.mjs:112,129` exige ausência de sessão inconclusiva e candidato heurístico com evidência `[2,4]` | PASS |
+| C4 | 6 | `timeline.unit.test.mjs:208,350–357` preserva duplicatas numa operação e deduplica Hermes por filho explícito | PASS |
+| C5 | 3 | `timeline.unit.test.mjs:384,397–398` exige segmentos `[1,2,2,2]` com cópia de `resume` e `[1,2,3,3]` com retomada distinta | PASS |
+| C6 | 11 | `operations.unit.test.mjs:257,304,323–333` exige itens Codex distintos intercalados, resultado sem ID `inconclusive/orphan_result` com campos observados e itens sem ID sem pareamento | PASS |
+| C7 | 3 | `operations.unit.test.mjs:181` exige `exitCode:0`, `elapsedMs:2500` e duração derivada | PASS |
+| C8 | 2 | `skills.unit.test.mjs:45` exige `post` fechando invocação com `instructionCompletion:"unobserved"` | PASS |
+| C9 | 2 | `skills.unit.test.mjs:63,84–87` exige expansão/lifecycle heurísticos e leitura de `SKILL.md` sem invocação | PASS |
+| C10 | 9 | `subagents.unit.test.mjs:169` exige pais divergentes sem pareamento ou atribuição de ferramenta | PASS |
+| C11 | 2 | `skills.unit.test.mjs:121` exige fronteira `boundary_only` sem `skill_completed` | PASS |
+| C12 | 6 | `timeline.cli.test.mjs:46,92–105,157–159` exige JSON v1 sem escrita e erros 2/3/4/5 | PASS |
+| C13 | 5 | `coverage.unit.test.mjs:42` exige contadores, lacunas, totais e `partial` exatos | PASS |
+| C14 | 1 | `timeline.e2e.test.mjs:68,84–100` exige CLI igual à API sobre 17 registros de fixtures | PASS |
+
+**Quatro achados das revisões formais:** itens Codex de IDs distintos em sessões sobrepostas preservam operação, campos e duração (C6); duplicata Hermes por `childSessionId` não cria operação extra (C4); `item.completed` sem `itemId` preserva `status`, `exitCode`, evidência e contagem de órfãos, sem pareamento inventado (C6); cópia idêntica de `resume` não abre segmento e `resume` diferente abre (C5).
+
+**Limites:** C11 usa `turn_end` Claude sintético; a E/S de C12 é injetada em `runPrivacyCommand`; C14 usa fixtures, sem agente ou modelo real. O Verifier não executou testes no commit anterior nem a suíte ampla relatada pelo autor. O limite de duas tentativas de revisão formal foi atingido com `changes_requested`; este PASS independente não equivale a revisão formal aprovada.
