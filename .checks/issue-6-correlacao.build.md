@@ -69,6 +69,40 @@ O código 5 (falha de E/S) é provado em processo, por `runPrivacyCommand` com u
 `rename` (escrita) e este comando só lê. O formato do envelope e a recusa de eco são provados; a
 tradução do código em saída do processo é a mesma já provada para os demais comandos `privacy`.
 
+## Correção do achado P1 do Verifier (subagente entre sessões)
+
+**Defeito.** O pareamento de subagente usava só o texto do `agentId` (chave sem sessão): `subagent_start`
+em `s1` e `subagent_stop` em `s2` com o mesmo `agentId` viravam um subagente `native` `closed`, e as
+ferramentas de `s2` com esse `agentId` eram atribuídas ao subagente de `s1`. Isso contraria C2 (mesmo texto
+de ID em sessões distintas não cria vínculo) e C10 (as ferramentas ficam na sessão do filho).
+
+**Reprodução (RED no HEAD `27b8ae6`).** Os três testes novos de `subagents.unit.test.mjs` falharam
+(`pass 4, fail 3` na suíte do arquivo): start(s1,A) + tool pre/post(s2,A) + stop(s2,A); o mesmo agentId em
+duas sessões completas; e `agentId` sem sessão.
+
+**Correção (`subagents.mjs`).** A chave de pareamento passa a ser:
+- `childSessionId` (Hermes): vale sozinha. Pai e filho são sessões diferentes por definição, então a sessão
+  do início e a do fim não precisam coincidir; a identidade é a sessão filha, única na captura e na origem.
+- `agentId`/`subagentId` (hooks): `[subagente, sessão]`. Sem ID de sessão não há par e cada metade fica
+  `inconclusive`.
+Na atribuição, o subagente com sessão filha leva as ferramentas dessa sessão; o dos hooks leva as do mesmo
+`agentId` **na mesma sessão** em que foi nomeado (`op.session === sub.parentSession`). O campo público
+`subagent` e `identity.subagent` não mudaram.
+
+**Resultado do cenário.** start(s1,A) fica `native open`; stop(s2,A) fica `native orphan_result`; nenhuma
+operação cruza sessões; a ferramenta de s2 é atribuída ao subagente órfão de s2 (mesma sessão e `agentId`) e
+não ao de s1.
+
+**Hermes (avaliação).** O teste existente de pai ≠ filho continua verde, e um novo prova `parentSession ≠
+childSession` pareando por `childSessionId` com a ferramenta da sessão filha atribuída. Não se exige que
+`parentSessionId` do início e do fim coincidam: um mesmo `childSessionId` com pais diferentes seria
+contraditório e não é tratado. Isso é uma limitação declarada, sem prova.
+
+**Provas.** `Proof:` de C10: 7 tests, 7 pass, 0 fail, 0 skipped. `tests/integrations/correlation/*.test.mjs`:
+48 tests, 48 pass. `npm run test:integrations`: 281 tests, 274 pass, 0 fail, 0 cancelled, 7 skipped (os mesmos
+7 skips de plataforma já listados). Mutação: remover `op.session === sub.parentSession` da atribuição faz
+2 dos novos testes falharem. Sem push, PR, merge ou revisão formal.
+
 ## Provas por check
 
 | Check | Teste(s) | Arquivo | Resultado |

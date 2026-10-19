@@ -91,3 +91,67 @@ test("T6-C10 subagent relations: o mesmo texto de agentId em outra origem não p
     ["native", "orphan_result", null, 2, [2]],
   ]);
 });
+
+// Achado P1 do Verifier: um agentId só identifica o subagente dentro da sessão
+// que o nomeia; o mesmo texto em outra sessão não pareia nem atribui ferramentas.
+const agentEvent = (kind, session, extra = {}) => ({ src: "claude", kind, ids: { sessionId: session, agentId: "A", ...extra.ids }, fields: { agentType: "Explore", ...extra.fields } });
+
+test("T6-C10 subagent relations: o mesmo agentId em outra sessão não pareia início e fim nem leva ferramentas para o subagente da primeira", () => {
+  const result = correlateTrace(
+    buildTrace([
+      agentEvent("subagent_start", "s1"),
+      { src: "claude", kind: "tool_pre", ids: { sessionId: "s2", toolUseId: "k1", agentId: "A" }, fields: { toolName: "Grep" } },
+      { src: "claude", kind: "tool_post", ids: { sessionId: "s2", toolUseId: "k1", agentId: "A" }, fields: { toolName: "Grep" } },
+      agentEvent("subagent_stop", "s2"),
+    ]),
+  );
+  const [first, second] = subagents(result);
+  assert.equal(subagents(result).length, 2, "nenhuma operação cruza as sessões");
+  assert.deepEqual(view(first), ["native", "open", 1, null, [1]]);
+  assert.deepEqual(view(second), ["native", "orphan_result", null, 4, [4]]);
+  assert.notEqual(first.parentSession, second.parentSession);
+  const [tool] = tools(result);
+  assert.deepEqual(first.operations, [], "a ferramenta de s2 não vai para o subagente de s1");
+  assert.deepEqual(second.operations, [tool.id], "ela fica com o subagente da própria sessão");
+});
+
+test("T6-C10 subagent relations: o mesmo agentId em duas sessões completas gera dois subagentes, cada um com as ferramentas da sua sessão", () => {
+  const tool = (session, id) => ({ src: "claude", kind: "tool_pre", ids: { sessionId: session, toolUseId: id, agentId: "A" }, fields: { toolName: "Grep" } });
+  const result = correlateTrace(
+    buildTrace([
+      agentEvent("subagent_start", "s1"),
+      agentEvent("subagent_start", "s2"),
+      tool("s2", "k2"),
+      tool("s1", "k1"),
+      agentEvent("subagent_stop", "s2"),
+      agentEvent("subagent_stop", "s1"),
+    ]),
+  );
+  const [s1, s2] = subagents(result);
+  assert.deepEqual([view(s1), view(s2)], [["native", "closed", 1, 6, [1, 6]], ["native", "closed", 2, 5, [2, 5]]]);
+  const bySession = Object.fromEntries(tools(result).map((op) => [op.call.split("/").at(-1), op.id]));
+  assert.deepEqual([s1.operations, s2.operations], [[bySession.k1], [bySession.k2]]);
+});
+
+test("T6-C10 subagent relations: agentId sem ID de sessão não pareia nem é native; o filho do Hermes continua pareado por childSessionId com pai e filho distintos", () => {
+  const loose = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "subagent_start", ids: { agentId: "A" }, fields: { agentType: "Explore" } },
+      { src: "claude", kind: "subagent_stop", ids: { agentId: "A" }, fields: { agentType: "Explore" } },
+    ]),
+  );
+  assert.deepEqual(subagents(loose).map(view), [["inconclusive", "open", 1, null, [1]], ["inconclusive", "orphan_result", null, 2, [2]]]);
+
+  const hermes = correlateTrace(
+    buildTrace([
+      { src: "hermes", kind: "subagent_start", ids: { parentSessionId: "hs", childSessionId: "hc", subagentId: "A" }, fields: { childRole: "leaf" } },
+      { src: "hermes", kind: "tool_pre", ids: { sessionId: "hc", toolCallId: "c1" }, fields: { toolName: "write_file" } },
+      { src: "hermes", kind: "subagent_stop", ids: { parentSessionId: "hs", childSessionId: "hc" }, fields: { childRole: "leaf", childStatus: "completed" } },
+    ]),
+  );
+  const [sub] = subagents(hermes);
+  assert.equal(subagents(hermes).length, 1);
+  assert.deepEqual(view(sub), ["native", "closed", 1, 3, [1, 3]]);
+  assert.notEqual(sub.parentSession, sub.childSession, "pai e filho legitimamente diferentes");
+  assert.deepEqual(sub.operations, [tools(hermes)[0].id]);
+});
