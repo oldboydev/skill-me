@@ -14,7 +14,25 @@ import { CAPTURE_REPORT_ENV, appendDeliveryReport, deliveryReportFile, deliveryR
 import { REPO_ROOT, baseEnv, makeScratch, runIntegrations, runIntegrationsJson } from "../helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers, runClaudeHandler, runCodexHandler } from "../helpers/installed-hooks.mjs";
 import { MARKER, claudePayload, codexHookPayload, execEvent, hermesRecord } from "../helpers/privacy-canaries.mjs";
-import { ISO_MS, TRACES_PROBE, boundEnv, captureDir, capturesDir, exportOf, expectedPseudonym, privacyOk, runHermesIngest, runHook, startCapture, statusOf, storeDir, waitUntil } from "../helpers/traces.mjs";
+import {
+  ISO_MS,
+  TRACES_PROBE,
+  boundEnv,
+  captureDir,
+  capturesDir,
+  describeTiming,
+  deliveryTiming,
+  exportOf,
+  expectedPseudonym,
+  privacyOk,
+  runHermesIngest,
+  runHook,
+  startCapture,
+  statusOf,
+  storeDir,
+  timingLines,
+  waitUntil,
+} from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
 
@@ -712,4 +730,38 @@ test("T8-C16 delivery failure neutrality: no hook real, lock obtido na repetiç�
   unlinkSync(lock);
   assert.deepEqual(snapshotTree(captureDir(root, id)), before);
   assert.equal(statusOf(root, id).counters.persisted, 0);
+});
+
+test("T8-C16 delivery failure neutrality: no hook real, a tentativa só faz flush dos dados confirmados (segmento e state.json); o lock é tomado e liberado sem flush", async () => {
+  // Cada flush espera o disco dentro dos 650 ms da tentativa, e no runner
+  // Windows da CI as operações com flush são lentas (rodada 6 do build). O lock
+  // só serializa processos vivos e continua obrigatório na abertura e no commit.
+  const root = scratch("t8 c16 flush");
+  const id = startCapture(root);
+  const timing = path.join(scratch("t8 c16 flush tempos"), "operações.ndjson");
+  // A 1ª entrega cria o segmento; a 2ª lê o anterior, grava o seguinte e apaga o antigo.
+  for (const [index, toolUseId] of ["flush-1", "flush-2"].entries()) {
+    const run = await runHook("claude", claudePayload("pre_tool_bash", { tool_use_id: toolUseId }), {
+      env: boundEnv(root, id, { SKILL_ME_TEST_TRACES_TIMING: timing }),
+      nodeArgs: ["--import", TRACES_PROBE],
+    });
+    const lines = timingLines(timing);
+    assert.equal(lines.length, index + 1, `${toolUseId}: uma linha da pré-carga de tempo por hook`);
+    assert.deepEqual(run.report.delivery, { bound: true, code: null, entries: 1, committed: 1, persisted: 1, lost: 0 }, `${toolUseId}: ${describeTiming(deliveryTiming(lines.at(-1)))}`);
+  }
+  for (const [index, { ops }] of timingLines(timing).entries()) {
+    const label = `entrega ${index + 1}`;
+    assert.deepEqual(
+      ops.filter(([op]) => op === "sync").map(([, kind]) => kind),
+      ["segmento.tmp", "state.json.tmp"],
+      `${label}: flush do segmento e do state.json, nessa ordem, e nenhum outro`,
+    );
+    assert.deepEqual(
+      ["writeFile", "unlink"].map((name) => ops.filter(([op, kind]) => op === name && kind === "lock").length),
+      [2, 2],
+      `${label}: abertura e commit gravaram e liberaram o próprio lock`,
+    );
+  }
+  assert.deepEqual(exportOf(root, id).records.map((r) => r.envelope.ids.toolUseId), ["flush-1", "flush-2"].map((value) => expectedPseudonym(root, id, value)));
+  assertSegmentConsistent(root, id, "depois das duas entregas");
 });

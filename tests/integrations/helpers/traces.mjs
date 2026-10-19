@@ -105,6 +105,42 @@ export function runInternal(args, { env, cwd, stdinText = "", writeAfterMs = 0, 
   });
 }
 
+// Ambiente que carrega a pré-carga de tempo (SKILL_ME_TEST_TRACES_TIMING) num
+// processo iniciado como o agente o inicia — sem argumento novo na linha de
+// comando instalada, só pelo NODE_OPTIONS herdado.
+export const timedEnv = (file) => ({ NODE_OPTIONS: `--import=${TRACES_PROBE}`, SKILL_ME_TEST_TRACES_TIMING: file });
+export const timingLines = (file) => (existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []);
+
+// Tentativa de entrega de um processo, pela linha da pré-carga: da primeira
+// operação de disco (a abertura começa no instante em que o evento lido entra
+// na entrega) ao fim da última. Só tipos e números.
+export function deliveryTiming({ ops, cpuMs }) {
+  if (ops.length === 0) return { ms: 0, operations: 0, syncs: [], syncMs: 0, byOperation: [], slowest: "nenhuma", failed: [], cpuMs };
+  const start = Math.min(...ops.map(([, , at]) => at));
+  const end = Math.max(...ops.map(([, , at, ms]) => at + ms));
+  const totals = {};
+  for (const [op, , , ms] of ops) totals[op] = (totals[op] ?? 0) + ms;
+  const syncs = ops.filter(([op]) => op === "sync");
+  const [op, kind, , ms] = ops.reduce((a, b) => (b[3] > a[3] ? b : a));
+  return {
+    ms: Math.round(end - start),
+    operations: ops.length,
+    syncs: syncs.map(([, file]) => file),
+    syncMs: Math.round(syncs.reduce((sum, entry) => sum + entry[3], 0)),
+    byOperation: Object.entries(totals)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([name, total]) => `${name} ${Math.round(total)}`),
+    slowest: `${op} ${kind} ${Math.round(ms)} ms`,
+    failed: ops.filter((entry) => entry.length > 4).map(([name, file, , , code]) => `${name} ${file} ${code}`),
+    cpuMs,
+  };
+}
+
+export const describeTiming = (t) =>
+  `${t.ms} ms da 1ª à última operação de disco; ${t.operations} operações; flush ${t.syncs.join("+") || "nenhum"} = ${t.syncMs} ms; ` +
+  `por operação ${t.byOperation.join(", ")} ms; mais lenta ${t.slowest}; falhas ${t.failed.join(", ") || "nenhuma"}; CPU do processo ${t.cpuMs} ms`;
+
 export const runHook = (agent, payload, options = {}) =>
   runInternal(["hook", "--agent", agent], { ...options, stdinText: options.stdinText ?? JSON.stringify(payload) });
 

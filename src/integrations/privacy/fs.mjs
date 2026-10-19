@@ -29,12 +29,13 @@ export function createStoreIo({ openFile = open } = {}) {
     // Não recursivo: só a pasta pedida, nunca ancestrais.
     mkdir: (dir) => mkdir(dir, { mode: 0o700 }),
     // `wx`: falha se o caminho existe — serve de lock e impede que um
-    // temporário sobrescreva o que não é nosso.
-    async writeExclusive(file, data) {
+    // temporário sobrescreva o que não é nosso. `durable: false` dispensa o
+    // flush; só o lock o usa (store.mjs, `withLock`).
+    async writeExclusive(file, data, { durable = true } = {}) {
       const handle = await open(file, "wx", 0o600);
       try {
         await handle.writeFile(data);
-        await handle.sync();
+        if (durable) await handle.sync();
       } finally {
         await handle.close();
       }

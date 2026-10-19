@@ -10,6 +10,8 @@ import { runPrivacy } from "../helpers/privacy-store.mjs";
 import {
   assertAbsentOnDisk,
   boundEnv,
+  deliveryTiming,
+  describeTiming,
   exportOf,
   expectedPseudonym,
   filesUnder,
@@ -20,6 +22,8 @@ import {
   startCapture,
   statusOf,
   storeDir,
+  timedEnv,
+  timingLines,
 } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 import { probeOf, runWrapper, writeScenario } from "../helpers/wrapper.mjs";
@@ -72,6 +76,29 @@ function nativeIdValues(payloads, names) {
   return payloads.flatMap((payload) => Object.values(names).map((name) => payload[name]).filter((value) => typeof value === "string" && value !== ""));
 }
 
+// C1 e C2 rodam os hooks com a pré-carga de tempo (só observa): a entrega que
+// passar do prazo diz, na própria falha, onde a tentativa gastou o tempo, e a
+// mais lenta vai ao log como diagnóstico. Na CI Windows em `ef9e6f0` as duas
+// provas perderam uma entrega com `delivery_timeout` sem esse dado (rodadas 5 e
+// 6 do build). Uma linha por processo: o arquivo fica fora da raiz da captura.
+function deliveryClock(label) {
+  const file = path.join(scratch(`${label} tempos`), "operações.ndjson");
+  let processes = 0;
+  let slowest = null;
+  return {
+    env: timedEnv(file),
+    // Tempo da entrega do hook que acabou de sair: a linha dele precisa existir.
+    last(name) {
+      const lines = timingLines(file);
+      assert.equal(lines.length, ++processes, `${name}: uma linha da pré-carga de tempo por hook`);
+      const timing = { name, ...deliveryTiming(lines.at(-1)) };
+      if (slowest === null || timing.ms > slowest.ms) slowest = timing;
+      return describeTiming(timing);
+    },
+    report: (t) => t.diagnostic(`entrega mais lenta: ${slowest.name}, ${describeTiming(slowest)}`),
+  };
+}
+
 let claude;
 let codex;
 before(() => {
@@ -88,10 +115,11 @@ before(() => {
   codex.handlers = readCodexHandlers(codex.target);
 });
 
-test("T8-C1 Claude live capture: hook instalado e vinculado grava um registro v1 por evento suportado, sem payload bruto", async () => {
+test("T8-C1 Claude live capture: hook instalado e vinculado grava um registro v1 por evento suportado, sem payload bruto", async (t) => {
   const root = scratch("t8 c1 raiz");
   const id = startCapture(root);
-  const env = boundEnv(root, id);
+  const clock = deliveryClock("t8 c1");
+  const env = boundEnv(root, id, clock.env);
   const cases = loadFixture("claude-hooks.json").cases.filter((c) => c.valid);
   assert.ok(cases.length >= 10);
   let toolEvents = 0;
@@ -99,7 +127,7 @@ test("T8-C1 Claude live capture: hook instalado e vinculado grava um registro v1
     const run = await runClaudeHandler(claude.handlers[payload.hook_event_name].handler, payload, { env, cwd: claude.cwd });
     assert.equal(run.status, 0, `${name}: ${run.stderr}`);
     assert.equal(run.stdout, "", name);
-    assert.deepEqual(run.report.delivery, DELIVERED(1), name);
+    assert.deepEqual(run.report.delivery, DELIVERED(1), `${name}: ${clock.last(name)}`);
     const { records } = exportOf(root, id);
     assert.equal(records.length, index + 1, `${name}: exatamente um registro novo`);
     const record = records.at(-1);
@@ -115,6 +143,7 @@ test("T8-C1 Claude live capture: hook instalado e vinculado grava um registro v1
     if (isTool) toolEvents += 1;
     assert.deepEqual(record.privacy, isTool ? ["content:content_disabled"] : [], name);
   }
+  clock.report(t);
   const status = statusOf(root, id);
   assert.deepEqual(status.counters, {
     accepted: cases.length,
@@ -128,10 +157,11 @@ test("T8-C1 Claude live capture: hook instalado e vinculado grava um registro v1
   for (const file of filesUnder(storeDir(root))) assert.ok(!CANARY_PATTERN.test(readFileSync(file, "latin1")), path.basename(file));
 });
 
-test("T8-C2 Codex hook live capture: linha instalada em hooks.json grava um registro por evento suportado e sai 0", async () => {
+test("T8-C2 Codex hook live capture: linha instalada em hooks.json grava um registro por evento suportado e sai 0", async (t) => {
   const root = scratch("t8 c2 raiz");
   const id = startCapture(root);
-  const env = boundEnv(root, id, codex.extra);
+  const clock = deliveryClock("t8 c2");
+  const env = boundEnv(root, id, { ...codex.extra, ...clock.env });
   const cases = loadFixture("codex-hooks.json").cases.filter((c) => c.valid);
   assert.ok(cases.length >= 8);
   for (const [index, { name, payload }] of cases.entries()) {
@@ -139,7 +169,7 @@ test("T8-C2 Codex hook live capture: linha instalada em hooks.json grava um regi
     assert.equal(run.status, 0, `${name}: ${run.stderr}`);
     assert.equal(run.stdout, "", name);
     assert.ok(run.report, `${name}: relatório`);
-    assert.deepEqual(run.report.delivery, DELIVERED(1), name);
+    assert.deepEqual(run.report.delivery, DELIVERED(1), `${name}: ${clock.last(name)}`);
     const { records } = exportOf(root, id);
     assert.equal(records.length, index + 1, name);
     const record = records.at(-1);
@@ -150,6 +180,7 @@ test("T8-C2 Codex hook live capture: linha instalada em hooks.json grava um regi
     assertCapturePseudonyms(root, id, record.envelope, payload, CODEX_HOOK_IDS, name);
     assert.equal(record.content, null, name);
   }
+  clock.report(t);
   assert.equal(statusOf(root, id).counters.persisted, cases.length);
   const payloads = cases.map((c) => c.payload);
   assertAbsentOnDisk(root, [...nativeIdValues(payloads, CODEX_HOOK_IDS), ...payloads.flatMap((p) => [p.cwd, p.transcript_path].filter(Boolean))], "C2");

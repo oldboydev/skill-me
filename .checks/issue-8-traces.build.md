@@ -158,6 +158,8 @@ e o arquivo foi restaurado com `git checkout` (árvore limpa ao fim):
 | WSL Ubuntu, correção 3 (`npm test` em `d823c00`) | 657 ms; com diagnóstico em arquivo, 658 ms; lock obtido na repetição e disco parado, 657 ms | 650 ms | 650 ms; lock obtido na repetição, 650 ms |
 | Windows 11, correção 4 (`npm test`, Node 24.21.0) | 667 ms; com diagnóstico em arquivo, 662 ms; lock obtido na repetição e disco parado, 663 ms | 650 ms | 665 ms; lock obtido na repetição, 664 ms |
 | Windows 11, correção 4 (`npm test`, Node 24.13.0, o da CI) | 676 ms; com diagnóstico em arquivo, 665 ms; lock obtido na repetição e disco parado, 663 ms | 657 ms | 653 ms; lock obtido na repetição, 657 ms |
+| Windows 11, correção 6 (`Proof:` de C16, Node 24.21.0) | 675 ms; com diagnóstico em arquivo, 702 ms; lock obtido na repetição e disco parado, 675 ms | 657 ms | 650 ms; lock obtido na repetição, 652 ms |
+| Windows 11, correção 6 (`Proof:` de C16, Node 24.13.0) | 661 ms; com diagnóstico em arquivo, 674 ms; lock obtido na repetição e disco parado, 683 ms | 651 ms | 652 ms; lock obtido na repetição, 653 ms |
 
 Em processo a asserção é ≤ 750 ms exatos. No processo real a medida inclui o
 encerramento depois da tentativa; a asserção admite 750 + 500 ms. "Com
@@ -186,6 +188,10 @@ diagnóstico em arquivo" é o hook sem relatório de fixture e com
 | Windows 11 — Node 24.13.0, mesma árvore (correção 4) | `Proof:` de C7, C11, C14, C15 e C16, como escritos | cada um exit 0, 0 fail, 0 skip; C7, C11, C14 e C15 selecionam 1, C16 seleciona 8 |
 | Windows 11 — Node 24.21.0, mesma árvore (correção 4) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 232 (225 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX); 29 linhas T8, os 8 T8-C16 inclusive |
 | Windows 11 — Node 24.13.0 e npm 11.6.2 do pacote oficial, Hermes oculto como na CI, mesma árvore (correção 4) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 232 (217 pass, 0 fail, 15 skip: os 7 acima e Hermes ausente ×8, o mesmo conjunto da CI); 29 linhas T8 |
+| Windows 11 — Node 24.21.0, árvore de trabalho sobre `ef9e6f0` com a correção 6 | `Proof:` de C1, C2, C15, C16, C17 e C20, como escritos | cada um exit 0, 0 fail, 0 skip; C16 seleciona 9, C20 2, os demais 1 |
+| Windows 11 — Node 24.13.0 (o da CI), mesma árvore (correção 6) | idem | idem |
+| Windows 11 — Node 24.13.0 e npm 11.6.2, Hermes oculto, mesma árvore (correção 6) | `npm test` | exit 1 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 233 (217 pass, 1 fail: T8-C2 com `io_failure`, 15 skip); ver rodada 6 |
+| Windows 11 — Node 24.21.0, mesma árvore (correção 6) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 233 (226 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX); 30 linhas T8, os 9 T8-C16 inclusive |
 
 Preparação WSL: tar e `run-wsl.sh` num diretório de `mktemp -d` do `%TEMP%`
 (`skill-me-i8-wsl-stage-n0fAaX` na fase 1, `skill-me-i8-wsl-stage-71TySJ` na 2,
@@ -852,3 +858,508 @@ no 24.21.0 e no 24.13.0.
 - Fora do escopo, comunicado: o `node --test` não acusa os testes de um
   arquivo que morre depois de um subteste falho. Na CI, só o total de testes
   revela a perda.
+
+## Rodada de diagnóstico 5 — CI Windows em `ef9e6f0`
+
+Origem: CI run `39198006078` (`workflow_dispatch` da branch, `headSha`
+`ef9e6f0`), job Windows `117884894719`. `npm run test:integrations` terminou
+com 232 tests, 215 pass, 2 fail e 15 skip. Ubuntu e macOS passaram. As duas
+falhas têm `delivery.code` `delivery_timeout` onde a prova exige
+`DELIVERED(1)`:
+
+- T8-C1, no 8º caso válido do fixture Claude (`expansion_mcp_prompt`,
+  `live-capture.cli.test.mjs:102`);
+- T8-C2, no 1º caso válido do fixture Codex (`pre_tool_bash`, `:142`).
+
+C7, C11, C14, C15 e os oito C16, que falharam em `b2c230c`, passaram. Os
+números da CI eram os informados pelo orquestrador; o log não foi lido nesta
+rodada. Na rodada 6 ele foi lido e confirma esses números. Builder Claude.
+
+Nada mudou nesta rodada: produto, testes, helpers, workflow,
+`.tasks/issue-8-traces.md`, `.checks/issue-8-traces.md`,
+`.checks/issue-8-traces.verified.md`, `package.json` e os cinco arquivos do
+core seguem como estavam. A única alteração é esta seção. Sem commit, push,
+PR, merge ou revisão Codex.
+
+### Execução nesta rodada (corrigido na rodada 6)
+
+Limite da sessão da rodada 5, não do projeto nem do PowerShell: a ferramenta
+de comandos usada pedia aprovação para cada execução, e a sessão não era
+interativa, então os pedidos foram recusados — o `Proof:` de C1, `npm run
+test:governance`, `node -e`, `gh run view … --log`, `gh api`, o WebFetch da
+API do GitHub (também por um subagente) e a leitura do `%TEMP%`, onde ficou o
+Node 24.13.0 da rodada 4. Só a leitura de arquivos do repositório e o `git`
+somente leitura rodaram (árvore limpa em `ef9e6f0`). Na rodada 6, pelo
+PowerShell, os mesmos tipos de comando rodaram: `node`, `npm`, `gh run view` e
+`git` (abaixo).
+
+Por isso esta rodada não tem reprodução, execução de teste, prova de antes e
+depois nem duração por teste da CI. Nada abaixo declara execução.
+
+### Diagnóstico (análise estática)
+
+1. **O que `delivery_timeout` significa em C1 e C2.** Em `delivery.mjs`,
+   `untilDeadline` (linhas 63–92) devolve `delivery_timeout` quando a
+   tentativa ainda está em curso no prazo. Isso vale para a primeira
+   tentativa, com o lock ou sem ele, porque o código inicial já é
+   `delivery_timeout`, e para uma repetição que tenha o lock. Nesses dois
+   testes, nenhum outro processo toca a raiz da captura durante o hook:
+   - cada teste tem a sua raiz;
+   - os hooks rodam um por vez, porque o teste espera o `close`;
+   - `exportOf` e `startCapture` usam `spawnSync` (`helpers/cli.mjs`,
+     `runIntegrations`).
+
+   Logo, `lock_present` e a repetição são impossíveis. O código só pode vir da
+   primeira tentativa de `openCaptureForIngest` ou de `appendRecords` ainda em
+   curso 650 ms (`ATTEMPT_MS` = 750 − 100) depois de o hook ler o evento.
+   `readAt` é tomado depois do fim do stdin e do `JSON.parse`. Os `import()`
+   da entrega acontecem antes da leitura do stdin
+   (`hook-command.mjs:46–48`, `binding.mjs:32`), e não há outro `import()`
+   nesse caminho.
+2. **Trabalho dentro desse intervalo**, contado no código para um evento:
+   - abertura: cerca de 40 chamadas assíncronas de fs em sequência, com um
+     `FileHandle.sync` (o lock);
+   - commit: cerca de 43 chamadas em C2 (primeiro registro) ou 51 em C1
+     (8º registro, com a leitura e o `unlink` do segmento anterior), com três
+     `sync` (lock, temporário do segmento e temporário do `state.json`) e dois
+     `rename`.
+
+   No total, cerca de 83 a 91 idas ao threadpool em série e 4
+   FlushFileBuffers por hook. Base da contagem: `readSmallFile` = `lstat` +
+   `open` + `fstat` + 2 `read` + `fstat` + `close`; `writeExclusive` =
+   `open wx` + `write` + `sync` + `close`. É uma contagem do código, não uma
+   medida.
+3. **Folga medida antes.** Na rodada 4 (Node 24.13.0, 4 E-cores, suíte em
+   paralelo), a entrega em processo teve p99 de 78–87 ms e máximo de 115 ms.
+   O `delivery_timeout` exige mais de 650 ms, pelo menos 5,6 vezes o máximo
+   medido localmente.
+4. **Padrão das falhas.** Elas mudam de teste entre execuções: em `b2c230c`
+   foram C7 e C14 com `delivery_timeout` e C11 com `lock_present` depois de um
+   lock que ficou; em `ef9e6f0`, C1 e C2. Os dois casos de agora não têm nada
+   em comum:
+   - um evento Claude de expansão, sem ferramenta, depois de 7 entregas
+     confirmadas na mesma captura;
+   - o primeiro evento Codex, numa captura nova, com o menor payload.
+
+   As duas falhas são vizinhas no mesmo arquivo: falha de C1, depois o início
+   de C2 (`scratch`, `privacy start` por `spawnSync`, primeiro hook). A janela
+   lenta durou pelo menos esse intervalo e terminou antes de C3, que passou.
+   Ubuntu e macOS passam. Essa assinatura indica uma janela transitória de
+   latência no runner Windows, e não um caminho de código que dependa do
+   evento, do payload ou do estado da captura.
+5. **Hipótese da rodada 4.** O WerFault do processo morto com 0xC0000409 não
+   é necessário para explicar a falha. Em `ef9e6f0` nenhum arquivo morreu
+   (215 + 2 + 15 = 232, o total completo) e o `delivery_timeout` voltou mesmo
+   assim. Ocorreu a condição que a rodada 4 registrou como gatilho de medida no
+   runner e de decisão do proprietário ("Limites e achados fora do escopo",
+   primeiro item).
+
+Classificação:
+
+- **Defeito de produto: não demonstrado.** O produto cumpriu o critério 10: a
+  tentativa terminou no prazo com código fechado, e o agente não ficou preso.
+  O código 0 e o stdout vazio foram afirmados antes das linhas 102 e 142 e
+  passaram. O store não tem espera nem repetição nesse caminho, e as falhas
+  de E/S viram outros códigos (`io_failure`, `capture_*`). Não foi
+  encontrado caminho que prenda a operação.
+- **Prova: correta para o critério.** C1 e C2 exigem um registro confirmado
+  por evento, como dizem os checks C1 e C2. Implicitamente, exigem que o
+  ambiente complete cerca de 85 operações de fs e 4 flushes em 650 ms. A
+  prova não foi alterada: o prazo é contrato e as asserções não podem ser
+  enfraquecidas.
+- **Infraestrutura ou concorrência dos testes: não resolvido.** Duas causas
+  são compatíveis com o código:
+  - E/S: o flush e as operações de metadados no disco do `tmpdir()` do
+    runner atrasados por arquivos de teste em paralelo que gravam muito com
+    `sync`, como as reescritas de segmento de 8 MiB em C17 e nos limites da
+    #5;
+  - CPU: o processo do hook ficar sem CPU por centenas de ms nas 4 vCPUs,
+    com 3 arquivos de teste iniciando processos.
+
+  Nenhuma das duas foi medida. Distingui-las exige medida no próprio runner.
+  Medidas na rodada 6: as duas existem, e a E/S é o fator próprio do runner.
+
+**Lacuna de observabilidade.** A mensagem da falha mostra só o objeto
+`delivery`. O `collect` de `helpers/installed-hooks.mjs` devolve `elapsedMs`
+(do spawn ao `close`), mas o teste não o imprime. O relatório do produto não
+tem tempo, e a forma dele é fechada. O log da CI não tem horário por teste
+(rodada 4). Nada disponível distingue E/S de CPU.
+
+### Correção
+
+Nenhuma. Sem execução, não há causa demonstrada nem prova de regressão.
+Mudar a concorrência, o protocolo do store ou o teste seria palpite. Por isso
+não foram aplicados:
+
+- `--test-concurrency` ou isolamento dos arquivos T8 na CI;
+- menos trabalho por entrega (um ciclo de lock por hook em vez de dois, ou
+  lock sem `sync`), que muda o store da #5 e, pelo AGENTS.md, exige medida
+  antes e depois em condições comparáveis;
+- instrumentação nos testes, que não poderia ser validada nem uma vez antes de
+  entrar num checkout compartilhado.
+
+### Pendências desta rodada e situação na rodada 6
+
+1. **Permissão de execução.** Resolvida: o proprietário liberou as provas
+   locais e a leitura do log, e a rodada 6 as executou.
+2. **Instrumento.** Escrito e validado na rodada 6 como modo
+   `SKILL_ME_TEST_TRACES_TIMING` de `helpers/traces-probe.mjs`, carregado por
+   `NODE_OPTIONS=--import` em C1 e C2. Sem `monitorEventLoopDelay`: a duração
+   de cada operação, por tipo de arquivo, já separa disco (flush e metadados
+   lentos) de CPU (todas as operações infladas). Push e `workflow_dispatch`
+   ficam com o proprietário.
+3. **Opções.** A rodada 6 aplicou a menor correção demonstrada (lock sem
+   flush), dentro da instrução do proprietário de implementar a menor correção
+   demonstrada no escopo. Isolar arquivos na CI, um ciclo de lock por hook ou
+   aceitar o risco continuam decisão do proprietário se a CI falhar de novo
+   (rodada 6, "Limites").
+
+   Aumentar os 750 ms, enfraquecer asserções ou pular casos está excluído.
+
+### Execuções e ausências
+
+- Executado: nada (limite da sessão, acima). Lidos: `AGENTS.md`, a task, o checklist,
+  este registro, `delivery.mjs`, `binding.mjs`, `hook-command.mjs`,
+  `observation.mjs`, `store.mjs`, `privacy/fs.mjs`, `snapshot-read.mjs`,
+  `fs-adapter.mjs`, os helpers `cli.mjs`, `installed-hooks.mjs`, `traces.mjs`,
+  `privacy-store.mjs` e `traces-probe.mjs`, `live-capture.cli.test.mjs`,
+  `traces/limits.cli.test.mjs`, `docs.test.mjs`, os fixtures de hooks e o
+  workflow.
+- **CI pendente.** O job Windows em `ef9e6f0` continua com C1 e C2 falhando,
+  e C21 continua aberto. A próxima reexecução precisa conferir `tests 232`,
+  0 fail e 15 skip (233 depois da rodada 6, que acrescenta uma prova a C16).
+- WSL Ubuntu e macOS não foram executados nesta rodada.
+- Não executados: Claude, Codex ou Hermes reais com modelo.
+
+## Rodada de correção 6 — CI Windows em `ef9e6f0`: causa medida e lock sem flush
+
+Origem: a mesma da rodada 5 (run `39198006078`, job Windows `117884894719`).
+Builder Claude, numa sessão PowerShell com `node`, `npm`, `gh run view` e `git`
+liberados. Pediram aprovação, e foram substituídos por scripts Node com o
+mesmo efeito: comandos Bash compostos, a chamada direta (`&`) do `node.exe`
+24.13.0 baixado, `Get-ChildItem`/`Get-CimInstance` e `Select-String` em
+pipeline. Ferramentas da rodada fora do repositório, em
+`%TEMP%\issue8-r6\tools` (drivers, sondas e geradores de carga); saídas em
+`%TEMP%\issue8-r6\out`. Variantes do código para A/B e mutações em
+`%TEMP%\issue8-r6\variants`, cópias de `src/` (e de `tests/` nas mutações) —
+nenhuma mutação tocou o checkout compartilhado. Sem commit, push, PR, merge ou
+revisão Codex.
+
+Mudaram:
+
+- produto: `src/integrations/privacy/fs.mjs` (`writeExclusive(file, data,
+  { durable = true })`) e `src/integrations/privacy/store.mjs` (`withLock` cria
+  o lock com `durable: false`);
+- testes: `tests/integrations/helpers/traces-probe.mjs` (modo
+  `SKILL_ME_TEST_TRACES_TIMING`), `tests/integrations/helpers/traces.mjs`
+  (`timedEnv`, `timingLines`, `deliveryTiming`, `describeTiming`),
+  `tests/integrations/traces/concurrency.cli.test.mjs` (uma prova nova em C16)
+  e `tests/integrations/traces/live-capture.cli.test.mjs` (C1 e C2 com a
+  pré-carga de tempo);
+- este registro (rodada 5 corrigida e esta seção).
+
+Não mudaram: prazo de 750 ms, reserva de 100 ms, asserções e tolerâncias
+existentes, concorrência do runner, `.tasks/issue-8-traces.md`,
+`.checks/issue-8-traces.md`, `.checks/issue-8-traces.verified.md`,
+`package.json`, `.github/` e os cinco arquivos do core (`git diff origin/main`
+vazio).
+
+### O log da CI
+
+Lido com `gh run view 39198006078 --job 117884894719 --log`. Runner Windows
+Server 2025 (10.0.26100), região westus3. `npm run test:integrations`: tests
+232, pass 215, fail 2, cancelled 0, skipped 15, `duration_ms` 300 552. As
+falhas são as informadas: T8-C1 em `expansion_mcp_prompt`
+(`live-capture.cli.test.mjs:102`) e T8-C2 em `pre_tool_bash` (`:142`), ambas
+com `{ bound: true, code: "delivery_timeout", entries: 1, committed: 0,
+persisted: 0, lost: 1 }`. Nenhum arquivo morreu (215 + 2 + 15 = 232). Ubuntu
+e macOS: sucesso. O reporter imprime cada arquivo de uma vez (todas as linhas
+T8 com o carimbo `04:16:02.83`), então o log não dá o horário de cada teste,
+mas dá a duração. Comparação com uma execução local nas condições da CI (S0:
+Node 24.13.0, afinidade 4 E-cores 16–19, `--test-concurrency=3`, Hermes
+oculto, árvore `ef9e6f0`; 232 tests, 217 pass, 0 fail, 15 skip, 342 s):
+
+| Teste | Natureza | S0 local | CI | CI/local |
+| --- | --- | --- | --- | --- |
+| suíte inteira | — | 342 s | 301 s | 0,88 |
+| I5-C14j, I5-C39, I4-C30d | CPU e processos | 63,0 / 28,3 / 43,1 s | 60,3 / 26,3 / 35,6 s | 0,83–0,96 |
+| T8-C6 | hooks sem captura | 6,52 s | 6,42 s | 0,98 |
+| I5-C30s, C42s, C48s, C52s | store em processo | 49 / 91 / 80 / 105 ms | 151 / 245 / 215 / 306 ms | 2,7–3,1 |
+| T8-C9 | ~300 `start` em processo, ~900 flushes | 5,7 s | 29,0 s | 5,1 |
+| T8-C3 | ingest com store | 0,81 s | 1,82 s | 2,3 |
+| T8-C1, por caso | hook + `export` | 358 ms (13 casos) | 725 ms (8 casos) | 2,0 |
+
+Na CI, o que é CPU ou início de processo foi igual ou mais rápido que aqui;
+o que é operação de store (flush e metadados) foi de 2 a 5 vezes mais lento.
+O `tmpdir()` do runner fica em `C:\Users\RUNNER~1\…` (comentário de
+`makeScratch`). O que distingue o runner é o disco — inferido dessas
+durações; o log não tem medida por operação.
+
+### Onde a entrega gasta o prazo
+
+Sonda de tempo fora do repositório, carregada no processo do hook por
+`--import`: cada operação de `node:fs/promises` e de `FileHandle`, com o tipo
+do arquivo; lacunas do event loop com o CPU do processo nelas. Node 24.13.0,
+máquina ociosa, 60 hooks Claude vinculados: a tentativa de um evento com
+segmento anterior são 91 operações em série (79 instrumentadas na primeira
+versão da sonda mais 12 `close`, campo de cada `FileHandle` no Node 24) e 4
+flushes — lock da abertura, lock do commit, temporário do segmento e
+temporário do `state.json`. O primeiro evento de uma captura faz 83. Janela do
+fim do stdin à última operação: p50 14 ms, p99 16 ms. O `delivery_timeout`
+exige mais de 650 ms, cerca de 45 vezes isso.
+
+Cargas sintéticas (`load.mjs`): `cpu` é laço puro; `flush` repete o ciclo do
+`start` (lock, chave e `state.json` com `wx`, gravação, flush e `rename`, como
+T8-C9); `big` reescreve 8 MiB com flush (como T8-C17).
+
+| Condição | Entregas | Códigos | Janela p50 / p90 / p99 / máx. | O que a sonda mostrou |
+| --- | --- | --- | --- | --- |
+| 8 `cpu`, tudo nos 4 E-cores 16–19 | 80 | 80 confirmadas | 43 / 54 / 441 / 441 ms | cada operação esperou 15–40 ms por CPU |
+| 12 `cpu`, idem | 80 | 79 confirmadas, 1 `delivery_timeout` | 57 / 89 / 660 / 660 ms | só 43 operações no prazo; lacunas do event loop sem CPU do processo |
+| 6 `flush` + 2 `big`, CPU livre | 80 | 80 confirmadas | 125 / 253 / 504 / 505 ms | flush dominante; nas 8 mais lentas, os dois do lock somaram de 18 a 178 ms |
+
+A mesma separação aparece nos testes. T8-C9, C3, C5 e C7:
+
+| Carga | C9 | C3 | C5 | C7 |
+| --- | --- | --- | --- | --- |
+| nenhuma, todos os núcleos | 2,7 s | 0,50 s | 0,65 s | 0,84 s |
+| 12 `cpu` nos 4 E-cores | 270 s | 3,4 s | 4,3 s | 5,5 s |
+| 6 `flush` + 2 `big` | 10,8 s | 0,56 s | 0,75 s | 0,95 s |
+| CI | 29,0 s | 1,82 s | 1,52 s | 2,43 s |
+
+CPU disputada atrasa tudo; disco disputado atrasa o que usa o store. A CI
+combina as duas coisas e tem o disco mais lento. A suíte local nas condições
+da CI (S0) não falhou.
+
+Causa (mecanismo reproduzido aqui; no runner, inferida das durações): a
+tentativa do hook é uma sequência de cerca de 90 operações de disco com 4
+flushes. No runner Windows, com o disco lento e os arquivos de teste em
+paralelo, uma tentativa passou dos 650 ms. O produto cumpriu o critério 10:
+desistiu no prazo, com código fechado, sem prender o agente. Não é falha de
+lógica, de prova nem do 0xC0000409 da rodada 4.
+
+### Correção: o lock sem flush
+
+O `.lock` só serializa processos vivos: a criação `wx` é atômica, e os bytes
+conferidos na liberação são lidos pelo mesmo sistema. Depois de uma queda do
+sistema nenhum processo o detém, então guardá-lo no disco não protege nada.
+Com `durable: false`, cada aquisição do lock deixa de fazer flush. No hook, os
+flushes caem de 4 para 2, e as operações de 91 para 89 (de 83 para 81 no
+primeiro evento). Continuam com flush os dados confirmados (temporários do
+segmento e do `state.json`), a chave e o marcador `store.json`. Todo comando
+`privacy` que toma o lock também perde esse flush, o que diminui o disco
+disputado pela própria suíte. O guia não promete durabilidade do lock: nada a
+mudar nele.
+
+### Provas: antes e depois
+
+1. **Prova nova de C16** ("no hook real, a tentativa só faz flush dos dados
+   confirmados…"): duas entregas de hook com a pré-carga de tempo. Afirma, para
+   cada processo, flushes exatamente `["segmento.tmp", "state.json.tmp"]`,
+   nessa ordem, e 2 gravações e 2 liberações do próprio lock (abertura e
+   commit), além dos dois registros e da coerência do segmento.
+   - Antes (produto de `ef9e6f0`): falha com `['lock', 'lock',
+     'segmento.tmp', 'state.json.tmp']`.
+   - Depois: passa.
+   - Mutações numa cópia: `state.json` sem flush é detectado
+     (`['segmento.tmp']`); abertura sem lock é detectada (`[1, 1]` contra
+     `[2, 2]`).
+2. **Latência de flush injetada** (sonda fora do repositório que espera N ms
+   antes de cada flush real; 13 hooks por ponto, código antigo e novo
+   intercalados, máquina ociosa):
+
+   | Atraso por flush | Antes (4 flushes) | Depois (2 flushes) |
+   | --- | --- | --- |
+   | 0 ms | 13 confirmadas; janela ~29 ms | 13 confirmadas; ~19 ms |
+   | 100 ms | 13 confirmadas; ~445 ms | 13 confirmadas; ~230 ms |
+   | 140 ms | 13 confirmadas; ~621 ms | 13 confirmadas; ~316 ms |
+   | 160 ms | 13 `delivery_timeout` | 13 confirmadas; ~346 ms |
+   | 200 ms | 13 `delivery_timeout` | 13 confirmadas; ~428 ms |
+   | 300 ms | 13 `delivery_timeout` | 13 confirmadas; ~628 ms |
+   | 330 ms | 13 `delivery_timeout` | 13 `delivery_timeout` |
+
+   O flush mais lento que a tentativa tolera passa de cerca de 150 ms para
+   cerca de 310 ms. "Depois" é a cópia `variants/nolocksync`, com as mesmas
+   duas linhas de produto; repetida com o próprio checkout em 140, 160, 300 e
+   330 ms, deu os mesmos códigos e janelas (316 / 347 / 627 ms; 330 ms com
+   `delivery_timeout`).
+3. **Disco disputado de verdade, A/B intercalado** (mesmo laço, hooks
+   alternando o código antigo e o novo; "depois" é `variants/nolocksync` na
+   primeira carga e o checkout na segunda):
+
+   | Carga | Código | Entregas | Códigos | Janela p50 / p90 / p99 / máx. | Soma dos flushes p50 / p99 |
+   | --- | --- | --- | --- | --- | --- |
+   | 6 `flush` + 2 `big` | antes | 150 | 150 confirmadas | 130 / 198 / 352 / 368 ms | 68 / 193 ms |
+   | 6 `flush` + 2 `big` | depois | 150 | 150 confirmadas | 94 / 152 / 229 / 488 ms | 35 / 79 ms |
+   | 12 `flush` + 4 `big` | antes | 200 | 198 confirmadas, 2 `delivery_timeout` | 189 / 255 / 328 / 449 ms | 86 / 147 ms |
+   | 12 `flush` + 4 `big` | depois | 200 | 200 confirmadas | 136 / 192 / 343 / 500 ms | 44 / 166 ms |
+
+4. **C1 e C2 reais sob 12 `flush` + 4 `big`**, quatro execuções antes e quatro
+   depois, não intercaladas, com a pré-carga de tempo do repositório:
+   - antes: 8 de 8 passaram; entrega mais lenta por execução de 211 a 528 ms
+     (a de 528 ms com 321 ms de flush, 4 flushes);
+   - depois: 7 de 8 passaram. A que falhou foi C2 `post_tool_bash` com
+     `delivery_timeout`, e a mensagem da prova mostrou: 79 operações em
+     352 ms, flushes de 251 ms (222 ms só o do `state.json`). Faltaram 10 das
+     89; pela ordem das operações, a 80ª, em curso no prazo, é o `rename` do
+     `state.json` — o ponto de commit. Nas outras sete, a entrega mais lenta
+     ficou entre 134 e 227 ms.
+5. **Só CPU, A/B intercalado** (12 `cpu` nos E-cores 20–23, 100 entregas de
+   cada código, checkout como "depois"): antes, 98 confirmadas e 2
+   `delivery_timeout`, janela p50 / p90 / p99 58 / 112 / 720 ms; depois, 100
+   confirmadas, 53 / 82 / 277 ms. Ali o flush soma cerca de 3 ms por entrega
+   (p50), e as duas perdas vieram de lacunas de 370–430 ms sem CPU do
+   processo: não atribuo a diferença da cauda à correção (2 contra 0 eventos).
+
+Conclusão honesta: a correção corta metade dos flushes, reduz a mediana e o
+p90 da tentativa em cerca de 25–30% com o disco disputado e dobra a latência
+de flush tolerada. Não elimina o `delivery_timeout` com o disco local
+saturado, em que um único `rename` passou de 300 ms, nem com CPU saturada, em
+que o efeito direto dela é pequeno (2 de 91 operações). Que C1 e C2 passem no
+runner Windows não está demonstrado; só a CI pode demonstrar.
+
+### `io_failure` nas suítes inteiras: o `EPERM` do lock no Windows
+
+Depois da correção apareceu um código que a CI não mostrou: `io_failure`.
+`node --test "tests/integrations/**/*.test.mjs"` (concorrência padrão, 31
+arquivos em paralelo nesta máquina; Node 24.13.0; Hermes oculto), alternando
+uma cópia completa do checkout com o produto de `ef9e6f0`
+(`variants/full-base`, mesmos testes) e o checkout corrigido:
+
+| Execução | Sem a correção | Com a correção |
+| --- | --- | --- |
+| `npm test` (antes da série) | — | 233 tests, 217 pass, 1 fail: T8-C2 `subagent_start` com `io_failure`, 90 operações em 26 ms |
+| par 1 | 233 / 217 / 1 fail (só a prova nova de flush, esperado) | 233 / 218 / 0 |
+| par 2 | idem | 233 / 217 / 1 fail: T8-C15, produtor `b` com `io_failure` (39 de 40) |
+| par 3 | idem | 233 / 218 / 0 |
+| par 4 | 233 / 217 / 1 fail (só a prova nova); excluído com o par | excluído: 6 falhas, inclusive I4-C36 e I4-C25, que não usam o store, com processos de 21 s |
+| par 5 | idem | 233 / 218 / 0 |
+| par 6 | 233 / 216 / 2 fail (prova nova e I4-C27d, instalador, código igual nas duas árvores) | 233 / 218 / 0 |
+| par 7 | 233 / 217 / 1 fail (só a prova nova) | 233 / 218 / 0 |
+
+Skips: 15 em todas, o conjunto da CI. O par 4 rodou com o microteste sob carga
+abaixo ainda em curso nos E-cores 16–19 e teve uma parada geral de ~21 s; fica
+fora da comparação. Contagem: 0 `io_failure` em 6 execuções sem a correção, 2
+em 7 com ela. Fisher bicaudal p ≈ 0,46: não distingue as duas.
+
+Mecanismo, com microteste fora do repositório (`lock-cycle.mjs`): P processos
+disputam o mesmo `.lock` repetindo o ciclo do `withLock` (criar `wx`, gravar,
+[flush], fechar, reler, apagar), e cada criação que falha é contada pelo
+código:
+
+| Condição | Ciclos | Flush do lock | `EEXIST` | `EPERM` |
+| --- | --- | --- | --- | --- |
+| ociosa, 4 processos | 20 000 | sim | 6 964 | 2 |
+| ociosa, 4 processos | 20 000 | não | 2 474 | 3 |
+| 4 E-cores com 6 `cpu`, 4 processos | 4 000 | sim | 29 451 | 31 |
+| idem | 4 000 | não | 23 875 | 29 |
+
+No Windows, a criação exclusiva do `.lock` logo depois de outro processo
+apagá-lo falha às vezes com `EPERM` em vez de `EEXIST` — provavelmente o nome
+ainda em exclusão (delete pending), causa não medida —, muito mais sob carga,
+e na mesma taxa com ou sem o flush.
+O store só trata `EEXIST` como lock ocupado; `EPERM` sai como `io_failure`, e
+a entrega perde o lote sem repetir. É um comportamento anterior a esta rodada
+(o produto de `ef9e6f0` tem a mesma taxa no microteste). O C2 do `npm test`
+foi antes de a pré-carga registrar códigos de erro; pela contagem (90
+operações, uma a mais que as 89, o caminho de desfazer o commit), a falha foi
+no `rename` do `state.json` — provavelmente uma recusa transitória do Windows
+(`EPERM`, `EACCES` ou `EBUSY`), que o instalador da #4 repete
+(`RENAME_DENIED` em `install/run.mjs`) e o store da #5 não. Inferido, não
+medido.
+
+Decisão: a correção fica. Ela não muda a taxa de `EPERM` por criação no
+microteste, e as suítes não distinguem as duas árvores. O `EPERM` é registrado
+como achado fora do escopo (abaixo), sem correção.
+
+### Instrumento para a CI
+
+C1 e C2 rodam os hooks instalados com `NODE_OPTIONS=--import=<traces-probe>`
+e `SKILL_ME_TEST_TRACES_TIMING` (o arquivo fica fora da raiz da captura). A
+pré-carga só observa: grava, por processo, operação, tipo do arquivo, início,
+duração e, se a operação falhou, o código do erro (`EPERM`…), além do CPU do
+processo desde a primeira operação; nenhum caminho, ID, mensagem ou conteúdo.
+As asserções não mudaram. A mensagem da asserção de `delivery` passou a trazer
+o resumo da tentativa daquele hook, e uma linha `ℹ entrega mais lenta: …` vai
+ao log em toda execução. Leitura na próxima CI:
+
+- flush e operações que criam, renomeiam ou apagam lentos, com `lstat` e
+  leituras rápidas: disco;
+- todas as operações infladas por igual e CPU do processo baixo: espera por
+  CPU;
+- menos de 89 operações (81 no primeiro evento) numa falha por prazo: a
+  seguinte estava em curso no prazo e não foi registrada, porque o processo
+  sai;
+- `falhas …`: a operação que falhou e o código, numa entrega com
+  `io_failure`.
+
+### Alterações em testes existentes
+
+- C1 e C2 (`live-capture.cli.test.mjs`): ambiente dos hooks com a pré-carga
+  de tempo, mensagem da asserção de `delivery` com o resumo, uma linha de
+  diagnóstico e uma asserção nova, de uma linha da pré-carga por hook (sem ela
+  o resumo seria de outro processo). Justificativa: a falha da CI só acontece
+  no runner, e sem esse dado a rodada 5 não pôde distinguir disco de CPU.
+  Nenhuma asserção anterior mudou.
+- `scriptedIo` e o io parado do primeiro teste de C16 continuam chamando
+  `real.writeExclusive(file, data)` sem opções: nesses testes em processo o
+  lock ainda recebe flush. Não muda o que eles afirmam (lock ocupado,
+  repetições, parada no prazo).
+
+### Execuções e ausências
+
+Windows 11, i9-14900K. "4 E-cores" é a afinidade 16–19 (ou 20–23, indicado),
+como na rodada 4. Totais de `node --test` lidos da saída; os nomes dos 15 skips
+são os da CI.
+
+| Execução | Node | Árvore | Resultado |
+| --- | --- | --- | --- |
+| S0: integrações, 4 E-cores, `--test-concurrency=3`, Hermes oculto | 24.13.0 | `ef9e6f0` (só este registro mudado) | 232 tests, 217 pass, 0 fail, 15 skip, 342 s |
+| `live-capture` + `query` + `limits` sem carga | 24.13.0 | `ef9e6f0` | 14 tests, 13 pass, 0 fail, 1 skip (T8-C4 sinal POSIX) |
+| prova nova de C16 | 24.13.0 | produto de `ef9e6f0` | 1 test, 0 pass, 1 fail (esperado: flush do lock) |
+| prova nova de C16, C1 e C2 | 24.13.0 | rodada 6 | 3 tests, 3 pass, 0 fail |
+| `npm test`, Hermes oculto | 24.13.0, npm 11.6.2 | rodada 6 | exit 1 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 233 (217 pass, 1 fail: T8-C2 `io_failure`, 15 skip) |
+| integrações alternadas, 7 pares (tabela acima) | 24.13.0 | `full-base` × rodada 6 | rodada 6: 5 de 6 pares válidos com 233 / 218 / 0 / 15; 1 com T8-C15 `io_failure` |
+| `Proof:` de C1, C2, C15, C16, C17 e C20, como escritos | 24.21.0 | rodada 6 | cada um exit 0, 0 fail, 0 skip; C16 seleciona 9 (8 anteriores e o novo), C20 2, os demais 1 |
+| idem | 24.13.0 | rodada 6 | idem |
+| T8-C15 isolado, alternado 30 vezes | 24.13.0 | `full-base` × rodada 6 | 0 falhas em 30 nas duas |
+| `npm test`, Hermes presente | 24.21.0 | rodada 6 | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 233 (226 pass, 0 fail, 7 skip) |
+| S1: integrações como S0 | 24.13.0 | rodada 6 | 233 tests, 218 pass, 0 fail, 15 skip, 365 s; entrega mais lenta de C1 63 ms e de C2 75 ms, 2 flushes, nenhuma falha; T8-C9 7,7 s (no S0, 5,7 s: aqui o flush é barato, e a diferença entre execuções é ruído de carga, não efeito medido) |
+
+T8-C20, a única prova que lê este arquivo, rodou de novo pelo seu `Proof:`
+depois da última edição desta seção: 2 tests, 2 pass, 0 fail (Node 24.21.0).
+
+Não executados nesta rodada: WSL Ubuntu e macOS (a mudança de produto vale nas
+três plataformas: no POSIX o lock também deixa de receber `fsync`), a CI (fica
+com o proprietário) e Claude, Codex ou Hermes reais com modelo.
+
+### Limites e achados fora do escopo
+
+- **CI não reexecutada.** Na próxima execução, conferir no job Windows `tests
+  233`, 0 fail e 15 skip, e ler as linhas `ℹ entrega mais lenta` de C1 e C2
+  nos três jobs. Se C1 ou C2 falharem de novo por prazo, a mensagem diz a
+  operação e o tipo de arquivo; a decisão seguinte é do proprietário: um ciclo
+  de lock por hook em vez de dois (cerca de 40 operações a menos; muda a API do
+  store e a numeração de locks das provas de C16), isolar da concorrência da CI
+  os arquivos T8 sensíveis a tempo, ou aceitar o risco com limite declarado.
+  Nada disso foi feito; 750 ms, reserva e asserções seguem como estão.
+- **Achado, comunicado sem correção: `EPERM` na criação do lock no Windows.**
+  Com o lock recém-apagado por outro processo, a criação `wx` falha às vezes
+  com `EPERM` (31 em 4 000 sob carga; 2 em 20 000 ociosa, com o flush de
+  `ef9e6f0`). O store o trata como `io_failure`, não como lock ocupado, e a
+  entrega perde o lote sem repetir. Pode derrubar C15 (dois produtores) e
+  qualquer produtor concorrente no Windows, inclusive na CI. O mesmo vale,
+  inferido, para o `rename` do `state.json` (C2 do `npm test`). Corrigir
+  mudaria a classificação de erros do store da #5 (o instalador da #4 repete
+  esses códigos no `rename`); fica para decisão do proprietário.
+- A sonda e a pré-carga medem a partir da primeira operação de disco, no mesmo
+  tick em que o evento entra na entrega; o CPU do processo no Windows tem
+  granularidade de ~15,6 ms (aparece 0 ou 16 ms).
+- O laço fora do repositório associa a linha de tempo ao processo pelo PID; no
+  Windows o PID pode se repetir, então o detalhe de uma entrega no laço pode
+  ser o de outro processo. Os códigos vêm do relatório de cada hook e não
+  dependem disso. C1, C2 e a prova nova leem uma linha por hook, em ordem.
+- Depois de um `delivery_timeout` com o lock tomado, o `.lock` fica e as
+  entregas seguintes da mesma raiz saem `lock_present` (limite do guia), como
+  se viu num experimento misto de CPU e disco; os laços seguintes trocam de
+  raiz depois de cada perda.

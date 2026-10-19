@@ -137,11 +137,18 @@ async function assertUnchanged(ctx) {
 // `ctx.onLock`, quando houver, é chamado quando o lock passa a ser desta
 // operação, antes de qualquer leitura ou mutação; se lançar, a operação
 // desiste sem mudar nada.
+//
+// O lock é criado sem flush: só serializa processos vivos — a criação `wx` é
+// atômica e os bytes conferidos na liberação são lidos pelo mesmo sistema — e,
+// depois de uma queda do sistema, nenhum processo o detém; guardá-lo no disco
+// não protege nada. Cada flush espera o disco dentro do prazo de entrega da #8,
+// e os dois do lock eram metade dos de um hook (.checks/issue-8-traces.build.md,
+// rodada 6).
 async function withLock(ctx, fn) {
   const lockPath = path.join(ctx.storeDir, LOCK_FILE);
   const bytes = Buffer.from(JSON.stringify({ lockVersion: 1, pid: process.pid, nonce: randomBytes(8).toString("hex") }));
   try {
-    await ctx.io.writeExclusive(lockPath, bytes);
+    await ctx.io.writeExclusive(lockPath, bytes, { durable: false });
   } catch (error) {
     if (error.code === "EEXIST") throw new StoreError("lock_present");
     throw error;
