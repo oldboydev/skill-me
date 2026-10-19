@@ -84,6 +84,7 @@ node src/integrations/cli.mjs privacy list   --root <diretório> [--after <id>]
 node src/integrations/cli.mjs privacy export --root <diretório> --capture <id>
 node src/integrations/cli.mjs privacy follow --root <diretório> --capture <id>
 node src/integrations/cli.mjs privacy status --root <diretório> --capture <id>
+node src/integrations/cli.mjs privacy timeline --root <diretório> --capture <id>
 ```
 
 - `list` responde um JSON v1 (`schemaVersion`, `command`, `status`, `captures`,
@@ -122,8 +123,76 @@ lê a captura pelo store e chama `consumer` com uma cópia congelada
 `{ capture, records: [{ sequence, record }] }`: os mesmos registros do `export`,
 na ordem gravada, com origem, estado, contadores e limites da captura. Nada é
 executado, nenhum agente é iniciado e nenhuma skill é relida; a chave e os
-caminhos não fazem parte da cópia. Correlação, timeline e relatório ficam para
-as issues #6 e #7.
+caminhos não fazem parte da cópia. A timeline (issue #6, próxima
+seção) é calculada sobre essa mesma cópia; o relatório fica para a #7.
+
+## Timeline e cobertura (issue #6)
+
+```
+node src/integrations/cli.mjs privacy timeline --root <diretório> --capture <id>
+```
+
+Responde um JSON v1 (`schemaVersion`, `command: "timeline"`, `status: "ok"`) com
+`timelineVersion: 1`, `capture`, `entries`, `operations` e `coverage`. Funciona
+em captura ativa, encerrada ou desabilitada, não escreve nada e é recalculada a
+cada leitura (até 500 registros); não executa agente, não lê skill e não usa o
+conteúdo coletado. A mesma estrutura sai da API pura `correlateTrace(trace)`, de
+`src/integrations/correlation/timeline.mjs`, que recebe a cópia de `replayCapture`.
+Faltas de flag saem com 2; captura ausente ou inválida com 3; lock ou conflito
+com 4; falha de E/S com 5, no envelope de erro dos demais comandos `privacy`.
+
+**Entradas.** Uma por registro, na ordem gravada (`sequence`, a partir de 1), com
+`observedAt`, `source`, `eventKind`, `nativeEvent`, `ids`, `fields`, `gaps` e
+`evidence: [sequence]`. `observedAt` nunca reordena: um instante anterior ao do
+registro precedente só marca `outOfOrder: true`. Uma repetição com identidade
+nativa completa e conteúdo igual continua como entrada própria, com `duplicateOf`
+apontando para a primeira `sequence`, e não cria outra operação. `session` diz a
+qual sessão a entrada pertence e `segment` conta as retomadas (`resume`) da mesma
+sessão.
+
+**Força do vínculo.** Todo vínculo traz as `sequence` que o sustentam:
+
+| Força | Significa |
+| --- | --- |
+| `native` | o próprio registro traz o ID (sessão, chamada, subagente) e ele foi pareado dentro da mesma captura, agente e mecanismo |
+| `heuristic` | candidato sem ID no registro (evento sem sessão com uma única sessão da mesma origem; itens do `codex exec`, que não trazem sessão); nunca afirma |
+| `inconclusive` | sem ID ou com ambiguidade (duas sessões, colisão de `itemId`); nada é ligado |
+
+**Operações** (`operations`): `tool` (par `tool_pre`/`tool_post`, ou os itens do
+`codex exec`), `skill_invocation` (só a ferramenta `Skill` do Claude, com
+`toolUseId`), `skill_evidence` e `subagent`. O estado diz o que foi observado:
+`closed` (início e resultado), `open` (início sem resultado), `orphan_result`
+(resultado sem início), `ambiguous` (itens com `itemId` repetido ou em mais de
+uma sessão) e `boundary_only` (invocação de skill sem `post`, depois de um fim do
+próprio turno, sessão ou subagente).
+
+- `outcome`, `errorType`, `exitCode` e `durationMs` só aparecem quando o contrato
+  v1 os traz; sem eles ficam `null`. Sem duração nativa, e com início e resultado
+  em ordem, `elapsedMs` é o intervalo entre os instantes e `durationEvidence` é
+  `"derived"`; resultado anterior ao início não gera duração.
+- Um `post` de `Skill` encerra a chamada da ferramenta, não prova que as
+  instruções foram seguidas (`instructionCompletion: "unobserved"`). Nenhum fim de
+  turno, sessão, processo ou subagente produz conclusão de skill.
+- Expansão direta (`/nome`) e o ciclo de vida do Hermes (`loaded`, `patched`,
+  `edited`…) são `skill_evidence` com `strength: "heuristic"`: mostram que a skill
+  apareceu, não que foi usada. Ler um `SKILL.md` com uma ferramenta, no Codex ou
+  em qualquer agente, é só uma operação de ferramenta; o Codex não ganha skill pelo
+  nome de arquivo.
+- `agentType` e `childRole` iguais não unem subagentes; só IDs explícitos ligam
+  pai, filho e as ferramentas do filho (`operations` do subagente).
+
+**Cobertura** (`coverage`): `capture.counters` e `capture.limits` são os da captura;
+`eventGaps` lista, por `sequence`, os motivos de lacuna do envelope; `totals` conta
+entradas e operações inconclusivas, `orphanResult`, `open`, `boundaryOnly`,
+`duplicates` e `outOfOrder`. `partial: true` quando há registro malformado ou
+descartado, lacuna de envelope, entrada ou operação inconclusiva, ou operação
+aberta, órfã ou só com fronteira. Quase toda captura real é parcial: o contrato v1
+declara lacunas em quase todo evento. Nenhum percentual de cumprimento é calculado.
+
+Demonstrado com fixtures sintéticas em `tests/integrations/correlation/`:
+a prova de ponta a ponta `timeline.e2e.test.mjs` grava eventos de Claude, Codex e
+Hermes pelos caminhos locais desta seção e compara a API com o CLI. Nenhuma prova
+inicia um agente real nem executa um modelo.
 
 ## Limites
 
@@ -259,7 +328,9 @@ Com fixtures sintéticas, pelas provas de `tests/integrations/traces/`:
   uma pré-carga de teste depois de obter o lock); diagnóstico apontado para
   arquivos do store por grafias equivalentes, links e hard links; os limites acima;
 - a demonstração de ponta a ponta `tests/integrations/traces/demo.e2e.test.mjs`,
-  que rotula cada passo como fixture ou comando do usuário.
+  que rotula cada passo como fixture ou comando do usuário;
+- a timeline (`privacy timeline` e `correlateTrace`) sobre fixtures de Claude, Codex e
+  Hermes, em `tests/integrations/correlation/`, com a mesma estrutura pela API e pelo CLI.
 
 Não demonstrado: sessões reais do Claude, do Codex ou do Hermes com modelo (E2E
 pendente, não autorizado nesta entrega) e o plugin Hermes rodando dentro do

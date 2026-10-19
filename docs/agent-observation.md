@@ -4,7 +4,8 @@ Este guia descreve as integrações de observação com Claude Code, Codex e Her
 separadas do diagnóstico estático do `doctor` (ver `docs/agent-compatibility.md`).
 Elas cobrem o recorte aprovado em 16/10/2026: **fronteira mínima e receptor em
 memória**. A política de privacidade veio com a #5 e a captura local com a #8
-([docs/traces.md](traces.md)); timeline e atribuição de skill ficam na #6.
+([docs/traces.md](traces.md)); a timeline e a atribuição de skill, na #6
+([docs/traces.md](traces.md), seção "Timeline e cobertura").
 
 Não há coletor nem serviço de coleta. Sem vínculo explícito a uma captura, cada
 observação fica na memória do processo que a produziu e é descartada quando ele
