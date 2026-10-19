@@ -1,0 +1,257 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { correlateTrace } from "../../../src/integrations/correlation/timeline.mjs";
+import { CAPTURE_A, CAPTURE_B, at, buildTrace } from "./helpers/trace-builder.mjs";
+
+// Provas S1 da issue #6 (.checks/issue-6-correlacao.md, C1–C5): a correlação é
+// pura — recebe a cópia de `replayCapture` e devolve a timeline v1.
+
+const ENTRY_KEYS = ["duplicateOf", "evidence", "eventKind", "gaps", "ids", "fields", "identity", "nativeEvent", "observedAt", "outOfOrder", "segment", "sequence", "session", "source"].sort();
+
+test("T6-C1 ordered entries: uma entrada por registro em 1..N, campos v1 e evidência, mesmo com observedAt decrescente; vazio devolve listas vazias", () => {
+  const trace = buildTrace([
+    { src: "claude", kind: "session_start", native: "SessionStart", ids: { sessionId: "s1" }, fields: { source: "startup" }, at: 30 },
+    { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: { sessionId: "s1", toolUseId: "t1" }, fields: { toolName: "Bash" }, gaps: ["agentId:absent"], at: 20 },
+    { src: "claude", kind: "tool_post", native: "PostToolUse", ids: { sessionId: "s1", toolUseId: "t1" }, fields: { toolName: "Bash", outcome: "success" }, at: 10 },
+  ]);
+  const result = correlateTrace(trace);
+  assert.deepEqual(Object.keys(result).sort(), ["capture", "coverage", "entries", "operations", "timelineVersion"]);
+  assert.equal(result.timelineVersion, 1);
+  assert.deepEqual(result.capture, trace.capture);
+  assert.deepEqual(result.entries.map((e) => e.sequence), [1, 2, 3], "ordem da gravação, não do instante");
+  assert.deepEqual(result.entries.map((e) => e.observedAt), [at(30), at(20), at(10)]);
+  for (const [index, entry] of result.entries.entries()) {
+    const { envelope } = trace.records[index].record;
+    assert.deepEqual(Object.keys(entry).sort(), ENTRY_KEYS);
+    assert.deepEqual(entry.source, envelope.source);
+    assert.deepEqual(
+      [entry.eventKind, entry.nativeEvent, entry.ids, entry.fields, entry.gaps, entry.observedAt],
+      [envelope.eventKind, envelope.nativeEvent, envelope.ids, envelope.fields, envelope.gaps, envelope.observedAt],
+    );
+    assert.deepEqual(entry.evidence, [index + 1]);
+  }
+  assert.deepEqual(result.entries[1].gaps, ["agentId:absent"]);
+
+  const empty = correlateTrace(buildTrace([]));
+  assert.deepEqual([empty.timelineVersion, empty.entries, empty.operations], [1, [], []]);
+});
+
+test("T6-C1 ordered entries: a ordem é a de sequence mesmo se os registros chegarem embaralhados, e a entrada não aponta para o objeto do trace", () => {
+  const trace = buildTrace([
+    { src: "claude", kind: "turn_start", ids: { sessionId: "s1" } },
+    { src: "claude", kind: "turn_end", ids: { sessionId: "s1" } },
+    { src: "claude", kind: "session_end", ids: { sessionId: "s1" } },
+  ]);
+  const shuffled = { ...trace, records: [trace.records[2], trace.records[0], trace.records[1]] };
+  assert.deepEqual(correlateTrace(shuffled).entries.map((e) => [e.sequence, e.eventKind]), [[1, "turn_start"], [2, "turn_end"], [3, "session_end"]]);
+  const result = correlateTrace(trace);
+  result.entries[0].ids.sessionId = "alterado";
+  assert.equal(trace.records[0].record.envelope.ids.sessionId, "s1", "cópia, não alias");
+});
+
+test("T6-C2 strong identities: cada nome de ID alimenta sua identidade; ausente fica null", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", promptId: "p1", agentId: "ag1", toolUseId: "tu1" } },
+      { src: "codexExec", kind: "session_start", ids: { threadId: "th1" } },
+      { src: "codexExec", kind: "item", ids: { itemId: "it1" } },
+      { src: "hermes", kind: "tool_pre", ids: { sessionId: "hs", turnId: "ht", toolCallId: "tc1", taskId: "task1" } },
+      { src: "hermes", kind: "subagent_start", ids: { parentSessionId: "hs", childSessionId: "hc", subagentId: "sub1" } },
+      { src: "hermes", kind: "subagent_stop", ids: { parentSessionId: "hs", childSessionId: "hc" } },
+      { src: "codexExec", kind: "turn_start", ids: {} },
+    ]),
+  );
+  const part = (entry) => Object.fromEntries(Object.entries(entry.identity).map(([scope, key]) => [scope, key === null ? null : key.split("/").slice(-1)[0]]));
+  assert.deepEqual(part(result.entries[0]), { session: "s1", turn: "p1", call: "tu1", subagent: "ag1" });
+  assert.deepEqual(part(result.entries[1]), { session: "th1", turn: null, call: null, subagent: null });
+  assert.deepEqual(part(result.entries[2]), { session: null, turn: null, call: "it1", subagent: null });
+  assert.deepEqual(part(result.entries[3]), { session: "hs", turn: "ht", call: "tc1", subagent: null });
+  assert.deepEqual(part(result.entries[4]), { session: null, turn: null, call: null, subagent: "sub1" }, "parentSessionId não é a sessão do evento");
+  assert.deepEqual(part(result.entries[5]), { session: null, turn: null, call: null, subagent: "hc" });
+  assert.deepEqual(part(result.entries[6]), { session: null, turn: null, call: null, subagent: null });
+});
+
+test("T6-C2 strong identities: o mesmo texto de ID em captura, agente ou mecanismo distintos não gera a mesma chave nem vínculo", () => {
+  const same = { sessionId: "same", toolUseId: "same" };
+  const items = [
+    { src: "claude", kind: "tool_pre", ids: same },
+    { src: "codexHooks", kind: "tool_pre", ids: same },
+    { src: "claude", kind: "tool_pre", ids: same },
+    { src: "codexHooks", kind: "session_start", ids: { sessionId: "same" } },
+    { src: "codexExec", kind: "session_start", ids: { threadId: "same" } },
+  ];
+  const a = correlateTrace(buildTrace(items, { captureId: CAPTURE_A })).entries;
+  const b = correlateTrace(buildTrace(items, { captureId: CAPTURE_B })).entries;
+  assert.equal(a[0].identity.session, a[2].identity.session, "mesma origem e captura: mesma chave");
+  assert.equal(a[0].identity.call, a[2].identity.call);
+  const keys = [a[0], a[1], a[4]].map((e) => e.identity.session);
+  assert.equal(new Set(keys).size, 3, "agente distinto e mecanismo distinto do mesmo agente");
+  assert.equal(a[1].identity.session, a[3].identity.session, "mesmo agente e mecanismo");
+  assert.notEqual(a[3].identity.session, a[4].identity.session, "codex hook × codex exec");
+  assert.notEqual(a[1].identity.call, a[0].identity.call);
+  assert.notEqual(a[0].identity.session, b[0].identity.session, "captura distinta");
+  assert.notEqual(a[0].identity.call, b[0].identity.call);
+  assert.equal(new Set(a.map((e) => e.session.key)).size >= 3, true);
+  for (const entry of a) assert.equal(entry.session.strength, "native");
+  assert.notEqual(a[0].session.key, a[1].session.key, "sem vínculo cruzado de sessão");
+});
+
+test("T6-C3 session attribution: duas sessões simultâneas e evento sem ID de sessão não recebem vínculo native; ambiguidade é inconclusive", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "a" } },
+      { src: "claude", kind: "tool_pre", ids: { sessionId: "s2", toolUseId: "b" } },
+      { src: "claude", kind: "tool_post", ids: { toolUseId: "a" }, fields: { toolName: "Bash" } },
+      { src: "claude", kind: "tool_post", ids: { sessionId: "s2", toolUseId: "b" } },
+    ]),
+  );
+  const [s1, s2, orphan, last] = result.entries;
+  assert.deepEqual([s1.session.strength, s2.session.strength, last.session.strength], ["native", "native", "native"]);
+  assert.deepEqual([s1.session.evidence, s2.session.evidence], [[1], [2]]);
+  assert.notEqual(s1.session.key, s2.session.key);
+  assert.deepEqual(orphan.session, { key: null, strength: "inconclusive", evidence: [] });
+});
+
+test("T6-C3 session attribution: com uma única sessão da mesma origem o candidato é heuristic e cita as sequências que o motivaram; outras origens não contam", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "codexHooks", kind: "session_start", ids: { sessionId: "cx" } },
+      { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "a" } },
+      { src: "claude", kind: "turn_end", ids: {} },
+      { src: "claude", kind: "tool_post", ids: { sessionId: "s1", toolUseId: "a" } },
+      { src: "claude", kind: "turn_end", ids: {} },
+      { src: "codexHooks", kind: "tool_pre", ids: { sessionId: "cx", toolUseId: "z" } },
+    ]),
+  );
+  const between = result.entries[2];
+  assert.equal(between.session.strength, "heuristic");
+  assert.equal(between.session.key, result.entries[1].session.key);
+  assert.deepEqual(between.session.evidence, [2, 4], "vizinhos anterior e seguinte com ID da sessão");
+  const tail = result.entries[4];
+  assert.equal(tail.session.strength, "heuristic");
+  assert.deepEqual(tail.session.evidence, [4], "só há vizinho anterior");
+  assert.notEqual(tail.session.key, result.entries[0].session.key, "a sessão do Codex não é candidata do Claude");
+  for (const entry of result.entries) assert.ok(entry.session.strength === "native" ? entry.identity.session !== null : true);
+  assert.ok(result.entries.filter((e) => e.identity.session === null).every((e) => e.session.strength !== "native"));
+});
+
+test("T6-C3 session attribution: sem nenhuma sessão identificada na origem fica inconclusive; session_start sem ID nunca vira candidato", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "codexExec", kind: "turn_start", ids: {} },
+      { src: "codexExec", kind: "item", ids: { itemId: "i1" }, fields: { phase: "started" } },
+      { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "a" } },
+      { src: "claude", kind: "session_start", fields: { source: "startup" }, gaps: ["sessionId:absent"] },
+    ]),
+  );
+  assert.deepEqual(result.entries[0].session, { key: null, strength: "inconclusive", evidence: [] });
+  assert.deepEqual(result.entries[1].session, { key: null, strength: "inconclusive", evidence: [] });
+  assert.deepEqual(result.entries[3].session, { key: null, strength: "inconclusive", evidence: [] }, "abertura de sessão sem ID");
+});
+
+test("T6-C4 duplicates: repetição com identidade nativa completa e conteúdo igual vira entrada distinta com duplicateOf na primeira sequência", () => {
+  const call = { sessionId: "s1", toolUseId: "t1" };
+  const result = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: call, fields: { toolName: "Bash" }, at: 1 },
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: call, fields: { toolName: "Bash" }, at: 2 },
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: call, fields: { toolName: "Bash" }, at: 3 },
+    ]),
+  );
+  assert.equal(result.entries.length, 3, "nada é removido");
+  assert.deepEqual(result.entries.map((e) => e.duplicateOf), [null, 1, 1], "sempre a primeira sequência");
+  assert.deepEqual(result.entries.map((e) => e.observedAt), [at(1), at(2), at(3)]);
+});
+
+test("T6-C4 duplicates: sem identidade completa ou com fase, campo, evento nativo ou lacuna diferentes, cada evento é independente", () => {
+  const call = { sessionId: "s1", toolUseId: "t1" };
+  const result = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: call, fields: { toolName: "Bash" } },
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: call, fields: { toolName: "Read" } },
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: call, fields: { toolName: "Bash" }, gaps: ["agentId:absent"] },
+      { src: "claude", kind: "tool_pre", native: "OutroNome", ids: call, fields: { toolName: "Bash" } },
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: { toolUseId: "t1" }, fields: { toolName: "Bash" } },
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: { toolUseId: "t1" }, fields: { toolName: "Bash" } },
+      { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "i1" }, fields: { phase: "started", itemType: "command_execution" } },
+      { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "i1" }, fields: { phase: "started", itemType: "command_execution" } },
+      { src: "claude", kind: "skill_invocation", native: "UserPromptExpansion", ids: { sessionId: "s1" }, fields: { phase: "expansion", skillName: "x" } },
+      { src: "claude", kind: "skill_invocation", native: "UserPromptExpansion", ids: { sessionId: "s1" }, fields: { phase: "expansion", skillName: "x" } },
+    ]),
+  );
+  assert.deepEqual(result.entries.map((e) => e.duplicateOf), [null, null, null, null, null, null, null, null, null, null]);
+});
+
+test("T6-C4 duplicates: a mesma chamada em fases pre e post distintas não é duplicata, e a identidade completa de turno e subagente também deduplica", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "hermes", kind: "tool_pre", ids: { sessionId: "h", toolCallId: "c" }, fields: { toolName: "echo" } },
+      { src: "hermes", kind: "tool_post", ids: { sessionId: "h", toolCallId: "c" }, fields: { toolName: "echo" } },
+      { src: "hermes", kind: "turn_end", ids: { sessionId: "h", turnId: "u" }, fields: { completed: true } },
+      { src: "hermes", kind: "turn_end", ids: { sessionId: "h", turnId: "u" }, fields: { completed: true } },
+      { src: "hermes", kind: "session_end", ids: { sessionId: "h" } },
+    ]),
+  );
+  assert.deepEqual(result.entries.map((e) => e.duplicateOf), [null, null, null, 3, null]);
+});
+
+test("T6-C4 duplicates: a duplicata fica registrada como entrada e na operação original, sem criar segunda operação", () => {
+  const call = { sessionId: "s1", toolUseId: "t1" };
+  const result = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: call, fields: { toolName: "Bash" } },
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: call, fields: { toolName: "Bash" } },
+      { src: "claude", kind: "tool_post", native: "PostToolUse", ids: call, fields: { toolName: "Bash" } },
+      { src: "claude", kind: "tool_post", native: "PostToolUse", ids: call, fields: { toolName: "Bash" } },
+    ]),
+  );
+  assert.deepEqual(result.entries.map((e) => e.duplicateOf), [null, 1, null, 3]);
+  assert.equal(result.operations.length, 1, "uma operação para a chamada");
+  const [op] = result.operations;
+  assert.deepEqual([op.state, op.start, op.result, op.evidence, op.duplicates], ["closed", 1, 3, [1, 3], [2, 4]]);
+
+  // Sem identidade completa nada é deduplicado, então cada evento mantém a sua operação.
+  const loose = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: { toolUseId: "t1" }, fields: { toolName: "Bash" } },
+      { src: "claude", kind: "tool_pre", native: "PreToolUse", ids: { toolUseId: "t1" }, fields: { toolName: "Bash" } },
+    ]),
+  );
+  assert.equal(loose.operations.length, 2);
+});
+
+test("T6-C5 clock and resume: observedAt anterior ao registro precedente marca outOfOrder sem deslocar a entrada", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "turn_start", ids: { sessionId: "s1" }, at: 30 },
+      { src: "claude", kind: "turn_end", ids: { sessionId: "s1" }, at: 10 },
+      { src: "claude", kind: "turn_start", ids: { sessionId: "s1" }, at: 20 },
+      { src: "claude", kind: "turn_end", ids: { sessionId: "s1" }, at: 20 },
+      { src: "claude", kind: "turn_start", ids: { sessionId: "s1" }, at: 19.999 },
+    ]),
+  );
+  assert.deepEqual(result.entries.map((e) => e.sequence), [1, 2, 3, 4, 5]);
+  assert.deepEqual(result.entries.map((e) => e.outOfOrder), [false, true, false, false, true], "primeira nunca; igual não regride");
+});
+
+test("T6-C5 clock and resume: resume com ID mantém a sessão e abre um segmento novo; sem ID não junta sessões por proximidade", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "session_start", ids: { sessionId: "s1" }, fields: { source: "startup" } },
+      { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "a" } },
+      { src: "claude", kind: "session_start", ids: { sessionId: "s1" }, fields: { source: "resume" } },
+      { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "b" } },
+      { src: "claude", kind: "session_start", ids: { sessionId: "s2" }, fields: { source: "resume" } },
+      { src: "claude", kind: "session_start", fields: { source: "resume" }, gaps: ["sessionId:absent"] },
+      { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "c" } },
+    ]),
+  );
+  const e = result.entries;
+  assert.equal(e[0].session.key, e[2].session.key, "a retomada continua a sessão identificada");
+  assert.deepEqual(e.slice(0, 4).map((x) => x.segment), [1, 1, 2, 2]);
+  assert.equal(e[4].segment, 1, "resume de sessão ainda não vista começa no segmento 1");
+  assert.notEqual(e[4].session.key, e[2].session.key);
+  assert.deepEqual(e[5].session, { key: null, strength: "inconclusive", evidence: [] }, "sem ID não une a sessão vizinha");
+  assert.equal(e[5].segment, null);
+  assert.equal(e[6].segment, 2, "a retomada sem ID não abriu segmento em s1");
+});
