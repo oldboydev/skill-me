@@ -55,12 +55,13 @@ test("T6-C13 coverage: contadores, motivos por sequência e totais exatos de uma
 test("T6-C13 coverage: ambiguidade de operação e skill encerrada só por fronteira entram nos totais", () => {
   const coverage = coverageOf([
     { src: "codexExec", kind: "session_start", ids: { threadId: "th1" } },
-    { src: "codexExec", kind: "session_start", ids: { threadId: "th2" } },
     { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "i0" }, fields: { phase: "started", itemType: "command_execution" } },
+    { src: "codexExec", kind: "session_start", ids: { threadId: "th2" } },
+    { src: "codexExec", kind: "item", native: "item.completed", ids: { itemId: "i0" }, fields: { phase: "completed", itemType: "command_execution" } },
     { src: "claude", kind: "skill_invocation", ids: { sessionId: "s1", toolUseId: "u1" }, fields: { invocationPath: "skill_tool", phase: "pre", skillName: "x" } },
     { src: "claude", kind: "session_end", ids: { sessionId: "s1" }, fields: { reason: "other" } },
   ]);
-  assert.deepEqual(coverage.totals, { ...ZERO_TOTALS, inconclusiveEntries: 1, inconclusiveOperations: 1, boundaryOnly: 1 });
+  assert.deepEqual(coverage.totals, { ...ZERO_TOTALS, inconclusiveEntries: 2, inconclusiveOperations: 1, boundaryOnly: 1 });
   assert.equal(coverage.partial, true);
 });
 

@@ -67,9 +67,12 @@ function hookOperations(entries) {
   });
 }
 
-// Por que um grupo de itens não pode ser tratado como uma operação só.
-function itemAmbiguity(group, sessionsInOrigin) {
-  if (sessionsInOrigin > 1) return "multiple_sessions";
+// Por que um grupo de itens não pode ser tratado como uma operação só. Várias
+// sessões na origem só tornam o grupo ambíguo quando o mesmo itemId atravessa a
+// abertura de outra sessão (reuso do ID); itemIds distintos continuam operações
+// separadas, sem atribuição de sessão.
+function itemAmbiguity(group, crossesSessions) {
+  if (crossesSessions) return "multiple_sessions";
   const phases = group.map((entry) => entry.fields.phase ?? null);
   if (phases.includes(null)) return "unknown_phase";
   const count = (phase) => phases.filter((candidate) => candidate === phase).length;
@@ -95,7 +98,12 @@ function itemOperations(entries) {
   }
   return [...groups.entries()].map(([call, group]) => {
     const origin = `${group[0].source.agent}/${group[0].source.mechanism}`;
-    const ambiguity = itemAmbiguity(group, sessionsByOrigin.get(origin)?.size ?? 0);
+    const first = group[0].sequence;
+    const last = group.at(-1).sequence;
+    const crossesSessions =
+      (sessionsByOrigin.get(origin)?.size ?? 0) > 1 &&
+      entries.some((entry) => entry.eventKind === "session_start" && entry.identity.session !== null && `${entry.source.agent}/${entry.source.mechanism}` === origin && entry.sequence > first && entry.sequence < last);
+    const ambiguity = itemAmbiguity(group, crossesSessions);
     const common = { session: group[0].session.key, call, subagent: null, itemType: group[0].fields.itemType };
     if (ambiguity !== null) {
       const ambiguous = toolShape({ ...common, start: null, result: null, strength: "inconclusive", state: "ambiguous", toolName: null, outcome: null, errorType: null, exitCode: null, nativeMs: null });

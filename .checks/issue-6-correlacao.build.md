@@ -18,7 +18,9 @@ vendorizado intocado.
 | `2c22d3f` | correção do P1 do Verifier: subagente de hook não pareia entre sessões |
 | `9315253` | correção dos achados de C2 (chave pública do subagente) e C10 (pais divergentes) |
 | `5da7b1a` | `parentSession` do par subagente lido também do fim quando só ele nomeia o pai |
-| commit seguinte | turno e chamada com escopo de sessão na identidade pública (C2) |
+| `a1365b9` | turno e chamada com escopo de sessão na identidade pública (C2) |
+| `0232720` | registro da verificação independente (orquestrador) |
+| commit seguinte | achados P2 da revisão formal: itens do exec em várias sessões (C6/C7) e duplicata de subagente do Hermes (C4) |
 
 ## Decisões de implementação
 
@@ -38,8 +40,8 @@ do vínculo `native`/`heuristic`/`inconclusive`).
   `session_start` sem ID nunca é candidato. Com duas ou mais, ou nenhuma, `inconclusive`.
 - **Pareamento (C6).** Turno ou subagente só impedem o par quando os dois lados os trazem e
   diferem. Sem sessão ou sem ID de chamada, cada metade vira operação `inconclusive`.
-- **Itens do Codex exec.** `itemId` forma operação `heuristic`; colisão (mais de uma sessão na
-  origem, fase repetida, fora de ordem, tipos diferentes, fase desconhecida) vira operação
+- **Itens do Codex exec.** `itemId` forma operação `heuristic`; colisão (`itemId` reaproveitado
+  atravessando a abertura de outra sessão da origem — ver a correção da revisão formal —, fase repetida, fora de ordem, tipos diferentes, fase desconhecida) vira operação
   `ambiguous`/`inconclusive` com o motivo em `ambiguity`.
 - **Estados.** `closed`, `open`, `orphan_result`, `ambiguous`, `boundary_only` (só skill).
   `instructionCompletion: "unobserved"` em toda invocação de skill; nunca `skill_completed`.
@@ -151,12 +153,43 @@ no registro a chave é `null` — hook sem sessão não expõe turno nem chamada
 com `call: null`. Exceção deliberada: o `itemId` do `codex exec`, cuja linha nunca traz a sessão, continua uma chave por
 captura e origem, isto é, o agrupamento `heuristic` de C6 (inclusive a ambiguidade por colisão) não muda.
 
-**Provas.** `T6-C2` 7/7; `T6-C6` 5/5; correlação 55/55; `npm run test:integrations` 288 tests, 281 pass, 0 fail, 0 cancelled,
+**Provas (nesse commit; totais finais em "Execuções").** `T6-C2` 7/7; `T6-C6` 5/5; correlação 55/55; `npm run test:integrations` 288 tests, 281 pass, 0 fail, 0 cancelled,
 7 skipped (os mesmos 7 de plataforma). Mutação (chave sem a sessão) falha 2 testes. Os novos testes provam, para s1 e s2:
 chaves de turno e chamada diferentes, pre/post da mesma sessão alinhados e pareados (`closed`, evidência [1,2] e [3,4]),
 `operations.call` diferentes (inclusive de skill), e chaves de três origens em duas capturas todas distintas.
 **Limitações.** A garantia vale para IDs que o envelope v1 traz; o `itemId` do exec segue sem escopo de sessão por
 contrato do próprio Codex, de modo que duas threads só se distinguem pela ambiguidade já declarada em C6.
+
+## Correção dos dois achados P2 da revisão formal (tentativa 1)
+
+**Achado 1 — C6/C7, itens do exec em duas sessões.** `itemAmbiguity` marcava todo grupo `ambiguous` sempre que a origem
+tinha mais de uma sessão, apagando início, resultado, `exitCode` e duração derivada de itens com `itemId` distintos.
+Agora o grupo só é `multiple_sessions` quando o **mesmo** `itemId` atravessa a abertura de outra sessão da origem
+(um `session_start` entre a primeira e a última sequência do grupo); `itemId` distintos em duas sessões são operações
+`heuristic` separadas, com resultado, `exitCode`, `status`, `elapsedMs` derivado e evidência, e `session: null` — nenhuma
+atribuição de sessão `native` (as entradas ficam `inconclusive`). Fase repetida, fora de ordem, tipo diferente e fase
+desconhecida seguem ambíguas, e o caso do ID reaproveitado entre as sessões continua `ambiguous`/`inconclusive`.
+
+**Achado 2 — C4, subagente do Hermes.** `hasCompleteIdentity` exigia `identity.session`, que os eventos de subagente do
+Hermes nunca trazem (só `parentSessionId`/`childSessionId`), então a repetição não recebia `duplicateOf` e deixava uma
+operação `open` extra. Para `subagent_start`/`subagent_stop` a identidade completa passa a ser o próprio ID explícito do
+subagente (`identity.subagent`: `subagentId` com o pai como escopo, ou `childSessionId`). Início repetido aponta para o
+primeiro e há uma só operação `closed` com a duplicata em `duplicates`; evento sem ID, com pais diferentes, com campo
+diferente, ou `agentId` de hook sem sessão continuam independentes.
+
+**RED no HEAD `0232720`:** 3 falhas — C6 (2: duas sessões com IDs distintos; reaproveitado com um item distinto na mesma
+captura) e C4 (1: duplicata do Hermes); o teste de controles de C4 já passava. **GREEN:** C4 6/6, C6 7/7, C7 3/3,
+correlação 59/59, `npm run test:integrations` 292 tests, 285 pass, 0 fail, 0 cancelled, 7 skipped.
+
+**Fixtures corrigidas, não enfraquecidas.** `T6-C13` (ambiguidade nos totais) e `T6-docs` produziam o estado `ambiguous`
+com duas sessões e um único item, que não é colisão; passaram a usar o mesmo `itemId` começando numa sessão e concluindo
+após a abertura da outra, e continuam exigindo `ambiguous`. No total de C13 o item gerou duas entradas `inconclusive` em
+vez de uma (`inconclusiveEntries: 2`). O guia (`docs/traces.md`) teve a frase sobre `ambiguous` ajustada.
+
+**Limitações.** Como a linha do exec não traz a sessão, o reaproveitamento de um `itemId` só é visto quando há um
+`session_start` entre as ocorrências (ou fase/tipo conflitantes); com as duas sessões abertas antes e o mesmo `itemId`
+usado uma vez em cada, o par parece normal e fica `heuristic` — por isso nunca `native`. Dedupe de subagente do Hermes
+vale só para registros idênticos (mesma origem, fase, campos e lacunas, mesmos IDs).
 
 ## Provas por check
 
@@ -165,9 +198,9 @@ contrato do próprio Codex, de modo que duas threads só se distinguem pela ambi
 | C1 | `T6-C1` (2) | `timeline.unit.test.mjs` | 2 pass |
 | C2 | `T6-C2` (7) | idem | 7 pass |
 | C3 | `T6-C3` (3) | idem | 3 pass |
-| C4 | `T6-C4` (4) | idem | 4 pass |
+| C4 | `T6-C4` (6) | idem | 6 pass |
 | C5 | `T6-C5` (2) | idem | 2 pass |
-| C6 | `T6-C6` (5) | `operations.unit.test.mjs` | 5 pass |
+| C6 | `T6-C6` (7) | `operations.unit.test.mjs` | 7 pass |
 | C7 | `T6-C7` (3) | idem | 3 pass |
 | C8 | `T6-C8` (2) | `skills.unit.test.mjs` | 2 pass |
 | C9 | `T6-C9` (2) | idem | 2 pass |
@@ -179,7 +212,7 @@ contrato do próprio Codex, de modo que duas threads só se distinguem pela ambi
 | guia | `T6-docs` (2) | `docs.test.mjs` | 2 pass |
 
 Cada comando `Proof:` de `.checks/issue-6-correlacao.md` (C1–C14), executado como escrito, saiu
-com exit 0 e `fail 0`, `skipped 0`; a soma é 53 testes nomeados (C2 tem 7 e C10 tem 9 depois das correções do Verifier), mais 2 do guia = 55 em
+com exit 0 e `fail 0`, `skipped 0`; a soma é 57 testes nomeados (C2 tem 7, C4 tem 6, C6 tem 7 e C10 tem 9 depois das correções do Verifier e da revisão), mais 2 do guia = 59 em
 `tests/integrations/correlation/`. As provas de decisão ficam no consumidor puro; a fronteira
 é provada pelo CLI real (C12) e pelo fluxo de fixtures (C14), que compara a API com a resposta
 do CLI (mesmos registros, ordem, vínculos e cobertura) e identifica cada passo como fixture ou
@@ -205,6 +238,9 @@ Cada mutação foi aplicada ao produto, a prova correspondente rodou e o arquivo
 | `timeline` aceita flag extra | C12 | falhou |
 | `agentId` sem a sessão na chave pública | C2 | falhou |
 | turno e chamada sem a sessão na chave pública | C2 | 2 falhas |
+| duas sessões do exec tornam todo grupo ambíguo | C6 | 2 falhas |
+| subagente exige sessão para identidade completa | C4 | falhou |
+| subagente sempre com identidade completa | C4 | falhou |
 | pais divergentes pareiam | C10 | falhou |
 | sessão filha com pais em conflito atribuída | C10 | falhou |
 | controle: `agentType` acrescentado à lista de ID (sem efeito) | C10 | passou (esperado) |
@@ -213,12 +249,13 @@ Cada mutação foi aplicada ao produto, a prova correspondente rodou e o arquivo
 
 | Plataforma | Comando | Resultado |
 | --- | --- | --- |
-| Windows 11 (local) | `node --test "tests/integrations/correlation/*.test.mjs"` (final) | 55 tests, 55 pass, 0 fail, 0 skipped |
+| Windows 11 (local) | `node --test "tests/integrations/correlation/*.test.mjs"` (final) | 59 tests, 59 pass, 0 fail, 0 skipped |
 | Windows 11 (local) | `npm run test:integrations`, 1ª execução (antes deste registro existir) | 278 tests, 270 pass, 1 fail, 0 cancelled, 7 skipped; a falha era `T6-docs … build.md`, que exige este arquivo |
 | Windows 11 (local) | `npm run test:integrations`, entrega inicial `27b8ae6` | 278 tests, 271 pass, 0 fail, 0 cancelled, 7 skipped (exit 0) |
 | Windows 11 (local) | `npm run test:integrations`, após o P1 (`2c22d3f`) | 281 tests, 274 pass, 0 fail, 0 cancelled, 7 skipped |
 | Windows 11 (local) | `npm run test:integrations`, após C2/C10 do Verifier (`9315253`/`5da7b1a`) | 285 tests, 278 pass, 0 fail, 0 cancelled, 7 skipped |
-| Windows 11 (local) | `npm run test:integrations`, **execução final** | 288 tests, 281 pass, 0 fail, 0 cancelled, 7 skipped |
+| Windows 11 (local) | `npm run test:integrations`, após C2 de turno/chamada (`a1365b9`) | 288 tests, 281 pass, 0 fail, 0 cancelled, 7 skipped |
+| Windows 11 (local) | `npm run test:integrations`, **execução final** | 292 tests, 285 pass, 0 fail, 0 cancelled, 7 skipped |
 | Windows 11 (local, em `27b8ae6`; não reexecutado depois: as correções só tocam `src/integrations/correlation/` e seus testes) | `npm run test:governance` | 6 tests, 6 pass, 0 fail |
 | idem | `npm run test:code-review` | 16 tests, 16 pass, 0 fail, 0 skipped |
 | idem | `npm run test:doctor` | 417 tests, 410 pass, 0 fail, 0 cancelled, 7 skipped (FIFO e links POSIX: `agent-resolution-formal5-2`, `agent-resolution-C2`, `fifo-config-formal8-4` ×2, `fs-adapter-formal8-4` ×3; já existentes, nenhum da #6) |

@@ -191,3 +191,52 @@ test("T6-C7 tool outcome and duration: resultado anterior ao início, operação
   for (const op of [reversed, open, orphan]) assert.deepEqual([op.durationMs, op.elapsedMs, op.durationEvidence], [null, null, null], op.state);
   assert.deepEqual([open.state, orphan.state], ["open", "orphan_result"]);
 });
+
+// Achado 1 da revisão formal (C6/C7): duas sessões do exec com itemId distintos não são colisão.
+test("T6-C6 tool pairing: duas sessões do exec com itemId distintos formam operações heuristic separadas, com resultado, exitCode e duração visíveis e sem sessão native", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "codexExec", kind: "session_start", ids: { threadId: "th1" } },
+      item("item_a", "started", "command_execution", { at: 10 }),
+      item("item_a", "completed", "command_execution", { at: 12.5, fields: { exitCode: 3, status: "failed" } }),
+      { src: "codexExec", kind: "session_start", ids: { threadId: "th2" } },
+      item("item_b", "started", "mcp_tool_call", { at: 20, fields: { toolName: "search" } }),
+      item("item_b", "completed", "mcp_tool_call", { at: 21, fields: { toolName: "search", status: "completed" } }),
+    ]),
+  );
+  const [a, b] = tools(result);
+  assert.equal(tools(result).length, 2);
+  assert.deepEqual(shape(a), ["heuristic", "closed", 2, [], 3, [2, 3]]);
+  assert.deepEqual(shape(b), ["heuristic", "closed", 5, [], 6, [5, 6]]);
+  assert.equal(a.ambiguity ?? null, null);
+  assert.deepEqual([a.exitCode, a.status, a.elapsedMs, a.durationEvidence], [3, "failed", 2500, "derived"]);
+  assert.deepEqual([b.exitCode, b.toolName, b.elapsedMs, b.durationEvidence], [null, "search", 1000, "derived"]);
+  assert.notEqual(a.call, b.call);
+  for (const op of [a, b]) assert.deepEqual([op.session, op.strength === "native"], [null, false], "sem atribuição de sessão native");
+  for (const entry of result.entries.filter((e) => e.eventKind === "item")) assert.notEqual(entry.session.strength, "native");
+});
+
+test("T6-C6 tool pairing: itemId reutilizado entre duas sessões do exec continua ambiguous, e fase ou tipo conflitantes também", () => {
+  const reused = tools(
+    correlateTrace(
+      buildTrace([
+        { src: "codexExec", kind: "session_start", ids: { threadId: "th1" } },
+        item("item_0", "started", "command_execution"),
+        item("item_0", "completed", "command_execution", { fields: { exitCode: 0 } }),
+        { src: "codexExec", kind: "session_start", ids: { threadId: "th2" } },
+        item("item_0", "started", "command_execution"),
+        item("item_0", "completed", "command_execution", { fields: { exitCode: 1 } }),
+        item("item_z", "started", "command_execution"),
+        item("item_z", "completed", "command_execution"),
+      ]),
+    ),
+  );
+  assert.deepEqual(reused.map((op) => [op.state, op.ambiguity ?? null, op.exitCode]), [["ambiguous", "multiple_sessions", null], ["closed", null, null]]);
+  const mixed = tools(correlateTrace(buildTrace([
+    { src: "codexExec", kind: "session_start", ids: { threadId: "th1" } },
+    { src: "codexExec", kind: "session_start", ids: { threadId: "th2" } },
+    item("item_0", "started", "command_execution"),
+    item("item_0", "completed", "file_change"),
+  ])));
+  assert.deepEqual(mixed.map((op) => [op.state, op.ambiguity]), [["ambiguous", "mixed_item_type"]]);
+});

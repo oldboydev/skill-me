@@ -339,3 +339,32 @@ test("T6-C2 strong identities: sem ID de sessão o hook não expõe turno nem ch
   const other = correlateTrace(buildTrace([item("started")], { captureId: CAPTURE_B }));
   assert.notEqual(other.entries[0].identity.call, exec.entries[0].identity.call, "outra captura");
 });
+
+// Achado 2 da revisão formal (C4): subagentes do Hermes não trazem sessionId; pai e filho explícitos bastam.
+const hStart = (parent, child = "c", extra = {}) => ({ src: "hermes", kind: "subagent_start", native: "subagent_start", ids: { ...(parent === null ? {} : { parentSessionId: parent }), ...(child === null ? {} : { childSessionId: child, subagentId: "A" }) }, fields: { childRole: "leaf", ...extra.fields } });
+const hStop = (parent, child = "c") => ({ src: "hermes", kind: "subagent_stop", native: "subagent_stop", ids: { ...(parent === null ? {} : { parentSessionId: parent }), childSessionId: child }, fields: { childRole: "leaf", childStatus: "completed" } });
+const subs = (result) => result.operations.filter((op) => op.type === "subagent");
+
+test("T6-C4 duplicates: início ou fim idêntico do subagente do Hermes, com pai e filho explícitos e sem sessionId, aponta duplicateOf e não abre outra operação", () => {
+  const result = correlateTrace(buildTrace([hStart("p1"), hStart("p1"), hStop("p1"), hStop("p1")]));
+  assert.deepEqual(result.entries.map((e) => e.duplicateOf), [null, 1, null, 3]);
+  assert.equal(subs(result).length, 1, "uma operação só");
+  const [op] = subs(result);
+  assert.deepEqual([op.strength, op.state, op.start, op.result, op.evidence, op.duplicates], ["native", "closed", 1, 3, [1, 3], [2, 4]]);
+
+  const childOnly = correlateTrace(buildTrace([hStart(null), hStart(null), hStop(null)]));
+  assert.deepEqual(childOnly.entries.map((e) => e.duplicateOf), [null, 1, null], "childSessionId sozinho já é identidade nativa");
+  assert.deepEqual(subs(childOnly).map((op) => [op.state, op.duplicates]), [["closed", [2]]]);
+});
+
+test("T6-C4 duplicates: subagente sem identidade nativa suficiente ou com pais diferentes não é deduplicado", () => {
+  const noId = correlateTrace(buildTrace([hStart("p1", null), hStart("p1", null)]));
+  assert.deepEqual(noId.entries.map((e) => e.duplicateOf), [null, null]);
+  assert.equal(subs(noId).length, 2);
+  const parents = correlateTrace(buildTrace([hStart("p1"), hStart("p2")]));
+  assert.deepEqual(parents.entries.map((e) => e.duplicateOf), [null, null], "pais diferentes não são a mesma identidade");
+  const fields = correlateTrace(buildTrace([hStart("p1"), hStart("p1", "c", { fields: { childRole: "other" } })]));
+  assert.deepEqual(fields.entries.map((e) => e.duplicateOf), [null, null], "campo diferente");
+  const claudeNoSession = correlateTrace(buildTrace([{ src: "claude", kind: "subagent_start", ids: { agentId: "A" }, fields: { agentType: "Explore" } }, { src: "claude", kind: "subagent_start", ids: { agentId: "A" }, fields: { agentType: "Explore" } }]));
+  assert.deepEqual(claudeNoSession.entries.map((e) => e.duplicateOf), [null, null]);
+});

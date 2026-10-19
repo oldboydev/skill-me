@@ -83,9 +83,12 @@ function linkContextualSessions(entries) {
   }
 }
 
+// Subagente: o próprio ID explícito basta — o Hermes nomeia pai e filho (ou só a
+// sessão filha) e nunca traz `sessionId` nesses eventos.
 function hasCompleteIdentity(entry) {
-  if (entry.identity.session === null) return false;
   const required = REQUIRED_SCOPE[entry.eventKind];
+  if (required === "subagent") return entry.identity.subagent !== null;
+  if (entry.identity.session === null) return false;
   return required === undefined || entry.identity[required] !== null;
 }
 

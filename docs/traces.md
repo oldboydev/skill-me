@@ -162,8 +162,9 @@ sessão.
 `codex exec`), `skill_invocation` (só a ferramenta `Skill` do Claude, com
 `toolUseId`), `skill_evidence` e `subagent`. O estado diz o que foi observado:
 `closed` (início e resultado), `open` (início sem resultado), `orphan_result`
-(resultado sem início), `ambiguous` (itens com `itemId` repetido ou em mais de
-uma sessão) e `boundary_only` (invocação de skill sem `post`, depois de um fim do
+(resultado sem início), `ambiguous` (itens cujo `itemId` se repete, inclusive
+atravessando a abertura de outra sessão; `itemId` distintos em várias sessões seguem como operações
+`heuristic` separadas, sem sessão atribuída) e `boundary_only` (invocação de skill sem `post`, depois de um fim do
 próprio turno, sessão ou subagente).
 
 - `outcome`, `errorType`, `exitCode` e `durationMs` só aparecem quando o contrato
