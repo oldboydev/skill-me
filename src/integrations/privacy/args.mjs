@@ -9,6 +9,7 @@ export const PRIVACY_HELP_TEXT = `Uso:
   integrations privacy export --root <diretório> --capture <id>
   integrations privacy list --root <diretório> [--after <id>]
   integrations privacy follow --root <diretório> --capture <id>
+  integrations privacy timeline --root <diretório> --capture <id>
   integrations privacy delete --root <diretório> --capture <id> [--apply]
   integrations privacy prune --root <diretório> [--apply]
 
@@ -27,10 +28,14 @@ mostrada). follow acompanha a captura: uma linha JSON por registro, já gravado
 ou novo, e uma linha de fim quando ela é encerrada. Produtores locais (hooks,
 ingest Hermes, integrations run) gravam numa captura ativa só quando recebem
 SKILL_ME_CAPTURE_ROOT (absoluto) e SKILL_ME_CAPTURE_ID juntos; ver
-docs/traces.md. delete e prune mostram uma prévia e só apagam com --apply;
-prune remove capturas encerradas cuja idade, contada do encerramento, alcançou
-a retenção — não há daemon: rode prune quando quiser aplicar a retenção. Nada é
-enviado pela rede.
+docs/traces.md. timeline calcula, só a partir dos registros da captura, a
+timeline v1: entradas na ordem gravada, operações de ferramenta, skill e
+subagente com a força de cada vínculo (native, heuristic, inconclusive) e a
+cobertura (lacunas, operações abertas ou órfãs, partial); não escreve nada,
+não executa agente nem lê skill. delete e prune mostram uma prévia e só
+apagam com --apply; prune remove capturas encerradas cuja idade, contada do
+encerramento, alcançou a retenção — não há daemon: rode prune quando quiser
+aplicar a retenção. Nada é enviado pela rede.
 
 Resposta: um JSON por execução em stdout (follow: uma linha JSON por evento,
 até o fim ou um erro). Códigos: 0 concluído; 2 uso inválido; 3 estado ou
@@ -56,6 +61,7 @@ const COMMAND_FLAGS = {
   prune: ["--root", "--apply"],
   list: ["--root", "--after"],
   follow: ["--root", "--capture"],
+  timeline: ["--root", "--capture"],
 };
 const VALUE_FLAGS = new Set(["--root", "--capture", "--retention-days", "--agent", "--after"]);
 const INGEST_AGENT_NAMES = ["claude", "codex-hooks", "codex-exec", "hermes"];

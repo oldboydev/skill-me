@@ -1,4 +1,6 @@
 import { isPrivacyCommand, parsePrivacyArgs, PRIVACY_HELP_TEXT, PrivacyUsageError } from "./args.mjs";
+import { correlateTrace } from "../correlation/timeline.mjs";
+import { replayCapture } from "../traces/replay.mjs";
 import { followCapture, followLine } from "./follow.mjs";
 import { createStoreIo } from "./fs.mjs";
 import { ingestCapture } from "./ingest.mjs";
@@ -42,6 +44,8 @@ async function execute(command, args, { nowMs, io, stdin }) {
       return ok(command, { capture: id, batch: await ingestCapture({ root, id, agent: args.agent, stdin, io }) });
     case "export":
       return ok(command, await exportCapture({ root, id, io }));
+    case "timeline":
+      return ok(command, await replayCapture({ root, id, consumer: correlateTrace, io }));
     case "stop":
     case "disable":
       return ok(command, await changeCaptureState({ root, id, action: command, nowMs, io }));
