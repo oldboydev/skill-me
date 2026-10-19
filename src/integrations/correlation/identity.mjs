@@ -9,8 +9,24 @@ const SCOPE_ID_NAMES = Object.freeze({
   session: ["sessionId", "threadId"],
   turn: ["turnId", "promptId"],
   call: ["toolUseId", "toolCallId", "itemId"],
-  subagent: ["agentId", "subagentId", "childSessionId"],
 });
+
+// `agentId` e `subagentId` só valem dentro da sessão que os nomeia (a do
+// evento ou, no Hermes, a do pai): o mesmo texto em outra sessão é outro
+// subagente. Sem sessão não há chave — um texto compartilhado não é vínculo.
+const AGENT_NAMES = ["agentId", "subagentId"];
+const AGENT_SCOPE_NAMES = ["sessionId", "threadId", "parentSessionId"];
+
+export function agentKeyOf(captureId, envelope) {
+  const { source, ids } = envelope;
+  const scopeName = AGENT_SCOPE_NAMES.find((name) => typeof ids[name] === "string");
+  const name = AGENT_NAMES.find((candidate) => typeof ids[candidate] === "string");
+  if (scopeName === undefined || name === undefined) return null;
+  return keyFor(captureId, source, "subagent", `${ids[scopeName].length}:${ids[scopeName]}/${ids[name]}`);
+}
+
+export const childKeyOf = (captureId, envelope) =>
+  typeof envelope.ids.childSessionId === "string" ? keyFor(captureId, envelope.source, "subagent", envelope.ids.childSessionId) : null;
 
 export const keyFor = (captureId, source, scope, value) => `${captureId}/${source.agent}/${source.mechanism}/${scope}/${value}`;
 
@@ -21,5 +37,6 @@ export function identityOf(captureId, envelope) {
     const name = names.find((candidate) => typeof ids[candidate] === "string");
     identity[scope] = name === undefined ? null : keyFor(captureId, source, scope, ids[name]);
   }
+  identity.subagent = agentKeyOf(captureId, envelope) ?? childKeyOf(captureId, envelope);
   return identity;
 }

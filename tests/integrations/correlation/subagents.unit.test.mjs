@@ -155,3 +155,33 @@ test("T6-C10 subagent relations: agentId sem ID de sessão não pareia nem é na
   assert.notEqual(sub.parentSession, sub.childSession, "pai e filho legitimamente diferentes");
   assert.deepEqual(sub.operations, [tools(hermes)[0].id]);
 });
+
+// Segundo achado do Verifier (C10): pais explícitos que divergem para o mesmo childSessionId.
+const hermesStart = (parent, extra = {}) => ({ src: "hermes", kind: "subagent_start", ids: { ...(parent === null ? {} : { parentSessionId: parent }), childSessionId: "c", subagentId: "A" }, fields: { childRole: "leaf", ...extra.fields } });
+const hermesStop = (parent) => ({ src: "hermes", kind: "subagent_stop", ids: { ...(parent === null ? {} : { parentSessionId: parent }), childSessionId: "c" }, fields: { childRole: "leaf", childStatus: "completed" } });
+const childTool = { src: "hermes", kind: "tool_pre", ids: { sessionId: "c", toolCallId: "t1" }, fields: { toolName: "write_file" } };
+
+test("T6-C10 subagent relations: pais explícitos diferentes para o mesmo childSessionId não pareiam, e a ferramenta da sessão filha não é atribuída a nenhum dos dois", () => {
+  const result = correlateTrace(buildTrace([hermesStart("p1"), childTool, hermesStop("p2")]));
+  const [start, stop] = subagents(result);
+  assert.equal(subagents(result).length, 2, "a contradição fica visível, não fundida");
+  assert.deepEqual(view(start), ["native", "open", 1, null, [1]]);
+  assert.deepEqual(view(stop), ["native", "orphan_result", null, 3, [3]]);
+  assert.notEqual(start.parentSession, stop.parentSession);
+  assert.deepEqual([start.operations, stop.operations], [[], []], "sessão filha com pais em conflito não é atribuída");
+  assert.equal(stop.childStatus, "completed");
+});
+
+test("T6-C10 subagent relations: o mesmo pai no início e no fim pareia e atribui a sessão filha; sem pai de um lado a ausência não prova divergência", () => {
+  const matching = correlateTrace(buildTrace([hermesStart("p1"), childTool, hermesStop("p1")]));
+  const [pair] = subagents(matching);
+  assert.equal(subagents(matching).length, 1);
+  assert.deepEqual(view(pair), ["native", "closed", 1, 3, [1, 3]]);
+  assert.deepEqual(pair.operations, [tools(matching)[0].id]);
+
+  const noParentOnStop = subagents(correlateTrace(buildTrace([hermesStart("p1"), hermesStop(null)])));
+  assert.deepEqual(noParentOnStop.map(view), [["native", "closed", 1, 2, [1, 2]]]);
+  assert.equal(noParentOnStop[0].parentSession !== null, true, "o pai vem do início");
+  const noParentOnStart = subagents(correlateTrace(buildTrace([hermesStart(null), hermesStop("p2")])));
+  assert.deepEqual(noParentOnStart.map(view), [["native", "closed", 1, 2, [1, 2]]]);
+});

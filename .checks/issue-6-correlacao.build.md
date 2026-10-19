@@ -14,7 +14,9 @@ vendorizado intocado.
 | `760a0e5` | `correlateTrace` e módulos puros (S1 + S2 + `coverage`) com as provas C1–C11 e C13 |
 | `7a7756b` | `privacy timeline`, ajuda da CLI e as provas C12 e C14 |
 | `0d8237e` | guia `docs/traces.md` (seção "Timeline e cobertura") e `docs/agent-observation.md` |
-| commit seguinte | prova do guia (`docs.test.mjs`) e este registro |
+| `27b8ae6` | prova do guia (`docs.test.mjs`) e este registro |
+| `2c22d3f` | correção do P1 do Verifier: subagente de hook não pareia entre sessões |
+| commit seguinte | correção dos achados de C2 (chave pública do subagente) e C10 (pais divergentes) |
 
 ## Decisões de implementação
 
@@ -98,17 +100,39 @@ childSession` pareando por `childSessionId` com a ferramenta da sessão filha at
 `parentSessionId` do início e do fim coincidam: um mesmo `childSessionId` com pais diferentes seria
 contraditório e não é tratado. Isso é uma limitação declarada, sem prova.
 
-**Provas.** `Proof:` de C10: 7 tests, 7 pass, 0 fail, 0 skipped. `tests/integrations/correlation/*.test.mjs`:
+**Provas (no momento desta correção, `2c22d3f`; os totais finais estão em "Execuções").** `Proof:` de C10: 7 tests, 7 pass, 0 fail, 0 skipped. `tests/integrations/correlation/*.test.mjs`:
 48 tests, 48 pass. `npm run test:integrations`: 281 tests, 274 pass, 0 fail, 0 cancelled, 7 skipped (os mesmos
 7 skips de plataforma já listados). Mutação: remover `op.session === sub.parentSession` da atribuição faz
 2 dos novos testes falharem. Sem push, PR, merge ou revisão formal.
+
+## Correção dos achados de C2 e C10 do Verifier (identidade pública e pais divergentes)
+
+**C2.** `identity.subagent` e `operations[].subagent` usavam o texto do `agentId` sem sessão: `subagent_start(s1,A)`,
+`subagent_start(s2,A)` e `tool_pre(s2,k2,A)` davam a mesma chave pública. Agora `agentId`/`subagentId` só geram chave
+junto com o escopo que os nomeia — `sessionId`/`threadId` do evento ou, no Hermes, `parentSessionId` (`identity.mjs`,
+`agentKeyOf`; o escopo entra na chave com o comprimento, sem ambiguidade de separador). Sem escopo a chave é `null` e o
+subagente fica `inconclusive`: texto compartilhado nunca é vínculo forte. `childSessionId` continua sendo identidade por si
+(`childKeyOf`). A operação de ferramenta e o subagente da mesma sessão têm a mesma chave; a de outra sessão, outra.
+
+**C10.** `subagent_start(parent p1, child c)` e `subagent_stop(parent p2, child c)` pareavam `native closed` com pai p1,
+escondendo a contradição. O pareamento agora exige `parentSessionId` igual quando os **dois** lados o trazem; divergindo,
+saem `open` (evidência [1]) e `orphan_result` (evidência [3] no teste, que intercala uma ferramenta). Uma sessão filha
+reivindicada por pais em conflito não atribui suas ferramentas a nenhum dos subagentes. Mesmo pai pareia e atribui as
+ferramentas da sessão filha. Se um lado não traz o pai, a ausência não prova divergência e o par se forma, o mesmo
+critério de C6 para turno e subagente; essa é uma escolha conservadora declarada, e o pai exposto é o do início, ou o do
+fim se o início não o trouxe.
+
+**RED no HEAD `2c22d3f`:** 3 falhas (2 de C2, 1 de C10); o teste de pais coincidentes/ausentes já passava e serve de
+controle. **GREEN:** C2 4/4, C10 9/9, correlação 52/52, `npm run test:integrations` 285 tests, 278 pass, 0 fail, 7 skipped.
+Limitações: o comportamento com pai ausente de um lado e a atribuição de ferramentas de uma sessão filha contestada são
+decisões de projeto, provadas só por fixtures sintéticas; `parentSessionId` não é validado contra eventos do pai.
 
 ## Provas por check
 
 | Check | Teste(s) | Arquivo | Resultado |
 | --- | --- | --- | --- |
 | C1 | `T6-C1` (2) | `timeline.unit.test.mjs` | 2 pass |
-| C2 | `T6-C2` (2) | idem | 2 pass |
+| C2 | `T6-C2` (4) | idem | 4 pass |
 | C3 | `T6-C3` (3) | idem | 3 pass |
 | C4 | `T6-C4` (4) | idem | 4 pass |
 | C5 | `T6-C5` (2) | idem | 2 pass |
@@ -116,7 +140,7 @@ contraditório e não é tratado. Isso é uma limitação declarada, sem prova.
 | C7 | `T6-C7` (3) | idem | 3 pass |
 | C8 | `T6-C8` (2) | `skills.unit.test.mjs` | 2 pass |
 | C9 | `T6-C9` (2) | idem | 2 pass |
-| C10 | `T6-C10` (4) | `subagents.unit.test.mjs` | 4 pass |
+| C10 | `T6-C10` (9) | `subagents.unit.test.mjs` | 9 pass |
 | C11 | `T6-C11` (2) | `skills.unit.test.mjs` | 2 pass |
 | C12 | `T6-C12` (6) | `timeline.cli.test.mjs` | 6 pass |
 | C13 | `T6-C13` (5) | `coverage.unit.test.mjs` | 5 pass |
@@ -124,7 +148,7 @@ contraditório e não é tratado. Isso é uma limitação declarada, sem prova.
 | guia | `T6-docs` (2) | `docs.test.mjs` | 2 pass |
 
 Cada comando `Proof:` de `.checks/issue-6-correlacao.md` (C1–C14), executado como escrito, saiu
-com exit 0 e `fail 0`, `skipped 0`; a soma é 43 testes nomeados, mais 2 do guia = 45 em
+com exit 0 e `fail 0`, `skipped 0`; a soma é 50 testes nomeados (C2 tem 4 e C10 tem 9 depois das correções do Verifier), mais 2 do guia = 52 em
 `tests/integrations/correlation/`. As provas de decisão ficam no consumidor puro; a fronteira
 é provada pelo CLI real (C12) e pelo fluxo de fixtures (C14), que compara a API com a resposta
 do CLI (mesmos registros, ordem, vínculos e cobertura) e identifica cada passo como fixture ou
@@ -148,18 +172,23 @@ Cada mutação foi aplicada ao produto, a prova correspondente rodou e o arquivo
 | `eventGaps` vazio | C13 | 2 falhas |
 | resposta do CLI diverge da API | C14 | falhou |
 | `timeline` aceita flag extra | C12 | falhou |
+| `agentId` sem a sessão na chave pública | C2 | falhou |
+| pais divergentes pareiam | C10 | falhou |
+| sessão filha com pais em conflito atribuída | C10 | falhou |
 | controle: `agentType` acrescentado à lista de ID (sem efeito) | C10 | passou (esperado) |
 
 ## Execuções
 
 | Plataforma | Comando | Resultado |
 | --- | --- | --- |
-| Windows 11 (local) | `node --test "tests/integrations/correlation/*.test.mjs"` | 45 tests, 45 pass, 0 fail, 0 skipped |
+| Windows 11 (local) | `node --test "tests/integrations/correlation/*.test.mjs"` (final) | 52 tests, 52 pass, 0 fail, 0 skipped |
 | Windows 11 (local) | `npm run test:integrations`, 1ª execução (antes deste registro existir) | 278 tests, 270 pass, 1 fail, 0 cancelled, 7 skipped; a falha era `T6-docs … build.md`, que exige este arquivo |
-| Windows 11 (local) | `npm run test:integrations`, execução final | 278 tests, 271 pass, 0 fail, 0 cancelled, 7 skipped (exit 0) |
-| Windows 11 (local) | `npm run test:governance` | 6 tests, 6 pass, 0 fail |
-| Windows 11 (local) | `npm run test:code-review` | 16 tests, 16 pass, 0 fail, 0 skipped |
-| Windows 11 (local) | `npm run test:doctor` | 417 tests, 410 pass, 0 fail, 0 cancelled, 7 skipped (FIFO e links POSIX: `agent-resolution-formal5-2`, `agent-resolution-C2`, `fifo-config-formal8-4` ×2, `fs-adapter-formal8-4` ×3; já existentes, nenhum da #6) |
+| Windows 11 (local) | `npm run test:integrations`, entrega inicial `27b8ae6` | 278 tests, 271 pass, 0 fail, 0 cancelled, 7 skipped (exit 0) |
+| Windows 11 (local) | `npm run test:integrations`, após o P1 (`2c22d3f`) | 281 tests, 274 pass, 0 fail, 0 cancelled, 7 skipped |
+| Windows 11 (local) | `npm run test:integrations`, **execução final** | 285 tests, 278 pass, 0 fail, 0 cancelled, 7 skipped |
+| Windows 11 (local, em `27b8ae6`; não reexecutado depois: as correções só tocam `src/integrations/correlation/` e seus testes) | `npm run test:governance` | 6 tests, 6 pass, 0 fail |
+| idem | `npm run test:code-review` | 16 tests, 16 pass, 0 fail, 0 skipped |
+| idem | `npm run test:doctor` | 417 tests, 410 pass, 0 fail, 0 cancelled, 7 skipped (FIFO e links POSIX: `agent-resolution-formal5-2`, `agent-resolution-C2`, `fifo-config-formal8-4` ×2, `fs-adapter-formal8-4` ×3; já existentes, nenhum da #6) |
 
 Skips de `test:integrations`, todos já existentes e de plataforma, nenhum da #6: `I4-C15` e
 `T8-C4` (sinal POSIX), `I4-C25b` (modo POSIX), `I4-C25j`, `I4-C25k`, `I4-C25l` (ACL POSIX, Linux) e

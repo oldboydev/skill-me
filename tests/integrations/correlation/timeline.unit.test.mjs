@@ -255,3 +255,39 @@ test("T6-C5 clock and resume: resume com ID mantém a sessão e abre um segmento
   assert.equal(e[5].segment, null);
   assert.equal(e[6].segment, 2, "a retomada sem ID não abriu segmento em s1");
 });
+
+// Achado do Verifier (C2): o agentId (e o subagentId) só identifica o subagente dentro da sessão.
+test("T6-C2 strong identities: agentId ou subagentId iguais em sessões distintas dão chaves públicas distintas, e as operações da mesma sessão alinham", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "subagent_start", ids: { sessionId: "s1", agentId: "A" }, fields: { agentType: "Explore" } },
+      { src: "claude", kind: "subagent_start", ids: { sessionId: "s2", agentId: "A" }, fields: { agentType: "Explore" } },
+      { src: "claude", kind: "tool_pre", ids: { sessionId: "s2", toolUseId: "k2", agentId: "A" }, fields: { toolName: "Grep" } },
+      { src: "hermes", kind: "subagent_start", ids: { parentSessionId: "p1", subagentId: "H" }, fields: { childRole: "leaf" } },
+      { src: "hermes", kind: "subagent_start", ids: { parentSessionId: "p2", subagentId: "H" }, fields: { childRole: "leaf" } },
+    ]),
+  );
+  const [s1, s2, tool, h1, h2] = result.entries;
+  assert.notEqual(s1.identity.subagent, s2.identity.subagent);
+  assert.equal(s2.identity.subagent, tool.identity.subagent, "mesma sessão e agentId alinham");
+  assert.notEqual(h1.identity.subagent, h2.identity.subagent, "subagentId também é escopado pelo pai");
+  const [sub1, sub2, hs1, hs2] = result.operations.filter((op) => op.type === "subagent");
+  assert.notEqual(sub1.subagent, sub2.subagent);
+  assert.notEqual(hs1.subagent, hs2.subagent);
+  const toolOp = result.operations.find((op) => op.type === "tool");
+  assert.equal(toolOp.subagent, sub2.subagent, "a operação de ferramenta aponta para o subagente da sua sessão");
+  assert.notEqual(toolOp.subagent, sub1.subagent);
+});
+
+test("T6-C2 strong identities: agentId sem ID de sessão não expõe vínculo forte por texto compartilhado", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "claude", kind: "subagent_start", ids: { agentId: "A" }, fields: { agentType: "Explore" } },
+      { src: "claude", kind: "subagent_start", ids: { sessionId: "s1", agentId: "A" }, fields: { agentType: "Explore" } },
+    ]),
+  );
+  assert.equal(result.entries[0].identity.subagent, null);
+  assert.notEqual(result.entries[1].identity.subagent, null);
+  const [loose] = result.operations.filter((op) => op.type === "subagent");
+  assert.deepEqual([loose.subagent, loose.strength], [null, "inconclusive"]);
+});
