@@ -35,6 +35,11 @@
       "profile": "light",
       "maxRounds": 3,
       "approval": "Proprietário autorizou em 19/10/2026 a terceira tentativa formal da issue #8 após falha técnica de capacidade do modelo na segunda; registro em https://github.com/oldboydev/skill-me/issues/8#issuecomment-6265279482. Exclusivo da issue #8, preservando as duas tentativas anteriores. Merge permanece humano."
+    },
+    "6": {
+      "profile": "light",
+      "maxRounds": 3,
+      "approval": "Proprietário autorizou em 19/10/2026 a terceira tentativa formal da issue #6 após duas revisões changes_requested e correções verificadas; registro em https://github.com/oldboydev/skill-me/issues/6#issuecomment-6274122868. Exclusivo da issue #6, preservando as duas tentativas anteriores. Push e PR somente com status ready; merge permanece humano."
     }
   }
 }
