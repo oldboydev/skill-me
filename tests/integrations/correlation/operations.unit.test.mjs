@@ -240,3 +240,55 @@ test("T6-C6 tool pairing: itemId reutilizado entre duas sessões do exec continu
   ])));
   assert.deepEqual(mixed.map((op) => [op.state, op.ambiguity]), [["ambiguous", "mixed_item_type"]]);
 });
+
+// Achado da revisão: a abertura de uma sessão dentro da vida de um item não prova reuso do itemId.
+test("T6-C6 tool pairing: itens de itemId distintos com vidas sobrepostas e session_start no meio continuam heuristic closed, com campos e evidência, sem sessão native", () => {
+  const result = correlateTrace(
+    buildTrace([
+      { src: "codexExec", kind: "session_start", ids: { threadId: "th1" } },
+      item("item_a", "started", "command_execution", { at: 10 }),
+      { src: "codexExec", kind: "session_start", ids: { threadId: "th2" } },
+      item("item_b", "started", "command_execution", { at: 12 }),
+      item("item_a", "completed", "command_execution", { at: 14, fields: { exitCode: 3, status: "failed" } }),
+      item("item_b", "completed", "command_execution", { at: 13, fields: { exitCode: 0, status: "completed" } }),
+    ]),
+  );
+  const [a, b] = tools(result);
+  assert.equal(tools(result).length, 2);
+  assert.deepEqual(shape(a), ["heuristic", "closed", 2, [], 5, [2, 5]]);
+  assert.deepEqual(shape(b), ["heuristic", "closed", 4, [], 6, [4, 6]]);
+  assert.deepEqual([a.ambiguity ?? null, b.ambiguity ?? null], [null, null]);
+  assert.deepEqual([a.exitCode, a.status, a.elapsedMs, a.durationEvidence], [3, "failed", 4000, "derived"]);
+  assert.strictEqual(b.exitCode, 0);
+  assert.deepEqual([b.status, b.elapsedMs, b.durationEvidence], ["completed", 1000, "derived"], "resultado anterior ao outro não altera a conta");
+  for (const op of [a, b]) assert.deepEqual([op.session, op.strength === "native"], [null, false]);
+  for (const entry of result.entries.filter((e) => e.eventKind === "item")) assert.notEqual(entry.session.strength, "native");
+});
+
+test("T6-C6 tool pairing: um único início e um único fim do mesmo itemId em torno de um session_start não provam colisão — heuristic, nunca native; a repetição de fase continua ambígua", () => {
+  const straddle = tools(
+    correlateTrace(
+      buildTrace([
+        { src: "codexExec", kind: "session_start", ids: { threadId: "th1" } },
+        item("item_0", "started", "command_execution"),
+        { src: "codexExec", kind: "session_start", ids: { threadId: "th2" } },
+        item("item_0", "completed", "command_execution", { fields: { exitCode: 0 } }),
+      ]),
+    ),
+  );
+  assert.deepEqual(straddle.map((op) => [op.strength, op.state, op.ambiguity ?? null, op.exitCode, op.session]), [["heuristic", "closed", null, 0, null]]);
+
+  const twoSessions = tools(
+    correlateTrace(
+      buildTrace([
+        { src: "codexExec", kind: "session_start", ids: { threadId: "th1" } },
+        item("item_0", "started", "command_execution"),
+        { src: "codexExec", kind: "session_start", ids: { threadId: "th2" } },
+        item("item_0", "started", "command_execution"),
+      ]),
+    ),
+  );
+  assert.deepEqual(twoSessions.map((op) => [op.strength, op.state, op.ambiguity]), [["inconclusive", "ambiguous", "multiple_sessions"]]);
+  const oneSession = tools(correlateTrace(buildTrace([{ src: "codexExec", kind: "session_start", ids: { threadId: "th1" } }, item("item_0", "completed", "command_execution"), item("item_0", "completed", "command_execution")])));
+  assert.deepEqual(oneSession.map((op) => [op.state, op.ambiguity]), [["ambiguous", "repeated_phase"]]);
+});

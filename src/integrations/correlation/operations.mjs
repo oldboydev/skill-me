@@ -67,16 +67,19 @@ function hookOperations(entries) {
   });
 }
 
-// Por que um grupo de itens não pode ser tratado como uma operação só. Várias
-// sessões na origem só tornam o grupo ambíguo quando o mesmo itemId atravessa a
-// abertura de outra sessão (reuso do ID); itemIds distintos continuam operações
-// separadas, sem atribuição de sessão.
-function itemAmbiguity(group, crossesSessions) {
-  if (crossesSessions) return "multiple_sessions";
+// Por que um grupo de itens não pode ser tratado como uma operação só: só uma
+// colisão observável do mesmo itemId. A linha do exec não traz a sessão, então a
+// abertura de outra sessão no meio da vida de um item não prova reuso: itemIds
+// distintos seguem como operações separadas, ainda que as vidas se sobreponham.
+// Fase repetida é colisão (`multiple_sessions` quando a origem tem mais de uma
+// sessão, `repeated_phase` com uma só); tipo ou ordem conflitantes também. Um
+// único início e um único fim que atravessam um `session_start` não se provam
+// colisão: ficam `heuristic`, nunca `native`.
+function itemAmbiguity(group, sessionsInOrigin) {
   const phases = group.map((entry) => entry.fields.phase ?? null);
   if (phases.includes(null)) return "unknown_phase";
   const count = (phase) => phases.filter((candidate) => candidate === phase).length;
-  if (count("started") > 1 || count("completed") > 1) return "repeated_phase";
+  if (count("started") > 1 || count("completed") > 1) return sessionsInOrigin > 1 ? "multiple_sessions" : "repeated_phase";
   if (new Set(group.map((entry) => entry.fields.itemType)).size > 1) return "mixed_item_type";
   const ordered = phases.indexOf("started") <= 0 && (phases.indexOf("completed") === -1 || phases.indexOf("completed") === phases.length - 1);
   return ordered ? null : "phase_order";
@@ -98,12 +101,7 @@ function itemOperations(entries) {
   }
   return [...groups.entries()].map(([call, group]) => {
     const origin = `${group[0].source.agent}/${group[0].source.mechanism}`;
-    const first = group[0].sequence;
-    const last = group.at(-1).sequence;
-    const crossesSessions =
-      (sessionsByOrigin.get(origin)?.size ?? 0) > 1 &&
-      entries.some((entry) => entry.eventKind === "session_start" && entry.identity.session !== null && `${entry.source.agent}/${entry.source.mechanism}` === origin && entry.sequence > first && entry.sequence < last);
-    const ambiguity = itemAmbiguity(group, crossesSessions);
+    const ambiguity = itemAmbiguity(group, sessionsByOrigin.get(origin)?.size ?? 0);
     const common = { session: group[0].session.key, call, subagent: null, itemType: group[0].fields.itemType };
     if (ambiguity !== null) {
       const ambiguous = toolShape({ ...common, start: null, result: null, strength: "inconclusive", state: "ambiguous", toolName: null, outcome: null, errorType: null, exitCode: null, nativeMs: null });

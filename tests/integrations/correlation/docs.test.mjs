@@ -32,7 +32,7 @@ test("T6-docs timeline guide: a seção cita o comando da ajuda, as forças, os 
     { src: "codexExec", kind: "session_start", ids: { threadId: "t1" } },
     { src: "codexExec", kind: "item", ids: { itemId: "i" }, fields: { phase: "started", itemType: "command_execution" } },
     { src: "codexExec", kind: "session_start", ids: { threadId: "t2" } },
-    { src: "codexExec", kind: "item", ids: { itemId: "i" }, fields: { phase: "completed", itemType: "command_execution" } },
+    { src: "codexExec", kind: "item", ids: { itemId: "i" }, fields: { phase: "started", itemType: "command_execution" } },
   ]);
   const result = correlateTrace(trace);
   const states = new Set(result.operations.map((op) => op.state));

@@ -57,7 +57,7 @@ test("T6-C13 coverage: ambiguidade de operação e skill encerrada só por front
     { src: "codexExec", kind: "session_start", ids: { threadId: "th1" } },
     { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "i0" }, fields: { phase: "started", itemType: "command_execution" } },
     { src: "codexExec", kind: "session_start", ids: { threadId: "th2" } },
-    { src: "codexExec", kind: "item", native: "item.completed", ids: { itemId: "i0" }, fields: { phase: "completed", itemType: "command_execution" } },
+    { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "i0" }, fields: { phase: "started", itemType: "command_execution" } },
     { src: "claude", kind: "skill_invocation", ids: { sessionId: "s1", toolUseId: "u1" }, fields: { invocationPath: "skill_tool", phase: "pre", skillName: "x" } },
     { src: "claude", kind: "session_end", ids: { sessionId: "s1" }, fields: { reason: "other" } },
   ]);
