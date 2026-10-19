@@ -291,3 +291,51 @@ test("T6-C2 strong identities: agentId sem ID de sessão não expõe vínculo fo
   const [loose] = result.operations.filter((op) => op.type === "subagent");
   assert.deepEqual([loose.subagent, loose.strength], [null, "inconclusive"]);
 });
+
+// Último achado do Verifier (C2): turno e chamada também só valem dentro da sessão que os nomeia.
+const turnCall = (entry) => [entry.identity.turn, entry.identity.call];
+
+test("T6-C2 strong identities: promptId e toolUseId iguais em sessões distintas dão chaves públicas de turno e chamada distintas, e cada sessão continua alinhada e pareada", () => {
+  const step = (kind, session) => ({ src: "claude", kind, ids: { sessionId: session, promptId: "p", toolUseId: "t" }, fields: { toolName: "Bash" } });
+  const result = correlateTrace(buildTrace([step("tool_pre", "s1"), step("tool_post", "s1"), step("tool_pre", "s2"), step("tool_post", "s2")]));
+  const [pre1, post1, pre2, post2] = result.entries;
+  assert.deepEqual(turnCall(pre1), turnCall(post1), "pre e post da mesma sessão alinham");
+  assert.deepEqual(turnCall(pre2), turnCall(post2));
+  assert.notEqual(pre1.identity.turn, pre2.identity.turn);
+  assert.notEqual(pre1.identity.call, pre2.identity.call);
+  const [first, second] = result.operations;
+  assert.equal(result.operations.length, 2);
+  assert.deepEqual([first.state, first.evidence, second.state, second.evidence], ["closed", [1, 2], "closed", [3, 4]]);
+  assert.notEqual(first.call, second.call, "a chave pública da operação também não cruza sessões");
+  assert.notEqual(first.session, second.session);
+});
+
+test("T6-C2 strong identities: a chamada de skill e o turno do Hermes seguem a mesma regra, e origem ou captura distintas continuam separadas", () => {
+  const skill = (session) => ({ src: "claude", kind: "skill_invocation", ids: { sessionId: session, toolUseId: "u" }, fields: { invocationPath: "skill_tool", phase: "pre", skillName: "x" } });
+  const skills = correlateTrace(buildTrace([skill("s1"), skill("s2")])).operations;
+  assert.notEqual(skills[0].call, skills[1].call);
+
+  const items = [
+    { src: "claude", kind: "tool_pre", ids: { sessionId: "s", promptId: "p", toolUseId: "t" } },
+    { src: "codexHooks", kind: "tool_pre", ids: { sessionId: "s", turnId: "p", toolUseId: "t" } },
+    { src: "hermes", kind: "tool_pre", ids: { sessionId: "s", turnId: "p", toolCallId: "t" } },
+  ];
+  const a = correlateTrace(buildTrace(items, { captureId: CAPTURE_A })).entries.map(turnCall);
+  const b = correlateTrace(buildTrace(items, { captureId: CAPTURE_B })).entries.map(turnCall);
+  const all = [...a, ...b].flat();
+  assert.equal(new Set(all).size, 12, "três origens × duas capturas: nenhuma chave de turno ou chamada se repete");
+});
+
+test("T6-C2 strong identities: sem ID de sessão o hook não expõe turno nem chamada fortes, e o itemId do codex exec segue como agrupamento heuristic", () => {
+  const loose = correlateTrace(buildTrace([{ src: "claude", kind: "tool_pre", ids: { promptId: "p", toolUseId: "t" }, fields: { toolName: "Bash" } }]));
+  assert.deepEqual(turnCall(loose.entries[0]), [null, null]);
+  assert.deepEqual([loose.operations[0].call, loose.operations[0].strength], [null, "inconclusive"]);
+
+  const item = (phase) => ({ src: "codexExec", kind: "item", native: `item.${phase}`, ids: { itemId: "i0" }, fields: { phase, itemType: "command_execution" } });
+  const exec = correlateTrace(buildTrace([item("started"), item("completed")]));
+  assert.notEqual(exec.entries[0].identity.call, null);
+  assert.equal(exec.entries[0].identity.call, exec.entries[1].identity.call, "mesmo itemId agrupa sem sessão por linha");
+  assert.deepEqual([exec.operations[0].strength, exec.operations[0].state, exec.operations[0].call], ["heuristic", "closed", exec.entries[0].identity.call]);
+  const other = correlateTrace(buildTrace([item("started")], { captureId: CAPTURE_B }));
+  assert.notEqual(other.entries[0].identity.call, exec.entries[0].identity.call, "outra captura");
+});

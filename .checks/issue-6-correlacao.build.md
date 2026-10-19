@@ -17,7 +17,8 @@ vendorizado intocado.
 | `27b8ae6` | prova do guia (`docs.test.mjs`) e este registro |
 | `2c22d3f` | correção do P1 do Verifier: subagente de hook não pareia entre sessões |
 | `9315253` | correção dos achados de C2 (chave pública do subagente) e C10 (pais divergentes) |
-| commit seguinte | `parentSession` do par subagente lido também do fim quando só ele nomeia o pai |
+| `5da7b1a` | `parentSession` do par subagente lido também do fim quando só ele nomeia o pai |
+| commit seguinte | turno e chamada com escopo de sessão na identidade pública (C2) |
 
 ## Decisões de implementação
 
@@ -136,12 +137,33 @@ controle. **GREEN:** C2 4/4, C10 9/9, correlação 52/52, `npm run test:integrat
 Limitações: o comportamento com pai ausente de um lado e a atribuição de ferramentas de uma sessão filha contestada são
 decisões de projeto, provadas só por fixtures sintéticas; `parentSessionId` não é validado contra eventos do pai.
 
+## Correção do achado final de C2 do Verifier (turno e chamada entre sessões)
+
+**Defeito.** `entries.identity.turn`, `identity.call` e `operations[].call` eram iguais para `sessionId` s1 e s2 quando
+`promptId` e `toolUseId` tinham o mesmo texto. O pareamento já era separado (`callKey` inclui a sessão), mas a chave pública
+forte cruzava sessões, contra o critério 2.
+
+**RED no HEAD `5da7b1a`.** 3 testes novos de `T6-C2` falharam (`timeline.unit.test.mjs`: 15 pass, 3 fail).
+
+**Correção (`identity.mjs`).** Turno e chamada entram na chave com a sessão que os nomeia (`sessionId`/`threadId`, com o
+comprimento como prefixo, o mesmo formato do subagente); captura, agente e mecanismo continuam na chave. Sem ID de sessão
+no registro a chave é `null` — hook sem sessão não expõe turno nem chamada fortes, e a operação resultante é `inconclusive`
+com `call: null`. Exceção deliberada: o `itemId` do `codex exec`, cuja linha nunca traz a sessão, continua uma chave por
+captura e origem, isto é, o agrupamento `heuristic` de C6 (inclusive a ambiguidade por colisão) não muda.
+
+**Provas.** `T6-C2` 7/7; `T6-C6` 5/5; correlação 55/55; `npm run test:integrations` 288 tests, 281 pass, 0 fail, 0 cancelled,
+7 skipped (os mesmos 7 de plataforma). Mutação (chave sem a sessão) falha 2 testes. Os novos testes provam, para s1 e s2:
+chaves de turno e chamada diferentes, pre/post da mesma sessão alinhados e pareados (`closed`, evidência [1,2] e [3,4]),
+`operations.call` diferentes (inclusive de skill), e chaves de três origens em duas capturas todas distintas.
+**Limitações.** A garantia vale para IDs que o envelope v1 traz; o `itemId` do exec segue sem escopo de sessão por
+contrato do próprio Codex, de modo que duas threads só se distinguem pela ambiguidade já declarada em C6.
+
 ## Provas por check
 
 | Check | Teste(s) | Arquivo | Resultado |
 | --- | --- | --- | --- |
 | C1 | `T6-C1` (2) | `timeline.unit.test.mjs` | 2 pass |
-| C2 | `T6-C2` (4) | idem | 4 pass |
+| C2 | `T6-C2` (7) | idem | 7 pass |
 | C3 | `T6-C3` (3) | idem | 3 pass |
 | C4 | `T6-C4` (4) | idem | 4 pass |
 | C5 | `T6-C5` (2) | idem | 2 pass |
@@ -157,7 +179,7 @@ decisões de projeto, provadas só por fixtures sintéticas; `parentSessionId` n
 | guia | `T6-docs` (2) | `docs.test.mjs` | 2 pass |
 
 Cada comando `Proof:` de `.checks/issue-6-correlacao.md` (C1–C14), executado como escrito, saiu
-com exit 0 e `fail 0`, `skipped 0`; a soma é 50 testes nomeados (C2 tem 4 e C10 tem 9 depois das correções do Verifier), mais 2 do guia = 52 em
+com exit 0 e `fail 0`, `skipped 0`; a soma é 53 testes nomeados (C2 tem 7 e C10 tem 9 depois das correções do Verifier), mais 2 do guia = 55 em
 `tests/integrations/correlation/`. As provas de decisão ficam no consumidor puro; a fronteira
 é provada pelo CLI real (C12) e pelo fluxo de fixtures (C14), que compara a API com a resposta
 do CLI (mesmos registros, ordem, vínculos e cobertura) e identifica cada passo como fixture ou
@@ -182,6 +204,7 @@ Cada mutação foi aplicada ao produto, a prova correspondente rodou e o arquivo
 | resposta do CLI diverge da API | C14 | falhou |
 | `timeline` aceita flag extra | C12 | falhou |
 | `agentId` sem a sessão na chave pública | C2 | falhou |
+| turno e chamada sem a sessão na chave pública | C2 | 2 falhas |
 | pais divergentes pareiam | C10 | falhou |
 | sessão filha com pais em conflito atribuída | C10 | falhou |
 | controle: `agentType` acrescentado à lista de ID (sem efeito) | C10 | passou (esperado) |
@@ -190,11 +213,12 @@ Cada mutação foi aplicada ao produto, a prova correspondente rodou e o arquivo
 
 | Plataforma | Comando | Resultado |
 | --- | --- | --- |
-| Windows 11 (local) | `node --test "tests/integrations/correlation/*.test.mjs"` (final) | 52 tests, 52 pass, 0 fail, 0 skipped |
+| Windows 11 (local) | `node --test "tests/integrations/correlation/*.test.mjs"` (final) | 55 tests, 55 pass, 0 fail, 0 skipped |
 | Windows 11 (local) | `npm run test:integrations`, 1ª execução (antes deste registro existir) | 278 tests, 270 pass, 1 fail, 0 cancelled, 7 skipped; a falha era `T6-docs … build.md`, que exige este arquivo |
 | Windows 11 (local) | `npm run test:integrations`, entrega inicial `27b8ae6` | 278 tests, 271 pass, 0 fail, 0 cancelled, 7 skipped (exit 0) |
 | Windows 11 (local) | `npm run test:integrations`, após o P1 (`2c22d3f`) | 281 tests, 274 pass, 0 fail, 0 cancelled, 7 skipped |
-| Windows 11 (local) | `npm run test:integrations`, **execução final** | 285 tests, 278 pass, 0 fail, 0 cancelled, 7 skipped |
+| Windows 11 (local) | `npm run test:integrations`, após C2/C10 do Verifier (`9315253`/`5da7b1a`) | 285 tests, 278 pass, 0 fail, 0 cancelled, 7 skipped |
+| Windows 11 (local) | `npm run test:integrations`, **execução final** | 288 tests, 281 pass, 0 fail, 0 cancelled, 7 skipped |
 | Windows 11 (local, em `27b8ae6`; não reexecutado depois: as correções só tocam `src/integrations/correlation/` e seus testes) | `npm run test:governance` | 6 tests, 6 pass, 0 fail |
 | idem | `npm run test:code-review` | 16 tests, 16 pass, 0 fail, 0 skipped |
 | idem | `npm run test:doctor` | 417 tests, 410 pass, 0 fail, 0 cancelled, 7 skipped (FIFO e links POSIX: `agent-resolution-formal5-2`, `agent-resolution-C2`, `fifo-config-formal8-4` ×2, `fs-adapter-formal8-4` ×3; já existentes, nenhum da #6) |

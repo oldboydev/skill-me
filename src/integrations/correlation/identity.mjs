@@ -5,8 +5,9 @@
 // liga sessões ou chamadas por coincidência de texto.
 
 // A ordem é a de preferência quando um registro traz mais de um nome do escopo.
+const SESSION_NAMES = ["sessionId", "threadId"];
 const SCOPE_ID_NAMES = Object.freeze({
-  session: ["sessionId", "threadId"],
+  session: SESSION_NAMES,
   turn: ["turnId", "promptId"],
   call: ["toolUseId", "toolCallId", "itemId"],
 });
@@ -30,12 +31,23 @@ export const childKeyOf = (captureId, envelope) =>
 
 export const keyFor = (captureId, source, scope, value) => `${captureId}/${source.agent}/${source.mechanism}/${scope}/${value}`;
 
+// Turno e chamada só valem dentro da sessão que os nomeia: o mesmo texto em
+// outra sessão é outro turno ou outra chamada. Sem sessão no registro não há
+// chave forte, exceto o `itemId` do `codex exec`, cuja linha nunca traz a
+// sessão e que segue como agrupamento heurístico por captura e origem.
+function sessionScopedKey(captureId, source, scope, ids, name) {
+  const sessionName = SESSION_NAMES.find((candidate) => typeof ids[candidate] === "string");
+  if (sessionName !== undefined) return keyFor(captureId, source, scope, `${ids[sessionName].length}:${ids[sessionName]}/${ids[name]}`);
+  return name === "itemId" ? keyFor(captureId, source, scope, ids[name]) : null;
+}
+
 export function identityOf(captureId, envelope) {
   const { source, ids } = envelope;
   const identity = {};
   for (const [scope, names] of Object.entries(SCOPE_ID_NAMES)) {
     const name = names.find((candidate) => typeof ids[candidate] === "string");
-    identity[scope] = name === undefined ? null : keyFor(captureId, source, scope, ids[name]);
+    if (name === undefined) identity[scope] = null;
+    else identity[scope] = scope === "session" ? keyFor(captureId, source, scope, ids[name]) : sessionScopedKey(captureId, source, scope, ids, name);
   }
   identity.subagent = agentKeyOf(captureId, envelope) ?? childKeyOf(captureId, envelope);
   return identity;
