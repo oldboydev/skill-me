@@ -156,6 +156,8 @@ e o arquivo foi restaurado com `git checkout` (árvore limpa ao fim):
 | WSL Ubuntu, correção 1 (`npm test` em `0c108ee`) | 655 ms; com diagnóstico em arquivo, 656 ms | 651 ms | 649 ms |
 | Windows 11, correção 3 (`npm test` em `d823c00`) | 679 ms; com diagnóstico em arquivo, 666 ms; lock obtido na repetição e disco parado, 666 ms | 656 ms | 654 ms; lock obtido na repetição, 662 ms |
 | WSL Ubuntu, correção 3 (`npm test` em `d823c00`) | 657 ms; com diagnóstico em arquivo, 658 ms; lock obtido na repetição e disco parado, 657 ms | 650 ms | 650 ms; lock obtido na repetição, 650 ms |
+| Windows 11, correção 4 (`npm test`, Node 24.21.0) | 667 ms; com diagnóstico em arquivo, 662 ms; lock obtido na repetição e disco parado, 663 ms | 650 ms | 665 ms; lock obtido na repetição, 664 ms |
+| Windows 11, correção 4 (`npm test`, Node 24.13.0, o da CI) | 676 ms; com diagnóstico em arquivo, 665 ms; lock obtido na repetição e disco parado, 663 ms | 657 ms | 653 ms; lock obtido na repetição, 657 ms |
 
 Em processo a asserção é ≤ 750 ms exatos. No processo real a medida inclui o
 encerramento depois da tentativa; a asserção admite 750 + 500 ms. "Com
@@ -179,6 +181,11 @@ diagnóstico em arquivo" é o hook sem relatório de fixture e com
 | Windows 11 — Node 24.21.0, checkout em `d823c00` (correção 3) | os 20 comandos `Proof:` de C1–C20, como escritos | cada um exit 0, 0 fail; 29 testes selecionados, 28 pass, 1 skip (T8-C4 sinal POSIX); C16 seleciona 8 |
 | Windows 11 — Node 24.21.0, checkout em `d823c00` (correção 3) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 232 (225 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX), os 8 T8-C16 inclusive; nome 8.3 exercitado |
 | WSL Ubuntu — Node 24.13.0, uid 1000, `/tmp/skill-me-i8-hVDkg9` de `git archive d823c00` (sha256 `e17a7ae8…20fb8203` conferido; `git get-tar-commit-id` = `d823c004…`) (correção 3) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (416 pass, 1 skip); integrações 232 (220 pass, 0 fail, 12 skip pré-existentes: Hermes ausente ×8, DACL Windows ×3, ACL macOS ×1); nenhum T8 pulado, os 8 T8-C16 inclusive |
+| Windows 11 — Node 24.21.0, árvore de trabalho sobre `b2c230c` com os dois testes da correção 4 | `node --test tests/integrations/traces/*.test.mjs` | exit 0; 29 tests, 28 pass, 0 fail, 1 skip (T8-C4 sinal POSIX) |
+| Windows 11 — Node 24.13.0 (o da CI), mesma árvore (correção 4) | `node --test tests/integrations/traces/*.test.mjs` | exit 0; 29 tests, 28 pass, 0 fail, 1 skip (T8-C4 sinal POSIX) |
+| Windows 11 — Node 24.13.0, mesma árvore (correção 4) | `Proof:` de C7, C11, C14, C15 e C16, como escritos | cada um exit 0, 0 fail, 0 skip; C7, C11, C14 e C15 selecionam 1, C16 seleciona 8 |
+| Windows 11 — Node 24.21.0, mesma árvore (correção 4) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 232 (225 pass, 0 fail, 7 skip: os 6 pré-existentes e T8-C4 sinal POSIX); 29 linhas T8, os 8 T8-C16 inclusive |
+| Windows 11 — Node 24.13.0 e npm 11.6.2 do pacote oficial, Hermes oculto como na CI, mesma árvore (correção 4) | `npm test` | exit 0 — governança 6/6; code-review 16/16; doctor 417 (410 pass, 7 skip); integrações 232 (217 pass, 0 fail, 15 skip: os 7 acima e Hermes ausente ×8, o mesmo conjunto da CI); 29 linhas T8 |
 
 Preparação WSL: tar e `run-wsl.sh` num diretório de `mktemp -d` do `%TEMP%`
 (`skill-me-i8-wsl-stage-n0fAaX` na fase 1, `skill-me-i8-wsl-stage-71TySJ` na 2,
@@ -669,3 +676,179 @@ branch `codex/issue-8-traces`, sem PR ou merge nessa etapa, para executar
 `workflow_dispatch` na CI macOS antes da segunda e última revisão formal.
 Esta autorização substitui a pendência de ordem registrada acima; não altera
 o teto de duas tentativas de revisão nem autoriza outras publicações.
+
+## Rodada de correção 4 — CI Windows em `b2c230c`
+
+Origem: CI run `39191712082` (`workflow_dispatch` da branch, `headSha`
+`b2c230c`), job Windows `117865804739`. `npm run test:integrations` saiu 1
+com 227 tests, 206 pass, 6 fail, 15 skip: T8-C15, dois T8-C16, T8-C7, T8-C11 e
+T8-C14. Ubuntu e macOS passaram. Builder Claude; só testes mudaram. Não
+mudaram: produto (`src/`), `.tasks/issue-8-traces.md`,
+`.checks/issue-8-traces.md`, `.checks/issue-8-traces.verified.md` (do
+Verifier), `package.json`, `.github/workflows/` e os cinco arquivos do core
+(diff vazio contra `origin/main`, blobs da tabela de Governança). O prazo de
+750 ms, a reserva de 100 ms, as asserções, as tolerâncias e a concorrência do
+runner ficaram como estavam. Sem commit, push, PR, merge ou revisão Codex.
+
+### Diagnóstico
+
+A diferença decisiva é a versão do Node, não a carga. A CI fixa
+`node-version: 24.13.0`; as execuções locais das rodadas anteriores usaram a
+24.21.0. Sondas em `%TEMP%`, fora do repositório, com os binários oficiais
+win-x64 da 24.13.0 e da 24.13.1 baixados de nodejs.org e conferidos pelo
+`SHASUMS256.txt`; página de código ANSI local 1252, a mesma de um Windows en-US:
+
+| Chamada num caminho com "ação" | 24.13.0 | 24.13.1 | 24.21.0 |
+| --- | --- | --- | --- |
+| `rmSync(arquivo)` | não apaga e não lança | apaga | apaga |
+| `rmSync(pasta, { recursive, force })` | não apaga | — | apaga |
+| `cpSync(pasta, destino, { recursive })` | o processo morre com 0xC0000409 e deixa uma pasta com o nome trocado (`aÃ§Ã£o`) | idem | copia |
+| `unlinkSync`, `rmdirSync`, `cp`/`rm` de `node:fs/promises` | funcionam | — | funcionam |
+
+O defeito do `rmSync` já estava registrado nos testes da #4
+(`tests/integrations/install.cli.test.mjs` e
+`install-apply.unit.test.mjs`: nodejs/node#56049, corrigido na 24.13.1), com o
+mesmo remédio. Toda pasta de teste tem "ação" no nome (`makeScratch`).
+
+Cada falha da CI, com as linhas de `b2c230c`:
+
+- **`lock_present` depois de remover o lock alheio** — T8-C15 (`export` na
+  linha 112), T8-C16 "lock ocupado…" (esperava `io_failure` na linha 149) e
+  T8-C16 "no uso normal…" (esperava `io_failure` na linha 282). As três vêm
+  logo depois de um `rmSync(lock)` (linhas 111, 140 e 270) do lock alheio que
+  o próprio teste gravou. No 24.13.0 o lock ficava, e o passo seguinte o
+  disputava até o prazo.
+- **Testes que não rodaram** — `concurrency.cli.test.mjs` tem 9 testes, e a CI
+  listou 4 (227 contra os 232 locais). O quinto ("`SKILL_ME_CAPTURE_REPORT`
+  dentro do store…") abre com `cpSync` para uma raiz com "ação", e o processo
+  do arquivo morreu. Como já havia subtestes falhos, o `node --test` não acusou
+  o arquivo nem os cinco que faltaram: as regressões de P1 e P2 da rodada 3 não
+  rodaram no Windows da CI. Os 15 skips são os esperados.
+- **Latente em T8-C14** — o `rmSync` do `alheio.txt` (linha 252) também não
+  apaga no 24.13.0, e o `prune --apply` sai com `foreign_entry` (visto
+  localmente, linha 256). Na CI, C14 falhou antes, na linha 217.
+- **`delivery_timeout` numa entrega normal** — T8-C7 (execução `unknown`,
+  linha 372) e T8-C14 (linha 217); em T8-C11, `export` com `lock_present` na
+  linha 194, sem nenhum `rmSync` antes. Inferido para C11, que não afirma o
+  código dos produtores: uma tentativa passou dos 650 ms com o lock e o
+  processo saiu no meio do commit, deixando o `.lock` (limite do guia). Este
+  grupo não foi reproduzido localmente (abaixo).
+
+Reproduções locais: Windows 11, i9-14900K, com a afinidade restrita a 4 E-cores
+(16–19) para imitar as 4 vCPUs do runner `windows-latest` de repositório
+público (imagem `windows-2025-vs2026` no log do job); `--test-concurrency=3`,
+que é o padrão `availableParallelism() - 1` em 4 vCPUs; o mesmo glob de
+`test:integrations`.
+
+| Execução | Node | Árvore | Resultado |
+| --- | --- | --- | --- |
+| R1 | 24.21.0 | `b2c230c` | 232 tests, 225 pass, 0 fail, 7 skip (Hermes presente), 388 s: a carga sozinha não reproduz |
+| R2 | 24.13.0 | `b2c230c` | 227 tests, 210 pass, 10 fail, 7 skip, 373 s: T8-C15 e os dois T8-C16 com `lock_present` nas mesmas linhas da CI; T8-C14 com `foreign_entry` (linha 256); os mesmos cinco T8-C16 ausentes; I4-C19–C22, I4-C37 e I4-C35 falham porque aqui o Hermes existe e seus testes usam `cpSync`/`rmSync` (fora do escopo; na CI são pulados por Hermes ausente) |
+| R3 | 24.13.0 | correção, Hermes oculto (`SKILL_ME_HERMES_PYTHON` inexistente) | 232 tests, 217 pass, 0 fail, 15 skip, 349 s; os 15 skips são os da CI, comparados por nome |
+| R4 | 24.13.0 | como R3, com a sonda de entrega rodando ao mesmo tempo nos mesmos núcleos | 232 tests, 217 pass, 0 fail, 15 skip, 365 s |
+
+Folga do prazo, medida por uma sonda em processo: o `createCaptureDelivery`
+real abre e grava uma entrada Claude por entrega, numa captura nova com
+"ação", com o Node 24.13.0 e 4 E-cores. É o mesmo intervalo da tentativa de
+650 ms (da entrada ao fim). A captura enche em 500 registros, e depois só o
+`state.json` é regravado.
+
+| Condição | Entregas | p50 | p90 | p99 | máx. | Códigos |
+| --- | --- | --- | --- | --- | --- | --- |
+| ociosa | 200 | 15 ms | 20 ms | 26 ms | 29 ms | todas confirmadas |
+| ociosa | 3000 | 12 ms | 16 ms | 27 ms | 68 ms | todas confirmadas |
+| durante R4, amostra 1 | 600 | 17 ms | 36 ms | 78 ms | 107 ms | todas confirmadas |
+| durante R4, amostra 2 | 600 | 22 ms | 45 ms | 87 ms | 115 ms | todas confirmadas |
+
+Na mesma execução da CI, os testes de store em processo (`I5-*s`, `I5-S-*`)
+levaram 2 a 4 vezes o tempo da R2, e os dominados por processos, de 0,9 a 1,8
+vez. Mesmo multiplicado por 4, o máximo medido sob carga fica abaixo dos 650
+ms. A carga e a concorrência do runner, sozinhas, não explicam o
+`delivery_timeout` e não o reproduziram. Por isso a concorrência não foi
+alterada: não há causa demonstrada.
+
+O único evento transitório identificado na execução da CI é o processo de
+`concurrency.cli.test.mjs` morto com 0xC0000409. Nos runners, o Windows Error
+Reporting continua enfileirando relatórios: o `Configure-Diagnostics.ps1` do
+`actions/runner-images` (branch principal, consultada em 19/10/2026) só desliga
+a UI e define `ForceQueue=1`. Já o Defender
+está com tempo real desligado e `C:\` e `D:\` excluídos
+(`Configure-WindowsDefender.ps1`). Que o WerFault desse processo tenha
+disputado as 4 vCPUs no momento de C7, C11 e C14 é hipótese, não fato provado:
+o log da CI não tem o horário de cada teste, porque o reporter imprime os
+arquivos em bloco e todas as linhas T8 têm o carimbo `02:56:27.98`.
+
+### Correção (só testes)
+
+- `tests/integrations/traces/concurrency.cli.test.mjs`: sete `rmSync(lock)`
+  viraram `unlinkSync(lock)`; `rmSync(blocker, { recursive: true })` virou
+  `rmdirSync(blocker)`, porque a pasta é vazia e a chamada falha se sobrar
+  algo; os dois `cpSync(template, …, { recursive: true })` viraram
+  `await cp(…)` de `node:fs/promises`, com as mesmas opções (implementação JS
+  sobre libuv, que funciona no 24.13.0). Comentário no topo com o porquê.
+- `tests/integrations/traces/query.cli.test.mjs` (T8-C14): `rmSync` do
+  `alheio.txt` virou `unlinkSync`, com comentário.
+
+Justificativa: o teste não estava errado no que afirma, mas, no Node da CI,
+partia de outro estado (o lock alheio e o arquivo alheio continuavam lá) ou
+nem rodava. Os substitutos lançam se não conseguirem, então a prova não segue
+silenciosamente de um estado diferente do declarado. Nenhuma asserção, prazo,
+tolerância, fixture ou helper mudou. O store não confere modos, então `cp` e
+`cpSync` dão o mesmo modelo para o produto também no POSIX. Os
+`rmSync(dir, { recursive: true, force: true })` de limpeza nos `after` ficaram:
+não sustentam nenhuma prova (limite abaixo).
+
+### Falha antes, passa depois
+
+- Antes (R2; Node 24.13.0, `b2c230c`): T8-C15 e dois T8-C16 com
+  `lock_present`, como na CI; T8-C14 com `foreign_entry`; cinco T8-C16 não
+  executados, como na CI.
+- Depois (Node 24.13.0, árvore corrigida): `node --test` dos dois arquivos
+  alterados com 13 tests e 13 pass, os cinco T8-C16 de antes inclusive; o lote
+  T8, os `Proof:` afetados, R3, R4 e `npm test` com o Hermes oculto (tabela
+  "Execuções", linhas "correção 4").
+- No 24.21.0 os testes antigos passam (R1 e o `npm test` das rodadas
+  anteriores). Por isso o Windows local não via o defeito.
+- Não demonstrado: que C7, C11 e C14 (`delivery_timeout`) passem na CI depois
+  da correção. Essa é a prova pendente da reexecução da CI.
+
+### Execuções e ausências
+
+Linhas "correção 4" das tabelas "Execuções" e "Medições de tempo", todas na
+árvore de trabalho sobre `b2c230c`, com os dois arquivos de teste alterados e
+sem commit: lote T8 no 24.21.0 e no 24.13.0; `Proof:` de C7, C11, C14, C15 e
+C16 no 24.13.0; `npm test` no 24.21.0 e no 24.13.0 com o Hermes oculto. Os
+dois `npm test` rodaram antes desta seção. T8-C20, a única prova que lê este
+arquivo, rodou de novo depois dela pelo seu `Proof:`: 2 tests, 2 pass, 0 fail,
+no 24.21.0 e no 24.13.0.
+
+- `T8-C4 … sinal POSIX` continua pulado no Windows.
+- WSL Ubuntu e macOS não foram executados nesta rodada. A mudança só troca
+  chamadas de fs em testes por equivalentes portáveis, e o defeito é do Windows
+  com página de código ANSI. Ubuntu e macOS passaram na CI em `b2c230c` com as
+  chamadas antigas.
+- **CI pendente de reexecução** no HEAD com esta correção. Sem push nesta
+  rodada, por instrução. Na reexecução, conferir no job Windows
+  `tests 232`, 0 fail e 15 skip (o mesmo conjunto acima), e não só o código de
+  saída: um arquivo que morre depois de um subteste falho some do total sem
+  ser acusado.
+- Não executados: Claude, Codex ou Hermes reais com modelo.
+
+### Limites e achados fora do escopo
+
+- Se o `delivery_timeout` de C7, C11 ou C14 voltar na CI sem o processo
+  morto, o prazo no runner Windows precisa de medida no próprio runner e de
+  decisão do proprietário. Esta rodada não muda prazo, reserva, asserções nem
+  concorrência.
+- No Node 24.13.0 no Windows, a limpeza `rmSync(dir, { recursive: true,
+  force: true })` dos `after` (todos os arquivos T8 e outros da suíte) não
+  apaga as pastas com "ação". Elas ficam no `%TEMP%` do runner, que é
+  descartável. Nenhuma prova depende disso.
+- Fora do escopo, comunicado sem correção: `hermes-plugin.native.test.mjs`
+  (linha 54) e `skill-tree-hash.cli.test.mjs` (linha 88) usam `cpSync` para
+  pastas com "ação". No 24.13.0 com o Hermes presente, I4-C19–C22, I4-C37 e
+  I4-C35 falham (R2). Na CI eles são pulados por Hermes ausente, e a prova
+  nativa do Hermes já está declarada pendente.
+- Fora do escopo, comunicado: o `node --test` não acusa os testes de um
+  arquivo que morre depois de um subteste falho. Na CI, só o total de testes
+  revela a perda.

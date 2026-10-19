@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { cp } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -21,6 +22,14 @@ import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
 // captura e falhas de entrega (lock ocupado, E/S, confirmação perdida, disco
 // parado) com fixtures sintéticas. O diagnóstico de cada falha é lido como o
 // usuário o lê: no arquivo de SKILL_ME_CAPTURE_REPORT (docs/traces.md).
+//
+// `unlinkSync`/`rmdirSync` e o `cp` de node:fs/promises, não `rmSync`/`cpSync`:
+// no Windows, o Node 24.13.0 (o da CI) converte o caminho pela página de código
+// ANSI. Com "ação", o `rmSync` não apaga e não lança (nodejs/node#56049,
+// corrigido na 24.13.1) — o lock alheio ficava e a prova seguinte via
+// `lock_present` — e o `cpSync` derruba o processo do arquivo (0xC0000409; ainda
+// na 24.13.1, não na 24.21.0), sem que o `node --test` acuse os testes que não
+// rodaram. Os substitutos lançam se não conseguirem.
 
 const scratches = [];
 after(() => {
@@ -108,7 +117,7 @@ test("T8-C15 concurrent producers: dois produtores em paralelo confirmam cada ev
   assert.equal(refused.status, 0);
   assert.deepEqual(refused.report.delivery, { bound: true, code: "lock_present", entries: 3, committed: 0, persisted: 0, lost: 3 });
   assert.deepEqual(snapshotTree(captureDir(root, id)), before);
-  rmSync(lock);
+  unlinkSync(lock);
   assert.ok(!exportOf(root, id).records.some((r) => r.envelope.ids.toolCallId === expectedPseudonym(root, id, "c-0")));
 });
 
@@ -137,7 +146,7 @@ test("T8-C16 delivery failure neutrality: lock ocupado, falha de E/S e confirma�
   assert.equal(wrapped.report.delivery.code, "lock_present");
   assert.equal(readFileSync(lock, "utf8"), "lock alheio\n", "lock alheio nunca é removido");
   assert.deepEqual(snapshotTree(captureDir(root, id)), before, "nada gravado");
-  rmSync(lock);
+  unlinkSync(lock);
 
   // 2. Falha real de E/S no commit (rename do state.json): exit 0, código fechado, nada parcial.
   const io = await runHook("claude", claudePayload("pre_tool_bash"), {
@@ -185,7 +194,7 @@ test("T8-C16 delivery failure neutrality: lock ocupado, falha de E/S e confirma�
   assert.equal(busy.report().code, "lock_present");
   assert.ok(busyElapsed <= DELIVERY_DEADLINE_MS, `lock ocupado: ${Math.round(busyElapsed)} ms`);
   t.diagnostic(`em processo, lock ocupado: ${Math.round(busyElapsed)} ms da entrada ao fim da tentativa`);
-  rmSync(lock);
+  unlinkSync(lock);
   const real = createStoreIo();
   const stalled = createCaptureDelivery({
     root,
@@ -267,7 +276,7 @@ test("T8-C16 delivery failure neutrality: no uso normal, sem o relatório de fix
   for (const line of lines.slice(5)) assertDiagnostic(line, { agent: "claude", capture: id, delivery: lostAll("lock_present", 1) }, "paralelo");
   assert.equal(readFileSync(lock, "utf8"), "lock alheio\n");
   assert.deepEqual(snapshotTree(captureDir(root, id)), before, "nada gravado na captura");
-  rmSync(lock);
+  unlinkSync(lock);
 
   // 2. Falha real de E/S no commit: uma pasta ocupa o nome do próximo segmento
   // e o rename do sistema operacional falha.
@@ -276,7 +285,7 @@ test("T8-C16 delivery failure neutrality: no uso normal, sem o relatório de fix
   const beforeIo = snapshotTree(captureDir(root, id));
   neutral(await runClaudeHandler(claudeHook, claudePayload("pre_tool_bash"), { env, cwd: project, reportFd: null }), "E/S");
   assert.deepEqual(snapshotTree(captureDir(root, id)), beforeIo, "commit desfeito, sem temporário");
-  rmSync(blocker, { recursive: true });
+  rmdirSync(blocker);
   lines = diagnostics(reportFile);
   assert.equal(lines.length, 10);
   assertDiagnostic(lines[9], { agent: "claude", capture: id, delivery: lostAll("io_failure", 1) }, "E/S");
@@ -310,7 +319,7 @@ test("T8-C16 delivery failure neutrality: no uso normal, sem o relatório de fix
   assert.deepEqual(wrappedLost.stdout, Buffer.from(execLine + "\n"));
   assert.deepEqual(wrappedLost.stderrBytes, readFileSync(stderrCopyLost));
   assert.equal(existsSync(path.dirname(unwritable)), false);
-  rmSync(lock);
+  unlinkSync(lock);
 
   // 5. Captura encerrada: a perda também aparece.
   privacyOk(["stop", "--root", root, "--capture", id]);
@@ -509,7 +518,7 @@ test("T8-C16 delivery failure neutrality: SKILL_ME_CAPTURE_REPORT dentro do stor
   const damaged = [];
   for (const [index, variant] of storeReportVariants(t).entries()) {
     const ctx = { root: path.join(base, `raiz ${index} ação`), aside: path.join(base, `fora ${index}`), closed, active };
-    cpSync(template, ctx.root, { recursive: true });
+    await cp(template, ctx.root, { recursive: true });
     mkdirSync(ctx.aside);
     ctx.dir = captureDir(ctx.root, closed);
     const report = variant.report(ctx);
@@ -530,7 +539,7 @@ test("T8-C16 delivery failure neutrality: SKILL_ME_CAPTURE_REPORT dentro do stor
     if (!existed && existsSync(report)) damaged.push(`${variant.label}: o caminho apontado foi criado`);
     if (variant.lock) {
       if (readFileSync(lock, "utf8") !== "lock alheio\n") damaged.push(`${variant.label}: lock alheio mudou`);
-      rmSync(lock);
+      unlinkSync(lock);
     }
     damaged.push(...(await storeDamage(ctx.root, { closed, active, exported })).map((item) => `${variant.label}: ${item}`));
   }
@@ -539,7 +548,7 @@ test("T8-C16 delivery failure neutrality: SKILL_ME_CAPTURE_REPORT dentro do stor
   // Cenário da revisão pela CLI do usuário: hook tardio numa captura encerrada
   // com o diagnóstico apontado para o state.json dela.
   const root = path.join(base, "raiz da revisão");
-  cpSync(template, root, { recursive: true });
+  await cp(template, root, { recursive: true });
   const state = path.join(captureDir(root, closed), "state.json");
   const stateBytes = readFileSync(state);
   const late = await runHook("claude", claudePayload("pre_tool_bash"), { env: boundEnv(root, closed, { [CAPTURE_REPORT_ENV]: state }), fixtureReport: false });
@@ -700,7 +709,7 @@ test("T8-C16 delivery failure neutrality: no hook real, lock obtido na repetiç�
   // lock, a captura está como antes, sem temporário.
   const lock = path.join(storeDir(root), ".lock");
   assert.ok(existsSync(lock), "lock do processo que saiu no meio do commit");
-  rmSync(lock);
+  unlinkSync(lock);
   assert.deepEqual(snapshotTree(captureDir(root, id)), before);
   assert.equal(statusOf(root, id).counters.persisted, 0);
 });

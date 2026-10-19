@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { runPrivacyCommand } from "../../../src/integrations/privacy/command.mjs";
@@ -249,7 +249,10 @@ test("T8-C14 lifecycle remains authoritative: encerrada recusa entrega; delete/p
   const foreign = runPrivacy(["delete", "--root", root, "--capture", disabled, "--apply"]);
   assert.deepEqual([foreign.status, foreign.body.error.code], [4, "foreign_entry"]);
   assert.equal(readFileSync(path.join(captureDir(root, disabled), "alheio.txt"), "utf8"), "não é nosso");
-  rmSync(path.join(captureDir(root, disabled), "alheio.txt"));
+  // `unlinkSync`, não `rmSync`: no Windows, o do Node 24.13.0 (o da CI) não
+  // apaga num caminho com "ação" e não lança (nodejs/node#56049); o alheio
+  // ficava e o prune do --apply saía com foreign_entry.
+  unlinkSync(path.join(captureDir(root, disabled), "alheio.txt"));
 
   assert.equal(privacyOk(["delete", "--root", root, "--capture", stopped, "--apply"]).deleted, true);
   const pruned = await runPrivacyCommand({ argv: ["prune", "--root", root, "--apply"], now: at(t0 + 30 * DAY_MS) });
