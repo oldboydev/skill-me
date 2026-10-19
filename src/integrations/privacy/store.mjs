@@ -134,11 +134,21 @@ async function assertUnchanged(ctx) {
 
 // Lock exclusivo da raiz, sem espera: ocupado → conflito sem mutação, e nunca
 // removido por outro processo. Só sai se ainda tiver os bytes que gravamos.
+// `ctx.onLock`, quando houver, é chamado quando o lock passa a ser desta
+// operação, antes de qualquer leitura ou mutação; se lançar, a operação
+// desiste sem mudar nada.
+//
+// O lock é criado sem flush: só serializa processos vivos — a criação `wx` é
+// atômica e os bytes conferidos na liberação são lidos pelo mesmo sistema — e,
+// depois de uma queda do sistema, nenhum processo o detém; guardá-lo no disco
+// não protege nada. Cada flush espera o disco dentro do prazo de entrega da #8,
+// e os dois do lock eram metade dos de um hook (.checks/issue-8-traces.build.md,
+// rodada 6).
 async function withLock(ctx, fn) {
   const lockPath = path.join(ctx.storeDir, LOCK_FILE);
   const bytes = Buffer.from(JSON.stringify({ lockVersion: 1, pid: process.pid, nonce: randomBytes(8).toString("hex") }));
   try {
-    await ctx.io.writeExclusive(lockPath, bytes);
+    await ctx.io.writeExclusive(lockPath, bytes, { durable: false });
   } catch (error) {
     if (error.code === "EEXIST") throw new StoreError("lock_present");
     throw error;
@@ -146,6 +156,7 @@ async function withLock(ctx, fn) {
   let failure = null;
   let result;
   try {
+    ctx.onLock?.();
     await assertUnchanged(ctx);
     result = await fn();
   } catch (error) {
@@ -328,10 +339,11 @@ export function readCaptureStatus({ root, id, io = createStoreIo() }) {
 
 // Fase 1 do ingest: estado e chave lidos sob o lock e liberados antes do
 // stdin (Landing "Ingest — fases"). A chave só sai deste módulo para a
-// política, em memória; nunca para uma resposta.
-export function openCaptureForIngest({ root, id, io = createStoreIo() }) {
+// política, em memória; nunca para uma resposta. `onLock`: ver withLock (a
+// entrega da #8 distingue assim uma tentativa cortada com ou sem o lock).
+export function openCaptureForIngest({ root, id, io = createStoreIo(), onLock }) {
   return storeOp(async () => {
-    const ctx = await openExisting(root, io);
+    const ctx = { ...(await openExisting(root, io)), onLock };
     return withLock(ctx, async () => {
       const { dir, state } = await readCapture(ctx, id);
       if (state.state !== "active") throw new StoreError("capture_not_active");
@@ -344,30 +356,90 @@ export function openCaptureForIngest({ root, id, io = createStoreIo() }) {
 
 // Registros da captura, como gravados: o segmento tem exatamente `dataBytes`
 // e cada linha precisa ser um registro v1 com envelope válido.
+async function readRecords(io, dir, state) {
+  const records = [];
+  if (state.dataFile === null) return records;
+  const bytes = await readSmallFile(io, path.join(dir, state.dataFile), state.dataBytes, "capture_invalid");
+  if (bytes === null || bytes.length !== state.dataBytes) throw new StoreError("capture_invalid");
+  const text = bytes.toString("utf8");
+  if (!text.endsWith("\n")) throw new StoreError("capture_invalid");
+  for (const line of text.slice(0, -1).split("\n")) {
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      throw new StoreError("capture_invalid");
+    }
+    if (!isStoredRecord(record)) throw new StoreError("capture_invalid");
+    records.push(record);
+  }
+  return records;
+}
+
 export function exportCapture({ root, id, io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openExisting(root, io);
     return withLock(ctx, async () => {
       const { dir, state } = await readCapture(ctx, id);
-      const records = [];
-      if (state.dataFile !== null) {
-        const bytes = await readSmallFile(io, path.join(dir, state.dataFile), state.dataBytes, "capture_invalid");
-        if (bytes === null || bytes.length !== state.dataBytes) throw new StoreError("capture_invalid");
-        const text = bytes.toString("utf8");
-        if (!text.endsWith("\n")) throw new StoreError("capture_invalid");
-        for (const line of text.slice(0, -1).split("\n")) {
-          let record;
-          try {
-            record = JSON.parse(line);
-          } catch {
-            throw new StoreError("capture_invalid");
-          }
-          if (!isStoredRecord(record)) throw new StoreError("capture_invalid");
-          records.push(record);
+      return { capture: publicCapture(state), records: await readRecords(io, dir, state) };
+    });
+  });
+}
+
+// Sondagem do `privacy follow` (#8, crit. 7): estado sempre; segmento só
+// quando há registros além dos `seen` já entregues. Os registros só crescem
+// no fim do segmento, então os `seen` primeiros são os já entregues.
+export function readCaptureSince({ root, id, seen, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openExisting(root, io);
+    return withLock(ctx, async () => {
+      const { dir, state } = await readCapture(ctx, id);
+      if (state.counters.persisted < seen) throw new StoreError("capture_invalid");
+      if (state.counters.persisted === seen) return { capture: publicCapture(state), records: [] };
+      const records = await readRecords(io, dir, state);
+      if (records.length !== state.counters.persisted) throw new StoreError("capture_invalid");
+      return { capture: publicCapture(state), records: records.slice(seen) };
+    });
+  });
+}
+
+export const LIST_PAGE_SIZE = 100;
+
+const byCreation = (a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+// `privacy list` (#8, crit. 5): página de capturas por `createdAt`,`id`,
+// continuando depois de `after`. Sem a pasta do store a lista é vazia (nada é
+// criado). Pasta em exclusão e nomes alheios ficam fora; uma captura ilegível
+// impede a ordem da página inteira e aparece em `failed`, como no prune.
+export function listCaptures({ root, after = null, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io);
+    const read = async () => {
+      if (ctx === null || (await capturesDirKind(ctx)) === "missing") return { states: [], failed: [] };
+      const states = [];
+      const failed = [];
+      for (const name of (await io.readdir(ctx.capturesDir)).sort()) {
+        if (!CAPTURE_ID_PATTERN.test(name)) continue;
+        try {
+          states.push((await readCapture(ctx, name)).state);
+        } catch (error) {
+          if (!(error instanceof StoreError)) throw error;
+          failed.push({ capture: name, code: error.code });
         }
       }
-      return { capture: publicCapture(state), records };
-    });
+      return { states, failed };
+    };
+    const { states, failed } = ctx === null ? await read() : await withLock(ctx, read);
+    if (failed.length > 0) return { captures: [], nextAfter: null, failed };
+    states.sort(byCreation);
+    let start = 0;
+    if (after !== null) {
+      start = states.findIndex((state) => state.id === after) + 1;
+      if (start === 0) throw new StoreError("capture_not_found");
+    }
+    const page = states.slice(start, start + LIST_PAGE_SIZE);
+    const nextAfter = start + LIST_PAGE_SIZE < states.length ? page.at(-1).id : null;
+    return { captures: page.map(publicCapture), nextAfter, failed };
   });
 }
 
@@ -406,12 +478,13 @@ const dataFileName = (sequence) => `events-${String(sequence).padStart(6, "0")}.
 // saíram de applyPolicy. O storage não sanitiza nem deriva contadores do
 // conteúdo: soma os do chamador e decide só a admissão por limite. O arquivo
 // de dados é reescrito inteiro num novo segmento (anterior + admitidos) e o
-// state.json é o commit; o segmento anterior sai depois.
-export async function appendRecords({ root, id, batch, io = createStoreIo() }) {
+// state.json é o commit; o segmento anterior sai depois. `onLock`: ver
+// openCaptureForIngest.
+export async function appendRecords({ root, id, batch, io = createStoreIo(), onLock }) {
   assertBatch(batch);
   const lines = batch.records.map((record) => JSON.stringify(record) + "\n");
   return storeOp(async () => {
-    const ctx = await openExisting(root, io);
+    const ctx = { ...(await openExisting(root, io)), onLock };
     return withLock(ctx, async () => {
       const { dir, state } = await readCapture(ctx, id);
       if (state.state !== "active") throw new StoreError("capture_not_active");

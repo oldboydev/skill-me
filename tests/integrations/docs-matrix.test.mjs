@@ -65,8 +65,12 @@ test("I4-C41 evidências separam determinístico, nativo local e E2E; E2E só pe
   assert.match(rows[2][2], /^executado:/);
 });
 
-test("I4-C44c guia não anuncia coletor nem ingestão real", () => {
-  assert.match(GUIDE, /Não há coletor nem ingestão real\./);
+// A #8 acrescentou a gravação local numa captura escolhida pelo usuário: o
+// guia deixou de dizer "nem ingestão real", mas continua sem coletor e sem
+// envio, e sem vínculo nada é gravado.
+test("I4-C44c guia não anuncia coletor; sem vínculo a uma captura nada é gravado", () => {
+  assert.match(GUIDE, /Não há coletor nem serviço de coleta\./);
+  assert.match(GUIDE, /Sem vínculo explícito a uma captura, cada\s+observação fica na memória/);
   assert.match(GUIDE, /nada é gravado\s+nem enviado pelo debugger/);
   for (const forbidden of [/coletor (real )?(ativo|disponível|instalado)/i, /ingestão real (ativa|disponível)/i, /envia(mos)? (os )?(eventos|dados) (para|ao) /i])
     assert.ok(!forbidden.test(GUIDE), String(forbidden));

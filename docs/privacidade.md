@@ -5,7 +5,9 @@ as capturas locais. Vale para as integrações da #4 (hooks Claude/Codex, ingest
 Hermes, wrapper `integrations run`) e para o comando `privacy`. Não há envio
 pela rede: nenhum evento inicia telemetria, DNS ou upload, e não existe destino
 remoto nem consentimento implícito em variável de ambiente ou configuração de
-agente.
+agente. O par `SKILL_ME_CAPTURE_ROOT`/`SKILL_ME_CAPTURE_ID` da #8
+([docs/traces.md](traces.md)) só aponta para uma captura que você criou com
+`privacy start`: não cria captura nem liga conteúdo.
 
 ## Padrões
 
@@ -14,8 +16,10 @@ agente.
   captura; uma captura nova nunca herda o opt-in de outra, e `disable` desliga.
 - Retenção padrão de 7 dias, contada do encerramento (`stop` ou `disable`).
   `--retention-days` aceita inteiros de 1 a 365.
-- Hooks, ingest Hermes e wrapper não têm captura: neles o conteúdo está sempre
-  desligado e cada processo usa uma chave própria em memória, nunca gravada.
+- Sem vínculo a uma captura, hooks, ingest Hermes e wrapper só observam em
+  memória: o conteúdo está sempre desligado e cada processo usa uma chave
+  própria, nunca gravada. Vinculados pelo par de variáveis da #8, gravam na
+  captura com a chave e o opt-in dela, pela mesma política.
 - IDs viram pseudônimos `h1:` (HMAC-SHA-256 com chave aleatória da captura):
   iguais dentro da captura, diferentes entre capturas. A chave fica só em
   `captures/<id>/key`, nunca aparece em `status` ou `export` e sai com a captura.
@@ -38,6 +42,8 @@ node src/integrations/cli.mjs privacy stop    --root <diretório> --capture <id>
 node src/integrations/cli.mjs privacy disable --root <diretório> --capture <id>
 node src/integrations/cli.mjs privacy status  --root <diretório> --capture <id>
 node src/integrations/cli.mjs privacy export  --root <diretório> --capture <id>
+node src/integrations/cli.mjs privacy list    --root <diretório> [--after <id>]
+node src/integrations/cli.mjs privacy follow  --root <diretório> --capture <id>
 node src/integrations/cli.mjs privacy delete  --root <diretório> --capture <id> [--apply]
 node src/integrations/cli.mjs privacy prune   --root <diretório> [--apply]
 ```
@@ -58,7 +64,9 @@ links e junções são recusados em vez de apagados. Uma exclusão interrompida 
 conclui; se essa pasta existe junto da própria `captures/<id>`, os dois comandos
 recusam com `foreign_entry` sem ler nem apagar nenhuma das duas.
 
-Saída: um JSON por execução em stdout, stderr vazio. Códigos: 0 concluído;
+Saída: um JSON por execução em stdout, stderr vazio (`follow` escreve uma linha
+JSON por registro e uma final; `list` e `follow` estão em
+[docs/traces.md](traces.md)). Códigos: 0 concluído;
 2 uso inválido; 3 estado ou formato inválido ou ausente; 4 conflito, lock ocupado
 ou isolamento; 5 falha de E/S. Nenhuma resposta ecoa caminho, valor de flag,
 payload ou mensagem de exceção.

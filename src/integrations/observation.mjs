@@ -4,10 +4,14 @@ import { applyPolicy, createEphemeralKey } from "./privacy/policy.mjs";
 
 // Sessão de observação de um processo (hook, ingest ou wrapper): rascunho →
 // política de privacidade da #5 (fronteira, pseudônimos, nomes) → receptor em
-// memória. Sem captura não há opt-in: conteúdo sempre desligado e chave
-// efêmera do processo. Nada sai do processo, exceto pelo exportador de
-// fixture abaixo, que só existe quando os testes definem
-// SKILL_ME_OBSERVER_REPORT_FD — a instalação nunca define essa variável.
+// memória. Aqui não há opt-in: conteúdo sempre desligado e chave efêmera do
+// processo. Com vínculo explícito a uma captura (#8), cada entrada também vai
+// à `delivery`, que aplica a mesma política com a chave e o opt-in da
+// captura, e uma entrega com falha deixa só código e contagens no arquivo de
+// diagnóstico que o usuário indicar (traces/delivery-report.mjs). Fora isso,
+// nada sai do processo, exceto pelo exportador de fixture abaixo, que só existe
+// quando os testes definem SKILL_ME_OBSERVER_REPORT_FD — a instalação nunca
+// define essa variável.
 
 const COUNTER_NAMES = [
   "oversize",
@@ -20,6 +24,17 @@ const COUNTER_NAMES = [
   "partialTrailingLine",
   "reasoningExcluded",
 ];
+
+// Contadores de entrada que a captura soma como malformados; evento
+// desconhecido, raciocínio e envelope recusado a entrega classifica pelo lote.
+const MALFORMED_REASONS = Object.freeze({
+  invalidInput: "invalid_input",
+  invalidJson: "invalid_json",
+  oversizeLine: "oversize_line",
+  partialTrailingLine: "partial_trailing_line",
+  inputTooLarge: "input_too_large",
+  stdinTimeout: "stdin_timeout",
+});
 
 export const REPORT_DEADLINE_MS = 1000;
 
@@ -61,7 +76,7 @@ function writeWithDeadline(fd, buffer, deadlineMs) {
 
 const PRIVACY_CODES = ["content_disabled", "unsupported_content", "unsanitizable", "sensitive_removed", "content_truncated", "privacy_failure"];
 
-export function createObservation({ env = process.env, allowStderrReport = true, capacity } = {}) {
+export function createObservation({ env = process.env, allowStderrReport = true, capacity, delivery = null } = {}) {
   const receiver = createMemoryReceiver(capacity === undefined ? {} : { capacity });
   const counters = Object.fromEntries(COUNTER_NAMES.map((name) => [name, 0]));
   const privacy = Object.fromEntries(PRIVACY_CODES.map((code) => [code, 0]));
@@ -70,15 +85,18 @@ export function createObservation({ env = process.env, allowStderrReport = true,
   // política; um consumidor de v1 compararia IDs nativos sem saber da troca.
   const report = () => {
     const snap = receiver.snapshot();
-    return { skillMeObserverReport: 2, events: snap.events, counters: { ...snap.counters, ...counters, privacy: { ...privacy } } };
+    const base = { skillMeObserverReport: 2, events: snap.events, counters: { ...snap.counters, ...counters, privacy: { ...privacy } } };
+    return delivery === null ? base : { ...base, delivery: delivery.report() };
   };
 
   return {
     count(name) {
       counters[name] += 1;
+      if (delivery !== null && Object.hasOwn(MALFORMED_REASONS, name)) delivery.malformed(MALFORMED_REASONS[name]);
     },
     // Evento recusado pela política conta como descarte; nunca lança.
     submit(adapted, payload) {
+      if (delivery !== null) delivery.submit(adapted, payload);
       try {
         if (adapted.kind === "unknown") return counters.unknownEvent++;
         if (adapted.kind === "excluded") return counters.reasoningExcluded++;
@@ -94,9 +112,15 @@ export function createObservation({ env = process.env, allowStderrReport = true,
     report,
     // `deadlineAt` (relógio monotônico de `performance.now()`) permite a quem
     // chama contar o prazo de um instante anterior — o wrapper conta do fim do
-    // filho. A serialização entra no prazo.
+    // filho. A serialização entra no prazo. A entrega à captura termina antes,
+    // porque os relatórios trazem o resultado dela; o prazo de cada entrada
+    // (DELIVERY_DEADLINE_MS) e o diagnóstico do usuário cabem no do relatório.
     async flush({ deadlineAt = performance.now() + REPORT_DEADLINE_MS } = {}) {
       receiver.close();
+      if (delivery !== null) {
+        await delivery.settle();
+        await delivery.publish(deadlineAt);
+      }
       const fd = reportFd(env, allowStderrReport);
       if (fd === null) return;
       let line;

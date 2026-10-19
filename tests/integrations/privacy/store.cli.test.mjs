@@ -601,11 +601,11 @@ test("I5-C32s códigos de uso e de estado do lote de armazenamento, sem eco", ()
   const cases = [
     [[], 2, "unknown_command", null],
     // Lote D1: ingest/export existem (antes saíam unknown_command pela linha
-    // "Roteamento parcial"); comandos da #8 continuam desconhecidos.
+    // "Roteamento parcial"). A #8 acrescentou list e follow: list valida o
+    // cursor sem ecoá-lo; o erro de uso do follow, em NDJSON, é conferido abaixo.
     [["ingest", "--root", root], 2, "missing_capture", "ingest"],
     [["export", "--root", root], 2, "missing_capture", "export"],
-    [["follow", "--root", root], 2, "unknown_command", null],
-    [["list", "--root", root], 2, "unknown_command", null],
+    [["list", "--root", root, "--after", canary], 2, "invalid_capture_id", "list"],
     [[canary], 2, "unknown_command", null],
     [["status", "--root", root, "--capture", id, `--${canary}`], 2, "unknown_flag", "status"],
     [["status", "--root", root, "--capture"], 2, "missing_flag_value", "status"],
@@ -624,6 +624,11 @@ test("I5-C32s códigos de uso e de estado do lote de armazenamento, sem eco", ()
     assertClosedOutput(result, root);
     assert.ok(!result.stdout.includes(canary));
   }
+  const follow = runPrivacy(["follow", "--root", root, `--${canary}`]);
+  assert.equal(follow.status, 2);
+  assert.deepEqual(follow.body, { schemaVersion: 1, command: "follow", type: "error", sequence: 1, error: { code: "unknown_flag" } });
+  assertClosedOutput(follow, root);
+  assert.ok(!follow.stdout.includes(canary));
 
   writeFileSync(path.join(captureDir(root, id), "state.json"), "{não é json");
   const invalid = runPrivacy(["status", "--root", root, "--capture", id]);

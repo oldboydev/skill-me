@@ -3,12 +3,16 @@
 Este guia descreve as integrações de observação com Claude Code, Codex e Hermes,
 separadas do diagnóstico estático do `doctor` (ver `docs/agent-compatibility.md`).
 Elas cobrem o recorte aprovado em 16/10/2026: **fronteira mínima e receptor em
-memória**. Privacidade completa fica na #5, transporte e armazenamento na #8,
-timeline e atribuição de skill na #6.
+memória**. A política de privacidade veio com a #5 e a captura local com a #8
+([docs/traces.md](traces.md)); timeline e atribuição de skill ficam na #6.
 
-Não há coletor nem ingestão real. Sem o consumidor da #8, cada observação fica na
-memória do processo que a produziu e é descartada quando ele termina: nada é gravado
-nem enviado pelo debugger.
+Não há coletor nem serviço de coleta. Sem vínculo explícito a uma captura, cada
+observação fica na memória do processo que a produziu e é descartada quando ele
+termina: nada é gravado nem enviado pelo debugger. Com `SKILL_ME_CAPTURE_ROOT` e
+`SKILL_ME_CAPTURE_ID` de uma captura ativa no ambiente do agente, o mesmo processo
+também grava o resultado sanitizado nessa captura local; nada é enviado. Uma
+entrega que falha deixa só código fechado e contagens no arquivo de
+`SKILL_ME_CAPTURE_REPORT`, quando definido ([docs/traces.md](traces.md)).
 
 ## O que roda onde
 
@@ -30,7 +34,8 @@ limites, lacunas) está na seção "Fronteira mínima — assinatura fechada (U1
 - `signal`: `native_hook`, `native_plugin` ou `supervised_exec`. Nenhuma inferência é
   produzida nesta entrega; atribuição de skill é da #6.
 - `ids`: desde a #5, cada ID vira um pseudônimo `h1:` da chave do processo (ou da
-  captura, no `privacy ingest`), nunca truncado; nenhuma correlação é calculada.
+  captura, no `privacy ingest` e nos produtores vinculados da #8), nunca truncado;
+  nenhuma correlação é calculada.
   Política completa em `docs/privacidade.md`.
 - `gaps`: `<campo>:absent | not_in_contract | invalid_type | too_long | not_identifier |
   unrecognized_value` — um campo sem valor confiável vira lacuna, nunca default.

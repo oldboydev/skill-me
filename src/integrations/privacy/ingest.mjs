@@ -43,6 +43,15 @@ export function createIngestBatch({ agent, key, content, usage }) {
     increment(dropped, overflow);
   }
 
+  function draft(adapted, value) {
+    if (adapted.kind === "unknown") return increment(dropped, "unknown_event");
+    if (adapted.kind === "excluded") return increment(dropped, "reasoning_excluded");
+    if (adapted.kind !== "draft") return increment(malformed, "invalid_input");
+    const result = applyPolicy({ draft: adapted.draft, payload: value, key, content });
+    if (!result.ok) return increment(dropped, result.drop);
+    admit(result.record);
+  }
+
   return {
     line(buffer) {
       let value;
@@ -57,17 +66,22 @@ export function createIngestBatch({ agent, key, content, usage }) {
       } catch {
         return increment(malformed, "invalid_input");
       }
-      if (adapted.kind === "unknown") return increment(dropped, "unknown_event");
-      if (adapted.kind === "excluded") return increment(dropped, "reasoning_excluded");
-      if (adapted.kind !== "draft") return increment(malformed, "invalid_input");
-      const result = applyPolicy({ draft: adapted.draft, payload: value, key, content });
-      if (!result.ok) return increment(dropped, result.drop);
-      admit(result.record);
+      draft(adapted, value);
     },
+    // Entrada já adaptada pelo produtor vinculado (#8): hook, ingest Hermes e
+    // wrapper leem e adaptam uma vez para a observação em memória e a captura.
+    draft,
+    malformed: (reason) => increment(malformed, reason),
     oversize: () => increment(malformed, "oversize_line"),
     partial: () => increment(malformed, "partial_trailing_line"),
     result: () => ({ records, malformed, dropped, contentOmitted }),
   };
+}
+
+// Lote do comando → forma de `appendRecords`: o store guarda só o total de
+// malformados; os motivos ficam na resposta de quem leu.
+export function toStoreBatch({ records, malformed, dropped, contentOmitted }) {
+  return { records, malformed: Object.values(malformed).reduce((sum, n) => sum + n, 0), dropped, contentOmitted };
 }
 
 function readLines(stdin, batch) {
@@ -109,9 +123,9 @@ export async function ingestCapture({ root, id, agent, stdin, io }) {
   }
   const batch = createIngestBatch({ agent, key: opened.key, content: opened.content, usage: opened.usage });
   await readLines(stdin, batch);
-  const { records, malformed, dropped, contentOmitted } = batch.result();
-  const malformedTotal = Object.values(malformed).reduce((sum, n) => sum + n, 0);
-  const appended = await appendRecords({ root, id, batch: { records, malformed: malformedTotal, dropped, contentOmitted }, io });
+  const result = batch.result();
+  const { records, malformed, dropped, contentOmitted } = result;
+  const appended = await appendRecords({ root, id, batch: toStoreBatch(result), io });
   const allDropped = { ...dropped };
   for (const [reason, count] of Object.entries(appended.dropped)) increment(allDropped, reason, count);
   return { accepted: records.length, persisted: appended.admitted, malformed, dropped: allDropped, contentOmitted };

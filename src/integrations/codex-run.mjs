@@ -6,6 +6,7 @@ import { createProductionFsAdapter } from "../doctor/fs-adapter.mjs";
 import { codexExecDraft, processExitDraft } from "./adapters/codex-exec.mjs";
 import { STREAM_MAX_LINE_BYTES, createLineReader } from "./line-reader.mjs";
 import { REPORT_DEADLINE_MS, createObservation } from "./observation.mjs";
+import { captureDeliveryFor } from "./traces/binding.mjs";
 
 // Modo supervisionado: `codex exec --json` como processo filho, sem shell.
 // O stdout do wrapper é o JSONL nativo do Codex, byte a byte (inclusive itens
@@ -91,7 +92,12 @@ export async function runSupervisedCodex({ codexEntry, execArgs }) {
   }
 
   // Stderr do wrapper pertence ao filho: o relatório de fixture só aceita fd >= 3.
-  const observation = createObservation({ env: process.env, allowStderrReport: false });
+  // Vinculado a uma captura, a abre antes de iniciar o filho (até
+  // DELIVERY_DEADLINE_MS); o ambiente do filho continua o recebido, inclusive
+  // o vínculo, que os hooks do próprio Codex usam para os eventos deles.
+  const delivery = await captureDeliveryFor({ env: process.env, agent: "codex-exec" });
+  const observation = createObservation({ env: process.env, allowStderrReport: false, delivery });
+  await delivery?.open();
   const reader = createExecObserver(observation);
 
   const child = spawn(launch.command, [...launch.prefix, ...childArgv(execArgs)], {
