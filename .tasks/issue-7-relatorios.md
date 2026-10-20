@@ -1,5 +1,7 @@
 # Issue #7 — explicar a execução com evidências da skill
 
+Autorização adicional do proprietário em 20/10/2026: quarta verificação independente, terceira revisão formal e merge após os gates da entrega, registrada na [issue #7](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6289269096). O teto formal passa a 3 somente para esta issue, com histórico preservado.
+
 > Build this with **tlc-implement**. Cada critério vira um check com prova.
 > Nada em `Unresolved` é decidido durante a implementação.
 
