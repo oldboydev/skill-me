@@ -389,6 +389,13 @@ export function exportCapture({ root, id, io = createStoreIo() }) {
 // O relatório precisa consultar capturas arquivadas sem criar .lock. A leitura
 // confere estado e lock antes e depois do segmento; uma escrita concorrente
 // que altere o snapshot é exposta como conflito, sem combinar versões.
+async function assertSnapshotUnchanged(ctx, id, state, lockPath) {
+  if ((await entryKind(ctx.io, lockPath)) !== "missing") throw new StoreError("lock_present");
+  await assertUnchanged(ctx);
+  const current = await readCapture(ctx, id);
+  if (!isDeepStrictEqual(state, current.state)) throw new StoreError("lock_present");
+}
+
 export function readCaptureSnapshot({ root, id, io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openExisting(root, io);
@@ -396,10 +403,16 @@ export function readCaptureSnapshot({ root, id, io = createStoreIo() }) {
     if ((await entryKind(io, lockPath)) !== "missing") throw new StoreError("lock_present");
     await assertUnchanged(ctx);
     const { dir, state } = await readCapture(ctx, id);
-    const records = await readRecords(io, dir, state);
-    const current = await readCapture(ctx, id);
-    await assertUnchanged(ctx);
-    if ((await entryKind(io, lockPath)) !== "missing" || !isDeepStrictEqual(state, current.state)) throw new StoreError("lock_present");
+    let records;
+    try {
+      records = await readRecords(io, dir, state);
+    } catch (error) {
+      // O escritor troca o segmento depois de publicar state.json. Uma leitura
+      // do nome anterior pode falhar; só preservamos a falha se o estado não mudou.
+      await assertSnapshotUnchanged(ctx, id, state, lockPath);
+      throw error;
+    }
+    await assertSnapshotUnchanged(ctx, id, state, lockPath);
     return { capture: publicCapture(state), records };
   });
 }

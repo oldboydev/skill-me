@@ -5,7 +5,8 @@ import { after, test } from "node:test";
 import { runReportCommand } from "../../../src/integrations/report/command.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
 import { REPO_ROOT, runIntegrations } from "../helpers/cli.mjs";
-import { captureDir, startCapture, storeDir } from "../helpers/traces.mjs";
+import { claudePayload } from "../helpers/privacy-canaries.mjs";
+import { boundEnv, captureDir, runHook, startCapture, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
 const roots = [];
@@ -52,6 +53,39 @@ test("T7-C8 consulta de captura legível não solicita escrita nem lock", async 
     assert.equal(result.exitCode, 0, result.output);
   }
   assert.equal(writes, 0);
+});
+
+test("T7-C8 troca concorrente do segmento é conflito, sem mascarar corrupção estável", async () => {
+  const target = setup();
+  const env = boundEnv(target.root, target.id);
+  const send = async (toolUseId) => {
+    const payload = claudePayload("pre_tool_bash");
+    payload.tool_use_id = toolUseId;
+    assert.equal((await runHook("claude", payload, { env })).status, 0);
+  };
+  await send("before-report");
+  const base = createStoreIo();
+  let replaced = false;
+  const io = {
+    ...base,
+    readBounded: async (file, maxBytes) => {
+      if (!replaced && path.basename(file) === "events-000001.ndjson") {
+        replaced = true;
+        await send("during-report");
+      }
+      return base.readBounded(file, maxBytes);
+    },
+  };
+  const result = await runReportCommand({ argv: args(target).slice(1), io });
+  assert.equal(replaced, true);
+  assert.equal(result.exitCode, 4, result.output);
+  assert.equal(JSON.parse(result.output).error.code, "lock_present");
+
+  const state = JSON.parse(readFileSync(path.join(captureDir(target.root, target.id), "state.json"), "utf8"));
+  writeFileSync(path.join(captureDir(target.root, target.id), state.dataFile), "invalid\n");
+  const corrupt = await runReportCommand({ argv: args(target).slice(1) });
+  assert.equal(corrupt.exitCode, 3, corrupt.output);
+  assert.equal(JSON.parse(corrupt.output).error.code, "capture_invalid");
 });
 
 test("T7-C9 erros de uso, skill/captura, lock e E/S têm códigos fechados sem eco", async () => {
