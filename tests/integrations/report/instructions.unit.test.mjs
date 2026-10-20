@@ -88,3 +88,10 @@ test("T7-C2 comando literal com executável fora da lista conhecida é extraído
     ["curl --version"], ["docker build ."], ["curl"], [], ["curl", "docker build ."],
   ]);
 });
+
+test("T7-C2 referência entre crases não vira comando adicional", () => {
+  const source = "- Run `curl --version` (see `expected output` for reference).\n- Run `npm test` and `docker build .`.\n- If `curl` fails, run `npm run fix`.\n- Run `curl --version` (see `expected output` and `expected errors`).\n- Verify `expected output`.\n- If `expected output` fails, run `npm run fix`.\n";
+  assert.deepEqual(parseInstructions(source).map((item) => item.commands), [
+    ["curl --version"], ["npm test", "docker build ."], ["curl", "npm run fix"], ["curl --version"], [], ["npm run fix"],
+  ]);
+});

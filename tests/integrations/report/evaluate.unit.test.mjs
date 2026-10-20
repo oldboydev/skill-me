@@ -91,6 +91,14 @@ test("T7-C5 curl literal executado com sucesso recebe fonte e estado suficiente"
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
 });
 
+test("T7-C5 referência textual não rebaixa prova de curl observada", () => {
+  const trace = buildTrace([pre("curl", "curl --version"), post("curl", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `curl --version` (see `expected output` for reference).\n") });
+  assert.deepEqual(states(report), ["sufficient"]);
+  assert.equal(report.evaluations[0].reasonCode, "matching_command_succeeded");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
 test("T7-C5 falha de comando com vínculo heurístico não vira contradição", () => {
   const trace = buildTrace([
     { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "it1" }, fields: { phase: "started", itemType: "command_execution" }, content: { fields: [{ field: "item.command", role: "args", kind: "text", value: "npm test" }] } },
