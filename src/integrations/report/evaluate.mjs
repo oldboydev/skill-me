@@ -163,6 +163,7 @@ function redactedEvidence(instruction, timeline, trace) {
   if (instruction.kind === "condition") return { status: "inconclusive", reasonCode: "command_redacted", events: [], corrections: [] };
   if (instruction.commands.length === 0) return { status: "inconclusive", reasonCode: "command_redacted", events: [], corrections: [] };
   const observed = evidenceForCommands(instruction.commands, timeline, trace);
+  if (instruction.text === null) return { status: "inconclusive", reasonCode: "command_redacted", events: observed.events, corrections: [] };
   if (hasAlternativeCommands(instruction)) return { status: "inconclusive", reasonCode: "command_redacted", events: observed.events, corrections: [] };
   if (observed.status === "contradicted") return observed;
   return { ...observed, status: observed.status === "unobserved" ? "inconclusive" : "partial", reasonCode: "command_redacted" };

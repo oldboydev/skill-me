@@ -303,6 +303,15 @@ test("T7-C5 alternativa redigida impede contradição da opção visível", () =
   assert.deepEqual(redactedFirst.evaluations[0].sources.events, [1, 2]);
 });
 
+test("T7-C5 texto inteiro omitido pela política impede acusar alternativa invisível", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "failure")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` or `export TOKEN=$(gh auth token)`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "command_redacted");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+  assert.equal(report.evaluations[0].text, null);
+});
+
 test("T7-C5 script bash literal observado é comparado sem executar a referência", () => {
   const trace = buildTrace([pre("verify", "bash ./verify.sh"), post("verify", "success")]);
   const report = evaluateReport({ trace, skill: skill("- Run `bash ./verify.sh`.\n") });
