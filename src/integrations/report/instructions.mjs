@@ -89,7 +89,8 @@ export function parseInstructions(source) {
       const kind = CONDITIONAL.test(activeRaw) ? "condition" : VALIDATION.test(activeRaw) ? "validation" : ACTION.test(activeRaw) ? "action" : "guidance";
       const extracted = commandsIn(activeRaw);
       activeCommandTail = extracted.tail;
-      active = { id: `i-${instructions.length + 1}`, line: index + 1, heading, kind, text: safeText(activeRaw), commands: extracted.commands, commandRedacted: extracted.redacted };
+      const text = safeText(activeRaw);
+      active = { id: `i-${instructions.length + 1}`, line: index + 1, heading, kind, text, commands: extracted.commands, commandRedacted: extracted.redacted || text === null };
       instructions.push(active);
     } else if (active !== null && /^\s+\S/.test(line)) {
       const continuation = line.trim();
@@ -98,7 +99,7 @@ export function parseInstructions(source) {
       activeRaw += ` ${continuation}`;
       active.text = safeText(activeRaw);
       active.commands.push(...extracted.commands);
-      active.commandRedacted ||= extracted.redacted;
+      active.commandRedacted ||= extracted.redacted || active.text === null;
     } else {
       active = null;
       // Uma linha vazia pode separar o item pai de um subitem Markdown.

@@ -175,6 +175,19 @@ test("T7-C5 argumentos divergentes no mesmo par nativo não comprovam nenhum com
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
 });
 
+test("T7-C5 argumento divergente em evento duplicado limita prova e cita a duplicata", () => {
+  const trace = buildTrace([
+    pre("mixed", "npm test"),
+    { ...post("mixed", "success"), content: commandContent("npm test") },
+    { ...post("mixed", "success"), content: commandContent("npm run build") },
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n") });
+  assert.deepEqual(report.timeline.operations[0].duplicates, [3]);
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "command_conflict");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3]);
+});
+
 test("T7-C5 sanitização de caminhos não transforma comandos distintos em prova suficiente", () => {
   const trace = buildTrace([pre("other", "bash <home>/verify.sh"), post("other", "success")]);
   trace.records[0].record.privacy = ["tool_input.command:sensitive_removed"];
@@ -310,6 +323,19 @@ test("T7-C5 texto inteiro omitido pela política impede acusar alternativa invis
   assert.equal(report.evaluations[0].reasonCode, "command_redacted");
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
   assert.equal(report.evaluations[0].text, null);
+});
+
+test("T7-C5 texto omitido por referência parentética não transforma alternativa em contradição", () => {
+  const trace = buildTrace([
+    pre("test", "npm test"), post("test", "failure"),
+    pre("build", "npm run build"), post("build", "success"),
+  ]);
+  const source = "- Run `npm test` or `npm run build` (see `TOKEN=$(gh auth token)` for authentication).\n";
+  const report = evaluateReport({ trace, skill: skill(source) });
+  assert.equal(report.evaluations[0].text, null);
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "command_redacted");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
 });
 
 test("T7-C5 script bash literal observado é comparado sem executar a referência", () => {

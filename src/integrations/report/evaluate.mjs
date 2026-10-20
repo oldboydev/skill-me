@@ -30,16 +30,18 @@ function commandObservations(command, timeline, trace) {
   const recordsBySequence = new Map(trace.records.map(({ sequence, record }) => [sequence, record]));
   return timeline.operations.filter((op) => op.type === "tool")
     .map((op) => {
-      const records = op.evidence.map((sequence) => recordsBySequence.get(sequence)).filter(Boolean);
+      const sequences = [...new Set([...op.evidence, ...op.duplicates])].sort((a, b) => a - b);
+      const records = sequences.map((sequence) => recordsBySequence.get(sequence)).filter(Boolean);
       return {
         op,
+        sequences,
         commands: [...new Set(records.map(commandAt).filter(Boolean))],
         privacyLimited: records.some((record) => (record.privacy ?? []).some((item) => COMMAND_PRIVACY.test(item))),
       };
     })
     .filter(({ commands }) => commands.includes(command))
-    .map(({ op, commands, privacyLimited }) => ({ operation: op.id, strength: op.strength, state: op.state, result: commands.length === 1 && !privacyLimited ? operationResult(op) : "unknown", commandConflict: commands.length > 1, privacyLimited, session: op.session, origin: op.origin, sequences: op.evidence }))
-    .sort((a, b) => a.sequences[0] - b.sequences[0]);
+    .map(({ op, sequences, commands, privacyLimited }) => ({ operation: op.id, strength: op.strength, state: op.state, result: commands.length === 1 && !privacyLimited ? operationResult(op) : "unknown", commandConflict: commands.length > 1, privacyLimited, session: op.session, origin: op.origin, sequences, orderSequences: op.evidence }))
+    .sort((a, b) => a.orderSequences[0] - b.orderSequences[0]);
 }
 
 const contextOf = (observation) => JSON.stringify([observation.origin, observation.session]);
@@ -48,8 +50,8 @@ const multipleContexts = (observations) => new Set(observations.map(contextOf)).
 function overlappingAttempts(observations) {
   let latestEnd = -Infinity;
   for (const item of observations) {
-    if (item.sequences[0] <= latestEnd) return true;
-    latestEnd = Math.max(latestEnd, item.state === "closed" ? item.sequences.at(-1) : Infinity);
+    if (item.orderSequences[0] <= latestEnd) return true;
+    latestEnd = Math.max(latestEnd, item.state === "closed" ? item.orderSequences.at(-1) : Infinity);
   }
   return false;
 }
@@ -70,7 +72,7 @@ function confirmedCorrections(observations) {
 
 function evidenceForCommand(command, timeline, trace, { afterSequence = 0, context = null } = {}) {
   const observations = commandObservations(command, timeline, trace)
-    .filter((item) => item.sequences[0] > afterSequence && (context === null || contextOf(item) === context));
+    .filter((item) => item.orderSequences[0] > afterSequence && (context === null || contextOf(item) === context));
   if (observations.length === 0) return { status: "unobserved", reasonCode: "no_matching_observation", events: [], corrections: [] };
   if (multipleContexts(observations)) return { status: "partial", reasonCode: "ambiguous_context", events: observations.flatMap((item) => item.sequences), corrections: [] };
   if (overlappingAttempts(observations)) return { status: "partial", reasonCode: "overlapping_attempts", events: [...new Set(observations.flatMap((item) => item.sequences))].sort((a, b) => a - b), corrections: [] };
@@ -147,8 +149,8 @@ function conditionalEvidence(instruction, timeline, trace) {
   if (matching.length === 0) {
     return { status: "not_applicable", reasonCode: "condition_false_observed", events: observations.flatMap((item) => item.sequences), corrections: [] };
   }
-  const triggerResult = matching.reduce((latest, item) => item.sequences.at(-1) > latest.sequences.at(-1) ? item : latest);
-  const actionEvidence = evidenceForCommands(actions, timeline, trace, { afterSequence: triggerResult.sequences.at(-1), context: contextOf(triggerResult) });
+  const triggerResult = matching.reduce((latest, item) => item.orderSequences.at(-1) > latest.orderSequences.at(-1) ? item : latest);
+  const actionEvidence = evidenceForCommands(actions, timeline, trace, { afterSequence: triggerResult.orderSequences.at(-1), context: contextOf(triggerResult) });
   if (actionEvidence.status === "unobserved") return { ...actionEvidence, events: triggerResult.sequences, reasonCode: "condition_true_action_unobserved" };
   if (hasAlternativeCommands(instruction, 1)) return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], corrections: [] };
   return { ...actionEvidence, events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])] };
