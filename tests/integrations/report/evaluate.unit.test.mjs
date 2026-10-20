@@ -303,6 +303,24 @@ test("T7-C6 condição com dois gatilhos alternativos não é declarada falsa pe
   assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
 });
 
+test("T7-C6 ações alternativas após gatilho não são contraditas pela primeira falha", () => {
+  const trace = buildTrace([
+    pre("test", "npm test"), post("test", "failure"),
+    pre("fix", "npm run fix"), post("fix", "failure"),
+    pre("retry", "npm run retry"), post("retry", "success"),
+  ]);
+  const source = "- If `npm test` fails, run `npm run fix` or `npm run retry`.\n- If `npm test` fails, run `npm run fix` and `npm run retry`.\n";
+  const report = evaluateReport({ trace, skill: skill(source) });
+  assert.deepEqual(states(report), ["inconclusive", "contradicted"]);
+  assert.deepEqual(report.evaluations.map((item) => item.reasonCode), ["alternative_commands_unresolved", "some_commands_failed"]);
+  assert.deepEqual(report.evaluations.map((item) => item.sources.events), [[1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]]);
+  assert.deepEqual(report.evaluations.map((item) => item.sources.skill.line), [1, 2]);
+  const falseTrigger = buildTrace([pre("test", "npm test"), post("test", "success")]);
+  const falseReport = evaluateReport({ trace: falseTrigger, skill: skill(source) });
+  assert.deepEqual(states(falseReport), ["not_applicable", "not_applicable"]);
+  assert.deepEqual(falseReport.evaluations.map((item) => item.sources.events), [[1, 2], [1, 2]]);
+});
+
 test("T7-C6 condição com gatilho removido não é contradita pela ação isolada", () => {
   const trace = buildTrace([pre("fix", "npm run fix"), post("fix", "failure")]);
   const report = evaluateReport({ trace, skill: skill("- If `bash /home/alice/check.sh` fails, run `npm run fix`.\n") });

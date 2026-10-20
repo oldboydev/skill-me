@@ -105,15 +105,17 @@ function evidenceForCommands(commands, timeline, trace, options) {
   };
 }
 
-function hasAlternativeCommands(instruction) {
+function hasAlternativeCommands(instruction, firstCommand = 0) {
   if (instruction.commands.length < 2 || typeof instruction.text !== "string") return false;
   const commands = new Set(instruction.commands);
   let previousEnd = null;
+  let commandIndex = 0;
   for (const match of instruction.text.matchAll(/`([^`\r\n]+)`/g)) {
     if (!commands.has(match[1].trim())) continue;
     const between = previousEnd === null ? "" : instruction.text.slice(previousEnd, match.index).replace(/\([^()]*\)/g, "");
-    if (/\b(?:or|ou)\b/i.test(between)) return true;
+    if (commandIndex > firstCommand && /\b(?:or|ou)\b/i.test(between)) return true;
     previousEnd = match.index + match[0].length;
+    commandIndex += 1;
   }
   return false;
 }
@@ -145,6 +147,7 @@ function conditionalEvidence(instruction, timeline, trace) {
   }
   const triggerResult = matching.reduce((latest, item) => item.sequences.at(-1) > latest.sequences.at(-1) ? item : latest);
   const actionEvidence = evidenceForCommands(actions, timeline, trace, { afterSequence: triggerResult.sequences.at(-1), context: contextOf(triggerResult) });
+  if (hasAlternativeCommands(instruction, 1)) return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], corrections: [] };
   return { ...actionEvidence, events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], reasonCode: actionEvidence.status === "unobserved" ? "condition_true_action_unobserved" : actionEvidence.reasonCode };
 }
 
