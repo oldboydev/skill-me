@@ -1,5 +1,7 @@
 # skill-me
 
+Relatórios locais de execução: [docs/report.md](docs/report.md).
+
 Infraestrutura mínima de governança. Ainda não há aplicação ou publicação configurada.
 
 ## Governança e agentes

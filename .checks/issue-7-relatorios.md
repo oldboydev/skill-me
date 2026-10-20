@@ -57,7 +57,7 @@ Proof: `node --test --test-name-pattern=T7-C7 tests/integrations/report/render.u
 **C8** — comando local devolve texto, Markdown e JSON v1 da mesma análise sanitizada; repetição preserva output e não modifica captura/skill.
 Proof: `node --test --test-name-pattern=T7-C8 tests/integrations/report/report.cli.test.mjs`
 
-**C9** — flags/formatos inválidos saem 2, skill/captura inválida 3, conflito 4, E/S 5, com código fechado e sem eco.
+**C9** — flags/formatos/ID malformado saem 2, skill/estado de captura inválidos ou ausentes 3, conflito 4, E/S 5, com código fechado e sem eco.
 Proof: `node --test --test-name-pattern=T7-C9 tests/integrations/report/report.cli.test.mjs`
 
 **C10** — fixtures normal, erro/correção e condicional atravessam captura, correlação e relatório, demonstram seis estados e não atribuem leitura de SKILL.md como carregamento.

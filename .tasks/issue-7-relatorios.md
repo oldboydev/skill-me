@@ -29,7 +29,7 @@ O usuário consulta uma captura local com uma skill identificada pelo nome obser
 ### S3 — consultar e exportar
 
 8. `integrations report --root R --capture ID [--skill ARQUIVO] [--format text|markdown|json]` devolve texto por padrão, Markdown ou JSON v1 em stdout, sem escrever arquivos, iniciar agentes ou acessar rede; a saída estruturada contém apenas timeline sanitizada e instruções sanitizadas/derivadas.
-9. Falta de flag e formato desconhecido saem com 2; skill/captura inválida ou ausente com 3; conflito do store com 4; E/S com 5. Erros usam código fechado e não ecoam entradas.
+9. Falta de flag, ID de captura malformado e formato desconhecido saem com 2; arquivo de skill ou estado da captura inválido/ausente com 3; conflito do store com 4; E/S com 5. Erros usam código fechado e não ecoam entradas.
 10. Fixtures de fluxo normal, erro/correção e condição demonstram as seis avaliações, citações, três formatos e o limite de que referência a `SKILL.md` sem invocação comprovada não vira fato de carregamento.
 
 ## Out of scope

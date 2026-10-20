@@ -6,6 +6,7 @@ export const HELP_TEXT = `Uso:
   integrations uninstall --agent <claude|codex|hermes> --target <diretório> [--apply] [--json]
   integrations run --agent codex [--codex-entry <arquivo>] -- <argumentos de codex exec>
   integrations privacy <start|ingest|stop|disable|status|export|list|follow|delete|prune> --root <diretório> …
+  integrations report --root <diretório> --capture <id> [--skill <SKILL.md>] [--format text|markdown|json]
 
 Observação local de execuções (issue #4), separada do doctor. Sem --apply nada é
 escrito e nenhum agente é iniciado; --target é obrigatório e não tem default.
