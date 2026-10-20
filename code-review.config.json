@@ -43,8 +43,8 @@
     },
     "7": {
       "profile": "light",
-      "maxRounds": 10,
-      "approval": "Proprietário autorizou em 20/10/2026 quantas rodadas adicionais de verificação e revisão forem necessárias para a issue #7; registro em https://github.com/oldboydev/skill-me/issues/7#issuecomment-6293309938. O máximo de 10 é o teto suportado pelo motor; exclusivo da issue #7, preservando as quatro tentativas anteriores. Merge após gates autorizado em https://github.com/oldboydev/skill-me/issues/7#issuecomment-6289269096. Push e PR somente com status ready."
+      "maxRounds": 20,
+      "approval": "Proprietário autorizou a ampliação explícita do teto do motor vendorizado e da issue #7 para 20 tentativas, preservando as dez anteriores; registro em https://github.com/oldboydev/skill-me/issues/7#issuecomment-6297275855. Revisões adicionais somente conforme necessárias; push, PR e merge somente após verificação atualizada e status ready."
     }
   }
 }

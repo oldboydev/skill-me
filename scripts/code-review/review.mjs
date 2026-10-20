@@ -497,7 +497,7 @@ function snapshot(cwd, options, deps) {
         text(override.approval) &&
         Number.isInteger(override.maxRounds) &&
         override.maxRounds > policy.maxRounds &&
-        override.maxRounds <= 10,
+        override.maxRounds <= 20,
       "Exceção de rodadas inválida: registre issue, perfil, teto e aprovação do proprietário.",
     );
   }

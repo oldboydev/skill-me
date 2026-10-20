@@ -28,7 +28,7 @@ Erros de auth, contexto, processo, JSON ou mudança da cópia/original não gera
 
 ## Exceção autorizada por entrega
 
-Se o proprietário autorizar rodadas adicionais, registre apenas a issue afetada em `roundOverrides` na configuração versionada, com `profile`, `maxRounds` e `approval` (referência explícita à autorização). Exemplo: `"roundOverrides":{"42":{"profile":"light","maxRounds":3,"approval":"Autorização do proprietário registrada na task da issue 42"}}`. O perfil precisa corresponder ao comando; o novo teto deve superar o padrão e não exceder 10. O histórico anterior permanece na contagem. Outras issues continuam no limite do perfil. O motor valida o registro; o agente deve obter a autorização humana antes de criá-lo, sem assumir que o próprio registro a substitui.
+Se o proprietário autorizar rodadas adicionais, registre apenas a issue afetada em `roundOverrides` na configuração versionada, com `profile`, `maxRounds` e `approval` (referência explícita à autorização). Exemplo: `"roundOverrides":{"42":{"profile":"light","maxRounds":3,"approval":"Autorização do proprietário registrada na task da issue 42"}}`. O perfil precisa corresponder ao comando; o novo teto deve superar o padrão e não exceder 20; perfis padrão continuam limitados a 10. O histórico anterior permanece na contagem. Outras issues continuam no limite do perfil. O motor valida o registro; o agente deve obter a autorização humana antes de criá-lo, sem assumir que o próprio registro a substitui.
 
 ## Adotar em outro projeto
 
