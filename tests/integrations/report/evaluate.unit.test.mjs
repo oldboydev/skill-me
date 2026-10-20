@@ -39,6 +39,14 @@ test("T7-C5 comando literal: resultado nativo, parcial, negativo e silêncio; le
   assert.ok(report.limitations.some((item) => item.text.includes("não comprova")));
 });
 
+test("T7-C5 ação em checklist mantém a falha observada", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "failure")]);
+  const report = evaluateReport({ trace, skill: skill("- [ ] Run `npm test`.\n") });
+  assert.deepEqual(states(report), ["contradicted"]);
+  assert.equal(report.evaluations[0].kind, "action");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
 test("T7-C5 falha de comando com vínculo heurístico não vira contradição", () => {
   const trace = buildTrace([
     { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "it1" }, fields: { phase: "started", itemType: "command_execution" }, content: { fields: [{ field: "item.command", role: "args", kind: "text", value: "npm test" }] } },
@@ -221,4 +229,11 @@ test("T7-C6 condição com gatilho removido não é contradita pela ação isola
   assert.deepEqual(states(report), ["inconclusive"]);
   assert.equal(report.evaluations[0].reasonCode, "command_redacted");
   assert.deepEqual(report.evaluations[0].sources.events, []);
+});
+
+test("T7-C6 negação do gatilho não é interpretada como condição falsa", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- Se `npm test` não falhar, rode `npm run deploy`.\n- If `npm test` does not fail, run `npm run deploy`.\n") });
+  assert.deepEqual(states(report), ["inconclusive", "inconclusive"]);
+  assert.ok(report.evaluations.every((item) => item.reasonCode === "condition_unresolved"));
 });

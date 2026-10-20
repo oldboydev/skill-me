@@ -5,8 +5,8 @@ Autorização: pedido explícito do proprietário nesta conversa para puxar a pr
 
 ## Provas executadas
 
-- `node --test "tests/integrations/report/**/*.test.mjs"`: 37 testes, 37 passaram, 0 falharam, 0 skip. Cada `T7-C1` a `T7-C10` foi listado e executado; `T7-C1` cobre nome Unicode e nomes ambíguos com fonte; `T7-C2` cobre fences e continuação indentada; `T7-C5` cobre comandos compostos, argumentos divergentes, sanitização de caminhos, comandos em sessões distintas e falha heurística; `T7-C6` cobre retry, ordem, proibição, sobreposição, gatilhos compostos e gatilho redigido; `T7-C7` prova erro/correção/lacuna, código de saída, ausência, omissão e truncamento de conteúdo e proveniência do nome; `T7-C10` atravessa a fronteira com os seis estados.
-- `npm test` após os achados da sexta revisão formal: exit 0. Governança: 6/6. Motor de revisão: 16/16. Doctor: 410 passes, 7 skips condicionais. Integrações: 334 testes, 327 passaram, 7 skips de plataforma/ambiente já declarados pela suíte (casos POSIX no Windows ou criação de symlink sem privilégio); 0 falhas.
+- `node --test "tests/integrations/report/**/*.test.mjs"`: 40 testes, 40 passaram, 0 falharam, 0 skip. Cada `T7-C1` a `T7-C10` foi listado e executado; `T7-C1` cobre nome Unicode e nomes ambíguos com fonte; `T7-C2` cobre fences, continuação indentada e checklists; `T7-C5` cobre comandos compostos, argumentos divergentes, sanitização de caminhos, comandos em sessões distintas, falha heurística e ação em checklist; `T7-C6` cobre retry, ordem, proibição, sobreposição, gatilhos compostos, gatilho redigido e negação; `T7-C7` prova erro/correção/lacuna, código de saída, ausência, omissão e truncamento de conteúdo e proveniência do nome; `T7-C10` atravessa a fronteira com os seis estados.
+- `npm test` após os achados da sétima revisão formal: exit 0. Governança: 6/6. Motor de revisão: 16/16. Doctor: 410 passes, 7 skips condicionais. Integrações: 337 testes, 330 passaram, 7 skips de plataforma/ambiente já declarados pela suíte (casos POSIX no Windows ou criação de symlink sem privilégio); 0 falhas.
 - `npm run test:doctor` fora do sandbox de rede: 417 testes, 410 passaram, 7 skips condicionais por SO/ambiente, 0 falhas. A repetição dentro do sandbox deu 2 falhas (`collector-C9` IPv4/IPv6: socket de loopback observado como `unreachable`), 408 passes e 7 skips. Os 8 testes de `collector.cli.test.mjs` passaram fora do sandbox, inclusive os dois casos de loopback; nenhuma mudança no doctor foi feita.
 - `git diff --check`: exit 0; avisos de conversão LF/CRLF do Git no Windows, sem erro de whitespace.
 
@@ -38,6 +38,8 @@ A sexta verificação independente aprovou C1–C10 no commit `406ba4b`, com 30/
 
 A sétima verificação independente aprovou C1–C10 no commit `eed4eba`, com 35/35 provas executadas, e foi registrada em `.verified.md` no commit `e958d04`. A sexta revisão formal retornou `changes_requested` por dois cenários: uma falha com vínculo heurístico era declarada `contradicted`, e uma condição com gatilho redigido era julgada pelo resultado negativo da ação isolada. Dois testes novos reproduziram os erros no código revisado: 0 passes e 2 falhas no lote red selecionado, com os estados incorretos `contradicted` em ambos. A avaliação agora exige vínculo nativo para contradição e deixa a condição com qualquer comando redigido `inconclusive` sem atribuir a ação isolada. O lote green do relatório teve 37/37 passes, sem skip.
 
+A oitava verificação independente aprovou C1–C10 no commit `be7c8ba`, com 37/37 provas executadas, e foi registrada em `.verified.md` no commit `044830c`. A sétima revisão formal retornou `changes_requested` porque o marcador de checklist `[ ]` mudava uma ação para orientação, e a condição `não falhar` era interpretada como gatilho de falha simples. Três regressões cobriram classificação, avaliação do item e condição negativa; no código revisado, o lote red selecionado teve 0 passes e 3 falhas nos resultados incorretos. O parser agora remove o marcador de checklist antes de classificar o item, e condições com negação do gatilho ficam inconclusivas. O lote green do relatório teve 40/40 passes, sem skip.
+
 ## Decisões e limites
 
 - A consulta consome somente o snapshot do store da #8, a correlação da #6 e texto de skill explicitamente escolhido ou candidato único local. Não relê payload nativo, não escreve artefato e não inicia agentes.
@@ -48,6 +50,7 @@ A sétima verificação independente aprovou C1–C10 no commit `eed4eba`, com 3
 - Continuação indentada pertence ao mesmo item de lista; argumentos de comando divergentes entre eventos da mesma operação não provam execução. Omissão de argumento por política é citada com evento, e nomes observados ambíguos são listados com suas fontes quando `--skill` é explícito.
 - Sanitização que remove parte de um comando da skill impede a comparação literal, inclusive quando outro comando do item foi observado. Para instruções com vários comandos, resultados de sessões ou origens distintas não são agregados como prova suficiente ou contradição. Condições com `e`/`ou` ou `and`/`or` entre gatilhos permanecem inconclusivas.
 - Falha vinculada apenas por heurística permanece evidência parcial. Uma condição cujo gatilho foi removido pela política não é julgada pelo resultado da ação remanescente.
+- Marcador de checklist Markdown não altera a classificação da instrução. Negação no gatilho da condição não é tratada como prova de condição falsa.
 
 ## Fora do escopo observado
 

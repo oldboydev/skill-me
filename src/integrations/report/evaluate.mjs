@@ -99,7 +99,7 @@ function conditionalEvidence(instruction, timeline, trace) {
   const [prefix, between] = (instruction.text ?? "").split(/`[^`]*`/);
   const conditionText = `${prefix ?? ""} ${between ?? ""}`;
   const beforeAction = `${prefix ?? ""} ${(between ?? "").split(/\b(?:run|execute|rode|use|call|chame)\b/i)[0]}`;
-  if (/\b(?:or|ou|and|e)\b/i.test(beforeAction)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
+  if (/\b(?:or|ou|and|e|n[aã]o|not|never|doesn['’]t|didn['’]t)\b/i.test(beforeAction)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
   const fails = /\b(?:falh\w*|fail\w*|erro|error)\b/i.test(conditionText);
   const succeeds = /\b(?:pass\w*|succeed\w*|sucesso|success)\b/i.test(conditionText);
   if (!trigger || actions.length === 0 || fails === succeeds) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
