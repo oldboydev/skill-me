@@ -102,3 +102,17 @@ test("T7-C2 referência parentética entre comandos não oculta o segundo", () =
     ["curl --version", "docker build ."],
   ]);
 });
+
+test("T7-C2 comando coordenado sem opção conhecida preserva ambos os literais", () => {
+  const source = "- Run `npm test` and `docker ps`.\n- Run `npm test` or `docker ps`.\n";
+  assert.deepEqual(parseInstructions(source).map((item) => item.commands), [
+    ["npm test", "docker ps"], ["npm test", "docker ps"],
+  ]);
+});
+
+test("T7-C2 texto longo preserva a cláusula que liga comandos alternativos", () => {
+  const source = `- Run \`npm test\` (${"a".repeat(1000)}) or \`npm run build\`.\n`;
+  const instruction = parseInstructions(source)[0];
+  assert.deepEqual(instruction.commands, ["npm test", "npm run build"]);
+  assert.match(instruction.text, /or `npm run build`\.$/);
+});

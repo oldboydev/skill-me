@@ -231,6 +231,30 @@ test("T7-C5 comandos alternativos não são contraditos pela falha de uma opçã
   assert.deepEqual(report.evaluations.map((item) => item.sources.skill.line), [1, 2, 3]);
 });
 
+test("T7-C5 falha do segundo comando coordenado impede prova suficiente", () => {
+  const trace = buildTrace([
+    pre("test", "npm test"), post("test", "success"),
+    pre("docker", "docker ps"), post("docker", "failure"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` and `docker ps`.\n") });
+  assert.deepEqual(states(report), ["contradicted"]);
+  assert.equal(report.evaluations[0].reasonCode, "some_commands_failed");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
+});
+
+test("T7-C5 alternativa após texto longo mantém julgamento inconclusivo", () => {
+  const trace = buildTrace([
+    pre("test", "npm test"), post("test", "failure"),
+    pre("build", "npm run build"), post("build", "success"),
+  ]);
+  const source = `- Run \`npm test\` (${"a".repeat(1000)}) or \`npm run build\`.\n`;
+  const report = evaluateReport({ trace, skill: skill(source) });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "alternative_commands_unresolved");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
+  assert.match(report.evaluations[0].text, /or `npm run build`\.$/);
+});
+
 test("T7-C5 script bash literal observado é comparado sem executar a referência", () => {
   const trace = buildTrace([pre("verify", "bash ./verify.sh"), post("verify", "success")]);
   const report = evaluateReport({ trace, skill: skill("- Run `bash ./verify.sh`.\n") });

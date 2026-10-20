@@ -17,7 +17,7 @@ const CODE_SPAN = /`([^`\r\n]{1,300})`/g;
 
 function safeText(raw) {
   const result = sanitizeText(raw);
-  return result.ok ? result.text.slice(0, 1000) : null;
+  return result.ok ? result.text : null;
 }
 
 function isCommandSpan(match, line, prefix, bridge) {
@@ -29,7 +29,7 @@ function isCommandSpan(match, line, prefix, bridge) {
   const after = line.slice(match.index + match[0].length);
   return COMMAND_LEAD.test(before)
     || (strong && COMMAND_CHECK.test(before))
-    || (strong && bridge !== null && COMMAND_COORDINATION.test(bridge.replace(/\([^()]*\)/g, "")))
+    || (bridge !== null && COMMAND_COORDINATION.test(bridge.replace(/\([^()]*\)/g, "")))
     || ((strong || EXECUTABLE.test(value)) && CONDITIONAL.test(`${prefix}${line}`.trim()) && /\b(?:fails?|succeeds?|passes?|falha|passa)\b/i.test(after));
 }
 

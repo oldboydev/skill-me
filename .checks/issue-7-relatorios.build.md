@@ -68,6 +68,8 @@ A décima nona verificação independente aprovou C1–C10 no commit `0f557ca`, 
 
 A vigésima verificação independente aprovou C1–C10 no commit `824c501`, com 63/63 provas T7, e foi registrada em `.verified.md` no commit `d8c51a0`. A décima sexta revisão formal encontrou o mesmo erro em ações alternativas dentro de condição: após `npm test` falhar, `npm run fix` falhar e `npm run retry` ter sucesso, a instrução `If npm test fails, run npm run fix or npm run retry` era declarada `contradicted`. O teste C6 falhou antes da correção com esse estado e passou depois exigindo `inconclusive`, motivo `alternative_commands_unresolved`, linha e seis sequências; o controle com `and` exige `contradicted`. A detecção da alternativa agora distingue pares de ações após o primeiro comando, conservando a regra anterior para gatilhos alternativos. O lote T7 completo passou 64/64, sem skips.
 
+A vigésima primeira verificação independente aprovou C1–C10 no commit `a8dd5d6`, com 64/64 provas T7, e foi registrada em `.verified.md` no commit `a9e75b3`. A décima sétima revisão formal apontou dois novos casos: `docker ps` como segundo comando coordenado era ignorado, e uma instrução longa perdia a cláusula `or` após o corte de 1.000 caracteres. Quatro regressões falharam no código revisado (45 passes, 4 falhas no lote red). A extração agora preserva um segundo literal executável quando unido por `and`/`or`, inclusive sem opção conhecida, e o texto sanitizado da instrução permanece integral dentro do limite de 1 MiB da skill. O lote green selecionado passou 49/49, e o lote T7 completo passou 68/68, sem falhas nem skips. O controle de referência parentética continua no mesmo lote.
+
 ## Decisões e limites
 
 - A consulta consome somente o snapshot do store da #8, a correlação da #6 e texto de skill explicitamente escolhido ou candidato único local. Não relê payload nativo, não escreve artefato e não inicia agentes.
@@ -89,6 +91,7 @@ A vigésima verificação independente aprovou C1–C10 no commit `824c501`, com
 - Um aparte parentético entre comandos não oculta a coordenação após ele; o segundo comando continua necessário para declarar a instrução suficiente.
 - `or`/`ou` entre comandos literais expressa alternativa; a avaliação não acusa contradição pelo fracasso de uma opção quando a escolha não é interpretada. Um `or` dentro de referência parentética não muda a regra de comandos unidos por `and`.
 - A mesma prudência vale para ações alternativas após uma condição comprovada; gatilhos alternativos continuam com o motivo conservador `condition_unresolved`.
+- O segundo literal de comando ligado por `and`/`or` é avaliado mesmo quando o executável não está na lista conhecida. A cláusula de coordenação e a fonte sanitizada não são cortadas em 1.000 caracteres; o limite da skill lida permanece 1 MiB.
 
 ## Fora do escopo observado
 
