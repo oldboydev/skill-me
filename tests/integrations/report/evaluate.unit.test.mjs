@@ -233,7 +233,29 @@ test("T7-C6 condição com gatilho removido não é contradita pela ação isola
 
 test("T7-C6 negação do gatilho não é interpretada como condição falsa", () => {
   const trace = buildTrace([pre("test", "npm test"), post("test", "success")]);
-  const report = evaluateReport({ trace, skill: skill("- Se `npm test` não falhar, rode `npm run deploy`.\n- If `npm test` does not fail, run `npm run deploy`.\n") });
-  assert.deepEqual(states(report), ["inconclusive", "inconclusive"]);
+  const report = evaluateReport({ trace, skill: skill("- Se `npm test` não falhar, rode `npm run deploy`.\n- If `npm test` does not fail, run `npm run deploy`.\n- If `npm test` has no errors, run `npm run deploy`.\n- If `npm test` has no error, run `npm run deploy`.\n- Se `npm test` passar sem erros, rode `npm run deploy`.\n") });
+  assert.deepEqual(states(report), ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]);
   assert.ok(report.evaluations.every((item) => item.reasonCode === "condition_unresolved"));
+});
+
+test("T7-C6 ação deve vir depois do último resultado verdadeiro entre gatilhos sobrepostos", () => {
+  const trace = buildTrace([
+    pre("a", "npm test"), pre("b", "npm test"), post("b", "failure"),
+    pre("fix", "npm run fix"), post("fix", "success"), post("a", "failure"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["unobserved"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_true_action_unobserved");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 6]);
+});
+
+test("T7-C6 tentativa aberta impede confirmar a condição apesar de outra falha", () => {
+  const trace = buildTrace([
+    pre("open", "npm test"), pre("fail", "npm test"), post("fail", "failure"),
+    pre("fix", "npm run fix"), post("fix", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3]);
 });

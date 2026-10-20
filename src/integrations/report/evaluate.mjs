@@ -99,7 +99,7 @@ function conditionalEvidence(instruction, timeline, trace) {
   const [prefix, between] = (instruction.text ?? "").split(/`[^`]*`/);
   const conditionText = `${prefix ?? ""} ${between ?? ""}`;
   const beforeAction = `${prefix ?? ""} ${(between ?? "").split(/\b(?:run|execute|rode|use|call|chame)\b/i)[0]}`;
-  if (/\b(?:or|ou|and|e|n[aã]o|not|never|doesn['’]t|didn['’]t)\b/i.test(beforeAction)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
+  if (/\b(?:or|ou|and|e|n[aã]o|sem|no|not|never|without|doesn['’]t|didn['’]t)\b/i.test(beforeAction)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
   const fails = /\b(?:falh\w*|fail\w*|erro|error)\b/i.test(conditionText);
   const succeeds = /\b(?:pass\w*|succeed\w*|sucesso|success)\b/i.test(conditionText);
   if (!trigger || actions.length === 0 || fails === succeeds) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
@@ -109,12 +109,12 @@ function conditionalEvidence(instruction, timeline, trace) {
   if (proven.length === 0) {
     return { status: "inconclusive", reasonCode: "condition_unresolved", events: observations.flatMap((item) => item.sequences), corrections: [] };
   }
+  if (proven.length !== observations.length) return { status: "inconclusive", reasonCode: "condition_unresolved", events: observations.flatMap((item) => item.sequences), corrections: [] };
   const matching = proven.filter((item) => fails ? item.result === "negative" : item.result === "positive");
   if (matching.length === 0) {
-    if (proven.length !== observations.length) return { status: "inconclusive", reasonCode: "condition_unresolved", events: observations.flatMap((item) => item.sequences), corrections: [] };
     return { status: "not_applicable", reasonCode: "condition_false_observed", events: observations.flatMap((item) => item.sequences), corrections: [] };
   }
-  const triggerResult = matching.at(-1);
+  const triggerResult = matching.reduce((latest, item) => item.sequences.at(-1) > latest.sequences.at(-1) ? item : latest);
   const actionEvidence = evidenceForCommands(actions, timeline, trace, { afterSequence: triggerResult.sequences.at(-1), context: contextOf(triggerResult) });
   return { ...actionEvidence, events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], reasonCode: actionEvidence.status === "unobserved" ? "condition_true_action_unobserved" : actionEvidence.reasonCode };
 }

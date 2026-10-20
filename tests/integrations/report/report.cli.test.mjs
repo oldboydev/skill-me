@@ -52,6 +52,7 @@ test("T7-C9 erros de uso, skill/captura, lock e E/S têm códigos fechados sem e
   };
   check([], 2, "missing_root");
   check(["--root", target.root], 2, "missing_capture");
+  check(["--root", target.root, "--capture", target.id, "--skill", "--format=markdown"], 2, "missing_flag_value");
   check([...args(target).slice(1), "--format", canary], 2, "invalid_format");
   check(["--root", target.root, "--capture", `../${canary}`, "--skill", target.skill], 2, "invalid_capture_id");
   check(["--root", target.root, "--capture", target.id, "--skill", path.join(target.root, canary)], 3, "skill_not_found");

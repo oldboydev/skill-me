@@ -34,7 +34,7 @@ function parseArgs(tokens) {
     if (!ALLOWED.has(flag)) throw new PrivacyUsageError("unknown_flag");
     if (Object.hasOwn(values, flag)) throw new PrivacyUsageError("unexpected_argument");
     const value = at < 0 ? tokens[++index] : token.slice(at + 1);
-    if (value === undefined || value === "") throw new PrivacyUsageError("missing_flag_value");
+    if (value === undefined || value === "" || (at < 0 && value.startsWith("--"))) throw new PrivacyUsageError("missing_flag_value");
     values[flag] = value;
   }
   const privacyTokens = [];
