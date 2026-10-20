@@ -276,6 +276,33 @@ test("T7-C5 alternativas sem observação preservam ausência e fonte da condiç
   assert.deepEqual(triggered.evaluations[1].sources.events, [1, 2]);
 });
 
+test("T7-C5 alternativa entre parênteses não acusa contradição pela primeira falha", () => {
+  const trace = buildTrace([
+    pre("test", "npm test"), post("test", "failure"),
+    pre("build", "npm run build"), post("build", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` (or `npm run build`).\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "alternative_commands_unresolved");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
+});
+
+test("T7-C5 alternativa redigida impede contradição da opção visível", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "failure")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` or `bash /home/alice/check.sh`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "command_redacted");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+  assert.match(report.evaluations[0].text, /bash <home>\/check\.sh/);
+  const mandatory = evaluateReport({ trace, skill: skill("- Run `npm test` and `bash /home/alice/check.sh`.\n") });
+  assert.deepEqual(states(mandatory), ["contradicted"]);
+  assert.equal(mandatory.evaluations[0].reasonCode, "matching_command_failed");
+  const redactedFirst = evaluateReport({ trace, skill: skill("- Run `bash /home/alice/check.sh` or `npm test`.\n") });
+  assert.deepEqual(states(redactedFirst), ["inconclusive"]);
+  assert.equal(redactedFirst.evaluations[0].reasonCode, "command_redacted");
+  assert.deepEqual(redactedFirst.evaluations[0].sources.events, [1, 2]);
+});
+
 test("T7-C5 script bash literal observado é comparado sem executar a referência", () => {
   const trace = buildTrace([pre("verify", "bash ./verify.sh"), post("verify", "success")]);
   const report = evaluateReport({ trace, skill: skill("- Run `bash ./verify.sh`.\n") });

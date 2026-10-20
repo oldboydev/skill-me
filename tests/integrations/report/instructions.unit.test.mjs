@@ -121,3 +121,7 @@ test("T7-C2 comando literal longo conserva o valor completo para comparação", 
   const command = `node ${"x".repeat(1001)}`;
   assert.deepEqual(parseInstructions(`- Run \`${command}\`.\n`)[0].commands, [command]);
 });
+
+test("T7-C2 alternativa entre parênteses conserva o segundo comando", () => {
+  assert.deepEqual(parseInstructions("- Run `npm test` (or `npm run build`).\n")[0].commands, ["npm test", "npm run build"]);
+});

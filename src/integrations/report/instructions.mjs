@@ -8,7 +8,7 @@ const EXECUTABLE = /^(?:[a-z_][\w.+-]*|\.\/[\w./-]+)$/i;
 const EXECUTABLE_WITH_ARGS = /^(?:[a-z_][\w.+-]*|\.\/[\w./-]+)\s+\S/i;
 const COMMAND_LEAD = /\b(?:run|execute|rode|executar)\s*$/i;
 const COMMAND_CHECK = /\b(?:use|call|chame|verify|validate|test|check|verifique|valide|teste|confira)\s*$/i;
-const COMMAND_COORDINATION = /^\s*,?\s*(?:and|e|or|ou|then|depois)\s*$/i;
+const COMMAND_COORDINATION = /^\s*,?\s*\(?\s*(?:and|e|or|ou|then|depois)\s*\)?\s*$/i;
 const COMMAND_SHAPE = /(?:^|\s)(?:--?[\w-]+|\.\/[\w./-]+|\.)(?=\s|$)/;
 const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+(.+)$/;
 const CHECKBOX = /^\[(?: |x|X)\]\s+/;

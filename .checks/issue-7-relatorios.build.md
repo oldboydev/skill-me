@@ -72,6 +72,8 @@ A vigésima primeira verificação independente aprovou C1–C10 no commit `a8dd
 
 A vigésima segunda verificação independente aprovou C1–C10 no commit `858fed2`, com 68/68 provas T7, e foi registrada em `.verified.md` no commit `decaf63`. A décima oitava revisão formal identificou um limite oculto de 300 caracteres no trecho entre crases e ausência de observação de todas as alternativas classificada como escolha inconclusiva. Três regressões falharam antes da correção (49 passes, 3 falhas no lote red): parser de comando com mais de 1.000 caracteres, avaliação do comando de 303 caracteres com resultado nativo positivo, e distinção de nenhuma alternativa observada, inclusive após gatilho condicional. A extração agora conserva o literal sanitizado completo, e a avaliação mantém `unobserved`/`no_matching_observation` ou `condition_true_action_unobserved` quando cabível. O teste antigo de renderização que usava captura vazia para exigir escolha inconclusiva foi corrigido para observar uma opção falha, preservando esse caso; outro teste exige o texto de lacuna quando nenhuma opção aparece. O lote T7 completo passou 72/72, sem falhas ou skips.
 
+A vigésima terceira verificação independente aprovou C1–C10 no commit `7c698fb`, com 72/72 provas T7, e foi registrada em `.verified.md` no commit `6213661`. A décima nona revisão formal encontrou `Run npm test (or npm run build)` tratado só como primeiro comando e uma alternativa sanitizada ignorada para fins de contradição. Três regressões reproduziram os erros antes da correção (52 passes, 3 falhas no lote red). O parser agora aceita o conector parentético, e a avaliação reconhece a alternativa redigida na fonte sanitizada, conservando `command_redacted` em vez de acusar contradição pela opção visível; um controle com `and` conserva a contradição válida. A variante com a alternativa redigida antes do comando visível também passou. O lote T7 completo passou 75/75, sem falhas ou skips.
+
 ## Decisões e limites
 
 - A consulta consome somente o snapshot do store da #8, a correlação da #6 e texto de skill explicitamente escolhido ou candidato único local. Não relê payload nativo, não escreve artefato e não inicia agentes.
@@ -95,6 +97,7 @@ A vigésima segunda verificação independente aprovou C1–C10 no commit `858fe
 - A mesma prudência vale para ações alternativas após uma condição comprovada; gatilhos alternativos continuam com o motivo conservador `condition_unresolved`.
 - O segundo literal de comando ligado por `and`/`or` é avaliado mesmo quando o executável não está na lista conhecida. A cláusula de coordenação e a fonte sanitizada não são cortadas em 1.000 caracteres; o limite da skill lida permanece 1 MiB.
 - Comandos literais acima de 300 caracteres também são comparados sem corte de 1.000 caracteres. Alternativas não observadas são lacuna, inclusive quando o gatilho condicional ocorreu; a escolha só fica inconclusiva quando há alguma observação.
+- `or` entre parênteses ainda liga comandos alternativos. Quando a política redige uma opção ligada por `or`, o relatório expõe `command_redacted` e não acusa contradição com base apenas na outra opção; `and` preserva a exigência de ambas.
 
 ## Fora do escopo observado
 

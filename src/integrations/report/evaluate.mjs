@@ -106,12 +106,13 @@ function evidenceForCommands(commands, timeline, trace, options) {
 }
 
 function hasAlternativeCommands(instruction, firstCommand = 0) {
-  if (instruction.commands.length < 2 || typeof instruction.text !== "string") return false;
+  if (typeof instruction.text !== "string") return false;
   const commands = new Set(instruction.commands);
   let previousEnd = null;
   let commandIndex = 0;
   for (const match of instruction.text.matchAll(/`([^`\r\n]+)`/g)) {
-    if (!commands.has(match[1].trim())) continue;
+    const value = match[1].trim();
+    if (!commands.has(value) && !(instruction.commandRedacted && /(?:<home>|\[removido\])/.test(value))) continue;
     const between = previousEnd === null ? "" : instruction.text.slice(previousEnd, match.index).replace(/\([^()]*\)/g, "");
     if (commandIndex > firstCommand && /\b(?:or|ou)\b/i.test(between)) return true;
     previousEnd = match.index + match[0].length;
@@ -162,6 +163,7 @@ function redactedEvidence(instruction, timeline, trace) {
   if (instruction.kind === "condition") return { status: "inconclusive", reasonCode: "command_redacted", events: [], corrections: [] };
   if (instruction.commands.length === 0) return { status: "inconclusive", reasonCode: "command_redacted", events: [], corrections: [] };
   const observed = evidenceForCommands(instruction.commands, timeline, trace);
+  if (hasAlternativeCommands(instruction)) return { status: "inconclusive", reasonCode: "command_redacted", events: observed.events, corrections: [] };
   if (observed.status === "contradicted") return observed;
   return { ...observed, status: observed.status === "unobserved" ? "inconclusive" : "partial", reasonCode: "command_redacted" };
 }
@@ -177,10 +179,10 @@ export function evaluateReport({ trace, skill }) {
       ? prohibitionEvidence(instruction, timeline, trace)
       : instruction.kind === "guidance"
       ? { status: "not_applicable", reasonCode: "guidance_not_step", events: [], corrections: [] }
-      : instruction.kind !== "condition" && hasAlternativeCommands(instruction)
-        ? alternativeCommandEvidence(instruction, timeline, trace)
       : instruction.commandRedacted
         ? redactedEvidence(instruction, timeline, trace)
+      : instruction.kind !== "condition" && hasAlternativeCommands(instruction)
+        ? alternativeCommandEvidence(instruction, timeline, trace)
       : instruction.kind === "condition"
         ? conditionalEvidence(instruction, timeline, trace)
         : instruction.commands.length > 0
