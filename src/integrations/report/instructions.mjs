@@ -17,8 +17,12 @@ function commandsIn(line) {
   return [...line.matchAll(CODE_SPAN)]
     .map((match) => match[1].trim())
     .filter((value) => COMMAND.test(value))
-    .map(safeText)
-    .filter((value) => value !== null && !value.includes("[removido]"));
+    .reduce((found, value) => {
+      const result = sanitizeText(value);
+      if (!result.ok || result.removed || result.text.includes("[removido]")) found.redacted = true;
+      else found.commands.push(result.text.slice(0, 1000));
+      return found;
+    }, { commands: [], redacted: false });
 }
 
 export function parseInstructions(source) {
@@ -53,13 +57,16 @@ export function parseInstructions(source) {
     if (item) {
       activeRaw = item[1].trim();
       const kind = CONDITIONAL.test(activeRaw) ? "condition" : VALIDATION.test(activeRaw) ? "validation" : ACTION.test(activeRaw) ? "action" : "guidance";
-      active = { id: `i-${instructions.length + 1}`, line: index + 1, heading, kind, text: safeText(activeRaw), commands: commandsIn(activeRaw) };
+      const extracted = commandsIn(activeRaw);
+      active = { id: `i-${instructions.length + 1}`, line: index + 1, heading, kind, text: safeText(activeRaw), commands: extracted.commands, commandRedacted: extracted.redacted };
       instructions.push(active);
     } else if (active !== null && /^\s+\S/.test(line)) {
       const continuation = line.trim();
       activeRaw += ` ${continuation}`;
       active.text = safeText(activeRaw);
-      active.commands.push(...commandsIn(continuation));
+      const extracted = commandsIn(continuation);
+      active.commands.push(...extracted.commands);
+      active.commandRedacted ||= extracted.redacted;
     } else {
       active = null;
     }

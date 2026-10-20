@@ -88,6 +88,38 @@ test("T7-C5 argumentos divergentes no mesmo par nativo não comprovam nenhum com
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
 });
 
+test("T7-C5 sanitização de caminhos não transforma comandos distintos em prova suficiente", () => {
+  const trace = buildTrace([pre("other", "bash <home>/verify.sh"), post("other", "success")]);
+  trace.records[0].record.privacy = ["tool_input.command:sensitive_removed"];
+  const report = evaluateReport({ trace, skill: skill("- Run `bash /home/alice/verify.sh`.\n- Run `bash <home>/verify.sh`.\n") });
+  assert.deepEqual(states(report), ["inconclusive", "partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "command_redacted");
+  assert.equal(report.evaluations[1].reasonCode, "command_privacy_limited");
+  assert.deepEqual(report.evaluations[1].sources.events, [1, 2]);
+});
+
+test("T7-C5 comando legível não encobre outro comando omitido no mesmo item", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` and `bash /home/alice/verify.sh`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "command_redacted");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
+test("T7-C5 comandos de sessões distintas não comprovam uma instrução composta", () => {
+  const buildPre = { ...pre("build", "npm run build"), ids: { sessionId: "s2", toolUseId: "build" } };
+  const buildPost = { ...post("build", "success"), ids: { sessionId: "s2", toolUseId: "build" } };
+  const trace = buildTrace([pre("test", "npm test"), post("test", "success"), buildPre, buildPost]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` and `npm run build`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "commands_different_contexts");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
+  const failed = buildTrace([pre("test", "npm test"), post("test", "success"), buildPre, { ...buildPost, fields: { toolName: "Bash", outcome: "failure" } }]);
+  const failureReport = evaluateReport({ trace: failed, skill: skill("- Run `npm test` and `npm run build`.\n") });
+  assert.deepEqual(states(failureReport), ["partial"]);
+  assert.equal(failureReport.evaluations[0].reasonCode, "commands_different_contexts");
+});
+
 test("T7-C5 todos os comandos positivos são suficientes; falha em um contradiz a instrução", () => {
   const trace = buildTrace([
     pre("test", "npm test"), post("test", "success"),
@@ -159,4 +191,15 @@ test("T7-C6 palavra failure no comando da ação não altera condição succeeds
   const report = evaluateReport({ trace, skill: skill("- If `npm test` succeeds, run `npm run failure-report`.\n") });
   assert.deepEqual(states(report), ["sufficient"]);
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
+});
+
+test("T7-C6 condição com dois gatilhos alternativos não é declarada falsa pelo primeiro", () => {
+  const trace = buildTrace([
+    pre("test", "npm test"), post("test", "success"),
+    pre("lint", "npm run lint"), post("lint", "failure"),
+    pre("fix", "npm run fix"), post("fix", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails or `npm run lint` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
 });

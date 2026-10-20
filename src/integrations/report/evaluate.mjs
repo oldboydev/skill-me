@@ -3,6 +3,12 @@ import { correlateTrace } from "../correlation/timeline.mjs";
 const SUCCESS = new Set(["success", "completed"]);
 const FAILURE = new Set(["failure", "failed", "blocked", "declined"]);
 const PROHIBITION = /\b(?:do\s+not|don't|never|must\s+not|não|nunca|jamais)\s+(?:run|execute|rode|use|call|chame|instale|install|faça)\b/i;
+const COMMAND_PRIVACY = /^(?:tool_input\.command|item\.command):(unsanitizable|sensitive_removed|content_truncated)$/;
+const PRIVACY_LIMIT_TEXT = Object.freeze({
+  unsanitizable: "A política omitiu o argumento de comando; essa operação não pode comprovar o comando literal.",
+  sensitive_removed: "A política removeu parte do argumento de comando; a igualdade do texto restante não comprova o comando literal.",
+  content_truncated: "O argumento de comando foi truncado pela política; a comparação literal ficou limitada.",
+});
 
 function commandAt(record) {
   const fields = record?.content?.fields;
@@ -21,11 +27,18 @@ function operationResult(operation) {
 }
 
 function commandObservations(command, timeline, trace) {
-  const commandsBySequence = new Map(trace.records.map(({ sequence, record }) => [sequence, commandAt(record)]));
+  const recordsBySequence = new Map(trace.records.map(({ sequence, record }) => [sequence, record]));
   return timeline.operations.filter((op) => op.type === "tool")
-    .map((op) => ({ op, commands: [...new Set(op.evidence.map((sequence) => commandsBySequence.get(sequence)).filter(Boolean))] }))
+    .map((op) => {
+      const records = op.evidence.map((sequence) => recordsBySequence.get(sequence)).filter(Boolean);
+      return {
+        op,
+        commands: [...new Set(records.map(commandAt).filter(Boolean))],
+        privacyLimited: records.some((record) => (record.privacy ?? []).some((item) => COMMAND_PRIVACY.test(item))),
+      };
+    })
     .filter(({ commands }) => commands.includes(command))
-    .map(({ op, commands }) => ({ operation: op.id, strength: op.strength, state: op.state, result: commands.length === 1 ? operationResult(op) : "unknown", commandConflict: commands.length > 1, session: op.session, origin: op.origin, sequences: op.evidence }))
+    .map(({ op, commands, privacyLimited }) => ({ operation: op.id, strength: op.strength, state: op.state, result: commands.length === 1 && !privacyLimited ? operationResult(op) : "unknown", commandConflict: commands.length > 1, privacyLimited, session: op.session, origin: op.origin, sequences: op.evidence }))
     .sort((a, b) => a.sequences[0] - b.sequences[0]);
 }
 
@@ -53,23 +66,25 @@ function evidenceForCommand(command, timeline, trace, { afterSequence = 0, conte
     ? earlierFailures.map((item) => ({ failed: item.sequences, corrected: last.sequences }))
     : [];
   const events = [...new Set(observations.flatMap((item) => item.sequences))];
-  if (last.result === "negative") return { status: "contradicted", reasonCode: "matching_command_failed", events, corrections };
-  if (last.result === "positive" && last.strength === "native") return { status: "sufficient", reasonCode: "matching_command_succeeded", events, corrections };
-  return { status: "partial", reasonCode: last.commandConflict ? "command_conflict" : last.strength === "heuristic" ? "heuristic_operation" : "result_unconfirmed", events, corrections };
+  if (last.result === "negative") return { status: "contradicted", reasonCode: "matching_command_failed", events, corrections, context: contextOf(last) };
+  if (last.result === "positive" && last.strength === "native") return { status: "sufficient", reasonCode: "matching_command_succeeded", events, corrections, context: contextOf(last) };
+  return { status: "partial", reasonCode: last.commandConflict ? "command_conflict" : last.privacyLimited ? "command_privacy_limited" : last.strength === "heuristic" ? "heuristic_operation" : "result_unconfirmed", events, corrections, context: contextOf(last) };
 }
 
 function evidenceForCommands(commands, timeline, trace, options) {
   const evidence = commands.map((command) => evidenceForCommand(command, timeline, trace, options));
   if (evidence.length === 1) return evidence[0];
   const statuses = evidence.map((item) => item.status);
-  const status = statuses.includes("contradicted") ? "contradicted"
+  const differentContexts = new Set(evidence.map((item) => item.context).filter(Boolean)).size > 1;
+  const status = differentContexts ? "partial"
+    : statuses.includes("contradicted") ? "contradicted"
     : statuses.every((item) => item === "sufficient") ? "sufficient"
       : statuses.every((item) => item === "unobserved") ? "unobserved" : "partial";
   const reasonCode = {
     contradicted: "some_commands_failed",
     sufficient: "all_commands_succeeded",
     unobserved: "no_matching_observation",
-    partial: evidence.some((item) => item.reasonCode === "command_conflict") ? "command_conflict" : "commands_incomplete",
+    partial: differentContexts ? "commands_different_contexts" : evidence.some((item) => item.reasonCode === "command_conflict") ? "command_conflict" : evidence.some((item) => item.reasonCode === "command_privacy_limited") ? "command_privacy_limited" : "commands_incomplete",
   }[status];
   return {
     status,
@@ -83,6 +98,8 @@ function conditionalEvidence(instruction, timeline, trace) {
   const [trigger, ...actions] = instruction.commands;
   const [prefix, between] = (instruction.text ?? "").split(/`[^`]*`/);
   const conditionText = `${prefix ?? ""} ${between ?? ""}`;
+  const beforeAction = `${prefix ?? ""} ${(between ?? "").split(/\b(?:run|execute|rode|use|call|chame)\b/i)[0]}`;
+  if (/\b(?:or|ou|and|e)\b/i.test(beforeAction)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
   const fails = /\b(?:falh\w*|fail\w*|erro|error)\b/i.test(conditionText);
   const succeeds = /\b(?:pass\w*|succeed\w*|sucesso|success)\b/i.test(conditionText);
   if (!trigger || actions.length === 0 || fails === succeeds) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
@@ -107,16 +124,26 @@ function prohibitionEvidence(instruction, timeline, trace) {
   return { status: "inconclusive", reasonCode: "prohibition_uninterpreted", events: [...new Set(events)].sort((a, b) => a - b), corrections: [] };
 }
 
+function redactedEvidence(instruction, timeline, trace) {
+  if (instruction.commands.length === 0) return { status: "inconclusive", reasonCode: "command_redacted", events: [], corrections: [] };
+  const observed = evidenceForCommands(instruction.commands, timeline, trace);
+  if (observed.status === "contradicted") return observed;
+  return { ...observed, status: observed.status === "unobserved" ? "inconclusive" : "partial", reasonCode: "command_redacted" };
+}
+
 export function evaluateReport({ trace, skill }) {
   const timeline = correlateTrace(trace);
-  const omittedCommands = trace.records.flatMap(({ sequence, record }) => (record.privacy ?? [])
-    .filter((item) => /^(?:tool_input\.command|item\.command):unsanitizable$/.test(item))
-    .map((item) => ({ sequence, reason: item })));
+  const commandLimitations = trace.records.flatMap(({ sequence, record }) => (record.privacy ?? [])
+    .map((item) => ({ marker: item, reason: COMMAND_PRIVACY.exec(item)?.[1] }))
+    .filter((item) => item.reason !== undefined)
+    .map((item) => ({ text: PRIVACY_LIMIT_TEXT[item.reason], source: `evento #${sequence} privacy:${item.marker}` })));
   const evaluations = skill.instructions.map((instruction) => {
     const evidence = PROHIBITION.test(instruction.text ?? "")
       ? prohibitionEvidence(instruction, timeline, trace)
       : instruction.kind === "guidance"
       ? { status: "not_applicable", reasonCode: "guidance_not_step", events: [], corrections: [] }
+      : instruction.commandRedacted
+        ? redactedEvidence(instruction, timeline, trace)
       : instruction.kind === "condition"
         ? conditionalEvidence(instruction, timeline, trace)
         : instruction.commands.length > 0
@@ -153,7 +180,7 @@ export function evaluateReport({ trace, skill }) {
       { text: "Leitura ou referência a SKILL.md não comprova que o agente carregou as instruções.", source: "docs/traces.md" },
       { text: "Evidência de comando comprova apenas o resultado observado da ferramenta, não toda a intenção da instrução.", source: "docs/agent-observation.md" },
       ...(timeline.capture.content === false ? [{ text: "Conteúdo dos argumentos não foi coletado; comandos não podem ser comparados pela captura.", source: "timeline.capture.content" }] : []),
-      ...(omittedCommands.length > 0 ? [{ text: "A política omitiu o argumento de comando; essa operação não pode comprovar o comando literal.", source: omittedCommands.map((item) => `evento #${item.sequence} privacy:${item.reason}`).join(", ") }] : []),
+      ...commandLimitations,
       ...(timeline.coverage.partial ? [{ text: "Cobertura parcial da captura ou correlação; veja timeline.coverage.", source: "timeline.coverage" }] : []),
     ],
   };

@@ -23,6 +23,9 @@ const REASON = Object.freeze({
   all_commands_succeeded: "todos os comandos da instrução tiveram resultado positivo",
   commands_incomplete: "nem todos os comandos da instrução têm prova suficiente",
   command_conflict: "os argumentos do mesmo comando divergem entre eventos da operação",
+  command_privacy_limited: "a política omitiu, removeu ou truncou parte do argumento do comando",
+  command_redacted: "um comando literal da instrução teve conteúdo removido pela política",
+  commands_different_contexts: "os comandos foram observados em sessões ou origens distintas",
   prohibition_uninterpreted: "a proibição não foi interpretada como ação exigida",
   overlapping_attempts: "as tentativas do mesmo comando se sobrepõem; a ordem de correção é indeterminada",
 });
