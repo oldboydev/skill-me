@@ -174,10 +174,10 @@ export function evaluateReport({ trace, skill }) {
   });
   const bySource = new Map();
   for (const entry of timeline.entries) {
-    const key = `${entry.source.agent}/${entry.source.contract}`;
-    if (!bySource.has(key)) bySource.set(key, { agent: entry.source.agent, contract: entry.source.contract, platform: null, events: [] });
+    const platform = entry.fields.platform ?? null;
+    const key = JSON.stringify([entry.source.agent, entry.source.contract, platform]);
+    if (!bySource.has(key)) bySource.set(key, { agent: entry.source.agent, contract: entry.source.contract, platform, events: [] });
     const source = bySource.get(key);
-    source.platform ??= entry.fields.platform ?? null;
     source.events.push(entry.sequence);
   }
   const environment = [...bySource.values()];

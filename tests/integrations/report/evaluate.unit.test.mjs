@@ -62,6 +62,14 @@ test("T7-C5 condição aninhada falsa não altera a ação anterior", () => {
   assert.deepEqual(report.evaluations.map((item) => item.sources.events), [[1, 2], [1, 2]]);
 });
 
+test("T7-C5 condição aninhada após linha em branco conserva fonte própria", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n\n    - If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["sufficient", "not_applicable"]);
+  assert.deepEqual(report.evaluations.map((item) => item.sources.skill.line), [1, 3]);
+  assert.deepEqual(report.evaluations.map((item) => item.sources.events), [[1, 2], [1, 2]]);
+});
+
 test("T7-C5 falha de comando com vínculo heurístico não vira contradição", () => {
   const trace = buildTrace([
     { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "it1" }, fields: { phase: "started", itemType: "command_execution" }, content: { fields: [{ field: "item.command", role: "args", kind: "text", value: "npm test" }] } },

@@ -21,6 +21,26 @@ test("T7-C7 texto e Markdown citam eventos e skill, versões e limites, sem perc
   assert.deepEqual(json.evaluations[0].sources.skill, { sha256: skill.sha256, line: 2 });
 });
 
+test("T7-C7 plataformas diferentes citam apenas seus próprios eventos", () => {
+  const trace = buildTrace([
+    { src: "hermes", kind: "session_start", ids: { sessionId: "s1" }, fields: { platform: "win32" } },
+    { src: "hermes", kind: "session_start", ids: { sessionId: "s2" }, fields: { platform: "linux" } },
+  ]);
+  const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "f".repeat(64), instructions: [] };
+  const report = evaluateReport({ trace, skill });
+  const contract = trace.records[0].record.envelope.source.contract;
+  assert.deepEqual(report.environment, [
+    { agent: "hermes", contract, platform: "win32", events: [1] },
+    { agent: "hermes", contract, platform: "linux", events: [2] },
+  ]);
+  for (const format of ["text", "markdown"]) {
+    const output = renderReport(report, format);
+    assert.match(output, /plataforma win32; fonte: evento #1/);
+    assert.match(output, /plataforma linux; fonte: evento #2/);
+  }
+  assert.deepEqual(JSON.parse(renderReport(report, "json")).environment, report.environment);
+});
+
 test("T7-C7 erro, correção e lacuna aparecem na explicação com fontes observadas", () => {
   const command = { fields: [{ field: "tool_input.command", role: "args", kind: "text", value: "npm test" }] };
   const trace = buildTrace([

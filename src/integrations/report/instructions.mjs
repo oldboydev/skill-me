@@ -34,6 +34,7 @@ export function parseInstructions(source) {
   let frontmatter = lines[0]?.trim() === "---";
   let active = null;
   let activeRaw = "";
+  let listIndent = null;
   for (const [index, line] of lines.entries()) {
     if (frontmatter) {
       if (index > 0 && line.trim() === "---") frontmatter = false;
@@ -43,19 +44,23 @@ export function parseInstructions(source) {
     if (fenceMatch) {
       active = null;
       const marker = fenceMatch[1];
-      if (fence === null) fence = { character: marker[0], length: marker.length };
-      else if (fence.character === marker[0] && marker.length >= fence.length && fenceMatch[2].trim() === "") fence = null;
+      if (fence === null) {
+        if (listIndent === null || line.indexOf(marker) <= listIndent) listIndent = null;
+        fence = { character: marker[0], length: marker.length };
+      } else if (fence.character === marker[0] && marker.length >= fence.length && fenceMatch[2].trim() === "") fence = null;
       continue;
     }
     if (fence !== null) continue;
     const title = HEADING.exec(line);
     if (title) {
       active = null;
+      listIndent = null;
       heading = safeText(title[1].trim());
       continue;
     }
     const item = LIST_ITEM.exec(line);
-    if (item && (item[1].length <= 3 || active !== null)) {
+    if (item && (item[1].length <= 3 || (listIndent !== null && item[1].length >= listIndent))) {
+      listIndent = item[1].length;
       activeRaw = item[2].trim().replace(CHECKBOX, "");
       const kind = CONDITIONAL.test(activeRaw) ? "condition" : VALIDATION.test(activeRaw) ? "validation" : ACTION.test(activeRaw) ? "action" : "guidance";
       const extracted = commandsIn(activeRaw);
@@ -70,6 +75,8 @@ export function parseInstructions(source) {
       active.commandRedacted ||= extracted.redacted;
     } else {
       active = null;
+      // Uma linha vazia pode separar o item pai de um subitem Markdown.
+      if (line.trim() !== "") listIndent = null;
     }
   }
   return instructions;

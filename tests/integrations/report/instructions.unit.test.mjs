@@ -60,3 +60,14 @@ test("T7-C2 item aninhado recebe tipo e linha próprios", () => {
     [2, "condition", ["npm test", "npm run fix"]],
   ]);
 });
+
+test("T7-C2 linha em branco preserva o contexto de sublista", () => {
+  const source = "- Run `npm test`.\n\n    - If `npm test` fails, run `npm run fix`.\n";
+  assert.deepEqual(parseInstructions(source).map((item) => [item.line, item.kind, item.commands]), [
+    [1, "action", ["npm test"]],
+    [3, "condition", ["npm test", "npm run fix"]],
+  ]);
+  assert.deepEqual(parseInstructions("    - Run `npm run fix`.\n"), []);
+  const afterExample = "- Run `npm test`.\n    ```sh\n    echo exemplo\n    ```\n    - If `npm test` fails, run `npm run fix`.\n";
+  assert.deepEqual(parseInstructions(afterExample).map((item) => [item.line, item.kind]), [[1, "action"], [5, "condition"]]);
+});
