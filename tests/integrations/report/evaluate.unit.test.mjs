@@ -82,6 +82,13 @@ test("T7-C5 todos os comandos positivos são suficientes; falha em um contradiz 
   assert.deepEqual(report.evaluations[1].sources.events, [1, 2, 5, 6]);
 });
 
+test("T7-C5 script bash literal observado é comparado sem executar a referência", () => {
+  const trace = buildTrace([pre("verify", "bash ./verify.sh"), post("verify", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `bash ./verify.sh`.\n") });
+  assert.deepEqual(states(report), ["sufficient"]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
 test("T7-C6 falha anterior mantém condição verdadeira e ação precisa vir depois", () => {
   const trace = buildTrace([
     pre("fix-early", "npm run fix"), post("fix-early", "success"),
@@ -124,4 +131,14 @@ test("T7-C6 proibição condicional não recebe suficiente pela ação proibida"
   const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, do not run `npm deploy`.\n- Do not run `npm deploy`.\n") });
   assert.deepEqual(states(report), ["inconclusive", "inconclusive"]);
   assert.ok(report.evaluations.every((item) => item.reasonCode === "prohibition_uninterpreted"));
+});
+
+test("T7-C6 palavra failure no comando da ação não altera condição succeeds", () => {
+  const trace = buildTrace([
+    pre("test", "npm test"), post("test", "success"),
+    pre("report", "npm run failure-report"), post("report", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` succeeds, run `npm run failure-report`.\n") });
+  assert.deepEqual(states(report), ["sufficient"]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
 });

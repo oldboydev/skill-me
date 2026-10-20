@@ -44,3 +44,18 @@ test("T7-C7 nome observado cita evento e marca vínculo heurístico", () => {
     assert.match(output, /nome observado.*evento #1.*hipótese/);
   }
 });
+
+test("T7-C7 operação Codex exibe exitCode negativo e captura sem conteúdo explica a lacuna", () => {
+  const trace = buildTrace([
+    { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "it1" }, fields: { phase: "started", itemType: "command_execution" } },
+    { src: "codexExec", kind: "item", native: "item.completed", ids: { itemId: "it1" }, fields: { phase: "completed", itemType: "command_execution", status: "completed", exitCode: 1 } },
+  ]);
+  const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "e".repeat(64), instructions: [] };
+  const report = evaluateReport({ trace, skill });
+  assert.ok(report.limitations.some((item) => item.source === "timeline.capture.content"));
+  for (const format of ["text", "markdown"]) {
+    const output = renderReport(report, format);
+    assert.match(output, /completed.*exit 1.*evento #1.*evento #2/);
+    assert.match(output, /conteúdo.*argumentos.*não.*coletado/i);
+  }
+});

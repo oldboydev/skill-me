@@ -79,8 +79,10 @@ function evidenceForCommands(commands, timeline, trace, options) {
 
 function conditionalEvidence(instruction, timeline, trace) {
   const [trigger, ...actions] = instruction.commands;
-  const fails = /\b(?:falh\w*|fail\w*|erro|error)\b/i.test(instruction.text ?? "");
-  const succeeds = /\b(?:pass\w*|succeed\w*|sucesso|success)\b/i.test(instruction.text ?? "");
+  const [prefix, between] = (instruction.text ?? "").split(/`[^`]*`/);
+  const conditionText = `${prefix ?? ""} ${between ?? ""}`;
+  const fails = /\b(?:falh\w*|fail\w*|erro|error)\b/i.test(conditionText);
+  const succeeds = /\b(?:pass\w*|succeed\w*|sucesso|success)\b/i.test(conditionText);
   if (!trigger || actions.length === 0 || fails === succeeds) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
   const observations = commandObservations(trigger, timeline, trace);
   if (multipleContexts(observations)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: observations.flatMap((item) => item.sequences), corrections: [] };
@@ -145,6 +147,7 @@ export function evaluateReport({ trace, skill }) {
       { text: "Ausência de evento não prova omissão.", source: "docs/traces.md" },
       { text: "Leitura ou referência a SKILL.md não comprova que o agente carregou as instruções.", source: "docs/traces.md" },
       { text: "Evidência de comando comprova apenas o resultado observado da ferramenta, não toda a intenção da instrução.", source: "docs/agent-observation.md" },
+      ...(timeline.capture.content === false ? [{ text: "Conteúdo dos argumentos não foi coletado; comandos não podem ser comparados pela captura.", source: "timeline.capture.content" }] : []),
       ...(timeline.coverage.partial ? [{ text: "Cobertura parcial da captura ou correlação; veja timeline.coverage.", source: "timeline.coverage" }] : []),
     ],
   };

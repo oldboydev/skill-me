@@ -56,7 +56,7 @@ function timelineLines(report, markdown) {
 
 function operationLines(report, markdown) {
   return report.timeline.operations.map((op) => {
-    const result = op.outcome ?? op.status ?? (op.exitCode === null || op.exitCode === undefined ? "sem resultado" : `exit ${op.exitCode}`);
+    const result = [op.outcome ?? op.status, op.exitCode === null || op.exitCode === undefined ? null : `exit ${op.exitCode}`].filter(Boolean).join("; ") || "sem resultado";
     const error = op.errorType === null || op.errorType === undefined ? "" : `; erro ${op.errorType}`;
     const hypothesis = op.strength === "heuristic" ? "; hipótese de vínculo" : op.strength === "inconclusive" ? "; vínculo inconclusivo" : "";
     const line = `${op.id}: ${op.type}, ${op.state}, ${result}${error}${hypothesis}; fonte: ${citeEvents(op.evidence)}.`;
