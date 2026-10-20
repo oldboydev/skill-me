@@ -66,7 +66,7 @@ function evidenceForCommand(command, timeline, trace, { afterSequence = 0, conte
     ? earlierFailures.map((item) => ({ failed: item.sequences, corrected: last.sequences }))
     : [];
   const events = [...new Set(observations.flatMap((item) => item.sequences))];
-  if (last.result === "negative") return { status: "contradicted", reasonCode: "matching_command_failed", events, corrections, context: contextOf(last) };
+  if (last.result === "negative" && last.strength === "native") return { status: "contradicted", reasonCode: "matching_command_failed", events, corrections, context: contextOf(last) };
   if (last.result === "positive" && last.strength === "native") return { status: "sufficient", reasonCode: "matching_command_succeeded", events, corrections, context: contextOf(last) };
   return { status: "partial", reasonCode: last.commandConflict ? "command_conflict" : last.privacyLimited ? "command_privacy_limited" : last.strength === "heuristic" ? "heuristic_operation" : "result_unconfirmed", events, corrections, context: contextOf(last) };
 }
@@ -125,6 +125,7 @@ function prohibitionEvidence(instruction, timeline, trace) {
 }
 
 function redactedEvidence(instruction, timeline, trace) {
+  if (instruction.kind === "condition") return { status: "inconclusive", reasonCode: "command_redacted", events: [], corrections: [] };
   if (instruction.commands.length === 0) return { status: "inconclusive", reasonCode: "command_redacted", events: [], corrections: [] };
   const observed = evidenceForCommands(instruction.commands, timeline, trace);
   if (observed.status === "contradicted") return observed;

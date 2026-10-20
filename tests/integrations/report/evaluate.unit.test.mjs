@@ -39,6 +39,17 @@ test("T7-C5 comando literal: resultado nativo, parcial, negativo e silêncio; le
   assert.ok(report.limitations.some((item) => item.text.includes("não comprova")));
 });
 
+test("T7-C5 falha de comando com vínculo heurístico não vira contradição", () => {
+  const trace = buildTrace([
+    { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "it1" }, fields: { phase: "started", itemType: "command_execution" }, content: { fields: [{ field: "item.command", role: "args", kind: "text", value: "npm test" }] } },
+    { src: "codexExec", kind: "item", native: "item.completed", ids: { itemId: "it1" }, fields: { phase: "completed", itemType: "command_execution", status: "completed", exitCode: 1 } },
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "heuristic_operation");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
 test("T7-C6 condição falsa explícita, desconhecida e erro corrigido preservando ambas as sequências", () => {
   const trace = buildTrace([
     pre("check", "npm test"), post("check", "success"),
@@ -202,4 +213,12 @@ test("T7-C6 condição com dois gatilhos alternativos não é declarada falsa pe
   const report = evaluateReport({ trace, skill: skill("- If `npm test` fails or `npm run lint` fails, run `npm run fix`.\n") });
   assert.deepEqual(states(report), ["inconclusive"]);
   assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
+});
+
+test("T7-C6 condição com gatilho removido não é contradita pela ação isolada", () => {
+  const trace = buildTrace([pre("fix", "npm run fix"), post("fix", "failure")]);
+  const report = evaluateReport({ trace, skill: skill("- If `bash /home/alice/check.sh` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "command_redacted");
+  assert.deepEqual(report.evaluations[0].sources.events, []);
 });
