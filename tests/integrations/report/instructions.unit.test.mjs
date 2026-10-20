@@ -116,3 +116,8 @@ test("T7-C2 texto longo preserva a cláusula que liga comandos alternativos", ()
   assert.deepEqual(instruction.commands, ["npm test", "npm run build"]);
   assert.match(instruction.text, /or `npm run build`\.$/);
 });
+
+test("T7-C2 comando literal longo conserva o valor completo para comparação", () => {
+  const command = `node ${"x".repeat(1001)}`;
+  assert.deepEqual(parseInstructions(`- Run \`${command}\`.\n`)[0].commands, [command]);
+});

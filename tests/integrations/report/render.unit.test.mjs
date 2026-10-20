@@ -22,7 +22,10 @@ test("T7-C7 texto e Markdown citam eventos e skill, versões e limites, sem perc
 });
 
 test("T7-C7 alternativa de comandos aparece como escolha inconclusiva nos formatos", () => {
-  const trace = buildTrace([]);
+  const trace = buildTrace([
+    { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "test" }, fields: { toolName: "Bash" }, content: { fields: [{ field: "tool_input.command", role: "args", kind: "text", value: "npm test" }] } },
+    { src: "claude", kind: "tool_post", ids: { sessionId: "s1", toolUseId: "test" }, fields: { toolName: "Bash", outcome: "failure" } },
+  ]);
   const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "b".repeat(64), instructions: parseInstructions("- Run `npm test` or `npm run build`.\n") };
   const report = evaluateReport({ trace, skill });
   assert.equal(report.evaluations[0].status, "inconclusive");
@@ -31,6 +34,14 @@ test("T7-C7 alternativa de comandos aparece como escolha inconclusiva nos format
     assert.ok(output.includes("a instrução permite comandos alternativos"), format);
   }
   assert.equal(JSON.parse(renderReport(report, "json")).evaluations[0].reasonCode, "alternative_commands_unresolved");
+});
+
+test("T7-C7 alternativas sem observação são descritas como lacuna nos formatos", () => {
+  const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "b".repeat(64), instructions: parseInstructions("- Run `npm test` or `npm run build`.\n") };
+  const report = evaluateReport({ trace: buildTrace([]), skill });
+  assert.equal(report.evaluations[0].status, "unobserved");
+  for (const format of ["text", "markdown"]) assert.ok(renderReport(report, format).includes("nenhum comando correspondente foi observado"), format);
+  assert.equal(JSON.parse(renderReport(report, "json")).evaluations[0].reasonCode, "no_matching_observation");
 });
 
 test("T7-C7 plataformas diferentes citam apenas seus próprios eventos", () => {

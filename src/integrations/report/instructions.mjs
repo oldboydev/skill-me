@@ -13,7 +13,7 @@ const COMMAND_SHAPE = /(?:^|\s)(?:--?[\w-]+|\.\/[\w./-]+|\.)(?=\s|$)/;
 const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+(.+)$/;
 const CHECKBOX = /^\[(?: |x|X)\]\s+/;
 const HEADING = /^#{1,6}\s+(.+)$/;
-const CODE_SPAN = /`([^`\r\n]{1,300})`/g;
+const CODE_SPAN = /`([^`\r\n]+)`/g;
 
 function safeText(raw) {
   const result = sanitizeText(raw);
@@ -41,7 +41,7 @@ function commandsIn(line, prefix = "", priorTail = null) {
     if (!isCommandSpan(match, line, prefix, bridge)) continue;
     const result = sanitizeText(match[1].trim());
     if (!result.ok || result.removed || result.text.includes("[removido]")) found.redacted = true;
-    else found.commands.push(result.text.slice(0, 1000));
+    else found.commands.push(result.text);
     found.tail = "";
     cursor = match.index + match[0].length;
   }

@@ -122,6 +122,7 @@ function hasAlternativeCommands(instruction, firstCommand = 0) {
 
 function alternativeCommandEvidence(instruction, timeline, trace) {
   const observed = evidenceForCommands(instruction.commands, timeline, trace);
+  if (observed.status === "unobserved") return observed;
   return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events: observed.events, corrections: [] };
 }
 
@@ -147,8 +148,9 @@ function conditionalEvidence(instruction, timeline, trace) {
   }
   const triggerResult = matching.reduce((latest, item) => item.sequences.at(-1) > latest.sequences.at(-1) ? item : latest);
   const actionEvidence = evidenceForCommands(actions, timeline, trace, { afterSequence: triggerResult.sequences.at(-1), context: contextOf(triggerResult) });
+  if (actionEvidence.status === "unobserved") return { ...actionEvidence, events: triggerResult.sequences, reasonCode: "condition_true_action_unobserved" };
   if (hasAlternativeCommands(instruction, 1)) return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], corrections: [] };
-  return { ...actionEvidence, events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], reasonCode: actionEvidence.status === "unobserved" ? "condition_true_action_unobserved" : actionEvidence.reasonCode };
+  return { ...actionEvidence, events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])] };
 }
 
 function prohibitionEvidence(instruction, timeline, trace) {

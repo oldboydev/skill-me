@@ -255,6 +255,27 @@ test("T7-C5 alternativa após texto longo mantém julgamento inconclusivo", () =
   assert.match(report.evaluations[0].text, /or `npm run build`\.$/);
 });
 
+test("T7-C5 comando literal acima de 300 caracteres usa resultado e fontes nativas", () => {
+  const command = `node ${"x".repeat(298)}`;
+  const trace = buildTrace([pre("long", command), post("long", "success")]);
+  const report = evaluateReport({ trace, skill: skill(`- Run \`${command}\`.\n`) });
+  assert.deepEqual(states(report), ["sufficient"]);
+  assert.equal(report.evaluations[0].reasonCode, "matching_command_succeeded");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
+test("T7-C5 alternativas sem observação preservam ausência e fonte da condição", () => {
+  const source = "- Run `npm test` or `npm run build`.\n- If `npm test` fails, run `npm run fix` or `npm run retry`.\n";
+  const noEvents = evaluateReport({ trace: buildTrace([]), skill: skill(source) });
+  assert.deepEqual(states(noEvents), ["unobserved", "inconclusive"]);
+  assert.equal(noEvents.evaluations[0].reasonCode, "no_matching_observation");
+  assert.deepEqual(noEvents.evaluations[0].sources.events, []);
+  const triggered = evaluateReport({ trace: buildTrace([pre("test", "npm test"), post("test", "failure")]), skill: skill(source) });
+  assert.equal(triggered.evaluations[1].status, "unobserved");
+  assert.equal(triggered.evaluations[1].reasonCode, "condition_true_action_unobserved");
+  assert.deepEqual(triggered.evaluations[1].sources.events, [1, 2]);
+});
+
 test("T7-C5 script bash literal observado é comparado sem executar a referência", () => {
   const trace = buildTrace([pre("verify", "bash ./verify.sh"), post("verify", "success")]);
   const report = evaluateReport({ trace, skill: skill("- Run `bash ./verify.sh`.\n") });
