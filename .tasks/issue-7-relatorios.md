@@ -37,7 +37,7 @@ O usuário consulta uma captura local com uma skill identificada pelo nome obser
 ## Out of scope
 
 - LLM, dashboard, `step`, telemetria, instalação global, publicação e merge — entregas posteriores ou não autorizadas.
-- Alterar envelope, política de privacidade, store ou correlação da #6 — contratos existentes são fonte única.
+- Alterar envelope, política de privacidade ou correlação da #6 — contratos existentes são fonte única. A [exceção aprovada após a 20ª revisão](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6300606867) permite somente acrescentar ao store uma API de snapshot sem escrita para o relatório, preservando os comandos e contratos existentes.
 - Interpretar Markdown arbitrário ou provar semântica de texto livre — a leitura de listas é conservadora.
 
 ## Observable
@@ -67,7 +67,7 @@ O usuário consulta uma captura local com uma skill identificada pelo nome obser
 | Front | What changes |
 | --- | --- |
 | domain | `evaluation` significa julgamento de uma instrução com fonte e evidência, distinto de operação e de invocação da #6. |
-| integrations | novo comando de leitura; `privacy timeline` e schemas existentes mantêm significado. |
+| integrations | novo comando de leitura; `privacy timeline` e schemas existentes mantêm significado. A API adicional de snapshot sem lock atende ao check 8 sem mudar exportações existentes. |
 | stored data | nenhuma migração nem arquivo novo por execução; Markdown/JSON saem em stdout. |
 | governance | `package.json` continua privado; motor de revisão vendorizado intocado. |
 

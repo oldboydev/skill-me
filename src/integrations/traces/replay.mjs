@@ -1,6 +1,6 @@
 import { deepFreeze } from "../memory-receiver.mjs";
 import { createStoreIo } from "../privacy/fs.mjs";
-import { exportCapture } from "../privacy/store.mjs";
+import { exportCapture, readCaptureSnapshot } from "../privacy/store.mjs";
 
 // Releitura local de uma captura para um consumidor analítico (issue #8,
 // crit. 11). Só o store é lido — os mesmos registros sanitizados do
@@ -10,8 +10,15 @@ import { exportCapture } from "../privacy/store.mjs";
 // estado, os contadores e os limites da captura; nunca a chave nem caminhos.
 // Correlação, timeline e relatório são da #6/#7: nada disso é calculado aqui.
 
-export async function replayCapture({ root, id, consumer, io = createStoreIo() }) {
-  const { capture, records } = await exportCapture({ root, id, io });
+function consumeSnapshot({ capture, records }, consumer) {
   const trace = deepFreeze({ capture, records: records.map((record, index) => ({ sequence: index + 1, record })) });
   return consumer(trace);
+}
+
+export async function replayCapture({ root, id, consumer, io = createStoreIo() }) {
+  return consumeSnapshot(await exportCapture({ root, id, io }), consumer);
+}
+
+export async function replayCaptureReadOnly({ root, id, consumer, io = createStoreIo() }) {
+  return consumeSnapshot(await readCaptureSnapshot({ root, id, io }), consumer);
 }

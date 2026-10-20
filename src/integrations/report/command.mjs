@@ -1,7 +1,7 @@
 import { parsePrivacyArgs, PrivacyUsageError } from "../privacy/args.mjs";
 import { StoreError } from "../privacy/store.mjs";
 import { createStoreIo } from "../privacy/fs.mjs";
-import { replayCapture } from "../traces/replay.mjs";
+import { replayCaptureReadOnly } from "../traces/replay.mjs";
 import { correlateTrace } from "../correlation/timeline.mjs";
 import { readSkillSource, SkillSourceError } from "./skill-source.mjs";
 import { evaluateReport } from "./evaluate.mjs";
@@ -59,7 +59,7 @@ export async function runReportCommand({ argv, io = createStoreIo(), cwd = proce
     return failure(error instanceof PrivacyUsageError ? error.code : "unknown_flag", 2);
   }
   try {
-    const report = await replayCapture({
+    const report = await replayCaptureReadOnly({
       root: args.root,
       id: args.capture,
       io,

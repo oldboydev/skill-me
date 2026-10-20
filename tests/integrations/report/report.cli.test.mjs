@@ -40,6 +40,20 @@ test("T7-C8 texto, Markdown e JSON v1 refletem a mesma consulta sanitizada sem m
   assert.equal(readFileSync(target.skill, "utf8"), "# Fluxo\n- Run `npm test`.\n");
 });
 
+test("T7-C8 consulta de captura legível não solicita escrita nem lock", async () => {
+  const target = setup();
+  let writes = 0;
+  const io = {
+    ...createStoreIo(),
+    writeExclusive: async () => { writes += 1; throw new Error("write refused"); },
+  };
+  for (const format of ["text", "markdown", "json"]) {
+    const result = await runReportCommand({ argv: args(target, format).slice(1), io });
+    assert.equal(result.exitCode, 0, result.output);
+  }
+  assert.equal(writes, 0);
+});
+
 test("T7-C9 erros de uso, skill/captura, lock e E/S têm códigos fechados sem eco", async () => {
   const target = setup();
   const canary = "SKILLME-CANARY-secret";

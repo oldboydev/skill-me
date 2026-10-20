@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { runPrivacyCommand } from "../../../src/integrations/privacy/command.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
 import { PRIVACY_LIMITS } from "../../../src/integrations/privacy/lifecycle.mjs";
-import { appendRecords, StoreError } from "../../../src/integrations/privacy/store.mjs";
+import { appendRecords, readCaptureSnapshot, StoreError } from "../../../src/integrations/privacy/store.mjs";
 import { makeScratch } from "../helpers/cli.mjs";
 import { appendSanitized, recordLineBytes, sanitizedRecord, startIn } from "../helpers/privacy-store.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
@@ -22,6 +22,43 @@ const command = (argv) => runPrivacyCommand({ argv });
 async function rejects(promise, code) {
   await assert.rejects(promise, (error) => error instanceof StoreError && error.code === code);
 }
+
+test("T7-C8 snapshot do store lê registros sem solicitar escrita", async () => {
+  const root = makeScratch("t7 c8 snapshot");
+  const id = await startIn(root);
+  const before = snapshotTree(root);
+  let writes = 0;
+  const io = { ...createStoreIo(), writeExclusive: async () => { writes += 1; throw new Error("write refused"); } };
+  const snapshot = await readCaptureSnapshot({ root, id, io });
+  assert.equal(snapshot.capture.id, id);
+  assert.deepEqual(snapshot.records, []);
+  assert.equal(writes, 0);
+  assert.deepEqual(snapshotTree(root), before);
+});
+
+test("T7-C8 snapshot do store recusa estado alterado durante a leitura", async () => {
+  const root = makeScratch("t7 c8 concurrent");
+  const id = await startIn(root);
+  const stateFile = path.join(captureDir(root, id), "state.json");
+  const base = createStoreIo();
+  let changed = false;
+  const io = {
+    ...base,
+    async readBounded(file, maxBytes) {
+      const bytes = await base.readBounded(file, maxBytes);
+      if (file === stateFile && !changed) {
+        changed = true;
+        const state = JSON.parse(bytes.toString("utf8"));
+        state.counters.malformed += 1;
+        writeFileSync(stateFile, JSON.stringify(state));
+      }
+      return bytes;
+    },
+    writeExclusive: async () => { throw new Error("snapshot attempted write"); },
+  };
+  await rejects(readCaptureSnapshot({ root, id, io }), "lock_present");
+  assert.equal(changed, true);
+});
 
 test("I5-C42s captura stopped ou disabled recusa novos registros sem mudar a árvore", async () => {
   const root = makeScratch("i5 c42s");

@@ -1,6 +1,8 @@
 # Relatório local de execução (issue #7)
 
-`integrations report` lê uma captura existente pelo mesmo store de `privacy timeline`, correlaciona os registros sanitizados e compara comandos **literais** de itens de lista de uma skill. Não inicia o agente, não executa comandos mencionados no `SKILL.md`, não acessa rede e não grava relatório automaticamente.
+`integrations report` lê uma captura existente pelo mesmo store de `privacy timeline`, correlaciona os registros sanitizados e compara comandos **literais** de itens de lista de uma skill. A consulta não cria `.lock` nem escreve arquivos: confere o estado da captura antes e depois dos registros e devolve conflito se houver lock ou mudança durante a leitura. Não inicia o agente, não executa comandos mencionados no `SKILL.md` e não acessa rede.
+
+Se uma alternativa for removida pela política, o motivo `command_redacted` expõe essa limitação. Quando a política omite o texto inteiro, a falha de um comando ainda visível também não autoriza acusar contradição. Se nenhuma alternativa foi observada, a avaliação distingue essa lacuna da escolha inconclusiva.
 
 ```sh
 node src/integrations/cli.mjs report --root <diretório> --capture <id> --skill <caminho/para/SKILL.md>

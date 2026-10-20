@@ -386,6 +386,24 @@ export function exportCapture({ root, id, io = createStoreIo() }) {
   });
 }
 
+// O relatório precisa consultar capturas arquivadas sem criar .lock. A leitura
+// confere estado e lock antes e depois do segmento; uma escrita concorrente
+// que altere o snapshot é exposta como conflito, sem combinar versões.
+export function readCaptureSnapshot({ root, id, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openExisting(root, io);
+    const lockPath = path.join(ctx.storeDir, LOCK_FILE);
+    if ((await entryKind(io, lockPath)) !== "missing") throw new StoreError("lock_present");
+    await assertUnchanged(ctx);
+    const { dir, state } = await readCapture(ctx, id);
+    const records = await readRecords(io, dir, state);
+    const current = await readCapture(ctx, id);
+    await assertUnchanged(ctx);
+    if ((await entryKind(io, lockPath)) !== "missing" || !isDeepStrictEqual(state, current.state)) throw new StoreError("lock_present");
+    return { capture: publicCapture(state), records };
+  });
+}
+
 // Sondagem do `privacy follow` (#8, crit. 7): estado sempre; segmento só
 // quando há registros além dos `seen` já entregues. Os registros só crescem
 // no fim do segmento, então os `seen` primeiros são os já entregues.
