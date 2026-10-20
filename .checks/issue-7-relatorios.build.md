@@ -22,9 +22,11 @@ O proprietário autorizou em 20/10/2026 uma quarta verificação independente, a
 
 A terceira revisão identificou comando literal `bash ./verify.sh` ignorado, palavra `failure` no nome da ação alterando a leitura de uma condição `succeeds`, operação Codex `completed` com `exitCode: 1` sem exibir o código de saída, e captura sem conteúdo sem limitação explícita no relatório. As três regressões de teste acrescentadas (uma delas cobrindo os dois últimos achados) falharam no código revisado: 13 passes e 3 falhas no lote red. Após as correções, o lote green específico passou 25/25, sem skip. A documentação de uso foi alinhada aos quatro comportamentos. A prova da suíte completa atualizada está registrada acima.
 
-As três tentativas formais disponíveis foram usadas. A quarta verificação cobre o commit anterior à correção atual; não há `.verified.md` nem revisão formal aprovada para o novo conteúdo. Uma quinta verificação independente e quarta revisão formal exigem autorização específica do proprietário e registro na issue antes de PR ou merge.
+As três tentativas formais anteriores foram usadas. A quarta verificação cobre o commit anterior à correção atual; não há `.verified.md` nem revisão formal aprovada para o novo conteúdo. O proprietário autorizou especificamente a quinta verificação independente e a quarta revisão formal em 20/10/2026 ([registro na issue #7](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6292762034)). O override exclusivo da #7 eleva o teto formal a 4, preservando as três tentativas anteriores; PR e merge continuam condicionados aos gates.
 
 Após registrar o override, `npm run test:governance` passou 6/6 fora do sandbox e `npm run test:code-review` passou 16/16. A execução inicial de governança dentro do sandbox falhou ao criar o repositório Git temporário (`Permission denied` no Temp isolado); a repetição fora dele executou o mesmo teste e passou. O JSON da configuração foi lido pelo runner de revisão sem erro.
+
+Após elevar o override da #7 a quatro tentativas com nova autorização, `npm run test:governance` passou novamente 6/6 e `npm run test:code-review` passou 16/16, ambos fora do sandbox; a exportação atualizada do contexto da issue foi validada como JSON.
 
 ## Decisões e limites
 
