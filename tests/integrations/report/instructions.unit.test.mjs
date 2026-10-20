@@ -95,3 +95,10 @@ test("T7-C2 referência entre crases não vira comando adicional", () => {
     ["curl --version"], ["npm test", "docker build ."], ["curl", "npm run fix"], ["curl --version"], [], ["npm run fix"],
   ]);
 });
+
+test("T7-C2 referência parentética entre comandos não oculta o segundo", () => {
+  const source = "- Run `curl --version` (see `expected output`) and\n  `docker build .`.\n";
+  assert.deepEqual(parseInstructions(source).map((item) => item.commands), [
+    ["curl --version", "docker build ."],
+  ]);
+});

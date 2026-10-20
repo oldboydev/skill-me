@@ -99,6 +99,22 @@ test("T7-C5 referência textual não rebaixa prova de curl observada", () => {
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
 });
 
+test("T7-C5 referência parentética não oculta segundo comando sem prova", () => {
+  const trace = buildTrace([pre("curl", "curl --version"), post("curl", "success")]);
+  const source = "- Run `curl --version` (see `expected output`) and\n  `docker build .`.\n";
+  const report = evaluateReport({ trace, skill: skill(source) });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "commands_incomplete");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+  const complete = buildTrace([
+    pre("curl", "curl --version"), post("curl", "success"),
+    pre("docker", "docker build ."), post("docker", "success"),
+  ]);
+  const completeReport = evaluateReport({ trace: complete, skill: skill(source) });
+  assert.deepEqual(states(completeReport), ["sufficient"]);
+  assert.deepEqual(completeReport.evaluations[0].sources.events, [1, 2, 3, 4]);
+});
+
 test("T7-C5 falha de comando com vínculo heurístico não vira contradição", () => {
   const trace = buildTrace([
     { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "it1" }, fields: { phase: "started", itemType: "command_execution" }, content: { fields: [{ field: "item.command", role: "args", kind: "text", value: "npm test" }] } },

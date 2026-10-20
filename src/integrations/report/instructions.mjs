@@ -29,7 +29,7 @@ function isCommandSpan(match, line, prefix, bridge) {
   const after = line.slice(match.index + match[0].length);
   return COMMAND_LEAD.test(before)
     || (strong && COMMAND_CHECK.test(before))
-    || (strong && bridge !== null && COMMAND_COORDINATION.test(bridge))
+    || (strong && bridge !== null && COMMAND_COORDINATION.test(bridge.replace(/\([^()]*\)/g, "")))
     || ((strong || EXECUTABLE.test(value)) && CONDITIONAL.test(`${prefix}${line}`.trim()) && /\b(?:fails?|succeeds?|passes?|falha|passa)\b/i.test(after));
 }
 
