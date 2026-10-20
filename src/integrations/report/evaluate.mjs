@@ -131,6 +131,10 @@ function alternativeCommandEvidence(instruction, timeline, trace) {
 
 function conditionalEvidence(instruction, timeline, trace) {
   const [trigger, ...actions] = instruction.commands;
+  // Se o primeiro trecho citado não foi reconhecido como comando, os comandos
+  // restantes podem pertencer apenas à ação; nenhum deles prova o gatilho.
+  const firstSpan = /`([^`\r\n]+)`/.exec(instruction.text ?? "")?.[1].trim();
+  if (firstSpan !== trigger) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
   const [prefix, between] = (instruction.text ?? "").split(/`[^`]*`/);
   const conditionText = `${prefix ?? ""} ${between ?? ""}`;
   const beforeAction = `${prefix ?? ""} ${(between ?? "").split(/\b(?:run|execute|rode|use|call|chame)\b/i)[0]}`;

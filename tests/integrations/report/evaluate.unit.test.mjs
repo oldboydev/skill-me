@@ -138,6 +138,14 @@ test("T7-C6 condição falsa explícita, desconhecida e erro corrigido preservan
   assert.deepEqual(report.evaluations[2].corrections, [{ failed: [3, 4], corrected: [5, 6] }]);
 });
 
+test("T7-C6 referência textual no gatilho não usa o sucesso da ação para declarar condição falsa", () => {
+  const trace = buildTrace([pre("fix", "npm run fix"), post("fix", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- If `expected output` validation fails, run `npm run fix` and `npm run verify`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
+  assert.deepEqual(report.evaluations[0].sources.events, []);
+});
+
 test("T7-C6 comando repetido em sessões distintas não é declarado correção nem condição falsa", () => {
   const trace = buildTrace([
     pre("a", "npm test"), post("a", "failure"),

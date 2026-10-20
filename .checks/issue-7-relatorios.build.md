@@ -84,6 +84,8 @@ A vigésima sexta verificação independente aprovou C1–C10 no commit `efd56e7
 
 Na versão `805ab36`, `npm test` completo terminou com exit 0: governança 6/6, motor de revisão 16/16 e integrações 372 passes, 7 skips condicionais, 0 falhas (379 testes). Doctor também passou sem falhas; a contagem detalhada não foi retida na saída resumida. A vigésima sétima verificação independente aprovou C1–C10 no mesmo commit, com T7 80/80 e cinco suítes unitárias de correlação 55/55, ambas sem falhas nem skips; uma sondagem em memória confirmou que duplicata tardia não altera a ordem decisória. A tentativa da suíte ampla de correlação pelo Verifier esbarrou em `EPERM` ao criar symlink no Windows e não foi contada como prova verde; o `npm test` completo do builder, executado com as permissões necessárias, passou.
 
+A vigésima terceira revisão formal retornou `changes_requested`: numa condição sobre `expected output` como referência textual, o parser descartava esse trecho e `conditionalEvidence` usava `npm run fix`, primeiro comando da ação, como gatilho. Uma regressão com somente `npm run fix` positivo falhou antes da correção (`not_applicable` em vez de `inconclusive`, 0/1). A avaliação agora exige que o primeiro trecho citado seja o comando reconhecido como gatilho; caso contrário conserva `condition_unresolved` sem atribuir à condição o resultado da ação. A regressão passou e o lote T7 completo passou 81/81, sem falhas ou skips. O `npm test` amplo acima foi executado antes deste ajuste localizado; não o atribuo à nova versão.
+
 ## Decisões e limites
 
 - A consulta consome somente o snapshot do store da #8, a correlação da #6 e texto de skill explicitamente escolhido ou candidato único local. Não relê payload nativo, não escreve artefato e não inicia agentes.
