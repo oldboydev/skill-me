@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { REPO_ROOT, runIntegrations } from "../helpers/cli.mjs";
+import { runReportCommand } from "../../../src/integrations/report/command.mjs";
 import { claudePayload, codexHookPayload } from "../helpers/privacy-canaries.mjs";
 import { boundEnv, runHook, startCapture } from "../helpers/traces.mjs";
 
@@ -45,4 +46,24 @@ test("T7-C10 fixtures normal, erro/correção e condição atravessam captura; l
   assert.deepEqual(report.evaluations[4].sources.events, []);
   assert.ok(report.limitations.some((item) => item.text.includes("SKILL.md não comprova")));
   assert.ok(report.timeline.entries.every((entry) => entry.evidence.length === 1));
+});
+
+test("T7-C1 nome Unicode observado atravessa captura e comando sem --skill", async () => {
+  const root = mkdtempSync(path.join(REPO_ROOT, ".checks", "t7-unicode-"));
+  roots.push(root);
+  const id = startCapture(root);
+  const env = boundEnv(root, id);
+  const skillDir = path.join(root, ".agents", "skills", "revisão");
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(path.join(skillDir, "SKILL.md"), "# Revisão\n- Run `npm test`.\n");
+  for (const name of ["pre_tool_skill", "post_tool_skill"]) {
+    const payload = claudePayload(name);
+    payload.tool_input.skill = "revisão";
+    assert.equal((await runHook("claude", payload, { env })).status, 0);
+  }
+  const result = await runReportCommand({ argv: ["--root", root, "--capture", id, "--format", "json"], cwd: root });
+  assert.equal(result.exitCode, 0, result.output);
+  const report = JSON.parse(result.output);
+  assert.deepEqual([report.skill.name, report.skill.observedName, report.skill.identification], ["revisão", "revisão", "observed_name"]);
+  assert.deepEqual(report.skill.observedSources, [{ events: [1, 2], strength: "native" }]);
 });

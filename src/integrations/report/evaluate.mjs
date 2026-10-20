@@ -30,13 +30,23 @@ function commandObservations(command, timeline, trace) {
 const contextOf = (observation) => JSON.stringify([observation.origin, observation.session]);
 const multipleContexts = (observations) => new Set(observations.map(contextOf)).size > 1;
 
+function overlappingAttempts(observations) {
+  let latestEnd = -Infinity;
+  for (const item of observations) {
+    if (item.sequences[0] <= latestEnd) return true;
+    latestEnd = Math.max(latestEnd, item.state === "closed" ? item.sequences.at(-1) : Infinity);
+  }
+  return false;
+}
+
 function evidenceForCommand(command, timeline, trace, { afterSequence = 0, context = null } = {}) {
   const observations = commandObservations(command, timeline, trace)
     .filter((item) => item.sequences[0] > afterSequence && (context === null || contextOf(item) === context));
   if (observations.length === 0) return { status: "unobserved", reasonCode: "no_matching_observation", events: [], corrections: [] };
   if (multipleContexts(observations)) return { status: "partial", reasonCode: "ambiguous_context", events: observations.flatMap((item) => item.sequences), corrections: [] };
+  if (overlappingAttempts(observations)) return { status: "partial", reasonCode: "overlapping_attempts", events: [...new Set(observations.flatMap((item) => item.sequences))].sort((a, b) => a - b), corrections: [] };
   const last = observations.at(-1);
-  const earlierFailures = observations.slice(0, -1).filter((item) => item.result === "negative");
+  const earlierFailures = observations.slice(0, -1).filter((item) => item.result === "negative" && item.strength === "native");
   const corrections = last.result === "positive" && last.strength === "native"
     ? earlierFailures.map((item) => ({ failed: item.sequences, corrected: last.sequences }))
     : [];

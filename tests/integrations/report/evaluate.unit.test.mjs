@@ -104,6 +104,18 @@ test("T7-C6 ação posterior à falha comprova condição mesmo após retry posi
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 5, 6]);
 });
 
+test("T7-C6 tentativas simultâneas não são relatadas como correção", () => {
+  const trace = buildTrace([
+    pre("a", "npm test"), pre("b", "npm test"),
+    post("a", "failure"), post("b", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "overlapping_attempts");
+  assert.deepEqual(report.evaluations[0].corrections, []);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
+});
+
 test("T7-C6 proibição condicional não recebe suficiente pela ação proibida", () => {
   const trace = buildTrace([
     pre("fail", "npm test"), post("fail", "failure"),

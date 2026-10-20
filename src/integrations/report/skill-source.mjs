@@ -6,8 +6,15 @@ import { sanitizeText } from "../privacy/sanitize.mjs";
 import { parseInstructions } from "./instructions.mjs";
 
 const MAX_SKILL_BYTES = 1024 * 1024;
-const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+const INVALID_NAME = /[\\/\u0000-\u001f\u007f<>:"|?*]/u;
+const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
 const LOCAL_DIRS = [".agents/skills", ".claude/skills", ".codex/skills", "skills"];
+
+function validDirectoryName(name) {
+  return typeof name === "string" && name.length > 0 && name.length <= 255
+    && name !== "." && name !== ".." && !/[. ]$/.test(name)
+    && !INVALID_NAME.test(name) && !WINDOWS_DEVICE.test(name);
+}
 
 export class SkillSourceError extends Error {
   constructor(code) {
@@ -21,7 +28,7 @@ function observedNames(timeline) {
 }
 
 async function candidateFile(cwd, name) {
-  if (!SAFE_NAME.test(name)) throw new SkillSourceError("skill_name_invalid");
+  if (!validDirectoryName(name)) throw new SkillSourceError("skill_name_invalid");
   const candidates = [];
   for (const dir of LOCAL_DIRS) {
     const file = path.join(cwd, dir, name, "SKILL.md");

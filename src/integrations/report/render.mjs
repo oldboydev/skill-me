@@ -23,6 +23,7 @@ const REASON = Object.freeze({
   all_commands_succeeded: "todos os comandos da instrução tiveram resultado positivo",
   commands_incomplete: "nem todos os comandos da instrução têm prova suficiente",
   prohibition_uninterpreted: "a proibição não foi interpretada como ação exigida",
+  overlapping_attempts: "as tentativas do mesmo comando se sobrepõem; a ordem de correção é indeterminada",
 });
 
 const md = (value) => String(value).replace(/[\\`*_{}\[\]()+!|<>]/g, "\\$&");

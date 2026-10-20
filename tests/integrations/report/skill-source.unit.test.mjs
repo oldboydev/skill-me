@@ -34,6 +34,18 @@ test("T7-C1 skill observada e caminho explícito: SHA-256, linha, modo e arquivo
   assert.equal(statSync(file).mtimeMs, before.mtimeMs);
 });
 
+test("T7-C1 nome observado Unicode resolve candidato único e ainda recusa travessia", async () => {
+  const root = scratch();
+  const bytes = Buffer.from("# Revisão\n- Run `npm test`.\n");
+  writeSkill(root, ".agents/skills", "revisão", bytes);
+  const observed = await readSkillSource({ timeline: timeline(["revisão"]), cwd: root });
+  assert.deepEqual([observed.name, observed.observedName, observed.identification], ["revisão", "revisão", "observed_name"]);
+  assert.equal(observed.sha256, createHash("sha256").update(bytes).digest("hex"));
+  for (const name of ["..", "../revisão", "revisão\\outra"]) {
+    await assert.rejects(readSkillSource({ timeline: timeline([name]), cwd: root }), (error) => error.code === "skill_name_invalid");
+  }
+});
+
 test("T7-C3 skill inválida: ausência, ambiguidade, arquivo não regular, UTF-8 e teto 1 MiB", async () => {
   const root = scratch();
   const error = async (options, code) => assert.rejects(readSkillSource(options), (e) => e.code === code && e.message === code);
