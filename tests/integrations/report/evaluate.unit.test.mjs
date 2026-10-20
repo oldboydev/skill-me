@@ -146,6 +146,14 @@ test("T7-C6 referência textual no gatilho não usa o sucesso da ação para dec
   assert.deepEqual(report.evaluations[0].sources.events, []);
 });
 
+test("T7-C6 condição em prosa não usa o primeiro comando da ação como gatilho", () => {
+  const trace = buildTrace([pre("fix", "npm run fix"), post("fix", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- If validation fails, run `npm run fix` then `npm run verify`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
+  assert.deepEqual(report.evaluations[0].sources.events, []);
+});
+
 test("T7-C6 comando repetido em sessões distintas não é declarado correção nem condição falsa", () => {
   const trace = buildTrace([
     pre("a", "npm test"), post("a", "failure"),
@@ -155,6 +163,20 @@ test("T7-C6 comando repetido em sessões distintas não é declarado correção 
   const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n- If `npm test` fails, run `npm run fix`.\n") });
   assert.deepEqual(states(report), ["partial", "inconclusive"]);
   assert.equal(report.evaluations[0].reasonCode, "ambiguous_context");
+  assert.deepEqual(report.evaluations[0].corrections, []);
+});
+
+test("T7-C5 falha e sucesso de subagentes distintos não são uma correção", () => {
+  const withAgent = (item, agentId) => ({ ...item, ids: { ...item.ids, agentId } });
+  const trace = buildTrace([
+    withAgent(pre("a", "npm test"), "agent-a"), withAgent(post("a", "failure"), "agent-a"),
+    withAgent(pre("b", "npm test"), "agent-b"), withAgent(post("b", "success"), "agent-b"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n") });
+  assert.notEqual(report.timeline.operations[0].subagent, report.timeline.operations[1].subagent);
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "ambiguous_context");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
   assert.deepEqual(report.evaluations[0].corrections, []);
 });
 
@@ -226,6 +248,19 @@ test("T7-C5 comandos de sessões distintas não comprovam uma instrução compos
   const failureReport = evaluateReport({ trace: failed, skill: skill("- Run `npm test` and `npm run build`.\n") });
   assert.deepEqual(states(failureReport), ["partial"]);
   assert.equal(failureReport.evaluations[0].reasonCode, "commands_different_contexts");
+});
+
+test("T7-C5 comando ambíguo não deixa outra sessão contradizer instrução composta", () => {
+  const inSession = (item, sessionId) => ({ ...item, ids: { ...item.ids, sessionId } });
+  const trace = buildTrace([
+    inSession(pre("a", "npm test"), "s1"), inSession(post("a", "success"), "s1"),
+    inSession(pre("b", "npm test"), "s2"), inSession(post("b", "success"), "s2"),
+    inSession(pre("c", "npm run build"), "s3"), inSession(post("c", "failure"), "s3"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` and `npm run build`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "ambiguous_context");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
 });
 
 test("T7-C5 todos os comandos positivos são suficientes; falha em um contradiz a instrução", () => {

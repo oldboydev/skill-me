@@ -40,11 +40,11 @@ function commandObservations(command, timeline, trace) {
       };
     })
     .filter(({ commands }) => commands.includes(command))
-    .map(({ op, sequences, commands, privacyLimited }) => ({ operation: op.id, strength: op.strength, state: op.state, result: commands.length === 1 && !privacyLimited ? operationResult(op) : "unknown", commandConflict: commands.length > 1, privacyLimited, session: op.session, origin: op.origin, sequences, orderSequences: op.evidence }))
+    .map(({ op, sequences, commands, privacyLimited }) => ({ operation: op.id, strength: op.strength, state: op.state, result: commands.length === 1 && !privacyLimited ? operationResult(op) : "unknown", commandConflict: commands.length > 1, privacyLimited, session: op.session, origin: op.origin, subagent: op.subagent, sequences, orderSequences: op.evidence }))
     .sort((a, b) => a.orderSequences[0] - b.orderSequences[0]);
 }
 
-const contextOf = (observation) => JSON.stringify([observation.origin, observation.session]);
+const contextOf = (observation) => JSON.stringify([observation.origin, observation.session, observation.subagent]);
 const multipleContexts = (observations) => new Set(observations.map(contextOf)).size > 1;
 
 function overlappingAttempts(observations) {
@@ -89,7 +89,8 @@ function evidenceForCommands(commands, timeline, trace, options) {
   if (evidence.length === 1) return evidence[0];
   const statuses = evidence.map((item) => item.status);
   const differentContexts = new Set(evidence.map((item) => item.context).filter(Boolean)).size > 1;
-  const status = differentContexts ? "partial"
+  const ambiguousContext = evidence.some((item) => item.reasonCode === "ambiguous_context");
+  const status = differentContexts || ambiguousContext ? "partial"
     : statuses.includes("contradicted") ? "contradicted"
     : statuses.every((item) => item === "sufficient") ? "sufficient"
       : statuses.every((item) => item === "unobserved") ? "unobserved" : "partial";
@@ -97,7 +98,7 @@ function evidenceForCommands(commands, timeline, trace, options) {
     contradicted: "some_commands_failed",
     sufficient: "all_commands_succeeded",
     unobserved: "no_matching_observation",
-    partial: differentContexts ? "commands_different_contexts" : evidence.some((item) => item.reasonCode === "command_conflict") ? "command_conflict" : evidence.some((item) => item.reasonCode === "command_privacy_limited") ? "command_privacy_limited" : "commands_incomplete",
+    partial: ambiguousContext ? "ambiguous_context" : differentContexts ? "commands_different_contexts" : evidence.some((item) => item.reasonCode === "command_conflict") ? "command_conflict" : evidence.some((item) => item.reasonCode === "command_privacy_limited") ? "command_privacy_limited" : "commands_incomplete",
   }[status];
   return {
     status,
@@ -134,8 +135,10 @@ function conditionalEvidence(instruction, timeline, trace) {
   // Se o primeiro trecho citado não foi reconhecido como comando, os comandos
   // restantes podem pertencer apenas à ação; nenhum deles prova o gatilho.
   const firstSpan = /`([^`\r\n]+)`/.exec(instruction.text ?? "")?.[1].trim();
-  if (firstSpan !== trigger) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
   const [prefix, between] = (instruction.text ?? "").split(/`[^`]*`/);
+  if (firstSpan !== trigger || /\b(?:fail\w*|falh\w*|erro|error|succeed\w*|pass\w*|sucesso)\b/i.test(prefix)) {
+    return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
+  }
   const conditionText = `${prefix ?? ""} ${between ?? ""}`;
   const beforeAction = `${prefix ?? ""} ${(between ?? "").split(/\b(?:run|execute|rode|use|call|chame)\b/i)[0]}`;
   if (/\b(?:or|ou|and|e|n[aã]o|sem|no|not|never|without|doesn['’]t|didn['’]t)\b/i.test(beforeAction)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
