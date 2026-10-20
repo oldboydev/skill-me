@@ -47,6 +47,13 @@ test("T7-C5 ação em checklist mantém a falha observada", () => {
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
 });
 
+test("T7-C5 exemplo em bloco aninhado não exige comando adicional", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n    ```sh\n    - Run `npm run deploy`.\n    ```\n") });
+  assert.deepEqual(states(report), ["sufficient"]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
 test("T7-C5 falha de comando com vínculo heurístico não vira contradição", () => {
   const trace = buildTrace([
     { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "it1" }, fields: { phase: "started", itemType: "command_execution" }, content: { fields: [{ field: "item.command", role: "args", kind: "text", value: "npm test" }] } },

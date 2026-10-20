@@ -43,3 +43,11 @@ test("T7-C2 marcador de checklist não altera o tipo nem o texto da instrução"
     ["validation", "Verify `npm run lint`.", ["npm run lint"]],
   ]);
 });
+
+test("T7-C2 bloco cercado aninhado não vira continuação executável da lista", () => {
+  const source = "- Run `npm test`.\n    ```sh\n    - Run `npm run deploy`.\n    ```\n";
+  const instructions = parseInstructions(source);
+  assert.deepEqual(instructions.map((item) => [item.line, item.kind, item.text, item.commands]), [
+    [1, "action", "Run `npm test`.", ["npm test"]],
+  ]);
+});

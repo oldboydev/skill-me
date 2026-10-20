@@ -81,3 +81,28 @@ test("T7-C7 argumento truncado pela política limita comparação e cita evento"
   assert.ok(report.limitations.some((item) => item.source.includes("evento #1") && item.source.includes("tool_input.command:content_truncated")));
   for (const format of ["text", "markdown"]) assert.match(renderReport(report, format), /argumento.*truncado.*evento #1/i);
 });
+
+test("T7-C7 cobertura parcial mostra quantidades e causas em texto e Markdown", () => {
+  const trace = buildTrace([], { counters: { malformed: 2, dropped: { queue_full: 3 } } });
+  const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "f".repeat(64), instructions: [] };
+  const report = evaluateReport({ trace, skill });
+  assert.equal(report.timeline.coverage.partial, true);
+  for (const format of ["text", "markdown"]) {
+    const output = renderReport(report, format).replaceAll("\\", "");
+    assert.match(output, /malformados.*2.*timeline\.coverage\.capture\.counters\.malformed/i);
+    assert.match(output, /descartados.*queue_full.*3.*timeline\.coverage\.capture\.counters\.dropped\.queue_full/i);
+  }
+});
+
+test("T7-C7 cobertura parcial distingue lacuna de evento e operação aberta", () => {
+  const trace = buildTrace([{ src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "a" }, fields: { toolName: "Bash" }, gaps: ["durationMs:absent"] }]);
+  const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "f".repeat(64), instructions: [] };
+  const report = evaluateReport({ trace, skill });
+  assert.equal(report.timeline.coverage.partial, true);
+  for (const format of ["text", "markdown"]) {
+    const output = renderReport(report, format);
+    assert.match(output, /Eventos com lacunas: 1.*timeline\.coverage\.eventGaps/);
+    assert.match(output, /Lacuna no evento #1: durationMs absent.*timeline\.coverage\.eventGaps/);
+    assert.match(output, /Operações abertas: 1.*timeline\.coverage\.totals\.open/);
+  }
+});

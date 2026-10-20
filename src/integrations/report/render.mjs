@@ -68,6 +68,24 @@ function operationLines(report, markdown) {
   });
 }
 
+function coverageLines(coverage, markdown) {
+  const lines = [`Cobertura parcial: ${coverage.partial}; fonte: timeline.coverage.`];
+  const { counters } = coverage.capture;
+  if (counters.malformed > 0) lines.push(`Registros malformados: ${counters.malformed}; fonte: timeline.coverage.capture.counters.malformed.`);
+  for (const [reason, count] of Object.entries(counters.dropped).sort()) {
+    if (count > 0) lines.push(`Registros descartados (${reason}): ${count}; fonte: timeline.coverage.capture.counters.dropped.${reason}.`);
+  }
+  if (coverage.eventGaps.length > 0) lines.push(`Eventos com lacunas: ${coverage.eventGaps.length}; fonte: timeline.coverage.eventGaps.`);
+  for (const item of coverage.eventGaps) {
+    for (const gap of item.gaps) lines.push(`Lacuna no evento #${item.sequence}: ${gap.field} ${gap.reason}; fonte: timeline.coverage.eventGaps.`);
+  }
+  const labels = { inconclusiveEntries: "Eventos inconclusivos", inconclusiveOperations: "Operações inconclusivas", orphanResult: "Resultados órfãos", open: "Operações abertas", boundaryOnly: "Operações só com fronteira", duplicates: "Eventos duplicados", outOfOrder: "Eventos fora de ordem" };
+  for (const [key, label] of Object.entries(labels)) {
+    if (coverage.totals[key] > 0) lines.push(`${label}: ${coverage.totals[key]}; fonte: timeline.coverage.totals.${key}.`);
+  }
+  return lines.map((line) => markdown ? `- ${md(line)}` : `  ${line}`);
+}
+
 export function renderReport(report, format = "text") {
   if (format === "json") return JSON.stringify(report) + "\n";
   const markdown = format === "markdown";
@@ -100,7 +118,7 @@ export function renderReport(report, format = "text") {
     "",
     heading("Limitações"),
     ...report.limitations.map((item) => bullet(`${item.text} Fonte: ${item.source}.`)),
-    bullet(`Cobertura parcial: ${report.timeline.coverage.partial}; fonte: timeline.coverage.`),
+    ...coverageLines(report.timeline.coverage, markdown),
   ];
   return rows.join("\n") + "\n";
 }

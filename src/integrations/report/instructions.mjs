@@ -39,7 +39,7 @@ export function parseInstructions(source) {
       if (index > 0 && line.trim() === "---") frontmatter = false;
       continue;
     }
-    const fenceMatch = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    const fenceMatch = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
     if (fenceMatch) {
       active = null;
       const marker = fenceMatch[1];
