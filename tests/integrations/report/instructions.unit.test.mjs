@@ -71,3 +71,13 @@ test("T7-C2 linha em branco preserva o contexto de sublista", () => {
   const afterExample = "- Run `npm test`.\n    ```sh\n    echo exemplo\n    ```\n    - If `npm test` fails, run `npm run fix`.\n";
   assert.deepEqual(parseInstructions(afterExample).map((item) => [item.line, item.kind]), [[1, "action"], [5, "condition"]]);
 });
+
+test("T7-C2 retorno de sublista profunda preserva item irmão e sua linha", () => {
+  const source = "- Run `npm test`.\n    - Verify `npm run lint`.\n      - Run `npm run build`.\n    - Run `npm run deploy`.\n";
+  assert.deepEqual(parseInstructions(source).map((item) => [item.line, item.kind, item.commands]), [
+    [1, "action", ["npm test"]],
+    [2, "validation", ["npm run lint"]],
+    [3, "action", ["npm run build"]],
+    [4, "action", ["npm run deploy"]],
+  ]);
+});

@@ -70,6 +70,18 @@ test("T7-C5 condição aninhada após linha em branco conserva fonte própria", 
   assert.deepEqual(report.evaluations.map((item) => item.sources.events), [[1, 2], [1, 2]]);
 });
 
+test("T7-C5 item irmão após sublista profunda recebe avaliação e fonte próprias", () => {
+  const trace = buildTrace([
+    pre("build", "npm run build"), post("build", "success"),
+    pre("deploy", "npm run deploy"), post("deploy", "failure"),
+  ]);
+  const source = "- Run `npm test`.\n    - Verify `npm run lint`.\n      - Run `npm run build`.\n    - Run `npm run deploy`.\n";
+  const report = evaluateReport({ trace, skill: skill(source) });
+  assert.deepEqual(states(report), ["unobserved", "unobserved", "sufficient", "contradicted"]);
+  assert.deepEqual(report.evaluations.map((item) => item.sources.skill.line), [1, 2, 3, 4]);
+  assert.deepEqual(report.evaluations.map((item) => item.sources.events), [[], [], [1, 2], [3, 4]]);
+});
+
 test("T7-C5 falha de comando com vínculo heurístico não vira contradição", () => {
   const trace = buildTrace([
     { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "it1" }, fields: { phase: "started", itemType: "command_execution" }, content: { fields: [{ field: "item.command", role: "args", kind: "text", value: "npm test" }] } },
