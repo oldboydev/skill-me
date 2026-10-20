@@ -22,6 +22,7 @@ const REASON = Object.freeze({
   some_commands_failed: "ao menos um comando da instrução teve resultado negativo",
   all_commands_succeeded: "todos os comandos da instrução tiveram resultado positivo",
   commands_incomplete: "nem todos os comandos da instrução têm prova suficiente",
+  alternative_commands_unresolved: "a instrução permite comandos alternativos; a escolha não foi avaliada",
   command_conflict: "os argumentos do mesmo comando divergem entre eventos da operação",
   command_privacy_limited: "a política omitiu, removeu ou truncou parte do argumento do comando",
   command_redacted: "um comando literal da instrução teve conteúdo removido pela política",

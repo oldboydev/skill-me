@@ -219,6 +219,18 @@ test("T7-C5 todos os comandos positivos são suficientes; falha em um contradiz 
   assert.deepEqual(report.evaluations[1].sources.events, [1, 2, 5, 6]);
 });
 
+test("T7-C5 comandos alternativos não são contraditos pela falha de uma opção", () => {
+  const trace = buildTrace([
+    pre("test", "npm test"), post("test", "failure"),
+    pre("build", "npm run build"), post("build", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` or `npm run build`.\n- Run `npm test` ou `npm run build`.\n- Run `npm test` (see errors or warnings) and `npm run build`.\n") });
+  assert.deepEqual(states(report), ["inconclusive", "inconclusive", "contradicted"]);
+  assert.deepEqual(report.evaluations.map((item) => item.reasonCode), ["alternative_commands_unresolved", "alternative_commands_unresolved", "some_commands_failed"]);
+  assert.deepEqual(report.evaluations.map((item) => item.sources.events), [[1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]]);
+  assert.deepEqual(report.evaluations.map((item) => item.sources.skill.line), [1, 2, 3]);
+});
+
 test("T7-C5 script bash literal observado é comparado sem executar a referência", () => {
   const trace = buildTrace([pre("verify", "bash ./verify.sh"), post("verify", "success")]);
   const report = evaluateReport({ trace, skill: skill("- Run `bash ./verify.sh`.\n") });

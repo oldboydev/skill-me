@@ -105,6 +105,24 @@ function evidenceForCommands(commands, timeline, trace, options) {
   };
 }
 
+function hasAlternativeCommands(instruction) {
+  if (instruction.commands.length < 2 || typeof instruction.text !== "string") return false;
+  const commands = new Set(instruction.commands);
+  let previousEnd = null;
+  for (const match of instruction.text.matchAll(/`([^`\r\n]+)`/g)) {
+    if (!commands.has(match[1].trim())) continue;
+    const between = previousEnd === null ? "" : instruction.text.slice(previousEnd, match.index).replace(/\([^()]*\)/g, "");
+    if (/\b(?:or|ou)\b/i.test(between)) return true;
+    previousEnd = match.index + match[0].length;
+  }
+  return false;
+}
+
+function alternativeCommandEvidence(instruction, timeline, trace) {
+  const observed = evidenceForCommands(instruction.commands, timeline, trace);
+  return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events: observed.events, corrections: [] };
+}
+
 function conditionalEvidence(instruction, timeline, trace) {
   const [trigger, ...actions] = instruction.commands;
   const [prefix, between] = (instruction.text ?? "").split(/`[^`]*`/);
@@ -154,6 +172,8 @@ export function evaluateReport({ trace, skill }) {
       ? prohibitionEvidence(instruction, timeline, trace)
       : instruction.kind === "guidance"
       ? { status: "not_applicable", reasonCode: "guidance_not_step", events: [], corrections: [] }
+      : instruction.kind !== "condition" && hasAlternativeCommands(instruction)
+        ? alternativeCommandEvidence(instruction, timeline, trace)
       : instruction.commandRedacted
         ? redactedEvidence(instruction, timeline, trace)
       : instruction.kind === "condition"

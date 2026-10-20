@@ -21,6 +21,18 @@ test("T7-C7 texto e Markdown citam eventos e skill, versões e limites, sem perc
   assert.deepEqual(json.evaluations[0].sources.skill, { sha256: skill.sha256, line: 2 });
 });
 
+test("T7-C7 alternativa de comandos aparece como escolha inconclusiva nos formatos", () => {
+  const trace = buildTrace([]);
+  const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "b".repeat(64), instructions: parseInstructions("- Run `npm test` or `npm run build`.\n") };
+  const report = evaluateReport({ trace, skill });
+  assert.equal(report.evaluations[0].status, "inconclusive");
+  for (const format of ["text", "markdown"]) {
+    const output = renderReport(report, format);
+    assert.ok(output.includes("a instrução permite comandos alternativos"), format);
+  }
+  assert.equal(JSON.parse(renderReport(report, "json")).evaluations[0].reasonCode, "alternative_commands_unresolved");
+});
+
 test("T7-C7 plataformas diferentes citam apenas seus próprios eventos", () => {
   const trace = buildTrace([
     { src: "hermes", kind: "session_start", ids: { sessionId: "s1" }, fields: { platform: "win32" } },
