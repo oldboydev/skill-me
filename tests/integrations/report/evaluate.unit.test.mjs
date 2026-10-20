@@ -154,6 +154,14 @@ test("T7-C6 condição em prosa não usa o primeiro comando da ação como gatil
   assert.deepEqual(report.evaluations[0].sources.events, []);
 });
 
+test("T7-C6 falha genérica não comprova qualificador de código de saída", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "failure")]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails with exit code 2, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
+  assert.deepEqual(report.evaluations[0].sources.events, []);
+});
+
 test("T7-C6 comando repetido em sessões distintas não é declarado correção nem condição falsa", () => {
   const trace = buildTrace([
     pre("a", "npm test"), post("a", "failure"),

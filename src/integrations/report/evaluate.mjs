@@ -139,6 +139,11 @@ function conditionalEvidence(instruction, timeline, trace) {
   if (firstSpan !== trigger || /\b(?:fail\w*|falh\w*|erro|error|succeed\w*|pass\w*|sucesso)\b/i.test(prefix)) {
     return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
   }
+  // Só a ligação simples entre resultado e ação é interpretada. Qualificadores
+  // como "with exit code 2" exigiriam uma prova própria que não temos aqui.
+  if (!/^\s*(?:fails?|succeeds?|passes?|falh\w*|pass\w*)\s*[,;:]?\s*(?:(?:then|então|depois)\s+)?(?:run|execute|rode|use|call|chame|faça)\s*$/i.test(between ?? "")) {
+    return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
+  }
   const conditionText = `${prefix ?? ""} ${between ?? ""}`;
   const beforeAction = `${prefix ?? ""} ${(between ?? "").split(/\b(?:run|execute|rode|use|call|chame)\b/i)[0]}`;
   if (/\b(?:or|ou|and|e|n[aã]o|sem|no|not|never|without|doesn['’]t|didn['’]t)\b/i.test(beforeAction)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
