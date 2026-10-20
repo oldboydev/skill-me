@@ -30,6 +30,10 @@ Após elevar o override da #7 a quatro tentativas com nova autorização, `npm r
 
 A quinta verificação independente aprovou C1–C10 no commit `559b3f6`, com 25/25 provas executadas, e foi registrada em `.verified.md` no commit `8773866`. A quarta revisão formal desse HEAD retornou `changes_requested` por quatro casos novos: continuação indentada de um item ignorada, argumentos divergentes na mesma operação aceitos como prova, omissão de argumento pela política sem limitação explícita e dois nomes observados tratados como ausência de nome. Acrescentei cinco testes de regressão; no código revisado, o lote red teve 21 passes e 5 falhas nos resultados incorretos. Depois das correções, o lote focado teve 26/26 passes e a suíte inteira do relatório teve 30/30. Uma colisão de nome introduzida na primeira implementação das correções causou quatro falhas no primeiro lote green; corrigi o nome e repeti os mesmos testes sem alterar asserções. A quinta verificação e as quatro tentativas formais autorizadas já foram consumidas; as evidências independentes e formais ainda não aprovam o novo conteúdo.
 
+O proprietário autorizou em 20/10/2026 as rodadas adicionais necessárias desta issue ([registro](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6293309938)). O override exclusivo da #7 passa ao teto de 10 tentativas suportado pelo motor, sem apagar as quatro anteriores; novas revisões continuam exigindo verificação independente atualizada e commit limpo.
+
+Após esse override, `npm run test:governance` passou 6/6 e `npm run test:code-review` passou 16/16, ambos fora do sandbox. O contexto exportado foi validado como JSON e comparado ao GitHub: título, corpo, URL e os três comentários coincidem.
+
 ## Decisões e limites
 
 - A consulta consome somente o snapshot do store da #8, a correlação da #6 e texto de skill explicitamente escolhido ou candidato único local. Não relê payload nativo, não escreve artefato e não inicia agentes.
