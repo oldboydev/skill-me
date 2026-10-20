@@ -1,45 +1,53 @@
 # Issue #7 — verificação independente do relatório
 
-**Verdict**: PASS — C1–C10 comprovados no HEAD `406ba4b03690287a2b65d1d6188e8778a075faaa`.
+**Verdict**: PASS — 10/10 checks comprovados no HEAD eed4eba1938048ef0467eea153ee0e0752d7c309.
 **Profile**: light.
-**Diff range**: `a1f855b..406ba4b` (entrega); `559b3f6..406ba4b` (comparação focal solicitada).
-**Round**: 6 — scoped; [autorização do proprietário](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6293309938).
-**Verifier**: subagente independente; escreveu somente este relatório.
+**Diff range**: a1f855b..eed4eba (entrega); 406ba4b..eed4eba (correção recente).
+**Round**: 7 — scoped; nova verificação independente após a quinta revisão formal.
+**Verifier**: subagente independente; somente este relatório foi editado.
 
-## Escopo e proveniência
+## Fontes e escopo
 
-Li `AGENTS.md`, `tlc-implement/references/verify.md`, a [issue #7](https://github.com/oldboydev/skill-me/issues/7) e seus três comentários pelo conector GitHub, `.tasks/issue-7-relatorios.md`, `.checks/issue-7-relatorios.md`, a quinta verificação em `8773866`, os quatro achados em `.checks/code-review/issue-7/response.json`, os diffs indicados, `docs/report.md`, `docs/traces.md` e `docs/privacidade.md`. `rg --files` encontrou somente o `AGENTS.md` da raiz e nenhum `CONTRIBUTING.md`. A autorização atual permite as rodadas adicionais necessárias da #7, preservando histórico; `code-review.config.json` limita o motor a dez tentativas somente nessa issue.
+Li AGENTS.md, a referência tlc-implement/references/verify.md, a issue exportada em .checks/code-review/issue-7/context.json (o comando gh issue view falhou por conexão com api.github.com), .tasks/issue-7-relatorios.md, .checks/issue-7-relatorios.md, .checks/issue-7-relatorios.build.md, os quatro achados da quinta revisão em .checks/code-review/issue-7/response.json, os caminhos do diff a1f855b..HEAD e o diff de código/testes 406ba4b..HEAD. Conferi docs/report.md, docs/traces.md, a implementação e os contratos de replay, correlação e store. rg --files encontrou AGENTS.md apenas na raiz e nenhum CONTRIBUTING.md.
 
-Reavaliei C1–C8 e C10 porque parser, avaliador, fonte da skill, renderizador e seus testes mudaram. Reavaliei também C3, embora suas validações não tenham mudado, porque `skill-source.mjs` foi tocado. **C9 carrega o julgamento da quinta verificação (`8773866`, que o herdou de `70b27e2`)**: `command.mjs`, o mapeamento de erro e seu teste não mudaram desde então; a prova C9 foi novamente executada no HEAD. Os julgamentos sobre snapshot/ordem do store e data lifecycle em `Swept existing` são carregados da quinta verificação (`8773866`), com conferência de que replay, store e correlação não aparecem em `git diff 559b3f6..HEAD`. A issue tem oito critérios de aceite, cobertos pelas decisões C1–C10 do plano.
+A issue contém oito critérios de aceite; C1–C10 os decompõem. O checklist não contém seções Coverage ou Test policy. A comparação de fonte vinculante de UI e a injeção de falhas pertencem aos perfis standard/ui e não foram executadas sob light. A issue declara o documento AGENT_SKILL_DEBUGGER_SPEC (1).md como guia não vinculante. Não usei o relato do autor como resultado de prova.
 
-## Provas no HEAD
+## Provas executadas no HEAD
 
-Uma invocação de `node --test '--test-name-pattern=T7-C([1-9]|10)'` com os seis arquivos `tests/integrations/report/*.test.mjs`, em Node `v24.21.0`, retornou **30 testes, 30 passes, 0 falhas, 0 skips, 0 todo**, exit 0. A saída listou individualmente T7-C1, C2, C3, C4, C5, C6, C7, C8, C9 e C10; `rg -n -C 7 'T7-C' tests/integrations/report` confirmou os testes e as asserções abaixo no HEAD. Caminhos e linhas são relativos à raiz.
+Executei uma única invocação:
 
-| Check | Asserção decisiva executada | Resultado |
+    node --test '--test-name-pattern=T7-C([1-9]|10)' tests/integrations/report/skill-source.unit.test.mjs tests/integrations/report/instructions.unit.test.mjs tests/integrations/report/evaluate.unit.test.mjs tests/integrations/report/render.unit.test.mjs tests/integrations/report/report.cli.test.mjs tests/integrations/report/report.e2e.test.mjs
+
+Exit 0; **35 tests, 35 pass, 0 fail, 0 skipped, 0 todo**. O runner listou individualmente todos os testes T7-C1 até T7-C10; rg -n dos testes localizou as asserções abaixo no HEAD. C9 também foi reexaminado, embora seus arquivos não tenham mudado no diff recente.
+
+| Check | Asserção decisiva localizada e executada | Resultado |
 | --- | --- | --- |
-| C1 | `tests/integrations/report/skill-source.unit.test.mjs:31–38`: `assert.equal(observed.identification, "observed_name")`, fonte `[1]`, SHA-256 dos bytes, linha/heading, modo explícito divergente e bytes/mtime inalterados; `:63,67–68`: dois nomes e eventos preservados sem alegar ausência; `report.e2e.test.mjs:67–68`: Unicode via CLI sem `--skill`. | PASS, reavaliado. |
-| C2 | `tests/integrations/report/instructions.unit.test.mjs:14–18`: vetor exato de tipos/linhas/headings/comandos e marcador de execução ausente; `:26`: fence respeitado; `:32–36`: continuação mantém os dois comandos do mesmo item. | PASS, reavaliado. |
-| C3 | `tests/integrations/report/skill-source.unit.test.mjs:74–88`: `assert.rejects` exige código e mensagem fechados para ausência, ambiguidade, arquivo não regular, UTF-8 e 1 MiB + 1; `:49`: travessia recusada. `report.cli.test.mjs:49–51` comprova envelope e ausência de eco na fronteira. | PASS, reavaliado. |
-| C4 | `tests/integrations/report/evaluate.unit.test.mjs:22–26`: vetor exato dos seis estados, linhas, sequências, `guidance_not_step`, hash e motivo por avaliação. | PASS, reavaliado. |
-| C5 | `tests/integrations/report/evaluate.unit.test.mjs:37–39`: suficiente, contradito, parcial, não observado e leitura sem carregamento; `:76–77`: comando na continuação não dá suficiente; `:86–88`: argumentos divergentes dão `partial`/`command_conflict` e eventos `[1,2]`; `:98–100`: todos os comandos positivos ou um negativo. | PASS, reavaliado. |
-| C6 | `tests/integrations/report/evaluate.unit.test.mjs:49–51`: condição falsa/inconclusiva e correção `{failed:[3,4],corrected:[5,6]}`; `:117–129`: ação precisa suceder o gatilho; `:138–141`: tentativas sobrepostas permanecem parciais. | PASS, reavaliado. |
-| C7 | `tests/integrations/report/render.unit.test.mjs:14–21`: hash/linha/eventos, contrato, seções, limites, JSON v1 e ausência de percentual/raciocínio privado; `:55,58–59`: exit 1 e conteúdo não coletado; `:69–71`: argumento omitido pela política com evento #1 em texto/Markdown; `skill-source.unit.test.mjs:63,67–68`: nomes ambíguos com eventos. | PASS, reavaliado. |
-| C8 | `tests/integrations/report/report.cli.test.mjs:30–40`: três formatos exit 0, JSON v1, repetição idêntica, árvore da captura e skill inalteradas. | PASS, reavaliado pelo renderizador compartilhado. |
-| C9 | `tests/integrations/report/report.cli.test.mjs:48–51`: exit, envelope fechado, stderr vazio e sem eco; `:53–65`: casos 2/3/4; `:69–71`: E/S sai 5 sem eco. | PASS; julgamento carregado de `8773866`, prova reexecutada. |
-| C10 | `tests/integrations/report/report.e2e.test.mjs:41–48`: CLI real retorna 0, vetor exato com seis estados, correção, leitura sem carregamento e eventos; `:65–68`: captura e resolução Unicode sem `--skill`. | PASS, reavaliado. |
+| C1 | tests/integrations/report/skill-source.unit.test.mjs:31–38: assert.equal(observed.identification, "observed_name"), fonte [{ events: [1], strength: "native" }], hash igual a SHA-256 dos bytes, linha/heading [[2,"Build"]], ["explicit_path",false], bytes e mtime preservados; :46–49 resolve revisão e recusa travessia; report.e2e.test.mjs:67–68 prova modo observado na CLI. | PASS |
+| C2 | tests/integrations/report/instructions.unit.test.mjs:14–18: assert.deepEqual dos quatro tipos/linhas/headings e comandos; assert.equal(existsSync(marker), false); :26 exige só item fora do fence; :32–36 exige os dois comandos da continuação. | PASS |
+| C3 | tests/integrations/report/skill-source.unit.test.mjs:74–88: assert.rejects exige error.code === code e error.message === code para ausência, ambiguidade, arquivo não regular, UTF-8 inválido e 1 MiB + 1; report.cli.test.mjs:48–51 verifica envelope fechado sem eco na fronteira. | PASS |
+| C4 | tests/integrations/report/evaluate.unit.test.mjs:22–26: vetor exato dos seis estados, linhas [2..9], eventos [1,2], guidance_not_step e hash em cada avaliação. | PASS |
+| C5 | tests/integrations/report/evaluate.unit.test.mjs:37–39: estados exatos sufficient/contradicted/partial/unobserved e limite de leitura; :95–98 exige inconclusive/partial sob remoção sensível; :104–106 exige partial para comando legível com outro removido; :114–120 exige partial e commands_different_contexts em sessões distintas inclusive resultado negativo; :130–132 exige sufficient quando ambos têm sucesso e contradicted quando um falha. | PASS |
+| C6 | tests/integrations/report/evaluate.unit.test.mjs:49–51: not_applicable/inconclusive/sufficient e correção com failed [3,4] e corrected [5,6]; :149–161 exige ação posterior ao gatilho e retry sem apagar a falha; :170–173 recusa correção simultânea; :203–204 mantém condição composta inconclusiva. | PASS |
+| C7 | tests/integrations/report/render.unit.test.mjs:14–21: texto/Markdown incluem hash, linha, eventos, contrato, timeline, avaliações e limites; JSON v1 e fonte da skill; :41–44 rotula hipótese; :55–59 mostra completed, exit 1 e lacuna de conteúdo; :69–71 e :80–82 citam eventos para argumento omitido e truncado em texto/Markdown; skill-source.unit.test.mjs:63,67–68 cita nomes observados ambíguos. | PASS |
+| C8 | tests/integrations/report/report.cli.test.mjs:30–40: três formatos saem 0, JSON com [1,"explicit_path","unobserved"], repetição idêntica, árvore da captura e bytes da skill inalterados. | PASS |
+| C9 | tests/integrations/report/report.cli.test.mjs:48–51: status igual ao exit esperado, JSON exatamente {schemaVersion:1,command:"report",status:"error",error:{code}}, stderr vazio e nenhum eco; :53–65 executa 2/3/4 para flags, formato, ID, skill, captura inválida/ausente e lock; :69–71 executa E/S com exit 5. | PASS |
+| C10 | tests/integrations/report/report.e2e.test.mjs:26,38,41–48: ingestão e CLI reais saem 0, oito avaliações com os seis estados exatos, correção, eventos, limite de leitura de SKILL.md e timeline citada; :65–68 prova nome Unicode pela captura e comando. Os três formatos são provados na fronteira CLI por C8. | PASS |
 
-## Quatro achados da quarta revisão
+## Quatro achados da quinta revisão
 
-| Achado | Evidência atual |
-| --- | --- |
-| Segundo comando na continuação de um item de lista desaparecia. | `src/integrations/report/instructions.mjs:52–62` anexa texto e comandos ao item ativo; `instructions.unit.test.mjs:32–36` exige os dois comandos; `evaluate.unit.test.mjs:76` exige `partial` com apenas o primeiro observado. |
-| Argumentos divergentes no mesmo par nativo podiam comprovar ambos. | `src/integrations/report/evaluate.mjs:23–29` marca conflito e resultado desconhecido; `evaluate.unit.test.mjs:86–88` exige `partial`, `command_conflict` e fontes `[1,2]`. |
-| Conteúdo habilitado com argumento omitido não explicava a lacuna. | `src/integrations/report/evaluate.mjs:112–114,155–156` cita omissão `unsanitizable` e sequência; `render.unit.test.mjs:69–71` exige limite e evento no texto e Markdown. |
-| `--skill` explícito com dois nomes observados dizia que nenhum fora observado. | `src/integrations/report/skill-source.mjs:86–101` preserva candidatos/fontes; `render.mjs:73–82` relata ambiguidade; `skill-source.unit.test.mjs:63,67–68` exige nomes/eventos e rejeita a frase incorreta. |
+| Achado | Correção observada | Prova atual |
+| --- | --- | --- |
+| Caminhos distintos colidiam após sanitização. | instructions.mjs:17–27 guarda commandRedacted; evaluate.mjs:29–44 recusa resultado conclusivo se a operação tem marcador de privacidade. | evaluate.unit.test.mjs:91–106 exige inconclusive/partial e command_redacted/command_privacy_limited. |
+| Comandos de sessões distintas viravam sufficient. | evaluate.mjs:74–94 compara contexto de origem e sessão antes de agregar. | evaluate.unit.test.mjs:109–120 exige partial para dois sucessos e também para falha em outra sessão. |
+| Condição composta usava só o primeiro gatilho. | evaluate.mjs:97–103 conserva condition_unresolved para conectivos entre gatilhos. | evaluate.unit.test.mjs:196–204 exige inconclusive no caso test positivo, lint negativo e fix positivo. |
+| content_truncated ficava invisível. | evaluate.mjs:136–140,180–184 inclui limitação com marcador e sequência; render.mjs imprime a limitação. | render.unit.test.mjs:74–82 exige marcador, evento #1 e explicação em texto/Markdown. |
 
-## Swept existing, gates e limites
+## Swept existing e limites
 
-`src/integrations/report/command.mjs:40–46,61–72` exige raiz/captura, lê a skill explícita ou candidata local, usa o replay e escreve apenas stdout. `src/integrations/traces/replay.mjs:13–16` entrega snapshot sanitizado e sequenciado. C8 comprova repetição e ausência de escrita no diretório da captura e no arquivo da skill. `git diff --check a1f855b..HEAD` e `git diff --check 559b3f6..HEAD` passaram; a árvore estava limpa antes desta escrita.
+- Authorization: report/command.mjs:28–50 exige root/capture pelo parser comum e só aceita skill explícita ou candidato local; :53–77 consome replay e retorna stdout. C1/C3/C9 verificam essas entradas e erros.
+- Concurrency/ordering: privacy/store.mjs:379–385 exporta estado e registros sob lock; traces/replay.mjs:13–16 congela o snapshot e atribui sequence crescente. A correlação preserva as sequências; C6 testa ordem de falha/correção.
+- Data lifecycle: privacy/lifecycle.mjs:20–30 decide stop/disable; privacy/store.mjs:596–605 e :614–650 implementam delete/prune no store existente. O diff da entrega não modifica esses módulos; C8 confirma que consultar não altera captura/skill. Não reexecutei provas da #5/#8, pois o relatório apenas lê esses contratos.
+- Sem provedor externo ou execução de agente no caminho do relatório: report/command.mjs:53–77 chama replay, leitura local da skill, avaliação e renderização. C8/C10 atravessam a CLI. O escopo não afirma prova dinâmica de ausência de rede para todo o processo.
+- Não há Test policy nem Coverage no checklist; nenhum join de conjunto foi omitido. Os seis estados exigidos têm asserções exatas em C4 e C10.
 
-O perfil `light` não executa comparação `ui` com fonte vinculante nem injeção de falhas. O checklist não tem seções `Coverage` ou `Test policy`. Não executei a suíte global, governança, code review ou a prova red anterior às correções; seus resultados em `.checks/issue-7-relatorios.build.md` são do autor, não provas minhas. Não houve skips no lote independente, nem checks sem `file:line` ou lacunas observadas neste perfil.
+git diff --check a1f855b..HEAD e git diff --check 406ba4b..HEAD saíram 0. A árvore estava limpa antes desta escrita. Não executei npm test completo nem a revisão formal; os números dessas etapas no arquivo .build.md são relatos do autor, não provas desta verificação. Nenhuma prova independente teve skip ou omissão.
