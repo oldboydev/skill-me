@@ -82,6 +82,15 @@ test("T7-C5 item irmão após sublista profunda recebe avaliação e fonte próp
   assert.deepEqual(report.evaluations.map((item) => item.sources.events), [[], [], [1, 2], [3, 4]]);
 });
 
+test("T7-C5 curl literal executado com sucesso recebe fonte e estado suficiente", () => {
+  const trace = buildTrace([pre("curl", "curl --version"), post("curl", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `curl --version`.\n") });
+  assert.deepEqual(states(report), ["sufficient"]);
+  assert.equal(report.evaluations[0].reasonCode, "matching_command_succeeded");
+  assert.deepEqual(report.evaluations[0].sources.skill.line, 1);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
 test("T7-C5 falha de comando com vínculo heurístico não vira contradição", () => {
   const trace = buildTrace([
     { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "it1" }, fields: { phase: "started", itemType: "command_execution" }, content: { fields: [{ field: "item.command", role: "args", kind: "text", value: "npm test" }] } },

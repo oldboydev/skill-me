@@ -81,3 +81,10 @@ test("T7-C2 retorno de sublista profunda preserva item irmão e sua linha", () =
     [4, "action", ["npm run deploy"]],
   ]);
 });
+
+test("T7-C2 comando literal com executável fora da lista conhecida é extraído", () => {
+  const source = "- Run `curl --version`.\n- Run `docker build .`.\n- Run `curl`.\n- Read `SKILL.md`.\n- If `curl` fails, run `docker build .`.\n";
+  assert.deepEqual(parseInstructions(source).map((item) => item.commands), [
+    ["curl --version"], ["docker build ."], ["curl"], [], ["curl", "docker build ."],
+  ]);
+});

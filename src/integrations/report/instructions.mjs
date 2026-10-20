@@ -4,6 +4,8 @@ const CONDITIONAL = /^(?:se|caso|quando|if|when)\b/i;
 const VALIDATION = /^(?:verifique|confira|valide|teste|check|verify|validate|test|assert)\b/i;
 const ACTION = /^(?:execute|rode|run|use|leia|read|crie|create|salve|save|edite|edit|instale|install|faça|do|abra|open|chame|call|aplique|apply)\b/i;
 const COMMAND = /^(?:npm|npx|node|pnpm|yarn|git|pytest|python|python3|cargo|make|go|dotnet|bash|sh|zsh|fish|pwsh|powershell|cmd|\.\/[\w./-]+)(?:\s|$)/i;
+const EXECUTABLE = /^(?:[a-z_][\w.+-]*|\.\/[\w./-]+)$/i;
+const EXECUTABLE_WITH_ARGS = /^(?:[a-z_][\w.+-]*|\.\/[\w./-]+)\s+\S/i;
 const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+(.+)$/;
 const CHECKBOX = /^\[(?: |x|X)\]\s+/;
 const HEADING = /^#{1,6}\s+(.+)$/;
@@ -14,10 +16,20 @@ function safeText(raw) {
   return result.ok ? result.text.slice(0, 1000) : null;
 }
 
+function isCommandSpan(match, line) {
+  const value = match[1].trim();
+  if (COMMAND.test(value) || EXECUTABLE_WITH_ARGS.test(value)) return true;
+  if (!EXECUTABLE.test(value)) return false;
+  const before = line.slice(0, match.index);
+  const after = line.slice(match.index + match[0].length);
+  return /\b(?:run|execute|rode|executar)\s*$/i.test(before)
+    || (CONDITIONAL.test(line.trim()) && /\b(?:fails?|succeeds?|passes?|falha|passa)\b/i.test(after));
+}
+
 function commandsIn(line) {
   return [...line.matchAll(CODE_SPAN)]
+    .filter((match) => isCommandSpan(match, line))
     .map((match) => match[1].trim())
-    .filter((value) => COMMAND.test(value))
     .reduce((found, value) => {
       const result = sanitizeText(value);
       if (!result.ok || result.removed || result.text.includes("[removido]")) found.redacted = true;
