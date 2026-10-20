@@ -103,3 +103,13 @@ test("T7-C6 ação posterior à falha comprova condição mesmo após retry posi
   assert.deepEqual(states(report), ["sufficient"]);
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 5, 6]);
 });
+
+test("T7-C6 proibição condicional não recebe suficiente pela ação proibida", () => {
+  const trace = buildTrace([
+    pre("fail", "npm test"), post("fail", "failure"),
+    pre("deploy", "npm deploy"), post("deploy", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, do not run `npm deploy`.\n- Do not run `npm deploy`.\n") });
+  assert.deepEqual(states(report), ["inconclusive", "inconclusive"]);
+  assert.ok(report.evaluations.every((item) => item.reasonCode === "prohibition_uninterpreted"));
+});

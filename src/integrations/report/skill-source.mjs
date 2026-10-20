@@ -77,11 +77,15 @@ export async function readSkillSource({ timeline, explicitPath = null, cwd = pro
   const { bytes, source } = await readRegularFile(file);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const observedName = names.length === 1 ? names[0] : null;
+  const observedSources = observedName === null ? [] : timeline.operations
+    .filter((op) => ["skill_invocation", "skill_evidence"].includes(op.type) && op.skillName === observedName)
+    .map((op) => ({ events: op.evidence ?? [], strength: op.strength }));
   const rawName = path.basename(path.dirname(file));
   const cleanedName = sanitizeText(rawName);
   return {
     name: cleanedName.ok ? cleanedName.text : "[omitido]",
     observedName,
+    observedSources,
     identification: explicitPath === null ? "observed_name" : "explicit_path",
     nameMatchesObservation: observedName === null ? null : observedName === rawName,
     sha256,

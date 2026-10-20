@@ -33,3 +33,14 @@ test("T7-C7 erro, correção e lacuna aparecem na explicação com fontes observ
   const output = renderReport(evaluateReport({ trace, skill }), "text");
   for (const part of ["Operações e erros", "failure", "erro command_error", "Correção observada: evento #1, evento #2 → evento #3, evento #4", "Cobertura parcial: true"]) assert.ok(output.includes(part), part);
 });
+
+test("T7-C7 nome observado cita evento e marca vínculo heurístico", () => {
+  const trace = buildTrace([{ src: "claude", kind: "skill_invocation", ids: { sessionId: "s1", promptId: "p1" }, fields: { invocationPath: "direct_command", phase: "expansion", skillName: "demo" } }]);
+  const skill = { name: "demo", observedName: "demo", identification: "observed_name", nameMatchesObservation: true, observedSources: [{ events: [1], strength: "heuristic" }], sha256: "d".repeat(64), instructions: [] };
+  const report = evaluateReport({ trace, skill });
+  assert.deepEqual(report.skill.observedSources, [{ events: [1], strength: "heuristic" }]);
+  for (const format of ["text", "markdown"]) {
+    const output = renderReport(report, format);
+    assert.match(output, /nome observado.*evento #1.*hipótese/);
+  }
+});

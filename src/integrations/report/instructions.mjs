@@ -32,11 +32,11 @@ export function parseInstructions(source) {
       if (index > 0 && line.trim() === "---") frontmatter = false;
       continue;
     }
-    const fenceMatch = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    const fenceMatch = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (fenceMatch) {
-      const marker = fenceMatch[1][0];
-      if (fence === null) fence = marker;
-      else if (fence === marker) fence = null;
+      const marker = fenceMatch[1];
+      if (fence === null) fence = { character: marker[0], length: marker.length };
+      else if (fence.character === marker[0] && marker.length >= fence.length && fenceMatch[2].trim() === "") fence = null;
       continue;
     }
     if (fence !== null) continue;

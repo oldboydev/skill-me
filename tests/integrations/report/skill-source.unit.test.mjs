@@ -9,7 +9,7 @@ import { readSkillSource } from "../../../src/integrations/report/skill-source.m
 const roots = [];
 after(() => roots.forEach((root) => rmSync(root, { recursive: true, force: true })));
 const scratch = () => { const root = mkdtempSync(path.join(tmpdir(), "skill-me-t7-")); roots.push(root); return root; };
-const timeline = (names) => ({ operations: names.map((skillName) => ({ type: "skill_invocation", skillName })) });
+const timeline = (names) => ({ operations: names.map((skillName, index) => ({ type: "skill_invocation", skillName, evidence: [index + 1], strength: "native" })) });
 const writeSkill = (root, dir, name, bytes) => {
   const parent = path.join(root, dir, name);
   mkdirSync(parent, { recursive: true });
@@ -25,6 +25,7 @@ test("T7-C1 skill observada e caminho explícito: SHA-256, linha, modo e arquivo
   const before = statSync(file);
   const observed = await readSkillSource({ timeline: timeline(["build"]), cwd: root });
   assert.equal(observed.identification, "observed_name");
+  assert.deepEqual(observed.observedSources, [{ events: [1], strength: "native" }]);
   assert.equal(observed.sha256, createHash("sha256").update(bytes).digest("hex"));
   assert.deepEqual(observed.instructions.map((i) => [i.line, i.heading]), [[2, "Build"]]);
   const explicit = await readSkillSource({ timeline: timeline(["other"]), explicitPath: file, cwd: root });

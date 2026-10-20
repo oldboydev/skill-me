@@ -2,6 +2,7 @@ import { correlateTrace } from "../correlation/timeline.mjs";
 
 const SUCCESS = new Set(["success", "completed"]);
 const FAILURE = new Set(["failure", "failed", "blocked", "declined"]);
+const PROHIBITION = /\b(?:do\s+not|don't|never|must\s+not|não|nunca|jamais)\s+(?:run|execute|rode|use|call|chame|instale|install|faça)\b/i;
 
 function commandAt(record) {
   const fields = record?.content?.fields;
@@ -87,10 +88,17 @@ function conditionalEvidence(instruction, timeline, trace) {
   return { ...actionEvidence, events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], reasonCode: actionEvidence.status === "unobserved" ? "condition_true_action_unobserved" : actionEvidence.reasonCode };
 }
 
+function prohibitionEvidence(instruction, timeline, trace) {
+  const events = instruction.commands.flatMap((command) => commandObservations(command, timeline, trace).flatMap((item) => item.sequences));
+  return { status: "inconclusive", reasonCode: "prohibition_uninterpreted", events: [...new Set(events)].sort((a, b) => a - b), corrections: [] };
+}
+
 export function evaluateReport({ trace, skill }) {
   const timeline = correlateTrace(trace);
   const evaluations = skill.instructions.map((instruction) => {
-    const evidence = instruction.kind === "guidance"
+    const evidence = PROHIBITION.test(instruction.text ?? "")
+      ? prohibitionEvidence(instruction, timeline, trace)
+      : instruction.kind === "guidance"
       ? { status: "not_applicable", reasonCode: "guidance_not_step", events: [], corrections: [] }
       : instruction.kind === "condition"
         ? conditionalEvidence(instruction, timeline, trace)
@@ -119,7 +127,7 @@ export function evaluateReport({ trace, skill }) {
   const environment = [...bySource.values()];
   return {
     reportVersion: 1,
-    skill: { name: skill.name, observedName: skill.observedName, identification: skill.identification, nameMatchesObservation: skill.nameMatchesObservation, sha256: skill.sha256 },
+    skill: { name: skill.name, observedName: skill.observedName, observedSources: skill.observedSources ?? [], identification: skill.identification, nameMatchesObservation: skill.nameMatchesObservation, sha256: skill.sha256 },
     environment,
     timeline,
     evaluations,

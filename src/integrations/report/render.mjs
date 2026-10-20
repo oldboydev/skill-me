@@ -22,6 +22,7 @@ const REASON = Object.freeze({
   some_commands_failed: "ao menos um comando da instrução teve resultado negativo",
   all_commands_succeeded: "todos os comandos da instrução tiveram resultado positivo",
   commands_incomplete: "nem todos os comandos da instrução têm prova suficiente",
+  prohibition_uninterpreted: "a proibição não foi interpretada como ação exigida",
 });
 
 const md = (value) => String(value).replace(/[\\`*_{}\[\]()+!|<>]/g, "\\$&");
@@ -67,10 +68,15 @@ export function renderReport(report, format = "text") {
   const markdown = format === "markdown";
   const heading = (title) => markdown ? `## ${title}` : `${title}:`;
   const bullet = (line) => markdown ? `- ${md(line)}` : `  ${line}`;
+  const observedSources = report.skill.observedSources.map((source) => {
+    const strength = source.strength === "heuristic" ? "hipótese de identificação" : source.strength === "native" ? "vínculo nativo" : "vínculo inconclusivo";
+    return `${citeEvents(source.events) || "evento não identificado"} (${strength})`;
+  }).join("; ") || "nenhum evento identificável";
+  const identificationSource = report.skill.identification === "explicit_path" ? "argumento --skill" : "eventos da captura";
   const rows = [
     markdown ? "# Relatório de execução" : "Relatório de execução",
     "",
-    `${heading("Skill")} ${md(report.skill.name)}; identificação ${report.skill.identification}; sha256:${report.skill.sha256}; nome observado ${md(report.skill.observedName ?? "não observado")}; coincidência ${report.skill.nameMatchesObservation ?? "indeterminada"}.`,
+    `${heading("Skill")} ${md(report.skill.name)}; identificação ${report.skill.identification} (fonte: ${identificationSource}); sha256:${report.skill.sha256}; nome observado ${md(report.skill.observedName ?? "não observado")}; fonte do nome observado: ${observedSources}; coincidência ${report.skill.nameMatchesObservation ?? "indeterminada"}.`,
     "",
     heading("Ambiente e versões"),
     ...((report.environment.length ? report.environment : [{ agent: "não observado", contract: "não observado", platform: null, events: [] }]).map((item) => bullet(`${item.agent}; contrato ${item.contract}; plataforma ${item.platform ?? "não observada"}; fonte: ${citeEvents(item.events) || "captura sem eventos"}.`))),

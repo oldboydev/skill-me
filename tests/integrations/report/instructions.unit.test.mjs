@@ -20,3 +20,8 @@ test("T7-C2 frontmatter e código ignorados; ação, validação, orientação e
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("T7-C2 fence de quatro crases não fecha com três nem com abertura interna", () => {
+  const source = "# Fluxo\n````md\n```\n- Run `npm run bad`.\n```sh\n- Run `npm run still-bad`.\n````\n- Run `npm test`.\n";
+  assert.deepEqual(parseInstructions(source).map((item) => [item.line, item.commands]), [[8, ["npm test"]]]);
+});
