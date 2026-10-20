@@ -29,8 +29,9 @@ function commandObservations(command, timeline, trace) {
 const contextOf = (observation) => JSON.stringify([observation.origin, observation.session]);
 const multipleContexts = (observations) => new Set(observations.map(contextOf)).size > 1;
 
-function evidenceForCommand(command, timeline, trace) {
-  const observations = commandObservations(command, timeline, trace);
+function evidenceForCommand(command, timeline, trace, { afterSequence = 0, context = null } = {}) {
+  const observations = commandObservations(command, timeline, trace)
+    .filter((item) => item.sequences[0] > afterSequence && (context === null || contextOf(item) === context));
   if (observations.length === 0) return { status: "unobserved", reasonCode: "no_matching_observation", events: [], corrections: [] };
   if (multipleContexts(observations)) return { status: "partial", reasonCode: "ambiguous_context", events: observations.flatMap((item) => item.sequences), corrections: [] };
   const last = observations.at(-1);
@@ -44,20 +45,45 @@ function evidenceForCommand(command, timeline, trace) {
   return { status: "partial", reasonCode: last.strength === "heuristic" ? "heuristic_operation" : "result_unconfirmed", events, corrections };
 }
 
+function evidenceForCommands(commands, timeline, trace, options) {
+  const evidence = commands.map((command) => evidenceForCommand(command, timeline, trace, options));
+  if (evidence.length === 1) return evidence[0];
+  const statuses = evidence.map((item) => item.status);
+  const status = statuses.includes("contradicted") ? "contradicted"
+    : statuses.every((item) => item === "sufficient") ? "sufficient"
+      : statuses.every((item) => item === "unobserved") ? "unobserved" : "partial";
+  const reasonCode = {
+    contradicted: "some_commands_failed",
+    sufficient: "all_commands_succeeded",
+    unobserved: "no_matching_observation",
+    partial: "commands_incomplete",
+  }[status];
+  return {
+    status,
+    reasonCode,
+    events: [...new Set(evidence.flatMap((item) => item.events))].sort((a, b) => a - b),
+    corrections: evidence.flatMap((item) => item.corrections),
+  };
+}
+
 function conditionalEvidence(instruction, timeline, trace) {
-  const [trigger, action] = instruction.commands;
+  const [trigger, ...actions] = instruction.commands;
   const fails = /\b(?:falh\w*|fail\w*|erro|error)\b/i.test(instruction.text ?? "");
   const succeeds = /\b(?:pass\w*|succeed\w*|sucesso|success)\b/i.test(instruction.text ?? "");
-  if (!trigger || !action || fails === succeeds) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
+  if (!trigger || actions.length === 0 || fails === succeeds) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
   const observations = commandObservations(trigger, timeline, trace);
   if (multipleContexts(observations)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: observations.flatMap((item) => item.sequences), corrections: [] };
-  const triggerResult = observations.at(-1);
-  if (!triggerResult || triggerResult.result === "unknown" || triggerResult.strength !== "native") {
+  const proven = observations.filter((item) => item.result !== "unknown" && item.strength === "native");
+  if (proven.length === 0) {
     return { status: "inconclusive", reasonCode: "condition_unresolved", events: observations.flatMap((item) => item.sequences), corrections: [] };
   }
-  const conditionTrue = fails ? triggerResult.result === "negative" : triggerResult.result === "positive";
-  if (!conditionTrue) return { status: "not_applicable", reasonCode: "condition_false_observed", events: triggerResult.sequences, corrections: [] };
-  const actionEvidence = evidenceForCommand(action, timeline, trace);
+  const matching = proven.filter((item) => fails ? item.result === "negative" : item.result === "positive");
+  if (matching.length === 0) {
+    if (proven.length !== observations.length) return { status: "inconclusive", reasonCode: "condition_unresolved", events: observations.flatMap((item) => item.sequences), corrections: [] };
+    return { status: "not_applicable", reasonCode: "condition_false_observed", events: observations.flatMap((item) => item.sequences), corrections: [] };
+  }
+  const triggerResult = matching.at(-1);
+  const actionEvidence = evidenceForCommands(actions, timeline, trace, { afterSequence: triggerResult.sequences.at(-1), context: contextOf(triggerResult) });
   return { ...actionEvidence, events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], reasonCode: actionEvidence.status === "unobserved" ? "condition_true_action_unobserved" : actionEvidence.reasonCode };
 }
 
@@ -69,7 +95,7 @@ export function evaluateReport({ trace, skill }) {
       : instruction.kind === "condition"
         ? conditionalEvidence(instruction, timeline, trace)
         : instruction.commands.length > 0
-          ? evidenceForCommand(instruction.commands[0], timeline, trace)
+          ? evidenceForCommands(instruction.commands, timeline, trace)
           : { status: "unobserved", reasonCode: "no_observable_command", events: [], corrections: [] };
     return {
       instruction: instruction.id,

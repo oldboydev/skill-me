@@ -62,3 +62,44 @@ test("T7-C6 comando repetido em sessões distintas não é declarado correção 
   assert.equal(report.evaluations[0].reasonCode, "ambiguous_context");
   assert.deepEqual(report.evaluations[0].corrections, []);
 });
+
+test("T7-C5 instrução com dois comandos só é suficiente quando ambos são observados", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` and `npm run build`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
+test("T7-C5 todos os comandos positivos são suficientes; falha em um contradiz a instrução", () => {
+  const trace = buildTrace([
+    pre("test", "npm test"), post("test", "success"),
+    pre("build", "npm run build"), post("build", "success"),
+    pre("lint", "npm run lint"), post("lint", "failure"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` and `npm run build`.\n- Run `npm test` and `npm run lint`.\n") });
+  assert.deepEqual(states(report), ["sufficient", "contradicted"]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
+  assert.deepEqual(report.evaluations[1].sources.events, [1, 2, 5, 6]);
+});
+
+test("T7-C6 falha anterior mantém condição verdadeira e ação precisa vir depois", () => {
+  const trace = buildTrace([
+    pre("fix-early", "npm run fix"), post("fix-early", "success"),
+    pre("fail", "npm test"), post("fail", "failure"),
+    pre("retry", "npm test"), post("retry", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["unobserved"]);
+  assert.deepEqual(report.evaluations[0].sources.events, [3, 4]);
+});
+
+test("T7-C6 ação posterior à falha comprova condição mesmo após retry positivo", () => {
+  const trace = buildTrace([
+    pre("fail", "npm test"), post("fail", "failure"),
+    pre("retry", "npm test"), post("retry", "success"),
+    pre("fix", "npm run fix"), post("fix", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["sufficient"]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 5, 6]);
+});

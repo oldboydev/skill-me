@@ -19,6 +19,9 @@ const REASON = Object.freeze({
   condition_unresolved: "a condição não tem resultado explícito suficiente",
   condition_false_observed: "a condição foi explicitamente falsa",
   condition_true_action_unobserved: "a condição ocorreu, mas a ação não foi observada",
+  some_commands_failed: "ao menos um comando da instrução teve resultado negativo",
+  all_commands_succeeded: "todos os comandos da instrução tiveram resultado positivo",
+  commands_incomplete: "nem todos os comandos da instrução têm prova suficiente",
 });
 
 const md = (value) => String(value).replace(/[\\`*_{}\[\]()+!|<>]/g, "\\$&");
