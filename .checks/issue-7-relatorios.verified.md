@@ -1,40 +1,41 @@
 # Issue #7 — verificação independente do relatório
 
-**Verdict**: PASS — 10/10 checks comprovados em `3bb71cf`.
+**Verdict**: PASS — 10/10 checks comprovados em `70b27e2`.
 **Profile**: light.
-**Diff range**: `a1f855b..3bb71cf` (entrega completa); `d031673..3bb71cf` (correção reavaliada).
-**Round**: 3 — scoped.
-**Verifier**: subagente independente; não editou produto, testes, plano, checklist ou build.
+**Diff range**: `a1f855b..70b27e2` (entrega completa); `3bb71cf..70b27e2` (mudanças desta rodada).
+**Round**: 4 — scoped, autorizada especificamente pelo proprietário na issue #7.
+**Verifier**: subagente independente; editou somente este relatório.
 
 ## Escopo e proveniência
 
-Li `AGENTS.md`, `.checks/issue-7-relatorios.md`, `.tasks/issue-7-relatorios.md`, `.checks/code-review/issue-7/context.json`, os três achados de `.checks/code-review/issue-7/response.json`, o relatório da rodada 2 (`0548aa9`) e o diff `d031673..3bb71cf`. O checklist não contém `Coverage` ou `Test policy` e o perfil `light` não pede comparação `ui` nem injeção de falhas. Reavaliei C1–C2, C4–C8 e C10 por tocarem as fontes, o parser, o avaliador, a renderização ou seus consumidores; C3 foi auditado na fonte tocada. O julgamento das asserções de C9 foi carregado da rodada 2 (`0548aa9`), pois sua fronteira de erros não mudou. **Todas** as provas C1–C10 foram reexecutadas em `3bb71cf`.
+Li `AGENTS.md`, `.checks/issue-7-relatorios.md`, `.tasks/issue-7-relatorios.md`, `.checks/code-review/issue-7/context.json`, `.checks/code-review/issue-7/response.json`, o relatório da rodada 3 (`3bb71cf`) e o diff `3bb71cf..70b27e2`. A autorização da quarta verificação e terceira revisão consta no comentário `6289269096`, reproduzido no contexto e no plano. O override `code-review.config.json:44–48` é exclusivo da issue `7`, perfil `light`, `maxRounds: 3`; os perfis gerais conservam teto 2 e o histórico anterior permanece. O checklist não contém `Coverage` ou `Test policy`; o perfil `light` não exige comparação `ui` nem injeção de falhas.
+
+Reavaliei as fontes e as asserções de C1, C3–C7 e C10 porque o diff alterou resolvedor, avaliador, renderizador e testes consumidores. Reinspecionei C8 no consumidor; C2 e C9 conservam o julgamento da rodada 3 (`3bb71cf`), com suas provas reexecutadas no HEAD. Todas as provas C1–C10 foram reexecutadas em `70b27e2`.
 
 ## Provas por check
 
-Uma única invocação de `node --test --test-name-pattern='T7-C(1|2|3|4|5|6|7|8|9|10)'` com os seis arquivos de `tests/integrations/report/` executou **19 testes, 19 passes, 0 falhas, 0 skips**, exit 0. Cada nome C1–C10 apareceu no resultado. Caminhos e linhas abaixo são relativos à raiz do repositório e correspondem a `3bb71cf`.
+Uma única invocação de `node --test --test-name-pattern='T7-C(1|2|3|4|5|6|7|8|9|10)'` com os seis arquivos de `tests/integrations/report/` executou **22 testes, 22 passes, 0 falhas, 0 skips**, exit 0. Os dez identificadores apareceram individualmente no resultado. As linhas abaixo são do HEAD.
 
-| Check | Resultado | Asserção decisiva no HEAD | Proveniência |
+| Check | Resultado | Asserção decisiva | Proveniência |
 | --- | --- | --- | --- |
-| C1 | PASS | `tests/integrations/report/skill-source.unit.test.mjs:27–34`: `observed.identification === "observed_name"`, `observedSources === [{ events: [1], strength: "native" }]`, hash dos bytes, linha/heading `[[2, "Build"]]`, modo explícito divergente, bytes e mtime inalterados. | Reavaliado em `3bb71cf`; `skill-source.mjs` e teste tocados. |
-| C2 | PASS | `tests/integrations/report/instructions.unit.test.mjs:14–18`: quatro tipos/linhas/heading, comandos literais e marcador de execução ausente; `:26`: fence de quatro crases com três crases internas produz somente `[[8, ["npm test"]]]`. | Reavaliado em `3bb71cf`; regressão nova. |
-| C3 | PASS | `tests/integrations/report/skill-source.unit.test.mjs:39–53`: `assert.rejects` exige código e mensagem fechados; casos de ausência, duas ambiguidades, diretório, UTF-8 inválido e 1 MiB + 1. | Asserções carregadas de `0548aa9`, auditadas na fonte tocada e prova reexecutada em `3bb71cf`. |
-| C4 | PASS | `tests/integrations/report/evaluate.unit.test.mjs:22–26`: vetor fechado de estados, linhas exatas, sequência `[1, 2]`, `guidance_not_step` e hash/motivo de toda avaliação. | Reavaliado em `3bb71cf`; avaliador tocado. |
-| C5 | PASS | `tests/integrations/report/evaluate.unit.test.mjs:37–39`: sucesso, falha, parcial, ausência e leitura sem atribuição de carregamento; `:69–70`: comando faltante é parcial; `:80–82`: dois sucessos são suficientes e um comando falho contradiz, com sequências. | Reavaliado em `3bb71cf`; avaliador tocado. |
-| C6 | PASS | `tests/integrations/report/evaluate.unit.test.mjs:49–51`: condição falsa/inconclusiva e correção com sequências de falha/sucesso; `:61–63`: sessões distintas; `:92–104`: ordem e retry; `:113–114`: proibição condicional e direta ficam `inconclusive` com `prohibition_uninterpreted`. | Reavaliado em `3bb71cf`; regressão nova. |
-| C7 | PASS | `tests/integrations/report/render.unit.test.mjs:14–21`: texto/Markdown citam hash, linha, evento, contrato, timeline e limites, sem percentual ou raciocínio privado; JSON v1 preserva fonte; `:34`: erro/correção/lacuna; `:41–44`: fonte `[1]` heurística é preservada e `nome observado.*evento #1.*hipótese` aparece nos dois formatos. | Reavaliado em `3bb71cf`; regressão nova. |
-| C8 | PASS | `tests/integrations/report/report.cli.test.mjs:30–40`: três formatos retornam 0, JSON v1, repetição idêntica e captura/skill inalteradas. | Reavaliado pelo consumidor de renderização tocada; asserções carregadas de `0548aa9`, prova reexecutada em `3bb71cf`. |
-| C9 | PASS | `tests/integrations/report/report.cli.test.mjs:48–51`: exit exato, erro JSON fechado, stderr vazio e ausência de eco; `:53–65` cobrem 2/3/4; `:69–71` cobrem 5. | Julgamento carregado de `0548aa9`; prova reexecutada em `3bb71cf`. |
-| C10 | PASS | `tests/integrations/report/report.e2e.test.mjs:40–47`: CLI real retorna 0, vetor exato contém os seis estados, correção mantém falha, ausência cita `[]`, limite de `SKILL.md` permanece e timeline traz evidência. | Reavaliado pelo pipeline compartilhado tocado; prova reexecutada em `3bb71cf`. |
+| C1 | PASS | `tests/integrations/report/skill-source.unit.test.mjs:27–34`: modo observado, fonte nativa `[1]`, hash, linha/heading, divergência explícita e arquivo inalterado; `:42–45`: `revisão` resolve e `..`/separadores são recusados; `report.e2e.test.mjs:65–68`: captura → comando sem `--skill` retorna `observed_name` e fonte nativa `[1,2]`. | Reavaliado em `70b27e2`; fonte e duas provas tocadas. |
+| C2 | PASS | `tests/integrations/report/instructions.unit.test.mjs:14–18`: quatro tipos, linhas, heading, comandos e ausência de execução; `:26`: fence longo preserva só a instrução externa. | Julgamento carregado de `3bb71cf`; prova reexecutada em `70b27e2`. |
+| C3 | PASS | `tests/integrations/report/skill-source.unit.test.mjs:51–65`: `assert.rejects` exige código/mensagem fechados para ausência, ambiguidade, arquivo não regular, UTF-8 e 1 MiB + 1; `:45` exige rejeição de travessia/separador. | Reavaliado em `70b27e2`; validação de nomes tocada. |
+| C4 | PASS | `tests/integrations/report/evaluate.unit.test.mjs:22–26`: vetor exato dos seis estados, linhas, sequências, motivo da orientação e hash/motivo por avaliação. | Reavaliado em `70b27e2`; avaliador compartilhado tocado. |
+| C5 | PASS | `tests/integrations/report/evaluate.unit.test.mjs:37–39`: suficiente, contradito, parcial, ausente e leitura sem alegar carregamento; `:69–70`: segundo comando ausente é parcial; `:80–82`: dois resultados positivos são suficientes e falha em um contradiz. | Reavaliado em `70b27e2`; avaliador compartilhado tocado. |
+| C6 | PASS | `tests/integrations/report/evaluate.unit.test.mjs:49–51`: condição falsa/inconclusiva e correção sequencial `[3,4] → [5,6]`; `:61–63`: contextos distintos; `:92–104`: ordem e retry; `:113–116`: sobreposição exige `partial`, `overlapping_attempts`, correções vazias e eventos `[1,2,3,4]`; `:125–126`: proibição inconclusiva. | Reavaliado em `70b27e2`; regressão nova. |
+| C7 | PASS | `tests/integrations/report/render.unit.test.mjs:14–21`: citações, contrato, timeline, limites, JSON v1 e ausência de percentual/raciocínio privado; `:34`: erro/correção/lacuna; `:41–44`: nome observado cita evento e hipótese. `src/integrations/report/render.mjs:25` apresenta o motivo de sobreposição. | Reavaliado em `70b27e2`; renderizador e avaliador tocados. |
+| C8 | PASS | `tests/integrations/report/report.cli.test.mjs:30–40`: três formatos com exit 0, JSON v1, repetição idêntica e captura/skill inalteradas. | Asserções carregadas de `3bb71cf`; consumidor reinspecionado e prova reexecutada em `70b27e2`. |
+| C9 | PASS | `tests/integrations/report/report.cli.test.mjs:48–51`: exit exato, erro JSON fechado, stderr vazio e ausência de eco; `:53–65` cobrem 2/3/4; `:69–71` cobrem 5. | Julgamento carregado de `3bb71cf`; prova reexecutada em `70b27e2`. |
+| C10 | PASS | `tests/integrations/report/report.e2e.test.mjs:41–48`: comando real retorna 0, vetor exato com seis estados, correção, lacuna e limite de leitura; `:65–68`: captura com nome Unicode passa pelo resolvedor automático. | Reavaliado em `70b27e2`; regressão de fronteira nova. |
 
-## Três achados da revisão formal
+## Dois achados da segunda revisão formal
 
-| Cenário | Esperado | Atual em `3bb71cf` | Resultado |
+| Cenário | Comportamento no HEAD | Prova | Resultado |
 | --- | --- | --- | --- |
-| Fence de quatro crases contém linha de três crases e item `- Run ...` ainda no bloco. | O item interno não vira instrução. | `instructions.mjs:35–41` guarda marcador/comprimento e só fecha com comprimento suficiente, mesmo caractere e sufixo vazio; `instructions.unit.test.mjs:24–26` exige só a instrução fora do bloco. | Resolvido; C2 PASS. |
-| `npm test` falha e `npm deploy` executa apesar de `do not run`. | Não declarar `sufficient`; se negação não for interpretada, ficar inconclusivo. | `evaluate.mjs:5,91–103` reconhece a proibição antes de avaliar ações e retorna `inconclusive`; `evaluate.unit.test.mjs:107–114` exige isso para condição e proibição direta. `render.mjs:25` explicita o motivo. | Resolvido; C6 PASS. |
-| Nome observado da skill aparece em texto/Markdown. | Citar sequência de origem e força heurística quando aplicável. | `skill-source.mjs:80–88` leva `evidence`/`strength` das operações; `evaluate.mjs:130` preserva; `render.mjs:71–79` cita evento e força na linha Skill. `skill-source.unit.test.mjs:28` e `render.unit.test.mjs:41–44` comprovam os elos. | Resolvido; C1/C7 PASS. |
+| Nome observado `revisão` com candidato único em `.agents/skills/revisão/SKILL.md`, sem `--skill`. | `src/integrations/report/skill-source.mjs:9–16,30–44` aceita Unicode e recusa travessia, separadores, nomes reservados e caracteres perigosos; `readSkillSource` mantém identificação, hash e instruções. | `skill-source.unit.test.mjs:37–46` e captura → comando `report.e2e.test.mjs:51–68`. | Resolvido; C1/C3/C10 PASS. |
+| A começa, B começa, A falha, B termina com sucesso para o mesmo comando. | `src/integrations/report/evaluate.mjs:31–45` detecta sobreposição antes de criar correção e devolve `partial` com sequências, sem `corrections`; `render.mjs:25` explica a indeterminação. A correção realmente sequencial continua em C6. | `evaluate.unit.test.mjs:107–116` e `:42–51`. | Resolvido; C6/C7 PASS. |
 
-## Superfícies adicionais e limites
+## Gate e limites
 
-`docs/report.md` descreve as três regras novas e `.checks/issue-7-relatorios.build.md` registra as provas do autor; não alteram fonte vinculante nem checklist. `git diff --check a1f855b..3bb71cf` passou. A árvore estava limpa antes da escrita deste relatório. Não repeti `npm test` completo nesta rodada; o lote C1–C10 e a auditoria do diff cobrem as superfícies alteradas. A execução completa informada no build é prova do autor, não execução independente desta rodada. Injeção de falhas e juízos de `Coverage`/`Test policy` não se aplicam ao perfil `light`.
+`git diff --check 3bb71cf..70b27e2` passou; a árvore estava limpa antes da escrita deste relatório. `docs/report.md` explica Unicode e sobreposição; `.checks/issue-7-relatorios.build.md` registra os testes do autor, inclusive a prova red antes das correções. Esta rodada executou independentemente o lote C1–C10; não repeti `npm test` completo, cujos números no build continuam sendo evidência do autor. Injeção de falhas, `Coverage` e `Test policy` não se aplicam ao perfil `light`.
