@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { readSkillSource } from "../../../src/integrations/report/skill-source.mjs";
+import { correlateTrace } from "../../../src/integrations/correlation/timeline.mjs";
+import { evaluateReport } from "../../../src/integrations/report/evaluate.mjs";
+import { renderReport } from "../../../src/integrations/report/render.mjs";
+import { buildTrace } from "../correlation/helpers/trace-builder.mjs";
 
 const roots = [];
 after(() => roots.forEach((root) => rmSync(root, { recursive: true, force: true })));
@@ -43,6 +47,25 @@ test("T7-C1 nome observado Unicode resolve candidato único e ainda recusa trave
   assert.equal(observed.sha256, createHash("sha256").update(bytes).digest("hex"));
   for (const name of ["..", "../revisão", "revisão\\outra"]) {
     await assert.rejects(readSkillSource({ timeline: timeline([name]), cwd: root }), (error) => error.code === "skill_name_invalid");
+  }
+});
+
+test("T7-C1/C7 caminho explícito preserva dois nomes observados ambíguos e seus eventos", async () => {
+  const root = scratch();
+  const file = writeSkill(root, ".agents/skills", "one", "- Run `npm test`.\n");
+  const trace = buildTrace([
+    { src: "claude", kind: "skill_invocation", ids: { sessionId: "s1", promptId: "p1" }, fields: { invocationPath: "direct_command", phase: "expansion", skillName: "one" } },
+    { src: "claude", kind: "skill_invocation", ids: { sessionId: "s1", promptId: "p2" }, fields: { invocationPath: "direct_command", phase: "expansion", skillName: "two" } },
+  ]);
+  const selected = await readSkillSource({ timeline: correlateTrace(trace), explicitPath: file, cwd: root });
+  assert.equal(selected.observedName, null);
+  assert.equal(selected.nameMatchesObservation, null);
+  assert.deepEqual(selected.observedNames.map((item) => [item.name, item.sources.flatMap((source) => source.events)]), [["one", [1]], ["two", [2]]]);
+  const report = evaluateReport({ trace, skill: selected });
+  for (const format of ["text", "markdown"]) {
+    const output = renderReport(report, format);
+    assert.match(output, /nomes observados ambíguos.*one.*evento #1.*two.*evento #2/i);
+    assert.doesNotMatch(output, /nome observado não observado/i);
   }
 });
 

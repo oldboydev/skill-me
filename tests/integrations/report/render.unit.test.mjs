@@ -59,3 +59,14 @@ test("T7-C7 operação Codex exibe exitCode negativo e captura sem conteúdo exp
     assert.match(output, /conteúdo.*argumentos.*não.*coletado/i);
   }
 });
+
+test("T7-C7 conteúdo habilitado mas argumento omitido pela política é limitação citada", () => {
+  const trace = buildTrace([{ src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "a" }, fields: { toolName: "Bash" } }]);
+  trace.capture.content = true;
+  trace.records[0].record.privacy = ["tool_input.command:unsanitizable"];
+  const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "f".repeat(64), instructions: parseInstructions("- Run `npm test`.\n") };
+  const report = evaluateReport({ trace, skill });
+  assert.equal(report.evaluations[0].status, "unobserved");
+  assert.ok(report.limitations.some((item) => item.source.includes("evento #1") && item.source.includes("tool_input.command:unsanitizable")));
+  for (const format of ["text", "markdown"]) assert.match(renderReport(report, format), /política.*omitiu.*argumento.*evento #1/i);
+});

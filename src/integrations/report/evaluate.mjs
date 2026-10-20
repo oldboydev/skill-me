@@ -21,9 +21,11 @@ function operationResult(operation) {
 }
 
 function commandObservations(command, timeline, trace) {
-  const sequences = trace.records.filter(({ record }) => commandAt(record) === command).map(({ sequence }) => sequence);
-  return timeline.operations.filter((op) => op.type === "tool" && op.evidence.some((sequence) => sequences.includes(sequence)))
-    .map((op) => ({ operation: op.id, strength: op.strength, state: op.state, result: operationResult(op), session: op.session, origin: op.origin, sequences: op.evidence }))
+  const commandsBySequence = new Map(trace.records.map(({ sequence, record }) => [sequence, commandAt(record)]));
+  return timeline.operations.filter((op) => op.type === "tool")
+    .map((op) => ({ op, commands: [...new Set(op.evidence.map((sequence) => commandsBySequence.get(sequence)).filter(Boolean))] }))
+    .filter(({ commands }) => commands.includes(command))
+    .map(({ op, commands }) => ({ operation: op.id, strength: op.strength, state: op.state, result: commands.length === 1 ? operationResult(op) : "unknown", commandConflict: commands.length > 1, session: op.session, origin: op.origin, sequences: op.evidence }))
     .sort((a, b) => a.sequences[0] - b.sequences[0]);
 }
 
@@ -53,7 +55,7 @@ function evidenceForCommand(command, timeline, trace, { afterSequence = 0, conte
   const events = [...new Set(observations.flatMap((item) => item.sequences))];
   if (last.result === "negative") return { status: "contradicted", reasonCode: "matching_command_failed", events, corrections };
   if (last.result === "positive" && last.strength === "native") return { status: "sufficient", reasonCode: "matching_command_succeeded", events, corrections };
-  return { status: "partial", reasonCode: last.strength === "heuristic" ? "heuristic_operation" : "result_unconfirmed", events, corrections };
+  return { status: "partial", reasonCode: last.commandConflict ? "command_conflict" : last.strength === "heuristic" ? "heuristic_operation" : "result_unconfirmed", events, corrections };
 }
 
 function evidenceForCommands(commands, timeline, trace, options) {
@@ -67,7 +69,7 @@ function evidenceForCommands(commands, timeline, trace, options) {
     contradicted: "some_commands_failed",
     sufficient: "all_commands_succeeded",
     unobserved: "no_matching_observation",
-    partial: "commands_incomplete",
+    partial: evidence.some((item) => item.reasonCode === "command_conflict") ? "command_conflict" : "commands_incomplete",
   }[status];
   return {
     status,
@@ -107,6 +109,9 @@ function prohibitionEvidence(instruction, timeline, trace) {
 
 export function evaluateReport({ trace, skill }) {
   const timeline = correlateTrace(trace);
+  const omittedCommands = trace.records.flatMap(({ sequence, record }) => (record.privacy ?? [])
+    .filter((item) => /^(?:tool_input\.command|item\.command):unsanitizable$/.test(item))
+    .map((item) => ({ sequence, reason: item })));
   const evaluations = skill.instructions.map((instruction) => {
     const evidence = PROHIBITION.test(instruction.text ?? "")
       ? prohibitionEvidence(instruction, timeline, trace)
@@ -139,7 +144,7 @@ export function evaluateReport({ trace, skill }) {
   const environment = [...bySource.values()];
   return {
     reportVersion: 1,
-    skill: { name: skill.name, observedName: skill.observedName, observedSources: skill.observedSources ?? [], identification: skill.identification, nameMatchesObservation: skill.nameMatchesObservation, sha256: skill.sha256 },
+    skill: { name: skill.name, observedName: skill.observedName, observedNames: skill.observedNames ?? [], observedSources: skill.observedSources ?? [], identification: skill.identification, nameMatchesObservation: skill.nameMatchesObservation, sha256: skill.sha256 },
     environment,
     timeline,
     evaluations,
@@ -148,6 +153,7 @@ export function evaluateReport({ trace, skill }) {
       { text: "Leitura ou referência a SKILL.md não comprova que o agente carregou as instruções.", source: "docs/traces.md" },
       { text: "Evidência de comando comprova apenas o resultado observado da ferramenta, não toda a intenção da instrução.", source: "docs/agent-observation.md" },
       ...(timeline.capture.content === false ? [{ text: "Conteúdo dos argumentos não foi coletado; comandos não podem ser comparados pela captura.", source: "timeline.capture.content" }] : []),
+      ...(omittedCommands.length > 0 ? [{ text: "A política omitiu o argumento de comando; essa operação não pode comprovar o comando literal.", source: omittedCommands.map((item) => `evento #${item.sequence} privacy:${item.reason}`).join(", ") }] : []),
       ...(timeline.coverage.partial ? [{ text: "Cobertura parcial da captura ou correlação; veja timeline.coverage.", source: "timeline.coverage" }] : []),
     ],
   };

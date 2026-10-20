@@ -27,6 +27,8 @@ export function parseInstructions(source) {
   let heading = null;
   let fence = null;
   let frontmatter = lines[0]?.trim() === "---";
+  let active = null;
+  let activeRaw = "";
   for (const [index, line] of lines.entries()) {
     if (frontmatter) {
       if (index > 0 && line.trim() === "---") frontmatter = false;
@@ -34,6 +36,7 @@ export function parseInstructions(source) {
     }
     const fenceMatch = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (fenceMatch) {
+      active = null;
       const marker = fenceMatch[1];
       if (fence === null) fence = { character: marker[0], length: marker.length };
       else if (fence.character === marker[0] && marker.length >= fence.length && fenceMatch[2].trim() === "") fence = null;
@@ -42,15 +45,24 @@ export function parseInstructions(source) {
     if (fence !== null) continue;
     const title = HEADING.exec(line);
     if (title) {
+      active = null;
       heading = safeText(title[1].trim());
       continue;
     }
     const item = LIST_ITEM.exec(line);
-    if (!item) continue;
-    const raw = item[1].trim();
-    const text = safeText(raw);
-    const kind = CONDITIONAL.test(raw) ? "condition" : VALIDATION.test(raw) ? "validation" : ACTION.test(raw) ? "action" : "guidance";
-    instructions.push({ id: `i-${instructions.length + 1}`, line: index + 1, heading, kind, text, commands: commandsIn(raw) });
+    if (item) {
+      activeRaw = item[1].trim();
+      const kind = CONDITIONAL.test(activeRaw) ? "condition" : VALIDATION.test(activeRaw) ? "validation" : ACTION.test(activeRaw) ? "action" : "guidance";
+      active = { id: `i-${instructions.length + 1}`, line: index + 1, heading, kind, text: safeText(activeRaw), commands: commandsIn(activeRaw) };
+      instructions.push(active);
+    } else if (active !== null && /^\s+\S/.test(line)) {
+      const continuation = line.trim();
+      activeRaw += ` ${continuation}`;
+      active.text = safeText(activeRaw);
+      active.commands.push(...commandsIn(continuation));
+    } else {
+      active = null;
+    }
   }
   return instructions;
 }

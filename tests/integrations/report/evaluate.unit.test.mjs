@@ -70,6 +70,24 @@ test("T7-C5 instrução com dois comandos só é suficiente quando ambos são ob
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
 });
 
+test("T7-C5 segundo comando na continuação não é declarado executado pelo primeiro", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` and\n  `npm run build`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
+test("T7-C5 argumentos divergentes no mesmo par nativo não comprovam nenhum comando", () => {
+  const trace = buildTrace([
+    pre("mixed", "npm test"),
+    { ...post("mixed", "success"), content: commandContent("npm run build") },
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` and `npm run build`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "command_conflict");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+});
+
 test("T7-C5 todos os comandos positivos são suficientes; falha em um contradiz a instrução", () => {
   const trace = buildTrace([
     pre("test", "npm test"), post("test", "success"),

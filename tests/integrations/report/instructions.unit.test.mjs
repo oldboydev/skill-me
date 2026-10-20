@@ -25,3 +25,13 @@ test("T7-C2 fence de quatro crases não fecha com três nem com abertura interna
   const source = "# Fluxo\n````md\n```\n- Run `npm run bad`.\n```sh\n- Run `npm run still-bad`.\n````\n- Run `npm test`.\n";
   assert.deepEqual(parseInstructions(source).map((item) => [item.line, item.commands]), [[8, ["npm test"]]]);
 });
+
+test("T7-C2 continuação indentada pertence ao mesmo item e preserva todos os comandos", () => {
+  const source = "- Run `npm test` and\n  `npm run build`.\n- Verify `npm run lint`.\n";
+  const instructions = parseInstructions(source);
+  assert.deepEqual(instructions.map((item) => [item.line, item.kind, item.commands]), [
+    [1, "action", ["npm test", "npm run build"]],
+    [3, "validation", ["npm run lint"]],
+  ]);
+  assert.match(instructions[0].text, /npm test.*npm run build/);
+});

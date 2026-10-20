@@ -5,8 +5,8 @@ Autorização: pedido explícito do proprietário nesta conversa para puxar a pr
 
 ## Provas executadas
 
-- `node --test "tests/integrations/report/**/*.test.mjs"`: 25 testes, 25 passaram, 0 falharam, 0 skip. Cada `T7-C1` a `T7-C10` foi listado e executado; `T7-C1` cobre nome Unicode na regra e na captura real; `T7-C2` cobre comprimento de fence; `T7-C5` cobre comandos compostos e `bash ./verify.sh`; `T7-C6` cobre retry, ordem, sessões distintas, proibição, sobreposição e palavra `failure` no comando da ação; `T7-C7` prova erro/correção/lacuna, código de saída, ausência de conteúdo e proveniência do nome observado; `T7-C10` atravessa a fronteira com os seis estados.
-- `npm test` após os achados da terceira revisão formal: exit 0. Governança: 6/6. Motor de revisão: 16/16. Doctor: 410 passes, 7 skips condicionais. Integrações: 322 testes, 315 passaram, 7 skips de plataforma/ambiente já declarados pela suíte (casos POSIX no Windows ou criação de symlink sem privilégio); 0 falhas.
+- `node --test "tests/integrations/report/**/*.test.mjs"`: 30 testes, 30 passaram, 0 falharam, 0 skip. Cada `T7-C1` a `T7-C10` foi listado e executado; `T7-C1` cobre nome Unicode e nomes ambíguos com fonte; `T7-C2` cobre fences e continuação indentada; `T7-C5` cobre comandos compostos, argumentos divergentes e `bash ./verify.sh`; `T7-C6` cobre retry, ordem, sessões distintas, proibição, sobreposição e palavra `failure` no comando da ação; `T7-C7` prova erro/correção/lacuna, código de saída, ausência e omissão de conteúdo e proveniência do nome; `T7-C10` atravessa a fronteira com os seis estados.
+- `npm test` após os achados da quarta revisão formal: exit 0. Governança: 6/6. Motor de revisão: 16/16. Doctor: 410 passes, 7 skips condicionais. Integrações: 327 testes, 320 passaram, 7 skips de plataforma/ambiente já declarados pela suíte (casos POSIX no Windows ou criação de symlink sem privilégio); 0 falhas.
 - `npm run test:doctor` fora do sandbox de rede: 417 testes, 410 passaram, 7 skips condicionais por SO/ambiente, 0 falhas. A repetição dentro do sandbox deu 2 falhas (`collector-C9` IPv4/IPv6: socket de loopback observado como `unreachable`), 408 passes e 7 skips. Os 8 testes de `collector.cli.test.mjs` passaram fora do sandbox, inclusive os dois casos de loopback; nenhuma mudança no doctor foi feita.
 - `git diff --check`: exit 0; avisos de conversão LF/CRLF do Git no Windows, sem erro de whitespace.
 
@@ -28,6 +28,8 @@ Após registrar o override, `npm run test:governance` passou 6/6 fora do sandbox
 
 Após elevar o override da #7 a quatro tentativas com nova autorização, `npm run test:governance` passou novamente 6/6 e `npm run test:code-review` passou 16/16, ambos fora do sandbox; a exportação atualizada do contexto da issue foi validada como JSON.
 
+A quinta verificação independente aprovou C1–C10 no commit `559b3f6`, com 25/25 provas executadas, e foi registrada em `.verified.md` no commit `8773866`. A quarta revisão formal desse HEAD retornou `changes_requested` por quatro casos novos: continuação indentada de um item ignorada, argumentos divergentes na mesma operação aceitos como prova, omissão de argumento pela política sem limitação explícita e dois nomes observados tratados como ausência de nome. Acrescentei cinco testes de regressão; no código revisado, o lote red teve 21 passes e 5 falhas nos resultados incorretos. Depois das correções, o lote focado teve 26/26 passes e a suíte inteira do relatório teve 30/30. Uma colisão de nome introduzida na primeira implementação das correções causou quatro falhas no primeiro lote green; corrigi o nome e repeti os mesmos testes sem alterar asserções. A quinta verificação e as quatro tentativas formais autorizadas já foram consumidas; as evidências independentes e formais ainda não aprovam o novo conteúdo.
+
 ## Decisões e limites
 
 - A consulta consome somente o snapshot do store da #8, a correlação da #6 e texto de skill explicitamente escolhido ou candidato único local. Não relê payload nativo, não escreve artefato e não inicia agentes.
@@ -35,6 +37,7 @@ Após elevar o override da #7 a quatro tentativas com nova autorização, `npm r
 - O código de saída de ID de captura **malformado** é 2, conforme `privacy timeline`; estado persistido inválido é 3. A redação inicial do plano agrupava ambos como 3 e foi corrigida para manter o contrato existente. A prova C9 cobre ambos.
 - Um comando repetido em sessões distintas não é tratado como correção nem como condição falsa por ordem global; recebe avaliação parcial/inconclusiva com as sequências observadas.
 - Uma instrução com vários comandos literais só é suficiente quando todos são comprovados; uma falha em qualquer deles contradiz a instrução. A condição avalia todas as tentativas nativas do gatilho na mesma sessão e só considera ação posterior ao último gatilho verdadeiro.
+- Continuação indentada pertence ao mesmo item de lista; argumentos de comando divergentes entre eventos da mesma operação não provam execução. Omissão de argumento por política é citada com evento, e nomes observados ambíguos são listados com suas fontes quando `--skill` é explícito.
 
 ## Fora do escopo observado
 
