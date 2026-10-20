@@ -4,7 +4,7 @@ const CONDITIONAL = /^(?:se|caso|quando|if|when)\b/i;
 const VALIDATION = /^(?:verifique|confira|valide|teste|check|verify|validate|test|assert)\b/i;
 const ACTION = /^(?:execute|rode|run|use|leia|read|crie|create|salve|save|edite|edit|instale|install|faça|do|abra|open|chame|call|aplique|apply)\b/i;
 const COMMAND = /^(?:npm|npx|node|pnpm|yarn|git|pytest|python|python3|cargo|make|go|dotnet|bash|sh|zsh|fish|pwsh|powershell|cmd|\.\/[\w./-]+)(?:\s|$)/i;
-const LIST_ITEM = /^\s{0,3}(?:[-*+]|\d+[.)])\s+(.+)$/;
+const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+(.+)$/;
 const CHECKBOX = /^\[(?: |x|X)\]\s+/;
 const HEADING = /^#{1,6}\s+(.+)$/;
 const CODE_SPAN = /`([^`\r\n]{1,300})`/g;
@@ -55,8 +55,8 @@ export function parseInstructions(source) {
       continue;
     }
     const item = LIST_ITEM.exec(line);
-    if (item) {
-      activeRaw = item[1].trim().replace(CHECKBOX, "");
+    if (item && (item[1].length <= 3 || active !== null)) {
+      activeRaw = item[2].trim().replace(CHECKBOX, "");
       const kind = CONDITIONAL.test(activeRaw) ? "condition" : VALIDATION.test(activeRaw) ? "validation" : ACTION.test(activeRaw) ? "action" : "guidance";
       const extracted = commandsIn(activeRaw);
       active = { id: `i-${instructions.length + 1}`, line: index + 1, heading, kind, text: safeText(activeRaw), commands: extracted.commands, commandRedacted: extracted.redacted };

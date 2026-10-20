@@ -54,6 +54,20 @@ function overlappingAttempts(observations) {
   return false;
 }
 
+function confirmedCorrections(observations) {
+  const corrections = [];
+  let failures = [];
+  for (const item of observations) {
+    if (item.strength !== "native") continue;
+    if (item.result === "negative") failures.push(item.sequences);
+    if (item.result === "positive") {
+      corrections.push(...failures.map((failed) => ({ failed, corrected: item.sequences })));
+      failures = [];
+    }
+  }
+  return corrections;
+}
+
 function evidenceForCommand(command, timeline, trace, { afterSequence = 0, context = null } = {}) {
   const observations = commandObservations(command, timeline, trace)
     .filter((item) => item.sequences[0] > afterSequence && (context === null || contextOf(item) === context));
@@ -61,10 +75,7 @@ function evidenceForCommand(command, timeline, trace, { afterSequence = 0, conte
   if (multipleContexts(observations)) return { status: "partial", reasonCode: "ambiguous_context", events: observations.flatMap((item) => item.sequences), corrections: [] };
   if (overlappingAttempts(observations)) return { status: "partial", reasonCode: "overlapping_attempts", events: [...new Set(observations.flatMap((item) => item.sequences))].sort((a, b) => a - b), corrections: [] };
   const last = observations.at(-1);
-  const earlierFailures = observations.slice(0, -1).filter((item) => item.result === "negative" && item.strength === "native");
-  const corrections = last.result === "positive" && last.strength === "native"
-    ? earlierFailures.map((item) => ({ failed: item.sequences, corrected: last.sequences }))
-    : [];
+  const corrections = confirmedCorrections(observations);
   const events = [...new Set(observations.flatMap((item) => item.sequences))];
   if (last.result === "negative" && last.strength === "native") return { status: "contradicted", reasonCode: "matching_command_failed", events, corrections, context: contextOf(last) };
   if (last.result === "positive" && last.strength === "native") return { status: "sufficient", reasonCode: "matching_command_succeeded", events, corrections, context: contextOf(last) };

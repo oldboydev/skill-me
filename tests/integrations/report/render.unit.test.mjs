@@ -106,3 +106,21 @@ test("T7-C7 cobertura parcial distingue lacuna de evento e operação aberta", (
     assert.match(output, /Operações abertas: 1.*timeline\.coverage\.totals\.open/);
   }
 });
+
+test("T7-C7 texto e Markdown preservam correção antes de tentativa aberta", () => {
+  const content = { fields: [{ field: "tool_input.command", role: "args", kind: "text", value: "npm test" }] };
+  const trace = buildTrace([
+    { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "a" }, fields: { toolName: "Bash" }, content },
+    { src: "claude", kind: "tool_post", ids: { sessionId: "s1", toolUseId: "a" }, fields: { toolName: "Bash", outcome: "failure" } },
+    { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "b" }, fields: { toolName: "Bash" }, content },
+    { src: "claude", kind: "tool_post", ids: { sessionId: "s1", toolUseId: "b" }, fields: { toolName: "Bash", outcome: "success" } },
+    { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "c" }, fields: { toolName: "Bash" }, content },
+  ]);
+  const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "f".repeat(64), instructions: parseInstructions("- Run `npm test`.\n") };
+  const report = evaluateReport({ trace, skill });
+  assert.equal(report.evaluations[0].status, "partial");
+  for (const format of ["text", "markdown"]) {
+    const output = renderReport(report, format);
+    assert.match(output, /Correção observada: evento #1, evento #2.*evento #3, evento #4/);
+  }
+});

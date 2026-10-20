@@ -54,6 +54,14 @@ test("T7-C5 exemplo em bloco aninhado não exige comando adicional", () => {
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
 });
 
+test("T7-C5 condição aninhada falsa não altera a ação anterior", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "success")]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n    - If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["sufficient", "not_applicable"]);
+  assert.deepEqual(report.evaluations.map((item) => item.sources.skill.line), [1, 2]);
+  assert.deepEqual(report.evaluations.map((item) => item.sources.events), [[1, 2], [1, 2]]);
+});
+
 test("T7-C5 falha de comando com vínculo heurístico não vira contradição", () => {
   const trace = buildTrace([
     { src: "codexExec", kind: "item", native: "item.started", ids: { itemId: "it1" }, fields: { phase: "started", itemType: "command_execution" }, content: { fields: [{ field: "item.command", role: "args", kind: "text", value: "npm test" }] } },
@@ -265,4 +273,15 @@ test("T7-C6 tentativa aberta impede confirmar a condição apesar de outra falha
   assert.deepEqual(states(report), ["inconclusive"]);
   assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3]);
+});
+
+test("T7-C6 tentativa aberta posterior conserva correção comprovada", () => {
+  const trace = buildTrace([
+    pre("fail", "npm test"), post("fail", "failure"),
+    pre("ok", "npm test"), post("ok", "success"), pre("open", "npm test"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5]);
 });
