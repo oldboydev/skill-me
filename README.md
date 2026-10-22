@@ -80,7 +80,19 @@ export SKILL_ME_HERMES_DELIVERY="$(node -p 'JSON.stringify([process.execPath, re
 
 Inicie o agente **nesse mesmo terminal** e use a skill normalmente. Os hooks ou
 o plugin herdam as variáveis e entregam eventos à captura. Para usar o wrapper do
-Codex CLI em vez dos hooks, um exemplo de início é:
+Codex CLI em vez dos hooks no PowerShell/Windows, a instalação npm pode expor
+`codex.cmd`. O wrapper não inicia arquivos `.cmd`/`.bat` por shell; aponte
+`--codex-entry` para o `codex.js` da instalação. Para uma instalação npm global:
+
+```powershell
+$codexEntry = Join-Path (npm root -g) '@openai/codex/bin/codex.js'
+if (-not (Test-Path -LiteralPath $codexEntry)) { throw 'Ajuste $codexEntry para o codex.js instalado.' }
+node src/integrations/cli.mjs run --agent codex --codex-entry $codexEntry -- '<pedido para usar a skill>'
+```
+
+Se o Codex está em outro local, substitua `$codexEntry` pelo caminho do
+`@openai/codex/bin/codex.js` dessa instalação. No bash/zsh, quando `codex`
+resolve para um launcher executável sem shell, o wrapper pode usar o `PATH`:
 
 ```sh
 node src/integrations/cli.mjs run --agent codex -- "<pedido para usar a skill>"
