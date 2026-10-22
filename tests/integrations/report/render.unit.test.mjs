@@ -179,7 +179,8 @@ test("T7-C7 operação Codex exibe exitCode negativo e captura sem conteúdo exp
   for (const format of ["text", "markdown"]) {
     const output = renderReport(report, format);
     assert.match(output, /completed.*exit 1.*evento #1.*evento #2/);
-    assert.match(output, /conteúdo.*argumentos.*não.*coletado/i);
+    assert.ok(output.includes("A coleta de conteúdo está desativada no estado atual da captura; somente argumentos já sanitizados e preservados nos eventos podem comprovar comandos."));
+    assert.ok(!output.includes("Conteúdo dos argumentos não foi coletado"));
   }
 });
 

@@ -91,6 +91,18 @@ test("T7-C5 curl literal executado com sucesso recebe fonte e estado suficiente"
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
 });
 
+test("T7-C7 coleta desativada não nega argumentos preservados anteriormente", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "success")]);
+  trace.capture.state = "disabled";
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n") });
+  assert.deepEqual(states(report), ["sufficient"]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+  assert.deepEqual(report.limitations.find((item) => item.source === "timeline.capture.content"), {
+    text: "A coleta de conteúdo está desativada no estado atual da captura; somente argumentos já sanitizados e preservados nos eventos podem comprovar comandos.",
+    source: "timeline.capture.content",
+  });
+});
+
 test("T7-C5 referência textual não rebaixa prova de curl observada", () => {
   const trace = buildTrace([pre("curl", "curl --version"), post("curl", "success")]);
   const report = evaluateReport({ trace, skill: skill("- Run `curl --version` (see `expected output` for reference).\n") });

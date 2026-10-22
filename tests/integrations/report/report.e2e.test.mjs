@@ -5,7 +5,7 @@ import { after, test } from "node:test";
 import { REPO_ROOT, runIntegrations } from "../helpers/cli.mjs";
 import { runReportCommand } from "../../../src/integrations/report/command.mjs";
 import { claudePayload, codexHookPayload } from "../helpers/privacy-canaries.mjs";
-import { boundEnv, runHook, startCapture } from "../helpers/traces.mjs";
+import { boundEnv, privacyOk, runHook, startCapture } from "../helpers/traces.mjs";
 
 const roots = [];
 after(() => roots.forEach((root) => rmSync(root, { recursive: true, force: true })));
@@ -46,6 +46,39 @@ test("T7-C10 fixtures normal, erro/correção e condição atravessam captura; l
   assert.deepEqual(report.evaluations[4].sources.events, []);
   assert.ok(report.limitations.some((item) => item.text.includes("SKILL.md não comprova")));
   assert.ok(report.timeline.entries.every((entry) => entry.evidence.length === 1));
+});
+
+test("T7-C7 captura desabilitada mantém comparação anterior e descreve limite atual nos três formatos", async () => {
+  const root = mkdtempSync(path.join(REPO_ROOT, ".checks", "t7-disabled-"));
+  roots.push(root);
+  const id = startCapture(root, ["--content"]);
+  const env = boundEnv(root, id);
+  const skill = path.join(root, "SKILL.md");
+  writeFileSync(skill, "- Run `npm test`.\n");
+  for (const name of ["pre_tool_bash", "post_tool_bash"]) {
+    const payload = claudePayload(name);
+    payload.tool_use_id = "t7-before-disable";
+    if (payload.tool_input) payload.tool_input.command = "npm test";
+    assert.equal((await runHook("claude", payload, { env })).status, 0);
+  }
+  const disabled = privacyOk(["disable", "--root", root, "--capture", id]);
+  assert.equal(disabled.capture.state, "disabled");
+  const limitation = "A coleta de conteúdo está desativada no estado atual da captura; somente argumentos já sanitizados e preservados nos eventos podem comprovar comandos.";
+  for (const format of ["text", "markdown", "json"]) {
+    const result = runIntegrations(["report", "--root", root, "--capture", id, "--skill", skill, "--format", format]);
+    assert.equal(result.status, 0, result.stdout);
+    if (format === "json") {
+      const report = JSON.parse(result.stdout);
+      assert.equal(report.timeline.capture.state, "disabled");
+      assert.equal(report.timeline.capture.content, false);
+      assert.equal(report.evaluations[0].status, "sufficient");
+      assert.deepEqual(report.evaluations[0].sources.events, [1, 2]);
+      assert.ok(report.limitations.some((item) => item.text === limitation && item.source === "timeline.capture.content"));
+    } else {
+      assert.ok(result.stdout.includes("evidência suficiente"), format);
+      assert.ok(result.stdout.includes(limitation), format);
+    }
+  }
 });
 
 test("T7-C1 nome Unicode observado atravessa captura e comando sem --skill", async () => {

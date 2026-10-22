@@ -270,7 +270,7 @@ export function evaluateReport({ trace, skill }) {
       { text: "Ausência de evento não prova omissão.", source: "docs/traces.md" },
       { text: "Leitura ou referência a SKILL.md não comprova que o agente carregou as instruções.", source: "docs/traces.md" },
       { text: "Evidência de comando comprova apenas o resultado observado da ferramenta, não toda a intenção da instrução.", source: "docs/agent-observation.md" },
-      ...(timeline.capture.content === false ? [{ text: "Conteúdo dos argumentos não foi coletado; comandos não podem ser comparados pela captura.", source: "timeline.capture.content" }] : []),
+      ...(timeline.capture.content === false ? [{ text: "A coleta de conteúdo está desativada no estado atual da captura; somente argumentos já sanitizados e preservados nos eventos podem comprovar comandos.", source: "timeline.capture.content" }] : []),
       ...commandLimitations,
       ...(timeline.coverage.partial ? [{ text: "Cobertura parcial da captura ou correlação; veja timeline.coverage.", source: "timeline.coverage" }] : []),
     ],
