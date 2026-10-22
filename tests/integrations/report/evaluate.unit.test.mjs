@@ -507,6 +507,34 @@ test("T7-C6 escolha condicional inconclusiva ainda cita correção do gatilho", 
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
 });
 
+test("T7-C6 tentativa aberta posterior não apaga correção comprovada do gatilho", () => {
+  const trace = buildTrace([
+    pre("fail", "npm test"), post("fail", "failure"),
+    pre("retry", "npm test"), post("retry", "success"),
+    pre("open", "npm test"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5]);
+});
+
+test("T7-C6 outra sessão não apaga correção comprovada do gatilho", () => {
+  const inSecondSession = (item) => ({ ...item, ids: { ...item.ids, sessionId: "s2" } });
+  const trace = buildTrace([
+    pre("fail", "npm test"), post("fail", "failure"),
+    pre("retry", "npm test"), post("retry", "success"),
+    inSecondSession(pre("other", "npm test")),
+    inSecondSession(post("other", "success")),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
+});
+
 test("T7-C6 tentativas simultâneas não são relatadas como correção", () => {
   const trace = buildTrace([
     pre("a", "npm test"), pre("b", "npm test"),

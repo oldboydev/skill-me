@@ -162,19 +162,21 @@ function conditionalEvidence(instruction, timeline, trace) {
   const succeeds = /\b(?:pass\w*|succeed\w*|sucesso|success)\b/i.test(conditionText);
   if (!trigger || actions.length === 0 || fails === succeeds) return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
   const observations = commandObservations(trigger, timeline, trace);
-  if (multipleContexts(observations)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: observations.flatMap((item) => item.sequences), corrections: [] };
+  const triggerEvents = [...new Set(observations.flatMap((item) => item.sequences))].sort((a, b) => a - b);
+  const triggerCorrections = correctionsWithinContexts(observations);
+  if (multipleContexts(observations)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: triggerEvents, corrections: triggerCorrections };
   const proven = observations.filter((item) => item.result !== "unknown" && item.strength === "native");
   if (proven.length === 0) {
-    return { status: "inconclusive", reasonCode: "condition_unresolved", events: observations.flatMap((item) => item.sequences), corrections: [] };
+    return { status: "inconclusive", reasonCode: "condition_unresolved", events: triggerEvents, corrections: triggerCorrections };
   }
-  if (proven.length !== observations.length) return { status: "inconclusive", reasonCode: "condition_unresolved", events: observations.flatMap((item) => item.sequences), corrections: [] };
+  if (proven.length !== observations.length) return { status: "inconclusive", reasonCode: "condition_unresolved", events: triggerEvents, corrections: triggerCorrections };
   const matching = proven.filter((item) => fails ? item.result === "negative" : item.result === "positive");
   if (matching.length === 0) {
-    return { status: "not_applicable", reasonCode: "condition_false_observed", events: observations.flatMap((item) => item.sequences), corrections: [] };
+    return { status: "not_applicable", reasonCode: "condition_false_observed", events: triggerEvents, corrections: triggerCorrections };
   }
   const triggerResult = matching.reduce((latest, item) => item.orderSequences.at(-1) > latest.orderSequences.at(-1) ? item : latest);
   const actionEvidence = evidenceForCommands(actions, timeline, trace, { afterSequence: triggerResult.orderSequences.at(-1), context: contextOf(triggerResult) });
-  const corrections = [...new Map([...confirmedCorrections(proven), ...actionEvidence.corrections]
+  const corrections = [...new Map([...triggerCorrections, ...actionEvidence.corrections]
     .map((item) => [JSON.stringify(item), item])).values()];
   const events = [...new Set([...triggerResult.sequences, ...actionEvidence.events, ...corrections.flatMap((item) => [...item.failed, ...item.corrected])])].sort((a, b) => a - b);
   if (actionEvidence.status === "unobserved") return { ...actionEvidence, events, corrections, reasonCode: "condition_true_action_unobserved" };
