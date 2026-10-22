@@ -2,22 +2,26 @@
 
 **Verdict**: PASS — C1–C10: 10/10 comprovados.
 **Profile**: light.
-**HEAD**: 88065d632dd059347c2095c622558036772e0354.
-**Diff range**: a1f855b..HEAD (entrega); 87dbbe3..HEAD (correção recente).
-**Round**: 30 — scoped; provas T7 e unitárias de correlação repetidas no HEAD.
+**HEAD**: 2232e287808dd0c5cd699f4f683f4ada266897b9.
+**Diff range**: a1f855b..HEAD (entrega); 88065d6..HEAD (ampliação recente do teto).
+**Round**: 31 — scoped; provas T7, correlação, governança e motor de revisão repetidas no HEAD.
 **Verifier**: subagente independente; somente este arquivo foi editado.
-**Gate formal**: a revisão #25 consumiu o teto autorizado; esta correção ainda requer decisão específica do proprietário para nova revisão e entrega.
+**Gate formal**: o proprietário autorizou até 30 tentativas exclusivas da #7 após a revisão #25; ainda falta revisão formal `ready` deste HEAD antes de push, PR e merge.
 
 ## Fontes e alcance
 
-Li AGENTS.md, `tlc-implement/references/verify.md`, `.tasks/issue-7-relatorios.md`, `.checks/issue-7-relatorios.md`, o registro de build, a verificação anterior e o contexto aprovado da issue #7. O [comentário 6300606867](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6300606867) autoriza a extensão mínima de snapshot sem escrita no store e até 25 revisões exclusivas da #7; o [comentário 6297902519](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6297902519) mantém os pilotos fora desta entrega. Examinei o diff `87dbbe3..HEAD`, a avaliação condicional qualificada e a regressão da revisão formal #25. A issue e o plano continuam como fontes de C1–C10; `AGENT_SKILL_DEBUGGER_SPEC` é guia não vinculante. O checklist não possui seções Coverage ou Test policy. Comparação de UI e injeção de falhas pertencem aos perfis standard/ui, não ao light. Julgamentos fora do diff recente são carregados da rodada 29 em `87dbbe3` e as provas T7 foram repetidas neste HEAD.
+Li AGENTS.md, `tlc-implement/references/verify.md`, `.tasks/issue-7-relatorios.md`, `.checks/issue-7-relatorios.md`, o registro de build, a verificação anterior e a issue #7 com seus sete comentários pelo conector GitHub. O [comentário 6300606867](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6300606867) autoriza a extensão mínima de snapshot sem escrita no store; o [comentário 6297902519](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6297902519) mantém os pilotos fora desta entrega; o [comentário 6331180478](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6331180478) autoriza até 30 revisões exclusivas da #7, com 25 anteriores preservadas. Examinei o diff `88065d6..HEAD`, que altera somente evidências, documentação e teto de revisão, e reconferi a regressão da revisão formal #25. A issue e o plano continuam como fontes de C1–C10; `AGENT_SKILL_DEBUGGER_SPEC` é guia não vinculante. O checklist não possui seções Coverage ou Test policy. Comparação de UI e injeção de falhas pertencem aos perfis standard/ui, não ao light. Julgamentos de produto fora do diff recente são carregados da rodada 30 em `88065d6`; todas as provas foram repetidas neste HEAD. `CONTRIBUTING.md` não existe neste checkout.
 
 ## Provas executadas no HEAD e limites
 
 - `node --test "tests/integrations/report/**/*.test.mjs"`: **exit 0; 85 testes, 85 passaram, 0 falharam, 0 skips**. O runner listou T7-C1 a T7-C10 nominalmente, inclusive a nova regressão T7-C6 e os controles simples.
 - `node --test` com os cinco arquivos `*.unit.test.mjs` de correlação: **exit 0; 55 testes, 55 passaram, 0 falharam, 0 skips**.
+- `npm run test:code-review`: **exit 0; 16 testes, 16 passaram, 0 falharam, 0 skips**. O teste C6 aceitou teto 30, rejeitou 31, manteve o padrão 2 e confirmou que aumentar o teto preserva as tentativas anteriores.
+- `npm run test:governance`: **exit 0; 6 testes, 6 passaram, 0 falharam, 0 skips**.
+- `.checks/code-review/issue-7/state.json` continha **25 tentativas** antes da nova revisão formal. `code-review.config.json` declara `maxRounds: 30` somente para a issue #7; os perfis `light`, `ui` e `direct` permanecem em 2.
+- Comparei por conteúdo com CRLF normalizado os cinco arquivos vendorizados locais com o branch padrão de ambos os pilotos via conector GitHub: os pilotos coincidem nos cinco; `cli.mjs` e `schema.json` coincidem também com este repositório; `README.md`, `review.mjs` e `review.test.mjs` divergem conforme a exceção local autorizada. A conferência de SHA-256 desses arquivos foi registrada pelo builder; minha comparação independente foi de conteúdo normalizado, não um novo cálculo de hash. Não editei pilotos.
 - Na rodada 27 (`805ab36`), smoke somente leitura de `evaluateReport` com duplicata da operação de falha em `sequence` 5, após a ação positiva em 3–4: operações permaneceram `evidence` `[1,2]`/`[3,4]`, duplicata `[5]` na primeira; condição ficou `sufficient`/`matching_command_succeeded`, citando `[1,2,5,3,4]`. A lista de citações agrupa eventos por operação e pode não estar em ordem global; a ordem da operação e a decisão permaneceram corretas. Não repeti esse smoke no HEAD atual.
-- `git diff --check 87dbbe3..HEAD`: exit 0. `git status --porcelain` estava vazio antes da escrita deste relatório.
+- `git diff --check 88065d6..HEAD`: exit 0. `git status --porcelain` estava vazio antes da escrita deste relatório.
 - Na rodada 27, a suíte ampla de correlação falhou inicialmente por escrita negada no TEMP do sandbox; repetida com TEMP no workspace, encontrou `EPERM` ao criar symlink em `timeline.cli.test.mjs`, limitação de privilégio no Windows. Não a repeti nem a considero prova verde neste HEAD. O builder registrou em `.checks/issue-7-relatorios.build.md` a regressão falhando antes da correção (0/1) e passando depois (1/1), com T7 85/85; conferi esse registro, sem atribuir a mim o red.
 
 ## Checks
@@ -37,8 +41,8 @@ Li AGENTS.md, `tlc-implement/references/verify.md`, `.tasks/issue-7-relatorios.m
 
 ## Achado anterior e correção
 
-A revisão formal #25 apontou que “If `npm test` fails with exit code 2, run `npm run fix`” podia tratar uma falha genérica como gatilho verdadeiro e relatar a ação ausente. `evaluate.mjs:142–147` agora só interpreta a ligação simples entre resultado e ação; qualificador não comprovado retorna `inconclusive`/`condition_unresolved` com fontes vazias. A regressão `evaluate.unit.test.mjs:157–162` exige esses valores exatos. Os controles `:129–138` preservam condição simples falsa e correção, e `:337–340` preserva condição simples verdadeira sem ação. O build registra red 0/1 e green 1/1 para a regressão; conferi o registro, sem atribuir a mim a execução red. Não encontrei defeito concreto no diff recente. O teto formal 25 está consumido e nenhuma revisão formal foi executada neste HEAD.
+A revisão formal #25 apontou que “If `npm test` fails with exit code 2, run `npm run fix`” podia tratar uma falha genérica como gatilho verdadeiro e relatar a ação ausente. `evaluate.mjs:142–147` agora só interpreta a ligação simples entre resultado e ação; qualificador não comprovado retorna `inconclusive`/`condition_unresolved` com fontes vazias. A regressão `evaluate.unit.test.mjs:157–162` exige esses valores exatos. Os controles `:129–138` preservam condição simples falsa e correção, e `:337–340` preserva condição simples verdadeira sem ação. O build registra red 0/1 e green 1/1 para a regressão; conferi o registro, sem atribuir a mim a execução red. Não encontrei defeito concreto no diff recente. O teto formal agora é 30 para a #7 e nenhuma revisão formal foi executada neste HEAD.
 
 ## Política local e limites
 
-A exceção do core vendorizado foi decidida pelo proprietário no quinto comentário e ampliada no sexto; está explícita em AGENTS.md e no comentário 6300606867. O diff recente não altera core, configuração ou pilotos; carrego o julgamento da rodada 29. Não executei revisão formal nem injeção de falhas; esta última não é exigida no perfil light.
+A exceção do core vendorizado foi decidida pelo proprietário no quinto comentário, ampliada a 25 no sexto e a 30 no sétimo; está explícita em AGENTS.md e na configuração. O diff recente altera somente o teto local, sua prova e documentação, sem alterar produto ou pilotos. A regra de igualdade permanece para atualizações comuns. Não executei revisão formal nem injeção de falhas; esta última não é exigida no perfil light.
