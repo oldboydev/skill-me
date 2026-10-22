@@ -41,6 +41,17 @@ test("T7-C8 texto, Markdown e JSON v1 refletem a mesma consulta sanitizada sem m
   assert.equal(readFileSync(target.skill, "utf8"), "# Fluxo\n- Run `npm test`.\n");
 });
 
+test("T7-C8 bloco sensível na skill não aparece em texto, Markdown ou JSON", () => {
+  const target = setup();
+  writeFileSync(target.skill, "- Run `npm test`.\n  password: |\n    SENHA_INTERNA_EXEMPLO\n");
+  for (const format of ["text", "markdown", "json"]) {
+    const result = runIntegrations(args(target, format));
+    assert.equal(result.status, 0);
+    assert.ok(!result.stdout.includes("SENHA_INTERNA_EXEMPLO"));
+    if (format === "json") assert.equal(JSON.parse(result.stdout).evaluations[0].text, null);
+  }
+});
+
 test("T7-C8 consulta de captura legível não solicita escrita nem lock", async () => {
   const target = setup();
   let writes = 0;

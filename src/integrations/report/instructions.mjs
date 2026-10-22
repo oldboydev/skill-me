@@ -96,8 +96,10 @@ export function parseInstructions(source) {
       const continuation = line.trim();
       const extracted = commandsIn(continuation, `${activeRaw} `, activeCommandTail === null ? null : `${activeCommandTail} `);
       activeCommandTail = extracted.tail;
-      activeRaw += ` ${continuation}`;
-      active.text = safeText(activeRaw);
+      // A política reconhece valores sensíveis em blocos pela quebra original.
+      activeRaw += `\n${continuation}`;
+      const sanitized = safeText(activeRaw);
+      active.text = sanitized === null ? null : sanitized.replace(/\n/g, " ");
       active.commands.push(...extracted.commands);
       active.commandRedacted ||= extracted.redacted || active.text === null;
     } else {

@@ -36,6 +36,14 @@ test("T7-C2 continuação indentada pertence ao mesmo item e preserva todos os c
   assert.match(instructions[0].text, /npm test.*npm run build/);
 });
 
+test("T7-C8 bloco sensível em continuação é omitido antes de normalizar linhas", () => {
+  const source = "- Run `npm test`.\n  password: |\n    SENHA_INTERNA_EXEMPLO\n";
+  const instruction = parseInstructions(source)[0];
+  assert.equal(instruction.text, null);
+  assert.equal(instruction.commandRedacted, true);
+  assert.ok(!JSON.stringify(instruction).includes("SENHA_INTERNA_EXEMPLO"));
+});
+
 test("T7-C2 marcador de checklist não altera o tipo nem o texto da instrução", () => {
   const instructions = parseInstructions("- [ ] Run `npm test`.\n- [x] Verify `npm run lint`.\n");
   assert.deepEqual(instructions.map((item) => [item.kind, item.text, item.commands]), [
