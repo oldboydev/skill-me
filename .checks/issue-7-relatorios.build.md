@@ -94,6 +94,8 @@ Em 21/10/2026, o proprietário [autorizou até 30 tentativas exclusivas da #7](h
 
 ## Decisões e limites
 
+No HEAD corrigido, `npm test` passou governança 6/6, motor de revisão 16/16 e doctor 410 passes/7 skips de plataforma. Na integração ampla houve falha em `I4-C38` (wrapper da #4, fora do diff); interrompi o restante do lote após a falha. A repetição isolada desse caso no sandbox falhou na preparação `install` (status 5 em vez de 0); fora do sandbox, o caso passou 1/1. Não atribuo aprovação à integração ampla nem alterei a #4. O lote T7 88/88 cobre as duas superfícies de produto alteradas nesta correção.
+
 A vigésima sexta revisão formal encontrou dois cenários adicionais: `If on Linux \`npm test\` fails` era julgado verdadeiro por uma falha sem plataforma, e `Run \`npm test\`, \`npm run lint\` and \`npm run build\`` era declarado suficiente após só `npm test`. Três regressões reproduziram os defeitos antes da mudança (63/66 testes selecionados passaram, 3 falharam). A condição simples agora exige que antes do comando haja somente o introdutor `if`/`when`/`se`/`caso`/`quando`; qualificadores não interpretados devolvem `inconclusive`/`condition_unresolved`. A extração reconhece a vírgula como coordenação entre comandos, mantendo a exigência de resultado positivo para todos. Os 66 testes selecionados e o lote T7 88/88 passaram depois, sem falhas ou skips. A revisão formal #26 continua `changes_requested` e exige nova verificação independente e revisão do novo HEAD.
 
 - A consulta consome somente o snapshot do store da #8, a correlação da #6 e texto de skill explicitamente escolhido ou candidato único local. Não relê payload nativo, não escreve artefato e não inicia agentes.
