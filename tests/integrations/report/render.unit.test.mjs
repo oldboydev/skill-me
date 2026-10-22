@@ -95,6 +95,27 @@ test("T7-C7 condição inconclusiva mantém correção anterior nos três format
   assert.deepEqual(json.sources.events, [1, 2, 3, 4, 5]);
 });
 
+test("T7-C7 segundo gatilho não oculta correção anterior da ação nos formatos", () => {
+  const pre = (id, value) => ({ src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: id }, fields: { toolName: "Bash" }, content: { fields: [{ field: "tool_input.command", role: "args", kind: "text", value }] } });
+  const post = (id, outcome) => ({ src: "claude", kind: "tool_post", ids: { sessionId: "s1", toolUseId: id }, fields: { toolName: "Bash", outcome } });
+  const trace = buildTrace([
+    pre("first-trigger", "npm test"), post("first-trigger", "failure"),
+    pre("fix-failed", "npm run fix"), post("fix-failed", "failure"),
+    pre("fix-corrected", "npm run fix"), post("fix-corrected", "success"),
+    pre("last-trigger", "npm test"), post("last-trigger", "failure"),
+  ]);
+  const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "b".repeat(64), instructions: parseInstructions("- If `npm test` fails, run `npm run fix`.\n") };
+  const report = evaluateReport({ trace, skill });
+  assert.equal(report.evaluations[0].status, "unobserved");
+  for (const format of ["text", "markdown"]) {
+    const output = renderReport(report, format);
+    assert.ok(output.includes("Correção observada: evento #3, evento #4 → evento #5, evento #6"), format);
+  }
+  const json = JSON.parse(renderReport(report, "json")).evaluations[0];
+  assert.deepEqual(json.corrections, [{ failed: [3, 4], corrected: [5, 6] }]);
+  assert.deepEqual(json.sources.events, [3, 4, 5, 6, 7, 8]);
+});
+
 test("T7-C7 alternativas sem observação são descritas como lacuna nos formatos", () => {
   const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "b".repeat(64), instructions: parseInstructions("- Run `npm test` or `npm run build`.\n") };
   const report = evaluateReport({ trace: buildTrace([]), skill });

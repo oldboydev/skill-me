@@ -535,6 +535,58 @@ test("T7-C6 outra sessão não apaga correção comprovada do gatilho", () => {
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
 });
 
+test("T7-C6 novo gatilho mantém correção histórica da ação anterior", () => {
+  const trace = buildTrace([
+    pre("first-trigger", "npm test"), post("first-trigger", "failure"),
+    pre("fix-failed", "npm run fix"), post("fix-failed", "failure"),
+    pre("fix-corrected", "npm run fix"), post("fix-corrected", "success"),
+    pre("last-trigger", "npm test"), post("last-trigger", "failure"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["unobserved"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_true_action_unobserved");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [3, 4], corrected: [5, 6] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [3, 4, 5, 6, 7, 8]);
+});
+
+test("T7-C6 novo gatilho em outra sessão mantém correção histórica da ação", () => {
+  const inSecondSession = (item) => ({ ...item, ids: { ...item.ids, sessionId: "s2" } });
+  const trace = buildTrace([
+    pre("first-trigger", "npm test"), post("first-trigger", "failure"),
+    pre("fix-failed", "npm run fix"), post("fix-failed", "failure"),
+    pre("fix-corrected", "npm run fix"), post("fix-corrected", "success"),
+    inSecondSession(pre("other-trigger", "npm test")),
+    inSecondSession(post("other-trigger", "failure")),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [3, 4], corrected: [5, 6] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
+test("T7-C6 ação corrigida antes do gatilho ou em outra sessão não é atribuída", () => {
+  const before = buildTrace([
+    pre("fix-failed", "npm run fix"), post("fix-failed", "failure"),
+    pre("fix-corrected", "npm run fix"), post("fix-corrected", "success"),
+    pre("trigger", "npm test"), post("trigger", "failure"),
+  ]);
+  const inSecondSession = (item) => ({ ...item, ids: { ...item.ids, sessionId: "s2" } });
+  const otherSession = buildTrace([
+    pre("trigger", "npm test"), post("trigger", "failure"),
+    inSecondSession(pre("fix-failed", "npm run fix")),
+    inSecondSession(post("fix-failed", "failure")),
+    inSecondSession(pre("fix-corrected", "npm run fix")),
+    inSecondSession(post("fix-corrected", "success")),
+  ]);
+  for (const trace of [before, otherSession]) {
+    const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
+    assert.deepEqual(states(report), ["unobserved"]);
+    assert.equal(report.evaluations[0].reasonCode, "condition_true_action_unobserved");
+    assert.deepEqual(report.evaluations[0].corrections, []);
+  }
+});
+
 test("T7-C6 tentativas simultâneas não são relatadas como correção", () => {
   const trace = buildTrace([
     pre("a", "npm test"), pre("b", "npm test"),

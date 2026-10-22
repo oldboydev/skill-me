@@ -81,6 +81,23 @@ function correctionsWithinContexts(observations) {
   return [...groups.values()].flatMap(confirmedCorrections);
 }
 
+function conditionalActionCorrections(actions, triggers, expectedResult, timeline, trace) {
+  const firstTriggerEndByContext = new Map();
+  for (const item of triggers) {
+    if (item.strength !== "native" || item.result !== expectedResult) continue;
+    const context = contextOf(item);
+    const end = item.orderSequences.at(-1);
+    if (!firstTriggerEndByContext.has(context) || end < firstTriggerEndByContext.get(context)) {
+      firstTriggerEndByContext.set(context, end);
+    }
+  }
+  return actions.flatMap((command) => correctionsWithinContexts(commandObservations(command, timeline, trace)
+    .filter((item) => {
+      const firstEnd = firstTriggerEndByContext.get(contextOf(item));
+      return firstEnd !== undefined && item.orderSequences[0] > firstEnd;
+    })));
+}
+
 function evidenceForCommand(command, timeline, trace, { afterSequence = 0, context = null } = {}) {
   const observations = commandObservations(command, timeline, trace)
     .filter((item) => item.orderSequences[0] > afterSequence && (context === null || contextOf(item) === context));
@@ -164,19 +181,23 @@ function conditionalEvidence(instruction, timeline, trace) {
   const observations = commandObservations(trigger, timeline, trace);
   const triggerEvents = [...new Set(observations.flatMap((item) => item.sequences))].sort((a, b) => a - b);
   const triggerCorrections = correctionsWithinContexts(observations);
-  if (multipleContexts(observations)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: triggerEvents, corrections: triggerCorrections };
+  const historicalCorrections = [...new Map([...triggerCorrections,
+    ...conditionalActionCorrections(actions, observations, fails ? "negative" : "positive", timeline, trace)]
+    .map((item) => [JSON.stringify(item), item])).values()];
+  const historicalEvents = [...new Set([...triggerEvents, ...historicalCorrections.flatMap((item) => [...item.failed, ...item.corrected])])].sort((a, b) => a - b);
+  if (multipleContexts(observations)) return { status: "inconclusive", reasonCode: "condition_unresolved", events: historicalEvents, corrections: historicalCorrections };
   const proven = observations.filter((item) => item.result !== "unknown" && item.strength === "native");
   if (proven.length === 0) {
-    return { status: "inconclusive", reasonCode: "condition_unresolved", events: triggerEvents, corrections: triggerCorrections };
+    return { status: "inconclusive", reasonCode: "condition_unresolved", events: historicalEvents, corrections: historicalCorrections };
   }
-  if (proven.length !== observations.length) return { status: "inconclusive", reasonCode: "condition_unresolved", events: triggerEvents, corrections: triggerCorrections };
+  if (proven.length !== observations.length) return { status: "inconclusive", reasonCode: "condition_unresolved", events: historicalEvents, corrections: historicalCorrections };
   const matching = proven.filter((item) => fails ? item.result === "negative" : item.result === "positive");
   if (matching.length === 0) {
-    return { status: "not_applicable", reasonCode: "condition_false_observed", events: triggerEvents, corrections: triggerCorrections };
+    return { status: "not_applicable", reasonCode: "condition_false_observed", events: historicalEvents, corrections: historicalCorrections };
   }
   const triggerResult = matching.reduce((latest, item) => item.orderSequences.at(-1) > latest.orderSequences.at(-1) ? item : latest);
   const actionEvidence = evidenceForCommands(actions, timeline, trace, { afterSequence: triggerResult.orderSequences.at(-1), context: contextOf(triggerResult) });
-  const corrections = [...new Map([...triggerCorrections, ...actionEvidence.corrections]
+  const corrections = [...new Map([...historicalCorrections, ...actionEvidence.corrections]
     .map((item) => [JSON.stringify(item), item])).values()];
   const events = [...new Set([...triggerResult.sequences, ...actionEvidence.events, ...corrections.flatMap((item) => [...item.failed, ...item.corrected])])].sort((a, b) => a - b);
   if (actionEvidence.status === "unobserved") return { ...actionEvidence, events, corrections, reasonCode: "condition_true_action_unobserved" };
