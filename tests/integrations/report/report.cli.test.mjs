@@ -52,6 +52,21 @@ test("T7-C8 bloco sensível na skill não aparece em texto, Markdown ou JSON", (
   }
 });
 
+test("T7-C8 subitem de bloco sensível não aparece em nenhum formato", () => {
+  const target = setup();
+  writeFileSync(target.skill, "- Run `npm test`.\n  password: |\n    - SENHA_INTERNA_EXEMPLO\n");
+  for (const format of ["text", "markdown", "json"]) {
+    const result = runIntegrations(args(target, format));
+    assert.equal(result.status, 0);
+    assert.ok(!result.stdout.includes("SENHA_INTERNA_EXEMPLO"));
+    if (format === "json") {
+      const evaluations = JSON.parse(result.stdout).evaluations;
+      assert.equal(evaluations.length, 1);
+      assert.deepEqual([evaluations[0].status, evaluations[0].reasonCode, evaluations[0].text], ["inconclusive", "command_redacted", null]);
+    }
+  }
+});
+
 test("T7-C8 consulta de captura legível não solicita escrita nem lock", async () => {
   const target = setup();
   let writes = 0;

@@ -550,3 +550,16 @@ test("T7-C6 tentativa aberta posterior conserva correção comprovada", () => {
   assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5]);
 });
+
+test("T7-C5 duas tentativas abertas sobrepostas não apagam correção anterior", () => {
+  const trace = buildTrace([
+    pre("fail", "npm test"), post("fail", "failure"),
+    pre("ok", "npm test"), post("ok", "success"),
+    pre("open1", "npm test"), pre("open2", "npm test"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "overlapping_attempts");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
+});

@@ -61,10 +61,11 @@ function confirmedCorrections(observations) {
   let failures = [];
   for (const item of observations) {
     if (item.strength !== "native") continue;
-    if (item.result === "negative") failures.push(item.sequences);
+    if (item.result === "negative") failures.push(item);
     if (item.result === "positive") {
-      corrections.push(...failures.map((failed) => ({ failed, corrected: item.sequences })));
-      failures = [];
+      const preceding = failures.filter((failed) => failed.orderSequences.at(-1) < item.orderSequences[0]);
+      corrections.push(...preceding.map((failed) => ({ failed: failed.sequences, corrected: item.sequences })));
+      failures = failures.filter((failed) => !preceding.includes(failed));
     }
   }
   return corrections;
@@ -75,9 +76,9 @@ function evidenceForCommand(command, timeline, trace, { afterSequence = 0, conte
     .filter((item) => item.orderSequences[0] > afterSequence && (context === null || contextOf(item) === context));
   if (observations.length === 0) return { status: "unobserved", reasonCode: "no_matching_observation", events: [], corrections: [] };
   if (multipleContexts(observations)) return { status: "partial", reasonCode: "ambiguous_context", events: observations.flatMap((item) => item.sequences), corrections: [] };
-  if (overlappingAttempts(observations)) return { status: "partial", reasonCode: "overlapping_attempts", events: [...new Set(observations.flatMap((item) => item.sequences))].sort((a, b) => a - b), corrections: [] };
-  const last = observations.at(-1);
   const corrections = confirmedCorrections(observations);
+  if (overlappingAttempts(observations)) return { status: "partial", reasonCode: "overlapping_attempts", events: [...new Set(observations.flatMap((item) => item.sequences))].sort((a, b) => a - b), corrections };
+  const last = observations.at(-1);
   const events = [...new Set(observations.flatMap((item) => item.sequences))];
   if (last.result === "negative" && last.strength === "native") return { status: "contradicted", reasonCode: "matching_command_failed", events, corrections, context: contextOf(last) };
   if (last.result === "positive" && last.strength === "native") return { status: "sufficient", reasonCode: "matching_command_succeeded", events, corrections, context: contextOf(last) };

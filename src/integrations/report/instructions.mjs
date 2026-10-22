@@ -51,6 +51,11 @@ function commandsIn(line, prefix = "", priorTail = null) {
 
 export function parseInstructions(source) {
   const lines = source.split(/\r\n|\n|\r/);
+  // Um bloco sensível pode atravessar itens Markdown; a política precisa ver a
+  // fonte inteira antes que a estrutura da lista separe o valor do nome.
+  if (lines.filter((line) => line.trim() !== "").length > 1 && !sanitizeText(source).ok) {
+    return [{ id: "i-1", line: 1, heading: null, kind: "action", text: null, commands: [], commandRedacted: true }];
+  }
   const instructions = [];
   let heading = null;
   let fence = null;
