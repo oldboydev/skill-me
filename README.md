@@ -1,5 +1,7 @@
 # skill-me
 
+Relatórios locais de execução: [docs/report.md](docs/report.md).
+
 Infraestrutura mínima de governança. Ainda não há aplicação ou publicação configurada.
 
 ## Governança e agentes
@@ -20,7 +22,7 @@ Comandos novos: `npm run review:run -- --issue N --profile light`,
 --issue N --profile light --title "tipo: descrição" --body-file caminho.md`.
 Perfis light/ui exigem plano e verificação; direct mantém checks aplicáveis sem
 esses artefatos. [Guia completo e adoção em outros projetos](scripts/code-review/README.md).
-O motor é o mesmo dos pilotos e suas atualizações devem preservar a igualdade dos cinco arquivos.
+O motor é vendorizado nos pilotos. Na issue #7, o proprietário [autorizou manter apenas neste repositório](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6297902519) a ampliação do teto de overrides, agora [até 35](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6342492981); três arquivos do core divergem nessa exceção. Outras atualizações devem preservar a igualdade dos cinco arquivos.
 
 Relatórios de runtime ficam ignorados em .checks/code-review; histórico/lock ficam
 no Git comum, compartilhados entre worktrees. Não publique relatórios depois da

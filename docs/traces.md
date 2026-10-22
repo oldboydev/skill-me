@@ -1,5 +1,8 @@
 # Traces locais: capturar, consultar e reutilizar (issue #8)
 
+A explicação da execução e a comparação com instruções da skill estão em
+[docs/report.md](report.md).
+
 Este guia mostra como ligar uma execução de agente a uma captura local, ver os
 registros enquanto chegam, recuperar a captura e reutilizar os registros numa
 análise. Tudo roda na sua máquina, a partir do checkout: não há servidor,

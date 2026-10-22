@@ -126,6 +126,12 @@ Não definem uma arquitetura, um framework ou um produto antes de existir essa n
   provas aplicáveis, revisão Codex local e merge humano.
 - Core vendorizado: preservar os cinco arquivos comuns e conferir hashes em atualizações.
   Ajuste regras/configuração locais; não crie fork silencioso do motor.
+- Exceção da issue #7: o proprietário escolheu manter somente neste repositório a
+  [ampliação autorizada do teto de overrides para 35](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6342492981). A divergência de
+  `scripts/code-review/README.md`, `review.mjs` e `review.test.mjs` perante os
+  dois pilotos fica explícita no [registro da issue](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6297902519);
+  os pilotos não serão alterados por esta entrega. As demais atualizações do core
+  continuam sujeitas à regra de igualdade e conferência de hashes acima.
 
 ## tlc-implement
 

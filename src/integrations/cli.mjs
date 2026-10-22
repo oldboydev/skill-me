@@ -97,7 +97,17 @@ async function privacy() {
   process.exitCode = result.exitCode;
 }
 
+async function report() {
+  const { runReportCommand } = await import("./report/command.mjs");
+  const result = await runReportCommand({ argv: argv.slice(1) });
+  process.stdout.write(result.output);
+  process.exitCode = result.exitCode;
+}
+
 switch (command) {
+  case "report":
+    await report();
+    break;
   case "privacy":
     await privacy();
     break;
