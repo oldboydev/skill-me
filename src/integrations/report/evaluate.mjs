@@ -138,7 +138,7 @@ function hasAlternativeCommands(instruction, firstCommand = 0) {
 function alternativeCommandEvidence(instruction, timeline, trace) {
   const observed = evidenceForCommands(instruction.commands, timeline, trace);
   if (observed.status === "unobserved") return observed;
-  return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events: observed.events, corrections: [] };
+  return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events: observed.events, corrections: observed.corrections };
 }
 
 function conditionalEvidence(instruction, timeline, trace) {
@@ -175,7 +175,7 @@ function conditionalEvidence(instruction, timeline, trace) {
   const triggerResult = matching.reduce((latest, item) => item.orderSequences.at(-1) > latest.orderSequences.at(-1) ? item : latest);
   const actionEvidence = evidenceForCommands(actions, timeline, trace, { afterSequence: triggerResult.orderSequences.at(-1), context: contextOf(triggerResult) });
   if (actionEvidence.status === "unobserved") return { ...actionEvidence, events: triggerResult.sequences, reasonCode: "condition_true_action_unobserved" };
-  if (hasAlternativeCommands(instruction, 1)) return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], corrections: [] };
+  if (hasAlternativeCommands(instruction, 1)) return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], corrections: actionEvidence.corrections };
   return { ...actionEvidence, events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])] };
 }
 
@@ -188,8 +188,8 @@ function redactedEvidence(instruction, timeline, trace) {
   if (instruction.kind === "condition") return { status: "inconclusive", reasonCode: "command_redacted", events: [], corrections: [] };
   if (instruction.commands.length === 0) return { status: "inconclusive", reasonCode: "command_redacted", events: [], corrections: [] };
   const observed = evidenceForCommands(instruction.commands, timeline, trace);
-  if (instruction.text === null) return { status: "inconclusive", reasonCode: "command_redacted", events: observed.events, corrections: [] };
-  if (hasAlternativeCommands(instruction)) return { status: "inconclusive", reasonCode: "command_redacted", events: observed.events, corrections: [] };
+  if (instruction.text === null) return { status: "inconclusive", reasonCode: "command_redacted", events: observed.events, corrections: observed.corrections };
+  if (hasAlternativeCommands(instruction)) return { status: "inconclusive", reasonCode: "command_redacted", events: observed.events, corrections: observed.corrections };
   if (observed.status === "contradicted") return observed;
   return { ...observed, status: observed.status === "unobserved" ? "inconclusive" : "partial", reasonCode: "command_redacted" };
 }

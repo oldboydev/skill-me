@@ -36,6 +36,24 @@ test("T7-C7 alternativa de comandos aparece como escolha inconclusiva nos format
   assert.equal(JSON.parse(renderReport(report, "json")).evaluations[0].reasonCode, "alternative_commands_unresolved");
 });
 
+test("T7-C7 alternativa inconclusiva ainda relata correção comprovada nos três formatos", () => {
+  const command = { fields: [{ field: "tool_input.command", role: "args", kind: "text", value: "npm test" }] };
+  const trace = buildTrace([
+    { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "failed" }, fields: { toolName: "Bash" }, content: command },
+    { src: "claude", kind: "tool_post", ids: { sessionId: "s1", toolUseId: "failed" }, fields: { toolName: "Bash", outcome: "failure" } },
+    { src: "claude", kind: "tool_pre", ids: { sessionId: "s1", toolUseId: "corrected" }, fields: { toolName: "Bash" }, content: command },
+    { src: "claude", kind: "tool_post", ids: { sessionId: "s1", toolUseId: "corrected" }, fields: { toolName: "Bash", outcome: "success" } },
+  ]);
+  const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "b".repeat(64), instructions: parseInstructions("- Run `npm test` or `npm run build`.\n") };
+  const report = evaluateReport({ trace, skill });
+  for (const format of ["text", "markdown"]) {
+    const output = renderReport(report, format);
+    assert.ok(output.includes("a instrução permite comandos alternativos"), format);
+    assert.ok(output.includes("Correção observada: evento #1, evento #2 → evento #3, evento #4"), format);
+  }
+  assert.deepEqual(JSON.parse(renderReport(report, "json")).evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+});
+
 test("T7-C7 alternativas sem observação são descritas como lacuna nos formatos", () => {
   const skill = { name: "demo", observedName: null, identification: "explicit_path", nameMatchesObservation: null, sha256: "b".repeat(64), instructions: parseInstructions("- Run `npm test` or `npm run build`.\n") };
   const report = evaluateReport({ trace: buildTrace([]), skill });

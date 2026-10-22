@@ -319,6 +319,30 @@ test("T7-C5 comandos alternativos não são contraditos pela falha de uma opçã
   assert.deepEqual(report.evaluations.map((item) => item.sources.skill.line), [1, 2, 3]);
 });
 
+test("T7-C5 alternativa conserva correção comprovada de uma opção", () => {
+  const trace = buildTrace([
+    pre("failed", "npm test"), post("failed", "failure"),
+    pre("corrected", "npm test"), post("corrected", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` or `npm run build`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "alternative_commands_unresolved");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
+});
+
+test("T7-C5 alternativa redigida conserva correção da opção observada", () => {
+  const trace = buildTrace([
+    pre("failed", "npm test"), post("failed", "failure"),
+    pre("corrected", "npm test"), post("corrected", "success"),
+  ]);
+  const source = "- Run `npm test` or `npm run build` (see `TOKEN=$(gh auth token)` for authentication).\n";
+  const report = evaluateReport({ trace, skill: skill(source) });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "command_redacted");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+});
+
 test("T7-C5 falha do segundo comando coordenado impede prova suficiente", () => {
   const trace = buildTrace([
     pre("test", "npm test"), post("test", "success"),
@@ -501,6 +525,19 @@ test("T7-C6 ações alternativas após gatilho não são contraditas pela primei
   const falseReport = evaluateReport({ trace: falseTrigger, skill: skill(source) });
   assert.deepEqual(states(falseReport), ["not_applicable", "not_applicable"]);
   assert.deepEqual(falseReport.evaluations.map((item) => item.sources.events), [[1, 2], [1, 2]]);
+});
+
+test("T7-C6 ações alternativas conservam correção comprovada após o gatilho", () => {
+  const trace = buildTrace([
+    pre("trigger", "npm test"), post("trigger", "failure"),
+    pre("failed", "npm run fix"), post("failed", "failure"),
+    pre("corrected", "npm run fix"), post("corrected", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix` or `npm run retry`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "alternative_commands_unresolved");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [3, 4], corrected: [5, 6] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
 });
 
 test("T7-C6 condição com gatilho removido não é contradita pela ação isolada", () => {
