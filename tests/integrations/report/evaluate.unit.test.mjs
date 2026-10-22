@@ -162,6 +162,30 @@ test("T7-C6 falha genérica não comprova qualificador de código de saída", ()
   assert.deepEqual(report.evaluations[0].sources.events, []);
 });
 
+test("T7-C6 falha genérica não comprova qualificador anterior ao comando", () => {
+  const trace = buildTrace([pre("test", "npm test"), post("test", "failure")]);
+  const report = evaluateReport({ trace, skill: skill("- If on Linux `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_unresolved");
+  assert.deepEqual(report.evaluations[0].sources.events, []);
+});
+
+test("T7-C5 enumeração por vírgulas exige prova de todos os comandos", () => {
+  const source = "- Run `npm test`, `npm run lint` and `npm run build`.\n";
+  const partial = evaluateReport({ trace: buildTrace([pre("test", "npm test"), post("test", "success")]), skill: skill(source) });
+  assert.deepEqual(states(partial), ["partial"]);
+  assert.equal(partial.evaluations[0].reasonCode, "commands_incomplete");
+  assert.deepEqual(partial.evaluations[0].sources.events, [1, 2]);
+  const complete = evaluateReport({ trace: buildTrace([
+    pre("test", "npm test"), post("test", "success"),
+    pre("lint", "npm run lint"), post("lint", "success"),
+    pre("build", "npm run build"), post("build", "success"),
+  ]), skill: skill(source) });
+  assert.deepEqual(states(complete), ["sufficient"]);
+  assert.equal(complete.evaluations[0].reasonCode, "all_commands_succeeded");
+  assert.deepEqual(complete.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
+});
+
 test("T7-C6 comando repetido em sessões distintas não é declarado correção nem condição falsa", () => {
   const trace = buildTrace([
     pre("a", "npm test"), post("a", "failure"),

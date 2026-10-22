@@ -136,7 +136,7 @@ function conditionalEvidence(instruction, timeline, trace) {
   // restantes podem pertencer apenas à ação; nenhum deles prova o gatilho.
   const firstSpan = /`([^`\r\n]+)`/.exec(instruction.text ?? "")?.[1].trim();
   const [prefix, between] = (instruction.text ?? "").split(/`[^`]*`/);
-  if (firstSpan !== trigger || /\b(?:fail\w*|falh\w*|erro|error|succeed\w*|pass\w*|sucesso)\b/i.test(prefix)) {
+  if (firstSpan !== trigger || !/^\s*(?:if|when|se|caso|quando)\s*$/i.test(prefix ?? "")) {
     return { status: "inconclusive", reasonCode: "condition_unresolved", events: [], corrections: [] };
   }
   // Só a ligação simples entre resultado e ação é interpretada. Qualificadores

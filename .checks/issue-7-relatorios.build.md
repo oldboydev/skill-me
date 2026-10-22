@@ -94,6 +94,8 @@ Em 21/10/2026, o proprietário [autorizou até 30 tentativas exclusivas da #7](h
 
 ## Decisões e limites
 
+A vigésima sexta revisão formal encontrou dois cenários adicionais: `If on Linux \`npm test\` fails` era julgado verdadeiro por uma falha sem plataforma, e `Run \`npm test\`, \`npm run lint\` and \`npm run build\`` era declarado suficiente após só `npm test`. Três regressões reproduziram os defeitos antes da mudança (63/66 testes selecionados passaram, 3 falharam). A condição simples agora exige que antes do comando haja somente o introdutor `if`/`when`/`se`/`caso`/`quando`; qualificadores não interpretados devolvem `inconclusive`/`condition_unresolved`. A extração reconhece a vírgula como coordenação entre comandos, mantendo a exigência de resultado positivo para todos. Os 66 testes selecionados e o lote T7 88/88 passaram depois, sem falhas ou skips. A revisão formal #26 continua `changes_requested` e exige nova verificação independente e revisão do novo HEAD.
+
 - A consulta consome somente o snapshot do store da #8, a correlação da #6 e texto de skill explicitamente escolhido ou candidato único local. Não relê payload nativo, não escreve artefato e não inicia agentes.
 - A comparação de comandos é literal sobre conteúdo previamente sanitizado. Captura sem `--content`, ausência de comando literal ou condição sem resultado ficam sem conclusão de execução. O relatório descreve o resultado observado da ferramenta, não certifica que o agente seguiu a skill inteira.
 - O código de saída de ID de captura **malformado** é 2, conforme `privacy timeline`; estado persistido inválido é 3. A redação inicial do plano agrupava ambos como 3 e foi corrigida para manter o contrato existente. A prova C9 cobre ambos.

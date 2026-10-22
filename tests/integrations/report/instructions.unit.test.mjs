@@ -110,6 +110,11 @@ test("T7-C2 comando coordenado sem opção conhecida preserva ambos os literais"
   ]);
 });
 
+test("T7-C2 enumeração por vírgulas preserva todos os comandos", () => {
+  const source = "- Run `npm test`, `npm run lint` and `npm run build`.\n";
+  assert.deepEqual(parseInstructions(source)[0].commands, ["npm test", "npm run lint", "npm run build"]);
+});
+
 test("T7-C2 texto longo preserva a cláusula que liga comandos alternativos", () => {
   const source = `- Run \`npm test\` (${"a".repeat(1000)}) or \`npm run build\`.\n`;
   const instruction = parseInstructions(source)[0];
