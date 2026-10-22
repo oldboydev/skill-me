@@ -43,8 +43,8 @@
     },
     "7": {
       "profile": "light",
-      "maxRounds": 30,
-      "approval": "Proprietário autorizou até 30 tentativas formais exclusivas da issue #7 após consumir as 25 anteriores, preservando todo o histórico; registro em https://github.com/oldboydev/skill-me/issues/7#issuecomment-6331180478. Revisões adicionais somente conforme necessárias; push, PR e merge somente após verificação atualizada e status ready."
+      "maxRounds": 35,
+      "approval": "Proprietário autorizou até 35 tentativas formais exclusivas da issue #7 após consumir as 30 anteriores, preservando todo o histórico e mantendo os pilotos intocados; registro em https://github.com/oldboydev/skill-me/issues/7#issuecomment-6342492981. Revisões adicionais somente conforme necessárias; push, PR e merge somente após verificação atualizada e status ready."
     }
   }
 }
