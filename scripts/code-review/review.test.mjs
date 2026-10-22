@@ -682,7 +682,7 @@ test("C6 limite de rodadas e exclusão mútua impedem chamadas adicionais", asyn
     { ...approved, approval: "" },
     { ...approved, profile: "direct" },
     { ...approved, maxRounds: 2 },
-    { ...approved, maxRounds: 26 },
+    { ...approved, maxRounds: 31 },
   ]) {
     recordOverride(7, invalid);
     await assert.rejects(review(f.cwd, f.options, f.deps), /Exceção/);
@@ -703,7 +703,7 @@ test("C6 limite de rodadas e exclusão mútua impedem chamadas adicionais", asyn
   f.git("add", ".");
   f.git("commit", "-m", "nova cabeça");
   await assert.rejects(review(f.cwd, f.options, f.deps), /rodadas/);
-  recordOverride(7, { ...approved, maxRounds: 25 });
+  recordOverride(7, { ...approved, maxRounds: 30 });
   assert.equal((await review(f.cwd, f.options, f.deps)).status, "ready");
   assert.equal(
     JSON.parse(readFileSync(commonState, "utf8")).attempts.length,

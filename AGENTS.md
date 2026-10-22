@@ -127,7 +127,7 @@ Não definem uma arquitetura, um framework ou um produto antes de existir essa n
 - Core vendorizado: preservar os cinco arquivos comuns e conferir hashes em atualizações.
   Ajuste regras/configuração locais; não crie fork silencioso do motor.
 - Exceção da issue #7: o proprietário escolheu manter somente neste repositório a
-  ampliação autorizada do teto de overrides para 25. A divergência de
+  [ampliação autorizada do teto de overrides para 30](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6331180478). A divergência de
   `scripts/code-review/README.md`, `review.mjs` e `review.test.mjs` perante os
   dois pilotos fica explícita no [registro da issue](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6297902519);
   os pilotos não serão alterados por esta entrega. As demais atualizações do core
