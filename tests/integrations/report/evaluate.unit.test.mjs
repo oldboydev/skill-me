@@ -563,3 +563,17 @@ test("T7-C5 duas tentativas abertas sobrepostas não apagam correção anterior"
   assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
   assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
 });
+
+test("T7-C5 outra sessão não apaga correção comprovada na primeira", () => {
+  const trace = buildTrace([
+    pre("fail", "npm test"), post("fail", "failure"),
+    pre("ok", "npm test"), post("ok", "success"),
+    { ...pre("other", "npm test"), ids: { sessionId: "s2", toolUseId: "other" } },
+    { ...post("other", "success"), ids: { sessionId: "s2", toolUseId: "other" } },
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "ambiguous_context");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
+});

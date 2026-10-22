@@ -67,6 +67,16 @@ test("T7-C8 subitem de bloco sensível não aparece em nenhum formato", () => {
   }
 });
 
+test("T7-C8 valor entre aspas removido pela política não vaza entre itens", () => {
+  const target = setup();
+  writeFileSync(target.skill, "- Run `npm test`.\n  password: \"\n    - SENHA_INTERNA_EXEMPLO\n  \"\n");
+  for (const format of ["text", "markdown", "json"]) {
+    const result = runIntegrations(args(target, format));
+    assert.equal(result.status, 0);
+    assert.ok(!result.stdout.includes("SENHA_INTERNA_EXEMPLO"));
+  }
+});
+
 test("T7-C8 consulta de captura legível não solicita escrita nem lock", async () => {
   const target = setup();
   let writes = 0;

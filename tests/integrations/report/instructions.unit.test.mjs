@@ -52,6 +52,14 @@ test("T7-C8 subitem de bloco sensível não é separado do contexto de privacida
   assert.ok(instructions.some((item) => item.commandRedacted && item.text === null));
 });
 
+test("T7-C8 valor sensível entre aspas que cruza subitem não reaparece", () => {
+  const source = "- Run `npm test`.\n  password: \"\n    - SENHA_INTERNA_EXEMPLO\n  \"\n";
+  const instructions = parseInstructions(source);
+  assert.equal(instructions.length, 1);
+  assert.ok(!JSON.stringify(instructions).includes("SENHA_INTERNA_EXEMPLO"));
+  assert.equal(instructions[0].text, null);
+});
+
 test("T7-C2 marcador de checklist não altera o tipo nem o texto da instrução", () => {
   const instructions = parseInstructions("- [ ] Run `npm test`.\n- [x] Verify `npm run lint`.\n");
   assert.deepEqual(instructions.map((item) => [item.kind, item.text, item.commands]), [

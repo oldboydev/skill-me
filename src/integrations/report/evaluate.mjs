@@ -71,12 +71,22 @@ function confirmedCorrections(observations) {
   return corrections;
 }
 
+function correctionsWithinContexts(observations) {
+  const groups = new Map();
+  for (const item of observations) {
+    const context = contextOf(item);
+    if (!groups.has(context)) groups.set(context, []);
+    groups.get(context).push(item);
+  }
+  return [...groups.values()].flatMap(confirmedCorrections);
+}
+
 function evidenceForCommand(command, timeline, trace, { afterSequence = 0, context = null } = {}) {
   const observations = commandObservations(command, timeline, trace)
     .filter((item) => item.orderSequences[0] > afterSequence && (context === null || contextOf(item) === context));
   if (observations.length === 0) return { status: "unobserved", reasonCode: "no_matching_observation", events: [], corrections: [] };
-  if (multipleContexts(observations)) return { status: "partial", reasonCode: "ambiguous_context", events: observations.flatMap((item) => item.sequences), corrections: [] };
-  const corrections = confirmedCorrections(observations);
+  const corrections = correctionsWithinContexts(observations);
+  if (multipleContexts(observations)) return { status: "partial", reasonCode: "ambiguous_context", events: observations.flatMap((item) => item.sequences), corrections };
   if (overlappingAttempts(observations)) return { status: "partial", reasonCode: "overlapping_attempts", events: [...new Set(observations.flatMap((item) => item.sequences))].sort((a, b) => a - b), corrections };
   const last = observations.at(-1);
   const events = [...new Set(observations.flatMap((item) => item.sequences))];

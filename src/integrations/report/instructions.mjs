@@ -50,12 +50,22 @@ function commandsIn(line, prefix = "", priorTail = null) {
 }
 
 export function parseInstructions(source) {
-  const lines = source.split(/\r\n|\n|\r/);
+  const originalLines = source.split(/\r\n|\n|\r/);
   // Um bloco sensível pode atravessar itens Markdown; a política precisa ver a
   // fonte inteira antes que a estrutura da lista separe o valor do nome.
-  if (lines.filter((line) => line.trim() !== "").length > 1 && !sanitizeText(source).ok) {
-    return [{ id: "i-1", line: 1, heading: null, kind: "action", text: null, commands: [], commandRedacted: true }];
+  if (originalLines.filter((line) => line.trim() !== "").length > 1) {
+    const projected = sanitizeText(source);
+    const projectedLines = projected.ok ? projected.text.split(/\r\n|\n|\r/) : [];
+    const crossLineRedaction = !projected.ok || projectedLines.length !== originalLines.length
+      || projectedLines.some((line, index) => {
+        const isolated = sanitizeText(originalLines[index]);
+        return !isolated.ok || isolated.text !== line;
+      });
+    if (crossLineRedaction) {
+      return [{ id: "i-1", line: 1, heading: null, kind: "action", text: null, commands: [], commandRedacted: true }];
+    }
   }
+  const lines = originalLines;
   const instructions = [];
   let heading = null;
   let fence = null;
