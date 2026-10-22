@@ -4,6 +4,8 @@
 
 Se uma alternativa for removida pela política, o motivo `command_redacted` expõe essa limitação. Quando a política omite o texto inteiro, a falha de um comando ainda visível também não autoriza acusar contradição. Se nenhuma alternativa foi observada, a avaliação distingue essa lacuna da escolha inconclusiva.
 
+Se a política não consegue projetar com segurança o texto de uma skill de várias linhas, o relatório substitui suas instruções por uma avaliação `inconclusive`/`command_redacted` sem texto nem comandos. Essa omissão conserva a privacidade quando um bloco sensível atravessa itens Markdown; nesse caso, a linha 1 indica a fonte da skill como um todo, sem atribuir um subitem específico.
+
 ```sh
 node src/integrations/cli.mjs report --root <diretório> --capture <id> --skill <caminho/para/SKILL.md>
 node src/integrations/cli.mjs report --root <diretório> --capture <id> --skill <caminho/para/SKILL.md> --format markdown > relatorio.md
