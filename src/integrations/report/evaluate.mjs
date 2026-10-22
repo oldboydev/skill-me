@@ -87,7 +87,7 @@ function evidenceForCommand(command, timeline, trace, { afterSequence = 0, conte
   if (observations.length === 0) return { status: "unobserved", reasonCode: "no_matching_observation", events: [], corrections: [] };
   const corrections = correctionsWithinContexts(observations);
   if (multipleContexts(observations)) return { status: "partial", reasonCode: "ambiguous_context", events: observations.flatMap((item) => item.sequences), corrections };
-  if (overlappingAttempts(observations)) return { status: "partial", reasonCode: "overlapping_attempts", events: [...new Set(observations.flatMap((item) => item.sequences))].sort((a, b) => a - b), corrections };
+  if (overlappingAttempts(observations)) return { status: "partial", reasonCode: "overlapping_attempts", events: [...new Set(observations.flatMap((item) => item.sequences))].sort((a, b) => a - b), corrections, context: contextOf(observations[0]) };
   const last = observations.at(-1);
   const events = [...new Set(observations.flatMap((item) => item.sequences))];
   if (last.result === "negative" && last.strength === "native") return { status: "contradicted", reasonCode: "matching_command_failed", events, corrections, context: contextOf(last) };
@@ -174,9 +174,12 @@ function conditionalEvidence(instruction, timeline, trace) {
   }
   const triggerResult = matching.reduce((latest, item) => item.orderSequences.at(-1) > latest.orderSequences.at(-1) ? item : latest);
   const actionEvidence = evidenceForCommands(actions, timeline, trace, { afterSequence: triggerResult.orderSequences.at(-1), context: contextOf(triggerResult) });
-  if (actionEvidence.status === "unobserved") return { ...actionEvidence, events: triggerResult.sequences, reasonCode: "condition_true_action_unobserved" };
-  if (hasAlternativeCommands(instruction, 1)) return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])], corrections: actionEvidence.corrections };
-  return { ...actionEvidence, events: [...new Set([...triggerResult.sequences, ...actionEvidence.events])] };
+  const corrections = [...new Map([...confirmedCorrections(proven), ...actionEvidence.corrections]
+    .map((item) => [JSON.stringify(item), item])).values()];
+  const events = [...new Set([...triggerResult.sequences, ...actionEvidence.events, ...corrections.flatMap((item) => [...item.failed, ...item.corrected])])].sort((a, b) => a - b);
+  if (actionEvidence.status === "unobserved") return { ...actionEvidence, events, corrections, reasonCode: "condition_true_action_unobserved" };
+  if (hasAlternativeCommands(instruction, 1)) return { status: "inconclusive", reasonCode: "alternative_commands_unresolved", events, corrections };
+  return { ...actionEvidence, events, corrections };
 }
 
 function prohibitionEvidence(instruction, timeline, trace) {

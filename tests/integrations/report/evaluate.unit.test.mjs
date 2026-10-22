@@ -282,6 +282,20 @@ test("T7-C5 comandos de sessões distintas não comprovam uma instrução compos
   assert.equal(failureReport.evaluations[0].reasonCode, "commands_different_contexts");
 });
 
+test("T7-C5 tentativas sobrepostas não permitem contradição entre sessões", () => {
+  const inSecondSession = (item) => ({ ...item, ids: { ...item.ids, sessionId: "s2" } });
+  const trace = buildTrace([
+    pre("first", "npm test"), pre("second", "npm test"),
+    post("first", "success"), post("second", "success"),
+    inSecondSession(pre("build", "npm run build")),
+    inSecondSession(post("build", "failure")),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- Run `npm test` and `npm run build`.\n") });
+  assert.deepEqual(states(report), ["partial"]);
+  assert.equal(report.evaluations[0].reasonCode, "commands_different_contexts");
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
+});
+
 test("T7-C5 comando ambíguo não deixa outra sessão contradizer instrução composta", () => {
   const inSession = (item, sessionId) => ({ ...item, ids: { ...item.ids, sessionId } });
   const trace = buildTrace([
@@ -452,7 +466,8 @@ test("T7-C6 falha anterior mantém condição verdadeira e ação precisa vir de
   ]);
   const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
   assert.deepEqual(states(report), ["unobserved"]);
-  assert.deepEqual(report.evaluations[0].sources.events, [3, 4]);
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [3, 4], corrected: [5, 6] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [3, 4, 5, 6]);
 });
 
 test("T7-C6 ação posterior à falha comprova condição mesmo após retry positivo", () => {
@@ -463,7 +478,33 @@ test("T7-C6 ação posterior à falha comprova condição mesmo após retry posi
   ]);
   const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
   assert.deepEqual(states(report), ["sufficient"]);
-  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 5, 6]);
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
+});
+
+test("T7-C6 ação condicional ausente ainda cita correção do gatilho", () => {
+  const trace = buildTrace([
+    pre("fail", "npm test"), post("fail", "failure"),
+    pre("retry", "npm test"), post("retry", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix`.\n") });
+  assert.deepEqual(states(report), ["unobserved"]);
+  assert.equal(report.evaluations[0].reasonCode, "condition_true_action_unobserved");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4]);
+});
+
+test("T7-C6 escolha condicional inconclusiva ainda cita correção do gatilho", () => {
+  const trace = buildTrace([
+    pre("fail", "npm test"), post("fail", "failure"),
+    pre("retry", "npm test"), post("retry", "success"),
+    pre("fix", "npm run fix"), post("fix", "success"),
+  ]);
+  const report = evaluateReport({ trace, skill: skill("- If `npm test` fails, run `npm run fix` or `npm run retry`.\n") });
+  assert.deepEqual(states(report), ["inconclusive"]);
+  assert.equal(report.evaluations[0].reasonCode, "alternative_commands_unresolved");
+  assert.deepEqual(report.evaluations[0].corrections, [{ failed: [1, 2], corrected: [3, 4] }]);
+  assert.deepEqual(report.evaluations[0].sources.events, [1, 2, 3, 4, 5, 6]);
 });
 
 test("T7-C6 tentativas simultâneas não são relatadas como correção", () => {
