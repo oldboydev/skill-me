@@ -2,25 +2,25 @@
 
 **Verdict**: PASS — C1–C10: 10/10 comprovados.
 **Profile**: light.
-**HEAD**: 10cf97b36ff94360b52d3930885f1913ad6541a2.
-**Diff range**: a1f855b..HEAD (entrega); 4c7b239..HEAD (correção da revisão formal #30).
-**Round**: 37 — scoped; todas as provas T7 repetidas no HEAD.
+**HEAD**: 60589a8513e6c8e9f7083b7a9ead7a6aa77c4b5a.
+**Diff range**: a1f855b..HEAD (entrega); 10cf97b..HEAD (extensão autorizada do teto após a revisão formal #30).
+**Round**: 38 — scoped; todas as provas T7 repetidas no HEAD.
 **Verifier**: subagente independente; somente este relatório foi editado.
-**Gate formal**: as 30 tentativas autorizadas foram consumidas; a revisão #30 pediu correção. Este PASS não substitui uma revisão formal `ready`.
+**Gate formal**: 30 tentativas consumidas e preservadas; o proprietário autorizou até 35 somente para a #7. A revisão #30 pediu correção. Este PASS não substitui uma revisão formal `ready`.
 
 ## Fontes e alcance
 
-Li AGENTS.md, `tlc-implement/references/verify.md`, `.tasks/issue-7-relatorios.md`, `.checks/issue-7-relatorios.md`, o contexto salvo da issue com sete comentários, `docs/report.md` e o diff. A issue e o plano continuam como fontes de C1–C10. O comentário 6300606867 autoriza o snapshot de leitura; 6297902519 exclui alterações nos pilotos; 6331180478 autoriza até 30 tentativas formais exclusivas da #7. Esta rodada examina o achado da revisão #30. Julgamentos não afetados pelo diff são carregados da rodada 36 em 0defb48; suas provas T7 foram repetidas no HEAD. Não há fonte de UI vinculante, seção Coverage ou seção Test policy. Comparação de UI e injeção de falhas pertencem aos perfis ui/standard. `CONTRIBUTING.md` não existe no checkout.
+Li AGENTS.md, `tlc-implement/references/verify.md`, `.tasks/issue-7-relatorios.md`, `.checks/issue-7-relatorios.md`, o contexto salvo da issue com oito comentários, `docs/report.md` e o diff. A issue e o plano continuam como fontes de C1–C10. O comentário 6300606867 autoriza o snapshot de leitura; 6297902519 exclui alterações nos pilotos; 6342492981 autoriza até 35 tentativas formais exclusivas da #7. Esta rodada examina a mudança do teto. O diff desde 10cf97b não toca produto nem testes T7; os julgamentos C1–C10 são carregados da rodada 37 naquele commit, e todas as provas T7 foram repetidas no HEAD. Não há fonte de UI vinculante, seção Coverage ou seção Test policy. Comparação de UI e injeção de falhas pertencem aos perfis ui/standard. `CONTRIBUTING.md` não existe no checkout.
 
 ## Provas executadas no HEAD
 
-- `node --test tests/integrations/report/*.test.mjs`: exit 0; 100/100 passaram, 0 falhas, 0 skips. O runner exibiu nominalmente T7-C1 a T7-C10 e as quatro regressões do último diff.
-- `node --test tests/integrations/privacy/policy.unit.test.mjs`: exit 0; 37/37 passaram, 0 falhas, 0 skips.
-- Unitários de correlação (coverage, operations, skills, subagents, timeline): exit 0; 55/55 passaram, 0 falhas, 0 skips.
-- `node --test --test-name-pattern='snapshot' tests/integrations/privacy/store.unit.test.mjs` fora do sandbox: exit 0; 2/2 passaram, 0 falhas, 0 skips. No sandbox, os mesmos dois testes falharam antes de suas asserções, pois `start` devolveu `io_failure` ao preparar a captura. Os testes T7 da CLI, que criam a captura em `.checks`, passaram dentro do sandbox.
+- `node --test tests/integrations/report/*.test.mjs`: exit 0; 100/100 passaram, 0 falhas, 0 skips. O runner exibiu nominalmente T7-C1 a T7-C10 e as quatro regressões da correção funcional anterior.
+- `npm run test:code-review` fora do sandbox: exit 0; 16/16 passaram, 0 falhas, 0 skips. Inclui C6 de limite, override e preservação do histórico.
+- `npm run test:governance` fora do sandbox: exit 0; 6/6 passaram, 0 falhas, 0 skips.
+- Privacidade 37/37, correlação unitária 55/55 e snapshot do store 2/2 fora do sandbox são carregados da rodada 37 em 10cf97b, não executados novamente: o diff atual não toca essas superfícies. Naquela rodada, o snapshot falhou dentro do sandbox antes das asserções porque `start` devolveu `io_failure`, e passou fora dele.
 - `git diff --check a1f855b..HEAD`: exit 0. `git status --porcelain` estava vazio antes da escrita deste relatório.
-- Motor de revisão 16/16 e governança 6/6 são carregados da rodada 31 em 2232e28; o último diff toca somente avaliação, seus testes e registro de build. A tentativa desta rodada de `npm run test:governance` falhou ao criar `.git/config` em temp com `Permission denied`; `npm run test:code-review` foi interrompido após não devolver saída no sandbox. Não atribuo aprovação nova a esses comandos. A suíte ampla de integração também não tem prova verde neste sandbox: a rodada 27 encontrou EPERM ao criar symlink; o builder registrou falha isolada de I4-C38 no sandbox e sucesso fora dele.
-- O registro de build documenta regressão vermelha antes da correção e verde depois. Conferi o registro, sem atribuir a mim a execução vermelha. O estado da revisão formal contém 30 tentativas e status `changes_requested` na última; não executei revisão formal.
+- A suíte ampla de integração não tem prova verde neste sandbox: a rodada 27 encontrou EPERM ao criar symlink; o builder registrou falha isolada de I4-C38 no sandbox e sucesso fora dele. Não atribuo aprovação ampla a esses resultados.
+- O registro de build documenta o C6 novo falhando 0/1 antes da mudança do motor e passando 1/1 depois. Conferi o registro, sem atribuir a mim a execução vermelha. O estado da revisão formal contém 30 tentativas e status `changes_requested` na última; não executei revisão formal.
 
 ## Checks
 
@@ -41,6 +41,10 @@ Li AGENTS.md, `tlc-implement/references/verify.md`, `.tasks/issue-7-relatorios.m
 
 O cenário de duas operações nativas sucessivas para `npm test`, uma falha em eventos 1–2 e outra bem-sucedida em 3–4, com a instrução `Run npm test or npm run build`, está em `evaluate.unit.test.mjs:322–331`. A avaliação permanece `inconclusive`/`alternative_commands_unresolved`, conserva `corrections: [{failed:[1,2], corrected:[3,4]}]` e cita os quatro eventos. `evaluate.mjs:138–142` propaga o par já calculado sem escolher entre as alternativas. `render.unit.test.mjs:39–54` confirma a explicação e o par em texto, Markdown e JSON. Os ramos também apontados pela revisão têm provas próprias: `evaluate.unit.test.mjs:334–343` conserva a correção de uma opção quando há conteúdo redigido, com `command_redacted`; `:530–540` conserva a correção da ação após gatilho sem afirmar qual alternativa foi escolhida. Não encontrei perda do par no cenário apontado.
 
+## Exceção de revisão 30→35
+
+O contexto salvo da issue contém oito comentários; o último registra literalmente a autorização "Sim, até 35 tentativas", preservando as 30 anteriores e os pilotos intocados. `code-review.config.json:43–48` mantém somente a #7 em `maxRounds: 35` com URL do comentário; `profiles.light/ui/direct` permanecem em 2. `review.mjs:490–501` valida perfil, aprovação, inteiro maior que o padrão e teto 35. `review.test.mjs:674–711` rejeita override de outra issue e 36, aceita 35 após esgotar o teto anterior, mantém o padrão em 2 e verifica o contador de 3 para 4. O teste C6 executou e passou na suíte 16/16. O registro do builder documenta red 0/1 com motor antigo e green 1/1 com o novo, que não repeti por exigir modificar uma cópia do motor. A documentação local em AGENTS.md, README.md e `scripts/code-review/README.md` aponta a autorização e a exceção; as outras atualizações do core permanecem sob regra de igualdade. O estado de revisão ainda contém exatamente 30 tentativas, sem reinício nem nova revisão formal nesta verificação.
+
 ## Limites e política local
 
-A proteção de texto sem projeção sanitizada segura pode omitir outras instruções da mesma skill; o relatório declara essa perda de cobertura sem afirmar omissão de execução. A exceção de core vendorizado permanece exclusiva da #7; não houve edição dos pilotos. Esta verificação usa o perfil light e não inclui injeção de falhas. O teto formal de 30 está esgotado e falta decisão específica do proprietário para nova tentativa, seguida de revisão `ready`, antes de push, PR ou merge.
+A proteção de texto sem projeção sanitizada segura pode omitir outras instruções da mesma skill; o relatório declara essa perda de cobertura sem afirmar omissão de execução. A exceção de core vendorizado permanece exclusiva da #7; não houve edição dos pilotos por esta verificação. A comparação de hashes com os pilotos foi registrada pelo builder, mas não foi repetida aqui; entre os cinco arquivos do core, o diff atual altera somente os três cobertos pela exceção. Esta verificação usa o perfil light e não inclui injeção de falhas. Há autorização para até cinco novas tentativas formais, porém ainda falta uma revisão `ready` do novo HEAD antes de push, PR ou merge.
