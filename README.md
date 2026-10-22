@@ -1,8 +1,168 @@
 # skill-me
 
-Relatórios locais de execução: [docs/report.md](docs/report.md).
+CLI local para observar eventos de Claude Code, Codex CLI e Hermes, guardar uma
+captura sanitizada e comparar os comandos observados com instruções de uma skill.
+O pacote é privado: execute os comandos a partir deste checkout, sem instalação
+global, aplicativo ou publicação configurada.
 
-Infraestrutura mínima de governança. Ainda não há aplicação ou publicação configurada.
+## Primeiro uso: capturar e explicar uma sessão
+
+### 1. Preparar o agente
+
+Use Node.js 24 ou mais recente e instale as dependências do checkout com `npm ci`.
+Os hooks do agente precisam estar instalados e confiáveis para entregar eventos.
+Faça primeiro a prévia e confira as mudanças propostas; substitua o agente por
+`claude`, `codex` ou `hermes` e indique a pasta **existente** de configuração
+dele em `--target`:
+
+```sh
+node src/integrations/cli.mjs plan --agent codex --target "<pasta-de-configuração>"
+node src/integrations/cli.mjs install --agent codex --target "<pasta-de-configuração>" --apply
+```
+
+Para Codex CLI, a instalação usa `hooks.json`; para Claude Code,
+`settings.json`; para Hermes, `plugins/`. A instalação não concede confiança
+ao hook: confirme os passos manuais que o comando mostrar (`/hooks` no
+Claude/Codex;
+`hermes plugins enable skill-me-observer` no Hermes). Veja os alvos, conflitos
+e limites em [Instalação das integrações](docs/agent-observation.md).
+Como alternativa aos hooks do Codex CLI, `integrations run --agent codex`
+observa uma execução de `codex exec --json` sem instalação do hook; ele requer
+o launcher Codex acessível e repassa a saída JSONL nativa.
+
+### 2. Criar uma captura e vincular o agente
+
+O fluxo atual exige uma captura explícita **antes** de iniciar o agente. O
+`--content` autoriza, apenas nesta captura, guardar argumentos e resultados
+suportados depois da sanitização. Sem ele, o relatório tem metadados, mas não
+consegue comparar o texto dos comandos. `--root` é uma pasta local absoluta;
+os dados ficam em `<root>/skill-me-privacy/`.
+
+No PowerShell, a partir da raiz deste checkout:
+
+```powershell
+$root = Join-Path $env:LOCALAPPDATA 'skill-me\capturas'
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+$started = node src/integrations/cli.mjs privacy start --root $root --content | ConvertFrom-Json
+$id = $started.capture.id
+$env:SKILL_ME_CAPTURE_ROOT = (Resolve-Path -LiteralPath $root).Path
+$env:SKILL_ME_CAPTURE_ID = $id
+$id
+```
+
+Somente para Hermes, com o plugin habilitado, configure também o destino do
+`ingest` antes de iniciá-lo:
+
+```powershell
+$env:SKILL_ME_HERMES_DELIVERY = ConvertTo-Json -Compress -InputObject @(
+  (Get-Command node).Source,
+  (Resolve-Path -LiteralPath 'src/integrations/cli.mjs').Path,
+  'ingest', '--agent', 'hermes'
+)
+```
+
+No bash/zsh, a partir da mesma raiz:
+
+```sh
+root="$HOME/.local/share/skill-me/capturas"
+mkdir -p "$root"
+node src/integrations/cli.mjs privacy start --root "$root" --content
+id="<capture.id da resposta acima>"
+export SKILL_ME_CAPTURE_ROOT="$root"
+export SKILL_ME_CAPTURE_ID="$id"
+```
+
+Somente para Hermes, com o plugin habilitado:
+
+```sh
+export SKILL_ME_HERMES_DELIVERY="$(node -p 'JSON.stringify([process.execPath, require("node:path").resolve("src/integrations/cli.mjs"), "ingest", "--agent", "hermes"])')"
+```
+
+Inicie o agente **nesse mesmo terminal** e use a skill normalmente. Os hooks ou
+o plugin herdam as variáveis e entregam eventos à captura. Para usar o wrapper do
+Codex CLI em vez dos hooks no PowerShell/Windows, a instalação npm pode expor
+`codex.cmd`. O wrapper não inicia arquivos `.cmd`/`.bat` por shell; aponte
+`--codex-entry` para o `codex.js` da instalação. Para uma instalação npm global:
+
+```powershell
+$codexEntry = Join-Path (npm root -g) '@openai/codex/bin/codex.js'
+if (-not (Test-Path -LiteralPath $codexEntry)) { throw 'Ajuste $codexEntry para o codex.js instalado.' }
+node src/integrations/cli.mjs run --agent codex --codex-entry $codexEntry -- '<pedido para usar a skill>'
+```
+
+Se o Codex está em outro local, substitua `$codexEntry` pelo caminho do
+`@openai/codex/bin/codex.js` dessa instalação. No bash/zsh, quando `codex`
+resolve para um launcher executável sem shell, o wrapper pode usar o `PATH`:
+
+```sh
+node src/integrations/cli.mjs run --agent codex -- "<pedido para usar a skill>"
+```
+
+O wrapper inicia `codex exec`; ele não escolhe nem executa uma skill por conta
+própria. Sem as duas variáveis de captura, Claude/Codex observam só na memória
+do processo, e nada é guardado para um relatório posterior. Sem
+`SKILL_ME_HERMES_DELIVERY`, o plugin Hermes fica inativo. Uma variável de
+captura ausente, raiz relativa ou ID inválido não escolhe outra captura
+automaticamente.
+
+### 3. Encerrar e consultar
+
+Depois que o agente terminar, use a **mesma** raiz e ID. Os comandos abaixo
+funcionam nos dois exemplos de terminal:
+
+```sh
+node src/integrations/cli.mjs privacy status --root "$root" --capture "$id"
+node src/integrations/cli.mjs privacy stop --root "$root" --capture "$id"
+node src/integrations/cli.mjs report --root "$root" --capture "$id" --skill "<caminho/para/SKILL.md>"
+node src/integrations/cli.mjs report --root "$root" --capture "$id" --skill "<caminho/para/SKILL.md>" --format markdown > "$root/relatorio.md"
+node src/integrations/cli.mjs report --root "$root" --capture "$id" --skill "<caminho/para/SKILL.md>" --format json > "$root/relatorio.json"
+```
+
+`report` escreve em texto no terminal por padrão; Markdown e JSON v1 vão para
+stdout e podem ser redirecionados. `--skill` informa o arquivo a comparar sem
+alterá-lo. Ele só pode ser omitido quando exatamente um nome de skill foi
+observado e existe um único `SKILL.md` correspondente nos diretórios de skills
+do diretório atual. Para ver eventos sem escolher uma skill, use
+`node src/integrations/cli.mjs privacy timeline --root "$root" --capture "$id"`;
+`node src/integrations/cli.mjs privacy list --root "$root"` recupera IDs de
+capturas. `report` é uma consulta: não inicia o agente, não executa comandos
+do `SKILL.md` e não cria arquivos nem lock da captura.
+
+### Como interpretar e resolver problemas
+
+O relatório cita linhas e hash da skill, eventos e lacunas da timeline. Seus
+estados (`sufficient`, `partial`, `contradicted`, `unobserved`, `not_applicable`,
+`inconclusive`) avaliam evidências dos comandos **literais** das instruções;
+silêncio não comprova que o agente omitiu uma etapa. Ele não registra o
+raciocínio interno nem prova o cumprimento integral da skill. Claude e Hermes
+fornecem sinais de skill; nos hooks atuais do Codex não existe evento nativo
+de início de skill, e ler `SKILL.md` é apenas evidência heurística, não prova
+de carregamento. Mesmo com `--content`, os eventos Hermes não incluem conteúdo
+de comandos pela política de privacidade; esse canal não comprova comandos
+literais do relatório.
+
+Se o relatório vier sem eventos, confira `privacy status`, o ID, as duas
+variáveis no ambiente do processo do agente e a confiança da integração. Se
+faltarem comandos, confira se a captura começou com `--content` e se o texto
+literal do comando aparece no `SKILL.md` e nos argumentos sanitizados dos
+eventos. Uma disputa momentânea do lock retorna código 4; repita a consulta.
+`privacy stop` encerra a captura, mas não a apaga. A retenção padrão é de sete
+dias após o encerramento; quando vencer, execute a limpeza:
+
+```sh
+node src/integrations/cli.mjs privacy prune --root "$root" --apply
+```
+
+Se precisar encerrar e desligar a coleta de conteúdo ao mesmo tempo, use
+`node src/integrations/cli.mjs privacy disable --root "$root" --capture "$id"`
+no lugar de `stop`.
+Trate relatórios exportados com o mesmo cuidado dos dados locais. A captura
+automática de qualquer skill após uma única ativação ainda não está
+implementada; hoje o vínculo acima é manual.
+
+Detalhes: [capturas e traces](docs/traces.md),
+[política de privacidade](docs/privacidade.md) e
+[contrato do relatório](docs/report.md).
 
 ## Governança e agentes
 
