@@ -1164,3 +1164,160 @@ produtores e entregas não mudaram.
   arquivo do `git archive`) e `%TEMP%\i23f4-mutations.mjs` no Windows;
   `/tmp/skill-me-i23-f4-zfyydJ`, o `.tar` dela e `/tmp/i23f4/` no WSL.
 - Árvore: limpa antes deste registro.
+
+## Correção do on recusado pelo registro que criava o store da raiz configurada
+
+Base: `909cea7`. Escopo pedido pelo orquestrador nesta sessão, dentro do
+isolamento aprovado: o `on` recusado pelo registro não pode criar nada na raiz
+configurada; o teste de conflito passa a exigir a árvore inteira das raízes
+intacta, não só a falta de capturas. Builder: Claude, perfil `light`. As seções
+anteriores deste arquivo não foram alteradas, e `.verified.md` não foi tocado.
+Nenhuma nova verificação foi convocada: ela depende do proprietário.
+
+### Commits
+
+- `311c554` docs(checks): registrar a conferência do registro no on antes do
+  store — linhas "Barreira da configuração", "Registro da autorização" e
+  "Conflito com o registro" do Landing, commitadas antes do código.
+- `ced2548` fix(observe): recusar o registro no on antes de abrir o store da raiz
+- `a168d53` docs(observe): documentar a conferência do registro no on antes da raiz
+- `35ba356` test(observe): exigir as raízes intactas depois do on recusado pelo registro
+- o commit deste registro (docs(checks))
+
+### O defeito
+
+Com `<home>/.skill-me-authorization.json` nomeando A (`on`) e a pasta
+`.skill-me` trocada por outra real que aponta B, o `on` respondia 4
+`observe_on`, mas o `changeObservation` chamava `openStore(B, create: true)` e
+`initStore` antes de o `claimAuthorization` recusar: `B/skill-me-privacy` e o
+marcador `store.json` ficavam criados. O mesmo com o registro ilegível
+(`config_invalid`) ou link/junção (`link_refused`), na raiz configurada. A
+seção anterior registrou isso como limitação ("O `on` recusado com
+`observe_on` cria a pasta do store…"); esta correção a remove. O teste de
+conflito só olhava `stateOf` e a falta de `captures` na raiz alheia, e as
+linhas do registro ilegível e do link nem chamavam `on`.
+
+### Escolha e alternativas
+
+O `on`, sob o lock do home, depois de ler a configuração e antes de abrir o
+store, chama `assertNoOtherAuthorization({ home, io }, config.rootReal)` — a
+mesma leitura e os mesmos códigos de `status` e `setup`. Sob o lock do home
+nenhum `on` ou `off` destes comandos muda o registro entre essa conferência e a
+do `claim`; a do `claim`, sob o `.lock` do store, continua para um registro
+gravado fora deles. Nenhum formato persistido nem lock novo.
+
+| Alternativa | Por que não |
+| --- | --- |
+| Abrir o store sem `create` e só criar depois do `claim` | Mexe no `openStore`/`initStore` compartilhado com `start` e na ordem lock da raiz → registro; o `claim` precisa do lock da raiz, que mora na pasta do store. |
+| Apagar a pasta do store criada quando o `claim` recusa | Rollback de efeito, que pode apagar o que outro processo acabou de criar; a raiz deixa de ser intocada só no caminho feliz. |
+| Retirar a conferência do `claim` | Deixa sem barreira um registro gravado depois da conferência do `on` (prova nova abaixo). |
+
+Precedência de erros do `on` (mudança observável): com registro de outra raiz,
+ilegível ou link, o código do registro vem antes dos da raiz configurada
+(`root_not_found`/`root_not_directory` 3, `root_changed` 4, store alheio). Com
+o registro da própria raiz, nada muda.
+
+### Provas e testes alterados
+
+| Teste (padrão do check) | O que afirma |
+| --- | --- |
+| I23-C4 … status não afirma off, setup não troca a configuração, on recusado não toca raiz nenhuma e o off desfaz o conflito (título e prova ampliados) | Em cada `on` (todos recusados, com a resposta inteira em `records`), a árvore inteira — tipos, sha256, bytes e mtime — da raiz original e da alheia é igual antes e depois. Linhas: pasta real que aponta B (`observe_on`; A continua `on` até o `off`), pasta apagada (`not_configured`), registro ilegível (`on` novo, 3 `config_invalid`) e link/junção (`on` novo, 4 `link_refused`). A raiz alheia termina com árvore vazia (`{}`), em vez de só `off` e sem `captures`. |
+| I23-C4 … registro da autorização (prova ampliada) | Cada `on` recusado por `observe_on`, `config_invalid` ou `link_refused` deixa as duas raízes iguais byte a byte: registro de outra raiz (a configurada não ganha store; a registrada continua `on`), registro vazio e link. Os demais passos, inclusive `on` normal e repetido depois do conflito, não mudaram. |
+| I23-C4 … registro de outra raiz gravado depois da conferência do on (novo) | O registro de outra raiz é gravado no primeiro `stat` da raiz pelo `on`, já depois da conferência: resposta 4 `observe_on` inteira, raiz `off`, o registro alheio fica, a raiz alheia vazia; a pasta do store tem só `store.json` (limite abaixo). Removido o registro, `on` 0 e `off` 0. |
+
+Nenhuma asserção foi enfraquecida; a expectativa antiga `foreign: ["off", false]`
+virou a árvore vazia.
+
+### Vermelho e verde
+
+Windows 11, Node 24.22.1. Os dois testes alterados contra o produto de
+`909cea7`, antes de qualquer código: 0/2 (`/tmp/i23f5/red-control.txt`). Em
+todas as linhas com `on` recusado pelo registro, a árvore depois traz
+`skill-me-privacy/` e `skill-me-privacy/store.json` (25 bytes, sha256
+`ad28c02f…71ae48`) na raiz alheia (pasta real que aponta B) ou na configurada
+(registro de outra raiz, ilegível, link); as respostas e estados em `records`
+já eram os esperados.
+
+Final, com `command.mjs` e `config.mjs` de `909cea7` na árvore (`git checkout
+909cea7 -- …`, devolvidos com `git checkout HEAD -- …`, `git status` limpo):
+`control.cli` inteiro, 15 testes, 13 pass, 2 fail — os dois alterados
+(`/tmp/i23f5/red-final.txt`). A prova nova passa também ali: ela guarda a
+conferência do `claim`, que já existia (mutação M47). Verde em `35ba356`:
+`control.cli`, `report.cli`, `docs` e `privacy.e2e`, 22 testes, 22 pass
+(`green-observe-a.txt`).
+
+### Mutações
+
+Script fora do repositório (`%TEMP%\i23f5-mutations.mjs`, mesma mecânica do
+anterior: aplica, roda, restaura e confere o sha256); `git status` limpo depois
+(`/tmp/i23f5/mutations.txt`).
+
+| Mutação | Resultado (pass/testes) |
+| --- | --- |
+| M44 `on` sem a conferência prévia do registro | conflito 0/1; registro 0/1; registro tardio 1/1; C3 1/1 |
+| M45 conferência prévia depois de ligar a raiz | conflito 0/1; registro 0/1 |
+| M46 conferência prévia recusa também o registro da própria raiz | C3 0/1; registro 0/1; conflito 1/1 |
+| M47 `claim` aceita o registro de outra raiz | registro tardio 0/1; registro 1/1; conflito 1/1 |
+
+M44 e M45 são o defeito; o C3 e o registro tardio passam na M44 porque não
+dependem da conferência nova. M46 mostra que `on` normal e repetido (C3) e o
+`on` depois de uma queda com o registro da própria raiz continuam protegidos.
+M47 só é vista pela prova nova: com a conferência prévia, nenhuma outra prova
+chega ao `claim` com outro registro.
+
+### Provas do checklist
+
+Windows 11, Node 24.22.1, HEAD `35ba356`, árvore limpa, comando literal de cada
+check em sequência (`/tmp/i23f5/checks.sh`, 15:40:08–15:41:14,
+`/tmp/i23f5/proof-C*.txt`): C1 1, C2 5, C3 1, C4 7, C5 1, C6 1, C7 1, C8 2, C9 2,
+C10 1, C11 2, C12 2, C13 1, C14 1, C15 2, C16 2, C17 1, C18 2 — 18/18 checks, 35
+testes, 35 pass, 0 fail, 0 skip; o C8 rodou com o runtime Hermes local.
+
+WSL Ubuntu 24.04.3, Node 24.15.0 (nvm), uid 1000 — `/tmp/skill-me-i23-f5-dpqk8c`,
+de `git archive 35ba356` (sha256 `9e9883f8…8b272e10` igual nos dois lados;
+`git get-tar-commit-id` = `35ba3561…`), `node_modules` copiado da cópia anterior:
+os mesmos 18 checks, 35 testes, 33 pass, 0 fail, 2 skip (os dois C8, sem
+runtime Hermes); `control.cli` inteiro 15/15. Ali o registro é link simbólico
+de verdade nas linhas do link.
+
+### Suítes
+
+| Ambiente | Alvo | Resultado |
+| --- | --- | --- |
+| Windows 11, Node 24.22.1 — HEAD `35ba356`, árvore limpa | `npm test` (`/tmp/i23f5/npm-test-1.txt`, 15:41:23–15:44:59) | exit 0, 3 min 36 s — governança 6/6; motor 16/16; doctor 417 (410 pass, 0 fail, 7 skip); integrações 450 (443 pass, 0 fail, 7 skip) |
+| WSL (acima) | `node scripts/test-integrations.mjs` | exit 0, 33 s — 450 testes, 436 pass, 0 fail, 14 skip |
+
+As integrações passam de 449 para 450 pela prova nova. Skips iguais aos da
+seção anterior: no Windows, os 7 de integrações e os 7 do doctor, de
+plataforma; no WSL, os 14 (10 sem runtime Hermes, 3 de DACL do Windows, 1 de
+ACL do macOS). `git diff --check`: exit 0 antes de cada commit. Desempenho não
+foi medido: a mudança acrescenta uma leitura de até 64 KiB do registro por
+`on`, sob o lock do home; produtores, hooks e entregas não mudaram, e o G1 não
+foi repetido.
+
+### Limitações e mudanças de comportamento
+
+- Registro gravado por outro processo depois da conferência do `on` e antes do
+  `claim`: continua recusado com 4 `observe_on` e nada é ligado, mas a pasta
+  `skill-me-privacy` e o marcador da raiz configurada ficam (prova nova). Nossos
+  `on`/`off` não chegam a esse intervalo, pois seguram o lock do home.
+- Falha ao criar o registro (sem registro presente, por exemplo E/S): o `on`
+  responde 5 e a pasta do store e o marcador ficam, como antes; não é conflito
+  com o registro e não foi alterado.
+- Precedência: com registro de outra raiz, ilegível ou link, o `on` responde o
+  código do registro mesmo que a raiz configurada esteja ausente, não seja
+  pasta, tenha sido trocada ou tenha um store alheio (antes, o código da raiz).
+- Nenhuma sessão real de agente; nenhum hook pessoal instalado; nenhum `on` no
+  home real: `.skill-me`, `.skill-me-authorization.json` e
+  `.skill-me-observe.lock` não existem no home do Windows nem no do uid 1000 do
+  WSL. Core vendorizado, pilotos e `.verified.md` não foram tocados.
+
+### Estado ao final
+
+- Processos: todas as execuções foram em primeiro plano e terminaram; nenhum
+  `node.exe` iniciado depois da primeira prova desta rodada (15:35) está vivo
+  (`ps -W`).
+- Fora do repositório: `/tmp/i23f5/` (`%TEMP%\i23f5`: logs, `checks.sh`,
+  `wsl-run.sh`, arquivo do `git archive`) e `%TEMP%\i23f5-mutations.mjs` no
+  Windows; `/tmp/skill-me-i23-f5-dpqk8c`, o `.tar` dela e `/tmp/i23f5/` no WSL.
+- Árvore: limpa antes deste registro.
