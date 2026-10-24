@@ -2,8 +2,8 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { CLI_PATH } from "../install/run.mjs";
 import { createStoreIo } from "../privacy/fs.mjs";
-import { changeObservation, readObservation, StoreError } from "../privacy/store.mjs";
-import { CONFIG_VERSION, ObserveConfigError, readObserveConfig, userHome, writeObserveConfig } from "./config.mjs";
+import { changeObservation, holdLockFile, readObservation, StoreError } from "../privacy/store.mjs";
+import { CONFIG_LOCK_FILE, CONFIG_VERSION, configDir, ObserveConfigError, readObserveConfig, userHome, writeObserveConfig } from "./config.mjs";
 
 export const OBSERVE_HELP_TEXT = `Uso:
   integrations observe setup --root <diretório-absoluto>
@@ -110,10 +110,25 @@ function parseSetup(tokens) {
   return root;
 }
 
-async function configured(home, io) {
-  const read = await readObserveConfig({ home, io });
+function configFrom(read) {
   if (read.state === "invalid") throw new StoreError(read.code);
   return read.state === "ok" ? read.config : null;
+}
+
+const configured = async (home, io) => configFrom(await readObserveConfig({ home, io }));
+
+// Barreira de setup, on e off: a configuração é lida e a decisão sobre a raiz
+// dela é aplicada sem soltar o lock da pasta da configuração. Sem ela, um setup
+// concorrente com on deixava a raiz anterior on fora do alcance do off (F1 da
+// verificação, rodada 1; linha "Barreira da configuração" do Landing). Sem a
+// pasta nada foi configurado, e on/off não a criam. `fn` recebe a leitura da
+// configuração. Um lock_present lançado por `fn` (lock da raiz) só chega depois
+// da paciência dela, quando este prazo também já passou: `fn` não é repetida.
+async function withConfigLock({ home, io, create = false }, fn) {
+  const dir = await configDir({ home, io, create });
+  if (dir === null) return fn({ state: "missing" });
+  const lock = { io, lockPath: path.join(dir, CONFIG_LOCK_FILE), lostCode: "foreign_entry" };
+  return patiently(() => holdLockFile(lock, async () => fn(await readObserveConfig({ home, io }))));
 }
 
 async function setup(tokens, { home, io }) {
@@ -126,35 +141,39 @@ async function setup(tokens, { home, io }) {
   }
   if (!stats.isDirectory()) throw new StoreError("root_not_directory");
   const rootReal = await io.realpath(root);
-  // Trocar a raiz com a observação ligada deixaria a autorização sem quem a
-  // desligue; uma raiz anterior inacessível não tem o que gravar.
-  const previous = await configured(home, io).catch(() => null);
-  if (previous !== null) {
-    const old = await patiently(() => readObservation({ root: previous.root, expectedReal: previous.rootReal, io })).catch((error) => {
-      if (error instanceof StoreError && ["lock_present", "io_failure"].includes(error.code)) throw error;
-      return null;
+  return withConfigLock({ home, io, create: true }, async (read) => {
+    // Trocar a raiz com a observação ligada deixaria a autorização sem quem a
+    // desligue; uma raiz anterior inacessível não tem o que gravar.
+    const previous = read.state === "ok" ? read.config : null;
+    if (previous !== null) {
+      const old = await patiently(() => readObservation({ root: previous.root, expectedReal: previous.rootReal, io })).catch((error) => {
+        if (error instanceof StoreError && ["lock_present", "io_failure"].includes(error.code)) throw error;
+        return null;
+      });
+      if (old?.observation?.state === "on") throw new StoreError("observe_on");
+    }
+    const current = await patiently(() => readObservation({ root, expectedReal: rootReal, io }));
+    await writeObserveConfig({
+      home,
+      io,
+      config: { skillMeObserveConfig: CONFIG_VERSION, root, rootReal, hermesDelivery: [process.execPath, CLI_PATH, "ingest", "--agent", "hermes"] },
     });
-    if (old?.observation?.state === "on") throw new StoreError("observe_on");
-  }
-  const current = await patiently(() => readObservation({ root, expectedReal: rootReal, io }));
-  await writeObserveConfig({
-    home,
-    io,
-    config: { skillMeObserveConfig: CONFIG_VERSION, root, rootReal, hermesDelivery: [process.execPath, CLI_PATH, "ingest", "--agent", "hermes"] },
+    return ok("setup", { observation: view(current.observation, true) });
   });
-  return ok("setup", { observation: view(current.observation, true) });
 }
 
 async function change(action, { home, io, nowMs }) {
-  const config = await configured(home, io);
-  if (config === null) {
-    if (action === "on") throw new StoreError("not_configured");
-    return ok(action, { observation: view(null, false), changed: false, stopped: [] });
-  }
-  const result = await patiently(() => changeObservation({ root: config.root, expectedReal: config.rootReal, action, nowMs, io }));
-  const fields = { observation: view(result.observation, true), changed: result.changed, ...(action === "off" ? { stopped: result.stopped } : {}) };
-  if (result.failed.length === 0) return ok(action, fields);
-  return failure(action, worstOf(result.failed).code, { ...fields, failed: result.failed });
+  return withConfigLock({ home, io }, async (read) => {
+    const config = configFrom(read);
+    if (config === null) {
+      if (action === "on") throw new StoreError("not_configured");
+      return ok(action, { observation: view(null, false), changed: false, stopped: [] });
+    }
+    const result = await patiently(() => changeObservation({ root: config.root, expectedReal: config.rootReal, action, nowMs, io }));
+    const fields = { observation: view(result.observation, true), changed: result.changed, ...(action === "off" ? { stopped: result.stopped } : {}) };
+    if (result.failed.length === 0) return ok(action, fields);
+    return failure(action, worstOf(result.failed).code, { ...fields, failed: result.failed });
+  });
 }
 
 async function status({ home, io }) {

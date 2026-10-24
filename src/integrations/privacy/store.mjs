@@ -150,11 +150,10 @@ async function assertUnchanged(ctx) {
   if (real !== ctx.rootReal || (await entryKind(ctx.io, ctx.storeDir)) !== "dir") throw new StoreError("root_changed");
 }
 
-// Lock exclusivo da raiz, sem espera: ocupado → conflito sem mutação, e nunca
-// removido por outro processo. Só sai se ainda tiver os bytes que gravamos.
-// `ctx.onLock`, quando houver, é chamado quando o lock passa a ser desta
-// operação, antes de qualquer leitura ou mutação; se lançar, a operação
-// desiste sem mudar nada.
+// Lock exclusivo por arquivo, sem espera: ocupado → conflito sem mutação, e
+// nunca removido por outro processo. Só sai se ainda tiver os bytes que
+// gravamos; senão `lostCode`. Consumidores: o lock da raiz (withLock) e o da
+// configuração da observação (#23, linha "Barreira da configuração").
 //
 // O lock é criado sem flush: só serializa processos vivos — a criação `wx` é
 // atômica e os bytes conferidos na liberação são lidos pelo mesmo sistema — e,
@@ -162,11 +161,10 @@ async function assertUnchanged(ctx) {
 // não protege nada. Cada flush espera o disco dentro do prazo de entrega da #8,
 // e os dois do lock eram metade dos de um hook (.checks/issue-8-traces.build.md,
 // rodada 6).
-async function withLock(ctx, fn) {
-  const lockPath = path.join(ctx.storeDir, LOCK_FILE);
+export async function holdLockFile({ io, lockPath, lostCode }, fn) {
   const bytes = Buffer.from(JSON.stringify({ lockVersion: 1, pid: process.pid, nonce: randomBytes(8).toString("hex") }));
   try {
-    await ctx.io.writeExclusive(lockPath, bytes, { durable: false });
+    await io.writeExclusive(lockPath, bytes, { durable: false });
   } catch (error) {
     if (error.code === "EEXIST") throw new StoreError("lock_present");
     throw error;
@@ -174,21 +172,30 @@ async function withLock(ctx, fn) {
   let failure = null;
   let result;
   try {
-    ctx.onLock?.();
-    await assertUnchanged(ctx);
     result = await fn();
   } catch (error) {
     failure = error;
   }
   try {
-    const current = await readSmallFile(ctx.io, lockPath, bytes.length, "root_changed");
-    if (current === null || !current.equals(bytes)) throw new StoreError("root_changed");
-    await ctx.io.unlink(lockPath);
+    const current = await readSmallFile(io, lockPath, bytes.length, lostCode);
+    if (current === null || !current.equals(bytes)) throw new StoreError(lostCode);
+    await io.unlink(lockPath);
   } catch (error) {
     failure ??= error;
   }
   if (failure) throw failure;
   return result;
+}
+
+// Lock da raiz. `ctx.onLock`, quando houver, é chamado quando o lock passa a
+// ser desta operação, antes de qualquer leitura ou mutação; se lançar, a
+// operação desiste sem mudar nada.
+function withLock(ctx, fn) {
+  return holdLockFile({ io: ctx.io, lockPath: path.join(ctx.storeDir, LOCK_FILE), lostCode: "root_changed" }, async () => {
+    ctx.onLock?.();
+    await assertUnchanged(ctx);
+    return fn();
+  });
 }
 
 async function ensureCapturesDir(ctx) {

@@ -13,6 +13,9 @@ import { createStoreIo } from "../privacy/fs.mjs";
 
 export const CONFIG_DIR = ".skill-me";
 export const CONFIG_FILE = "observe.json";
+// Barreira de `setup`, `on` e `off` (linha "Barreira da configuração" do
+// Landing); o lock é tomado em observe/command.mjs.
+export const CONFIG_LOCK_FILE = "observe.lock";
 export const CONFIG_VERSION = 1;
 const MAX_CONFIG_BYTES = 64 * 1024;
 const MAX_ARGV = 32;
@@ -77,20 +80,38 @@ export class ObserveConfigError extends Error {
   }
 }
 
-// Só `observe setup` grava. A pasta nasce 0700 (não recursiva: o home já
-// existe) e precisa ser diretório real; o arquivo entra por temporário `wx`
-// 0600 + `rename`, sem nunca abrir um link no caminho final.
-export async function writeObserveConfig({ home, config, io = createStoreIo() }) {
-  if (!absolute(home)) throw new ObserveConfigError("io_failure");
-  const dir = path.join(home, CONFIG_DIR);
-  try {
-    await io.mkdir(dir);
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
+// Pasta da configuração, que precisa ser diretório real. Com `create` (só o
+// setup) nasce 0700, não recursiva: o home já existe. Sem `create`, null quando
+// ainda não existe — nada foi configurado.
+export async function configDir({ home, io = createStoreIo(), create = false }) {
+  if (!absolute(home)) {
+    if (create) throw new ObserveConfigError("io_failure");
+    return null;
   }
-  const stats = await io.lstat(dir);
+  const dir = path.join(home, CONFIG_DIR);
+  if (create) {
+    try {
+      await io.mkdir(dir);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+  }
+  let stats;
+  try {
+    stats = await io.lstat(dir);
+  } catch (error) {
+    if (!create && (error.code === "ENOENT" || error.code === "ENOTDIR")) return null;
+    throw error;
+  }
   if (stats.isSymbolicLink()) throw new ObserveConfigError("link_refused");
   if (!stats.isDirectory()) throw new ObserveConfigError("config_invalid");
+  return dir;
+}
+
+// Só `observe setup` grava. O arquivo entra por temporário `wx` 0600 +
+// `rename`, sem nunca abrir um link no caminho final.
+export async function writeObserveConfig({ home, config, io = createStoreIo() }) {
+  const dir = await configDir({ home, io, create: true });
   const tmp = path.join(dir, `${CONFIG_FILE}.${randomBytes(4).toString("hex")}.skill-me-tmp`);
   try {
     await io.writeExclusive(tmp, JSON.stringify(config));
