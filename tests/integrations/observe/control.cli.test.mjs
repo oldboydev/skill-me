@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { after, test } from "node:test";
@@ -374,6 +374,16 @@ function describeConfigFolder(dir, configBytes, label) {
     .map((name) => (name === "observe.json" ? `${name}: ${readFileSync(path.join(dir, name)).equals(configBytes) ? label : "alterada"}` : `${name}: outro`));
 }
 
+// Apaga uma pasta da configuração real (só arquivos) e confere que ela saiu.
+// Sem `rmSync`: no Node 24.13.0 da CI, no Windows, ele não remove nada num
+// caminho com "ação", como o de todo scratch, e não lança erro
+// (nodejs/node#56049, corrigido no 24.13.1); a prova seguia com a pasta no lugar.
+function removeConfigFolder(dir) {
+  for (const name of readdirSync(dir)) unlinkSync(path.join(dir, name));
+  rmdirSync(dir);
+  assert.ok(!existsSync(dir), "a pasta da configuração continua no lugar depois da remoção");
+}
+
 // A pasta `.skill-me` de `home` vai para `moved`, e no lugar fica uma junção
 // (Windows) / link (POSIX) para `foreignDir` ou outra pasta real com
 // `foreignBytes`; `restore` devolve a original.
@@ -389,7 +399,7 @@ function configSwap({ home, foreignDir, foreignBytes, moved, realFolder }) {
     restore() {
       if (!existsSync(moved)) return;
       if (lstatSync(dir).isSymbolicLink()) unlinkSync(dir);
-      else rmSync(dir, { recursive: true });
+      else removeConfigFolder(dir);
       renameSync(moved, dir);
     },
   };
@@ -693,7 +703,7 @@ test("I23-C4 off encerra e é idempotente: registro da autorização — falha a
         assert.equal((await runObserveCommand({ argv: ["setup", "--root", other], home })).exitCode, 0);
         assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
         assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home: aux })).exitCode, 0);
-        rmSync(path.dirname(configFile(home)), { recursive: true });
+        removeConfigFolder(path.dirname(configFile(home)));
         mkdirSync(path.dirname(configFile(home)));
         writeFileSync(configFile(home), readFileSync(configFile(aux)));
       },
@@ -892,7 +902,7 @@ test("I23-C4 off encerra e é idempotente: com a raiz registrada on e a pasta da
     {
       when: "pasta da configuração apagada",
       startOn: true,
-      replace: ({ home }) => rmSync(path.dirname(configFile(home)), { recursive: true }),
+      replace: ({ home }) => removeConfigFolder(path.dirname(configFile(home))),
       steps: ["status", "setup", "on", "off", "status", "setup"],
       expect: ({ captures }) => [
         [error("status", "observe_on"), "ausente", "on", true],
