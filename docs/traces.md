@@ -98,7 +98,13 @@ A gravação usa temporário exclusivo e `rename`; no POSIX, pasta e arquivo sã
 só do dono. Toda operação automática confere que o caminho real da raiz ainda é
 `rootReal`: trocada por link ou junção, responde `root_changed` e nada é
 gravado. Com a raiz configurada `on`, um novo `setup` é recusado (4,
-`observe_on`): desligue antes.
+`observe_on`): desligue antes. `setup`, `on` e `off` se revezam pelo lock
+`.skill-me/observe.lock` do home (a forma e a regra do `.lock` do store,
+esperado por até 2 s): cada um lê a configuração e liga, desliga ou troca a raiz
+sem soltá-lo, então um `setup` concorrente com `on` nunca deixa a raiz anterior
+ligada fora do alcance do `off`. Se um deles sair no meio, o lock pode ficar, e
+os três respondem 4 (`lock_present`) até você conferir que nenhum está ativo e
+removê-lo. `status`, `report --latest`, hooks e ingest não usam esse lock.
 
 **Estado e consentimento.** `on` grava `<raiz>/skill-me-privacy/observe.json`
 sob o lock do store, com o estado, uma geração aleatória e uma chave das

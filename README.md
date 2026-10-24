@@ -98,7 +98,11 @@ arquivos nem lock da captura.
 `observe setup` e `npm run on|off|status` respondem um JSON (`schemaVersion: 1`)
 com os códigos 0 concluído, 2 uso inválido, 3 sem `setup` ou estado inválido,
 4 conflito, lock ocupado ou raiz trocada, 5 falha de E/S. Um lock ocupado por um
-hook que está gravando é esperado por até 2 s antes de responder 4.
+hook que está gravando é esperado por até 2 s antes de responder 4. `setup`,
+`on` e `off` também se revezam pelo lock `.skill-me/observe.lock` do home, com o
+mesmo prazo. Se um deles for interrompido no meio, esse arquivo pode ficar, e os
+três respondem 4 (`lock_present`) até você conferir que nenhum está em execução
+e removê-lo.
 
 ### 3. Limites reais
 

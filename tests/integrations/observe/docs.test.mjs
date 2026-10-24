@@ -5,6 +5,7 @@ import { after, test } from "node:test";
 import { HELP_TEXT } from "../../../src/integrations/cli-args.mjs";
 import { MAX_SESSIONS } from "../../../src/integrations/observe/authorization.mjs";
 import { OBSERVE_HELP_TEXT, OBSERVE_LOCK_PATIENCE_MS, RECENT_CAPTURES } from "../../../src/integrations/observe/command.mjs";
+import { CONFIG_DIR, CONFIG_LOCK_FILE } from "../../../src/integrations/observe/config.mjs";
 import { AUTOMATIC_DELIVERY_CODES } from "../../../src/integrations/observe/delivery.mjs";
 import { DEFAULT_RETENTION_DAYS, PRIVACY_LIMITS } from "../../../src/integrations/privacy/lifecycle.mjs";
 import { REPORT_HELP } from "../../../src/integrations/report/command.mjs";
@@ -86,6 +87,7 @@ test("I23-C18 README descreve on off real: preparação única, uma linha por a�
     `retidas por ${DEFAULT_RETENTION_DAYS} dias`,
     `as ${RECENT_CAPTURES} capturas automáticas mais recentes`,
     `esperado por até ${OBSERVE_LOCK_PATIENCE_MS / 1000} s`,
+    `\`setup\`, \`on\` e \`off\` também se revezam pelo lock \`${CONFIG_DIR}/${CONFIG_LOCK_FILE}\``,
     "nunca escolhe uma captura manual",
     "depois da sanitização",
     "inclusive para hooks ou plugin já em execução",
