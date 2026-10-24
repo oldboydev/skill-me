@@ -617,3 +617,318 @@ novo.
   em `%TEMP%`, criado às 11:30 no build original, continua registrado e não foi
   tocado. As cópias `/tmp/i23f2-ab/` e os logs em `/tmp/i23f2/` ficam fora do
   repositório.
+
+## Correção do F3 (verificação independente, rodada 3)
+
+Base: `8b5b62d`, com o veredito FAIL da rodada 3 em
+`.checks/issue-23-observacao-on-off.verified.md` (não editado aqui). Escopo
+autorizado pelo orquestrador: corrigir o F3 dentro do escopo aprovado — a raiz
+que o `on` autorizou precisa continuar ao alcance do `off` mesmo com a pasta
+`.skill-me` trocada antes ou depois do efeito, sem autorização órfã numa falha
+do `on` — e, depois, tratar a confiabilidade do gate (G1) com medida
+proporcional, sem enfraquecer o T8-C15. Builder: Claude, perfil `light`. As
+seções anteriores deste arquivo não foram alteradas. Nenhuma nova verificação
+foi convocada: ela depende da resposta do proprietário ao escalonamento.
+
+### Commits
+
+- `507707e` docs(checks): registrar a raiz autorizada fora da pasta da
+  configuração — linha "Registro da autorização" do Landing, commitada antes de
+  qualquer código (arquivo e formato novos, alternativas rejeitadas).
+- `e342bfd` fix(observe): manter a raiz ligada ao alcance do off pelo registro no home
+- `9412bab` test(observe): provar o off pela raiz registrada depois da troca da pasta
+- `c115ce2` docs(observe): documentar o registro da raiz autorizada no home
+- `a3a76d8` test(integrations): limitar a suíte a 8 arquivos em paralelo
+- `15559b4` docs(observe): explicar on com erro e raiz registrada inacessível
+- o commit deste registro (docs(checks))
+
+### Escolha e por que é a menor
+
+O F3 mostra que nenhuma conferência fecha a janela: a pasta pode ser trocada
+depois da última, e uma troca depois de um `on` bem-sucedido (ou a pasta
+apagada) tem o mesmo efeito — a raiz fica `on` e o `off` lê outra
+configuração. Qualquer correção precisa de um apontamento para a raiz que não
+se mova com a pasta e que exista antes do efeito. Alternativas:
+
+| Alternativa | Por que não |
+| --- | --- |
+| Mais uma conferência (`lstat`) depois do efeito | A troca pode vir depois dela. |
+| Rollback do `on` ao perceber a troca | Só cobre trocas percebidas pelo próprio `on`; uma queda entre o efeito e o rollback deixa a raiz órfã; uma troca depois de um `on` bem-sucedido não é falha dele. Com um registro durável o rollback deixa de ser necessário, e sem ele não basta. |
+| Registro dentro de `.skill-me` | Vai junto com a pasta movida. |
+| Conjunto de raízes no home com lock próprio | Mais um lock (e mais um lock residual depois de uma queda) para manter várias raízes `on` ao mesmo tempo, o que a configuração, com uma raiz por vez, nunca produz. |
+| Prender a autorização à identidade da pasta | A raiz fica inerte enquanto a pasta é outra, mas o `off` continua sem alcançá-la e ela volta a valer quando a pasta volta. |
+
+Escolha: um único registro, `<home>/.skill-me-authorization.json`, direto no
+home (a âncora de `os.homedir()`; não há pasta intermediária que possa ser
+trocada), com a forma literal do Landing
+`{"skillMeObserveAuthorization":1,"rootReal":"<rootReal>"}`. Nenhum lock
+novo: o registro só muda sob o `.lock` do store da raiz que ele nomeia, e a
+criação exclusiva (`wx`) impede que duas raízes se registrem.
+
+### Invariante, transições e corridas
+
+Invariante: raiz `on` ⇒ registro com ela. Logo há no máximo uma raiz `on`, e o
+`off` a alcança pelo registro, qualquer que seja a pasta `.skill-me`.
+
+| Registro | `on` (raiz configurada R) | `off` |
+| --- | --- | --- |
+| ausente | sob o lock de R: cria o registro com R (flush), depois grava `on` | desliga R (nada a fazer se já `off`); nada a apagar |
+| nomeia R | não reescreve; grava `on` se R estava `off` | desliga R, encerra as automáticas e apaga o registro, sob o lock de R |
+| nomeia outra raiz S | 4 `observe_on`, nada ligado | desliga R e depois S, pelo `rootReal` de S; apaga o registro sob o lock de S |
+| link/junção | 4 `link_refused`, nada ligado | desliga R; responde 4 e mantém o registro |
+| ilegível ou fora da forma | 3 `config_invalid`, nada ligado | desliga R; responde 3 e mantém o registro |
+| qualquer, com a configuração ilegível, trocada ou ausente | — (não há raiz a ligar) | desliga a raiz do registro; responde o código da configuração |
+
+- `on` de R × `off` de R: os dois mudam o registro e o estado de R sob o mesmo
+  lock, então nunca se cruzam entre um e outro (prova "se revezam pelo lock da
+  raiz"; a mutação M28, que registra fora do lock, é detectada por ela).
+- `on` de R × registro de S: `wx` falha com o registro de S e o `on` recusa;
+  se o `off` acabou de apagá-lo, o `on` seguinte cria o dele.
+- `off` concorrentes: o segundo encontra a raiz já `off` e o registro já
+  apagado (ou de outra raiz, que não apaga).
+- A parte do registro no `off` roda fora do lock da configuração, porque a
+  pasta pode estar recusada. `setup` não lê nem muda o registro; um `on`
+  concorrente que segura o lock da configuração muda o registro só sob o lock
+  da raiz, como acima.
+
+Estados de queda:
+
+- antes do registro: nada mudou.
+- registro gravado (com flush), estado `on` não: R `off` com registro. O `on`
+  seguinte de R o reaproveita; o `off` o apaga; o `on` de outra raiz recebe
+  `observe_on` até o `off`.
+- queda entre criar o arquivo e o flush: arquivo vazio ou incompleto. `on` e
+  `off` respondem 3 `config_invalid` e o mantêm; o `on` que o criou não chegou a
+  gravar `on` (o estado só é gravado depois do flush), então a remoção manual,
+  documentada, é segura. Apagar o arquivo depois de uma falha da abertura foi
+  descartado: uma falha antes da criação, seguida da criação do registro por
+  outra raiz, apagaria o registro alheio.
+- estado `on` gravado: R `on` com registro; o `off` alcança.
+- `off` depois de gravar `off` e antes de encerrar as automáticas ou apagar o
+  registro: o próximo `off` termina.
+- Durabilidade: o registro tem flush antes do estado `on`. A pasta do home não
+  recebe flush de diretório, como nenhuma pasta do store; vale a ordem dos
+  metadados do sistema de arquivos com journal (NTFS, ext4, APFS).
+
+Permissões e links: criação `wx` 0600 (no POSIX; no Windows, a DACL herdada do
+home), que nunca segue um link (um link no nome faz a criação falhar com
+`EEXIST`, e a leitura por `lstat` responde `link_refused`); leitura até 64 KiB,
+chaves exatas e `rootReal` absoluto. O home não é conferido: é a âncora.
+
+Resposta: no uso normal, `on` e `off` respondem exatamente como antes (as provas
+C1, C3 e C4 existentes não mudaram). Quando o `off` também desliga a raiz do
+registro, `changed`, `stopped` e `failed` somam as duas; qualquer erro sai só
+com o código, como antes, mesmo que a raiz registrada tenha sido desligada.
+
+### Regressão: vermelho e verde
+
+Três testes novos em `observe/control.cli.test.mjs`, todos com o padrão do C4
+(`off encerra e é idempotente`), em processo, sobre homes e raízes temporários
+reais, com a troca feita pelo io do comando (sem tempo):
+
+| Teste | Linhas e o que afirmam |
+| --- | --- |
+| pasta trocada depois da leitura do on | junção ou pasta real, logo depois do primeiro acesso do `on` à raiz (já depois da última conferência) ou do `rename` que grava o estado `on`: `on` 4 `foreign_entry` com a raiz `on` e o registro dela; um produtor aberto na geração ligada grava 1; `off` desliga a raiz pelo registro (junção: 4 `link_refused`; pasta real: 0, `changed: true`, `stopped` com a captura), encerra a captura e apaga o registro; o produtor tardio sai `observe_off` e o store não muda; o segundo `off` não muda nada; a pasta movida guarda só a configuração e o lock próprio; com a pasta de volta, `on`/`off` controlam a raiz e o registro |
+| registro da autorização | seis linhas com o código, `changed`, o estado das duas raízes e os bytes do registro depois de cada passo: falha ao criar o registro (5, nada ligado, sem registro); registro criado vazio e a gravação falha (5; depois `on` e `off` 3 `config_invalid` e o arquivo fica; após a remoção manual, `on`/`off` normais); falha ao gravar o estado `on` depois do registro, seguida de `off` (apaga) ou de `on` (reaproveita); registro de outra raiz depois de apagada a `.skill-me` (`on` 4 `observe_on`, `status` 0, `off` desliga as duas e apaga); registro como link/junção (4 `link_refused` no `on` e no `off`, destino intacto). No POSIX, o registro nasce 0600 |
+| on e off pelo registro se revezam pelo lock da raiz | `on` repetido para antes de tomar o lock da raiz; a pasta é trocada por uma real alheia e o `off` desliga a raiz pelo registro e o apaga; solto, o `on` liga de novo, com outra geração, e recria o registro; o `off` seguinte a alcança |
+
+Vermelho, Windows 11, Node 24.22.1: com os três arquivos de produto de
+`8b5b62d` postos na árvore (`git checkout 8b5b62d -- <arquivos>`, devolvidos
+ao HEAD em seguida, `git status` limpo), os três testes novos, a linha `off` do
+teste F2 e o C17: 0 pass, 5 fail (`/tmp/i23f3/red-final.txt`). No teste da
+troca, nas quatro linhas: a raiz continua `on` com a mesma geração depois dos
+dois `off`, a captura continua `active`, o produtor tardio grava
+(`committed: 2`, store alterado) e não há registro; na pasta real, o `off`
+responde `changed: false`, `stopped: []` — a reprodução do F3. A primeira
+corrida vermelha, antes do código, tinha um erro do próprio teste (a linha do
+link não fazia `setup`, `not_configured`); corrigido, a corrida acima é a dos
+testes finais.
+
+Verde: `control.cli` 13/13 e os oito arquivos de `observe/` 32/32, 0 skip.
+
+### Mutações
+
+Script fora do repositório (`/tmp/i23f3/mutations.mjs`): aplica a mutação,
+roda os quatro testes afetados e restaura os bytes, conferindo os hashes;
+`git status` vazio no fim.
+
+| Mutação | F2 pasta trocada | F3 troca depois da leitura | registro | lock da raiz |
+| --- | --- | --- | --- | --- |
+| M28 registro criado fora do lock da raiz | 1/1 | 1/1 | 1/1 | **0/1** |
+| M29 `off` sem a raiz do registro | **0/1** | **0/1** | **0/1** | **0/1** |
+| M30 `off` apaga o registro de outra raiz | 1/1 | 1/1 | **0/1** | 1/1 |
+| M31 `on` aceita o registro de outra raiz | 1/1 | 1/1 | **0/1** | 1/1 |
+| M32 raiz do registro só com a configuração lida | **0/1** | **0/1** | 1/1 | 1/1 |
+| M33 registro criado depois de gravar `on` | 1/1 | 1/1 | **0/1** | 1/1 |
+| M34 registro lido através de link | 1/1 | 1/1 | **0/1** | 1/1 |
+
+A ordem "apagar o registro depois de encerrar as automáticas" não tem mutação
+detectável sem uma falha injetada no encerramento: a autorização já está `off`
+nos dois casos; a ordem só evita que uma captura automática fique `active`
+sem quem a encerre.
+
+### Testes existentes alterados, e por quê
+
+- `I23-C2 … pasta da configuração trocada por junção depois da primeira
+  conferência` (F2): a linha `off, junção sob o lock` esperava a raiz original
+  ainda `on` depois do `off` recusado — exatamente a autorização fora do
+  alcance do F3. Com o registro, o `off` a desliga; a linha passa a esperar a
+  original `off`, e todas as linhas continuam afirmando que a raiz alheia não
+  muda. O código (4 `link_refused`), os leitores, as pastas e o controle depois
+  da restauração não mudaram. A troca e a restauração da pasta saíram para
+  `configSwap`/`removeOwnLock`, reutilizados pelos testes novos, sem mudar o
+  que a prova faz.
+- `I23-C17`: a sonda da #5 só admitia escrita no store e na pasta
+  `.skill-me`. Ela admite agora também o caminho literal do registro (não o
+  home inteiro), que só contém a raiz, e afirma que o `on` o gravou e que o
+  `off` o apagou. Sem a mudança, a prova falhava em "escrita fora do store" com
+  o próprio registro.
+- `I23-C18`: confere no README o nome do registro (pela constante) e o
+  `observe_on`. Sem o parágrafo novo do README: 0/1.
+
+### Provas do checklist
+
+Windows 11, Node 24.22.1, HEAD `c115ce2`, árvore limpa, comando literal de cada
+check, em sequência (`/tmp/i23f3/proof-C*.txt`, 14:18–14:19):
+
+| Check | Testes | Resultado |
+| --- | --- | --- |
+| C1 | 1 | 1 pass, 0 fail, 0 skip |
+| C2 | 5 | 5 pass, 0 fail, 0 skip |
+| C3 | 1 | 1 pass, 0 fail, 0 skip |
+| C4 | 5 | 5 pass, 0 fail, 0 skip |
+| C5 | 1 | 1 pass, 0 fail, 0 skip |
+| C6 | 1 | 1 pass, 0 fail, 0 skip |
+| C7 | 1 | 1 pass, 0 fail, 0 skip |
+| C8 | 2 | 2 pass, 0 fail, 0 skip |
+| C9 | 2 | 2 pass, 0 fail, 0 skip |
+| C10 | 1 | 1 pass, 0 fail, 0 skip |
+| C11 | 2 | 2 pass, 0 fail, 0 skip |
+| C12 | 2 | 2 pass, 0 fail, 0 skip |
+| C13 | 1 | 1 pass, 0 fail, 0 skip |
+| C14 | 1 | 1 pass, 0 fail, 0 skip |
+| C15 | 2 | 2 pass, 0 fail, 0 skip |
+| C16 | 1 | 1 pass, 0 fail, 0 skip |
+| C17 | 1 | 1 pass, 0 fail, 0 skip |
+| C18 | 2 | 2 pass, 0 fail, 0 skip |
+
+18/18 checks, 32 testes, 32 pass, 0 fail, 0 skip. O C8 rodou com o Hermes
+0.21.4 local, sem skip.
+Depois da mudança do README (`15559b4`), o C18 rodou de novo: 2 pass, 0 fail,
+0 skip. Os 32 testes também passaram dentro das duas execuções do `npm test`
+abaixo, no HEAD `15559b4`.
+
+### G1: confiabilidade do gate no Windows
+
+Histórico: o `T8-C15` falhou na suíte ampla do Windows no Verifier
+(`1ccfe70`) e no builder (`deacc50`, duas vezes, uma delas junto com o
+`T7-C10`; `40d77fc`), e passou isolado (1/1, 3/3, 3/3). O A/B anterior foi
+interrompido sem taxas (seção do F2). O `T8-C15` não foi alterado.
+
+Medida desta rodada: seis execuções de
+`node --test --test-reporter=spec "tests/integrations/**/*.test.mjs"` no HEAD
+`c115ce2`, alternando o paralelismo padrão do Node (31 arquivos nesta máquina de
+32 núcleos lógicos) e `--test-concurrency=8`, cada uma com `timeout 1500`, em
+sequência, sem outra carga minha (`/tmp/i23f3/g1.sh`, 14:19:55–14:41:55;
+saídas `/tmp/i23f3/g1-<modo>-<n>.txt`). Sem carga sintética.
+
+| Execução | Resultado | Duração |
+| --- | --- | --- |
+| padrão 1 | 446 testes, 439 pass, 0 fail, 7 skip | 194 s |
+| `--test-concurrency=8` 1 | 446, 439 pass, 0 fail, 7 skip | 282 s |
+| padrão 2 | 446, 432 pass, **7 fail**, 7 skip | 203 s |
+| `--test-concurrency=8` 2 | 446, 439 pass, 0 fail, 7 skip | 180 s |
+| padrão 3 | 446, 439 pass, 0 fail, 7 skip | 206 s |
+| `--test-concurrency=8` 3 | 446, 439 pass, 0 fail, 7 skip | 254 s |
+
+As sete falhas da execução padrão 2 são todas `delivery_timeout`, nas entregas
+manuais (#8: `T8-C1`, `T8-C15` com 29/40 confirmados, `T8-C16`, `T8-C17`) e
+automáticas (#23: `I23-C6`, `I23-C11`, `I23-C17`). O diagnóstico do `T8-C1`
+mostra espera de disco, não de CPU: 651 ms da primeira à última operação, 82
+operações, `sync` de até 125 ms, `close` 96 ms, `read` 79 ms e `lstat` 65 ms por
+operação, 16 ms de CPU do processo. Com 31 arquivos em paralelo, os processos das
+provas saturam o disco e o prazo de 750 ms da entrega estoura em qualquer
+caminho que grave; não há falha determinística. Três rodadas de cada lado não
+medem uma taxa: mostram que o limite de 8 removeu a falha nessas rodadas, sem a
+custo relevante de tempo, e o histórico acima aponta a mesma causa. Outras
+sessões de agentes nesta máquina podem ter somado carga; ela não foi medida.
+
+Decisão sobre o script (`a3a76d8`): `npm run test:integrations` passa a ser
+`node scripts/test-integrations.mjs`, que roda o mesmo `node --test` com o mesmo
+glob e `--test-concurrency=min(núcleos lógicos − 1, 8)` (no mínimo 1) e devolve
+o código de saída dele. As asserções de todas as provas são as mesmas.
+
+| Alternativa | Por que não |
+| --- | --- |
+| `--test-concurrency=8` fixo no `package.json` | Nos runners da CI (4 vCPU no Ubuntu e no Windows, 3 no macOS 14), o padrão é 3 ou 2 arquivos; 8 aumentaria o paralelismo lá sem medida, o mesmo risco transplantado. |
+| `--test-concurrency=3` fixo | Neutro na CI de 4 vCPU, mas não medido aqui e mais lento no Windows local. |
+| Prazo maior, nova tentativa ou mudança no `T8-C15` | Enfraquece o contrato de entrega da #8 ou esconde a falha. |
+
+Provas: o `I4-C47` passa a fixar o lançador e o glob dele (com o
+`package.json` anterior, 0/1); um teste novo em `fixtures-inventory.test.mjs`
+confere a tabela do limite (1→1, 2→1, 3→2, 4→3, 9→8, 10→8, 32→8, 128→8), o argv
+e, num diretório temporário, que a suíte verde sai 0, a vermelha sai 1 e um
+`.mjs` fora do glob não roda. Mutações: o lançador sempre com 0 → 0/1; sem o
+teto → 0/1 (lançador restaurado byte a byte).
+
+### Suítes
+
+| Ambiente | Alvo | Resultado |
+| --- | --- | --- |
+| Windows 11, Node 24.22.1 — HEAD `15559b4`, árvore limpa | `npm test`, 1ª execução (`/tmp/i23f3/npm-test-1.txt`) | exit 0, 220 s — governança 6/6; motor 16/16; doctor 417 (410 pass, 0 fail, 7 skip); integrações 447 (440 pass, 0 fail, 7 skip) |
+| o mesmo | `npm test`, 2ª execução (`/tmp/i23f3/npm-test-2.txt`) | exit 0, 223 s — os mesmos números |
+| WSL Ubuntu 24.04.3, Node 24.14.0, uid 1000 — `/tmp/skill-me-i23-f3-qKxDIp`, de `git archive 15559b4` (sha256 `984e1b9c1d98fc82…` igual nos dois lados; `git get-tar-commit-id` = `15559b46…`), `node_modules` copiado do checkout | C1–C18 literais | 32 testes: 30 pass, 0 fail, 2 skip (os dois C8, sem runtime Hermes) |
+| o mesmo | `node scripts/test-integrations.mjs` | exit 0, 33 s — 447 testes, 433 pass, 0 fail, 14 skip |
+
+As integrações passam de 443 para 447 testes: três provas do F3 e a do
+lançador. No WSL rodaram o lado POSIX das provas novas: registro com link
+simbólico, pastas trocadas por link de diretório e o modo 0600 do registro.
+O doctor não rodou no WSL nesta rodada (não foi tocado).
+
+Skips: no Windows, os 7 de integrações são os de antes, todos de plataforma
+(`I4-C15` e `T8-C4`, sinais POSIX; `I4-C25b`, modos POSIX; `I4-C25j`,
+`I4-C25k` e `I4-C25l`, ACL POSIX do Linux; `I4-C25m`, ACL do macOS), e os 7 do
+doctor são POSIX/FIFO. No WSL, 10 por falta do runtime Hermes (`I23-C8` duas
+vezes, `I4-C18` a `I4-C23`, `I4-C37`, `I4-C44b`), 3 de DACL do Windows
+(`I4-C25g`/`h`/`i`) e 1 de ACL do macOS (`I4-C25m`). `git diff --check`: exit 0
+em cada commit.
+
+### Limitações e mudanças de comportamento
+
+- Um `on` que só percebe a troca da pasta ao soltar o lock responde 4
+  (`foreign_entry`) com a raiz já `on`; ela fica no registro e o `off` a
+  desliga (documentado). Não há rollback no `on`, pelos motivos da tabela de
+  alternativas.
+- Um `off` que encontra a configuração recusada (link, junção, outra pasta)
+  desliga a raiz registrada e responde só o código da configuração, sem os
+  campos da raiz desligada.
+- Raiz registrada que não existe mais ou cujo caminho real mudou: o `off`
+  responde o código dela (`root_not_found`, `root_changed`…) e mantém o
+  registro; o `on` de outra raiz recebe `observe_on` até ela voltar ou até a
+  remoção manual (documentado). Um registro que nomeia uma raiz cujo store foi
+  apagado à mão também fica, porque o `off` só o apaga sob o lock dessa raiz;
+  o `on` dela o reaproveita.
+- `status` continua mostrando só a raiz configurada; um registro de outra raiz
+  aparece pelo `observe_on` do `on` e é resolvido pelo `off`.
+- Sem flush de diretório no home, como no resto do store (ver os estados de
+  queda acima).
+- A garantia vale contra a troca, o link ou a remoção da pasta `.skill-me`; o
+  próprio registro apagado ou trocado à mão junto com a configuração fica fora
+  do alcance, como o `observe.json` da raiz editado à mão.
+- G1: três rodadas de cada lado; a CI não foi executada (sem push), e o
+  lançador não muda o paralelismo nela.
+- Nenhuma sessão real de agente; nenhum hook pessoal instalado; nenhum `on` no
+  home real: `~/.skill-me` e `~/.skill-me-authorization.json` não existem no
+  Windows nem no home do uid 1000 do WSL, e as configurações de Claude e Codex
+  do usuário não mencionam o skill-me. Core vendorizado, pilotos e
+  `.verified.md` não foram tocados.
+
+### Estado ao final
+
+- Processos: as medições do G1 (`g1.sh`) e as duas execuções do `npm test`
+  terminaram sozinhas (14:41:55 e 14:52:08); nenhum script sem término foi
+  iniciado. O `Monitor` de acompanhamento foi negado pela sessão e não rodou.
+- Fora do repositório: `/tmp/i23f3/` (logs, script de mutações, arquivo do
+  `git archive`) no Windows e `/tmp/skill-me-i23-f3-qKxDIp` e
+  `/tmp/skill-me-i23-f3-out` no WSL.
+- Árvore: limpa antes deste registro.
