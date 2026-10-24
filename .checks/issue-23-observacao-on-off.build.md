@@ -1550,3 +1550,225 @@ commit.
   Windows; `/tmp/skill-me-i23-r1-*` e `/tmp/i23r1-wsl-out/` no WSL. A pasta do
   plugin no checkout não ganhou `__pycache__`.
 - Árvore: limpa antes deste registro.
+
+## Correção da falha da CI Windows no PR #24
+
+Base: `dbcf72f`, árvore limpa, depois do PASS do Verifier e da revisão formal
+`ready`. O PR #24 falhou na CI Windows duas vezes no mesmo HEAD; Linux e macOS
+passaram. Escopo autorizado pelo orquestrador: achar a causa com evidência e
+corrigir a menor parte adequada no escopo da #23, sem enfraquecer provas. O teto
+formal de duas tentativas está esgotado: nenhuma revisão formal rodou, e nada foi
+enviado (sem push, PR ou merge). Builder: Claude, perfil `light`. As seções
+anteriores e `.verified.md` não foram alterados.
+
+### Commits
+
+- `6ff2ffa` test(observe): apagar a pasta da configuração sem rmSync nas provas da #23
+- o commit deste registro (docs(checks))
+
+### O que a CI mostrou
+
+Run `40140217471`, tentativas 1 e 2 (jobs `121010248617` e `121012371982`),
+`windows-latest`, Node 24.13.0 fixado no workflow (`actions/setup-node`,
+`node-version: 24.13.0`). Os logs foram baixados com `gh run view --log-failed`
+(`%TEMP%\ci23\attempt{1,2}.log`). Nas duas tentativas, `npm run test:integrations`
+deu 452 testes, 431 pass, 4 fail e 17 skip, com as mesmas quatro falhas em
+`observe/control.cli.test.mjs`:
+
+| Teste (linha) | Linha da fixture | Erro |
+| --- | --- | --- |
+| C2, pasta trocada por junção (398), linha "outra pasta real antes de criar o lock" | `restore`, 393 | `EPERM` no `renameSync(movida, .skill-me)` |
+| C4, pasta trocada depois da leitura do on (519), linha "pasta real antes de ligar" | `restore`, 393 | `EPERM` no mesmo `renameSync` |
+| C4, registro da autorização (642), linha "registro de outra raiz" | `before`, 697 | `EEXIST` no `mkdirSync(.skill-me)` logo depois do `rmSync` da 696 |
+| C4, conflito com o registro (869), linha "pasta da configuração apagada" | `replace`, 895 | `deepStrictEqual`: `status` 0 com a configuração `original`, estado `on` e captura ativa, onde se esperava `ausente` |
+
+Os três sítios têm o mesmo passo: `rmSync(<home>/.skill-me, { recursive: true })`
+numa pasta real (o ramo da junção usa `unlinkSync` e passou). Nos três, o
+comportamento observado é o de uma remoção que não ocorreu e não lançou erro: o
+`rename` encontra o destino ocupado (`EPERM` no Windows), o `mkdir` encontra a
+pasta, e o `status` lê a configuração original.
+
+### Causa: `rmSync` do Node 24.13.0 no Windows com caminho não-ASCII
+
+Todo scratch das provas tem "ação" no caminho (`makeScratch`, de propósito). No
+Node 24.13.0, o `fs.rmSync` implementado em C++ não converte certo um caminho
+não-ASCII no Windows: não remove nada e não lança erro. É o defeito
+[nodejs/node#56049](https://github.com/nodejs/node/issues/56049), corrigido por
+[nodejs/node#61108](https://github.com/nodejs/node/pull/61108), que entrou no
+25.4.0 e no 24.13.1 (o changelog do 24.13.1, PR nodejs/node#61661, lista o
+commit `0ed0a30f74` "fs: fix rmSync to handle non-ASCII characters"). A CI fixa
+o 24.13.0. Os builds locais anteriores no Windows rodaram com o Node 24.22.1
+(e as provas focadas, com o 24.15), que já têm a correção; o WSL e a CI Linux
+usam o 24.13.0, mas o defeito é só do Windows.
+
+Sonda fora do repositório (`%TEMP%\i23probe-scripts\`), Windows 11 com página de
+código ANSI 1252 (a do runner não foi lida). Node 24.13.0 do zip oficial
+(`node-v24.13.0-win-x64.zip`, sha256 `ca274269…ce091cb88`, igual ao do
+`SHASUMS256.txt` de nodejs.org), executado de `%TEMP%\i23-node-24.13.0`, sem
+trocar o Node do sistema; as outras versões são as do nvm local:
+
+| Operação, pasta com `observe.json` | Outras versões | 24.13.0 |
+| --- | --- | --- |
+| `rmSync(dir, { recursive: true })`, caminho ASCII | remove (22.12.0, 24.15.0, 24.21.0, 24.22.1) | remove |
+| `rmSync(dir, { recursive: true })`, caminho com "ação" | remove (as mesmas quatro) | não lança e a pasta fica |
+| `fs.promises.rm(dir, { recursive: true })`, com "ação" | remove (as mesmas quatro) | remove |
+| `rmSync(arquivo)`, caminho com "ação" | remove (24.22.1) | não lança e o arquivo fica |
+| `unlinkSync` de cada arquivo + `rmdirSync`, com "ação" | remove (24.22.1) | remove |
+
+Não é o produto: `src/` não usa `rmSync` nem `cpSync`; a remoção dele passa por
+`unlink`/`rmdir` de `fs/promises` (`privacy/fs.mjs`, `install/io.mjs`), que
+funcionam no 24.13.0. Também não são handles abertos nem junções: o ramo da
+junção passou, cada falha está no `rmSync` de uma pasta real, e a falha se
+reproduz numa máquina sem o runner, só com a versão do Node.
+
+Vermelho local, HEAD `dbcf72f`, Windows 11, Node 24.13.0, comando literal de
+C2 e C4: C2 4/5, C4 4/7 (`%TEMP%\i23ci\red-2413-C{2,4}.txt`). Falham os mesmos
+quatro testes, nas mesmas linhas e com os mesmos erros da CI (393 via 455 e
+567; 697 via 731; o `deepStrictEqual` da 1001 com `'original'` no lugar de
+`'ausente'`).
+
+### Correção
+
+Só a fixture de `observe/control.cli.test.mjs` (`6ff2ffa`). O helper novo
+`removeConfigFolder(dir)` apaga cada arquivo da pasta com `unlinkSync`, a pasta
+com `rmdirSync` e afirma que ela não existe mais. Ele substitui o `rmSync` nos
+três sítios: o `restore` de `configSwap` (pasta real), o "registro de outra
+raiz" e a "pasta da configuração apagada". A troca continua sendo de pasta real:
+a pasta é apagada e recriada ou devolvida por `rename`, como antes. O ramo da
+junção, as asserções, as linhas, os valores esperados e o caminho POSIX não
+mudaram (o diff só toca a remoção, o helper e o import).
+
+Por que `unlink`/`rmdir`: são as primitivas que o produto usa e não dependem da
+implementação do `rm`. A pasta da configuração só tem arquivos; uma subpasta
+faria o `unlink` lançar erro, sem sumir em silêncio. A conferência depois da
+remoção transforma qualquer remoção silenciosa num erro da fixture, com mensagem
+própria, em vez de um `EPERM`, um `EEXIST` ou uma divergência que parece do
+produto.
+
+Alternativas descartadas:
+
+| Alternativa | Por que não |
+| --- | --- |
+| Subir o Node da CI para ≥ 24.13.1 | Mudança de workflow de governança, fora da #23; `engines` (`>=24`) admite o 24.13.0, e a prova continuaria falhando para quem roda com ele. Fica para o proprietário (abaixo). |
+| Scratch sem "ação" | Tira a cobertura de caminho com Unicode, que é intencional. |
+| `fs.promises.rm` | Funciona no 24.13.0, mas troca uma implementação do `rm` por outra; `unlink`/`rmdir` são as do produto. |
+| Repetir ou tolerar | Não é intermitente: falha sempre com o 24.13.0 e nunca com o 24.22.1. |
+
+### Vermelho, verde e detecção
+
+| Execução (Windows 11) | Node | C2 | C4 |
+| --- | --- | --- | --- |
+| Fixture de `dbcf72f` | 24.13.0 | 4/5 | 4/7 |
+| Fixture corrigida, antes do commit | 24.13.0 | 5/5 | 7/7 |
+| M51: o helper volta a usar `rmSync(dir, { recursive: true })`, com a conferência | 24.13.0 | 4/5 | 4/7 |
+
+Na M51, as quatro falhas são a conferência nova ("a pasta da configuração
+continua no lugar depois da remoção": 1 no C2 e 3 no C4), e nenhuma é `EPERM`,
+`EEXIST` ou `'ausente'` (`%TEMP%\i23ci\m51-2413-C{2,4}.txt`). A mutação foi
+aplicada e desfeita por script (`%TEMP%\i23ci\mutation.mjs`), com o sha256 do
+arquivo igual antes e depois (`34763a86…b1d4462045`). Ela mostra que a falha
+original agora é detectada na fixture, no ponto da remoção.
+
+### Provas do checklist
+
+HEAD `6ff2ffa`, árvore limpa, comando literal de cada check
+(`%TEMP%\i23ci\checks.sh`, com o `node` informado):
+
+- Os quatro testes da CI, isolados por nome: Node 24.13.0, 4 pass, 0 fail, 0
+  skip; Node 24.22.1, 4 pass, 0 fail, 0 skip (`four-v24.*.txt`).
+- Windows, Node 24.22.1 (20:17:10–20:18:20, `win-24.22.1/proof-C*.txt`): C1 1,
+  C2 5, C3 1, C4 7, C5 1, C6 1, C7 1, C8 3, C9 2, C10 1, C11 2, C12 2, C13 1,
+  C14 1, C15 2, C16 2, C17 1, C18 3. São 18/18 checks e 37 testes: 37 pass, 0
+  fail e 0 skip. O C8 rodou com o Hermes 0.21.4 local.
+- Windows, Node 24.13.0 (20:18:22–20:19:28, `win-24.13.0/proof-C*.txt`): 37
+  testes, 36 pass, 1 fail, 0 skip. C1–C7 e C9–C18 passam. No C8, 2/3: a prova
+  nativa principal falha com `Unknown tool: skillme_fixture_echo`, pelo `cpSync`
+  do helper da #4 (achado abaixo). Na CI essa prova fica `skipped`, sem o
+  runtime Hermes.
+- WSL Ubuntu 24.04.3, `/usr/bin/node` 24.13.0 (a versão da CI Linux), uid 1000:
+  `/tmp/skill-me-i23-ci-EApdi7`, de `git archive 6ff2ffa`, com o sha256
+  `50ae4a94…96646847` igual nos dois lados e `git get-tar-commit-id` =
+  `6ff2ffa1…`. O `node_modules` foi copiado de `/tmp/skill-me-i23-f5-dpqk8c`;
+  `package.json` e `package-lock.json` não mudaram desde `35ba356`. Resultados
+  (20:31:24–20:32:08, `/tmp/i23ci-wsl-out/`): os quatro, 4/4; `control.cli`
+  inteiro, 15 pass, 0 fail, 0 skip; C1–C18, 37 testes, 35 pass, 0 fail, 2 skip
+  (as duas nativas do C8, sem o runtime Hermes). O `rmdirSync`/`unlinkSync` do
+  helper e o link de diretório POSIX real foram exercitados.
+
+### Suítes
+
+| Ambiente | Alvo | Resultado |
+| --- | --- | --- |
+| Windows 11, Node 24.22.1 — HEAD `6ff2ffa` | `npm test` (`npm-test-win-24.22.1.txt`, 20:22:28–20:26:04) | exit 0 — governança 6/6; motor 16/16; doctor 417 (410 pass, 0 fail, 7 skip); integrações 452 (445 pass, 0 fail, 7 skip) |
+| Windows 11, Node 24.13.0 no `PATH` (`node --version` pelo `cmd` = v24.13.0; npm 11.6.2 do mesmo zip), `SKILL_ME_HERMES_PYTHON` apontando para um caminho inexistente, como no runner sem Hermes — HEAD `6ff2ffa` | `npm test` (`npm-test-win-24.13.0-sem-hermes.txt`, 20:26:16–20:30:05) | exit 0 — governança 6/6; motor 16/16; doctor 417 (410 pass, 0 fail, 7 skip); integrações 452 (435 pass, 0 fail, 17 skip) |
+| WSL (acima) | `npm test` (20:32:08–20:32:59) | exit 0 — governança 6/6; motor 16/16; doctor 417 (416 pass, 0 fail, 1 skip); integrações 452 (438 pass, 0 fail, 14 skip) |
+
+A segunda linha é o equivalente local do job Windows: as integrações passam de
+431 pass e 4 fail na CI para 435 pass e 0 fail, com os mesmos 452 testes. Os 17
+skips têm exatamente os nomes da CI (`diff` das listas, `ci-skips.txt` e
+`local-skips.txt`): os 10 nativos do Hermes e os 7 de plataforma. Os outros
+skips do Windows e do WSL são os de antes. `git diff --check`: exit 0 antes de
+cada commit.
+
+### Achado fora do escopo: o mesmo defeito do Node 24.13.0 em outras provas
+
+Registrado sem correção (AGENTS.md: achado fora do escopo é comunicado e não
+autoriza correção):
+
+- `hermes-plugin.native.test.mjs`, `prepareAndRun` (helper da #4, também usado
+  pelo C8 da #23): o `cpSync` do plugin de fixture para o `HERMES_HOME` (com
+  "ação") não copia nada no 24.13.0 do Windows. Com o Hermes local, o arquivo
+  inteiro no 24.13.0 dá 11 testes, 5 pass e 6 fail: I4-C19, I4-C20, I4-C21,
+  I4-C22, I4-C37 e a prova nativa principal do I23-C8. Todos falham por
+  `Unknown tool: skillme_fixture_echo` (371 ocorrências), e o scratch do C8 não
+  tem `hermes home/plugins/skillme-fixture-tool`, mas tem o
+  `skill-me-observer` instalado pelo produto (`hermes-native-24.13.0.txt`). Com
+  o 24.22.1 o arquivo passa, e na CI esses testes ficam `skipped`. A falha é
+  anterior à #23. Na sonda, um `cpSync` com origem e destino em "ação"
+  encerrou o Node 24.13.0 com código 127, sem saída. Ele também criou fora do
+  scratch pastas irmãs com o nome corrompido (`aÃ§Ã£o`), já removidas.
+- `rmSync` no meio de provas fora da #23, em scratch com "ação":
+  `install-permissions.cli.test.mjs` 241/397/528 (`rmSync(control)`, arquivo) e
+  `skill-tree-hash.cli.test.mjs` 101 (pasta do plugin, recursivo). No 24.13.0 do
+  Windows eles não removem nada. Passaram na CI, e não foi investigado se a prova
+  perde força. O `rmSync` da linha 151 de `report/report.cli.test.mjs` usa uma
+  raiz em `.checks/` (ASCII na CI).
+- Os `after` de limpeza com `rmSync` em todos os arquivos de teste deixam os
+  scratches no `%TEMP%` com o 24.13.0 do Windows, sem efeito nas provas.
+
+Decisão do proprietário: subir o Node fixado na CI para ≥ 24.13.1 resolveria
+os três na CI. Para quem roda localmente com o 24.13.0, as fixtures precisariam
+das primitivas, como neste commit.
+
+### Limitações
+
+- A CI não rodou depois da correção (sem push). A reprodução usou o zip oficial
+  de nodejs.org; o runner usa o pacote de `actions/node-versions` da mesma
+  versão, que não é byte a byte o mesmo arquivo. A equivalência vem da versão,
+  dos mesmos quatro testes e erros nas mesmas linhas, e dos mesmos totais e skips.
+- macOS não foi executado. Ali o `rmSync` não tem o defeito (a CI macOS passou
+  em `dbcf72f`), e o helper usa as mesmas primitivas do Linux.
+- Os cleanups `after` não foram alterados (achado acima).
+- Nenhuma sessão real de agente; nenhum hook pessoal instalado; nenhum `on` no
+  home real. `.skill-me`, `.skill-me-authorization.json` e
+  `.skill-me-observe.lock` não existem no home do Windows nem no do uid 1000 do
+  WSL. Produto, core vendorizado, pilotos, configuração do motor, overrides e
+  `.verified.md` não foram tocados. Nenhum `review:run`.
+
+### Estado ao final
+
+- Processos: as execuções rodaram em primeiro plano e terminaram. Uma listagem
+  do `%TEMP%` pelo shell, lenta demais, foi para segundo plano e foi
+  interrompida (TaskStop); ela só lia `stat`.
+- `%TEMP%` do Windows: removidas as 1047 pastas `skill-me i4 …`/`skill-me
+  probe…` criadas a partir das 20:12, todas nas janelas destas execuções. Entre
+  elas estão os scratches que o `after` do 24.13.0 não apagou e as duas pastas
+  `aÃ§Ã£o` da sonda; não sobrou nenhuma. As 26.133 pastas `skill-me i4 …`
+  anteriores a esta sessão (as mais recentes, das 20:05–20:06, de provas da #5)
+  não foram tocadas.
+- Fora do repositório ficam o Node 24.13.0 em `%TEMP%\i23-node-24.13.0` (zip e
+  extração, para reproduzir) e, no Windows, `%TEMP%\i23ci` (logs, `checks.sh`,
+  `mutation.mjs`, `leftovers.mjs`, `wsl-run.sh`, `head.tar`), `%TEMP%\ci23` (logs
+  da CI) e `%TEMP%\i23probe-scripts`. No WSL ficam `/tmp/skill-me-i23-ci-EApdi7`,
+  o `.tar` dela e `/tmp/i23ci-wsl-out/`.
+- Árvore: limpa antes deste registro.
