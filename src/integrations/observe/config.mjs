@@ -22,8 +22,6 @@ const MAX_ARGV = 32;
 const MAX_ARG_LENGTH = 4096;
 const KEYS = ["hermesDelivery", "root", "rootReal", "skillMeObserveConfig"];
 
-export const configPath = (home) => path.join(home, CONFIG_DIR, CONFIG_FILE);
-
 // `os.homedir()` segue USERPROFILE (Windows) ou HOME (POSIX), como o
 // `Path.home()` do plugin. Sem home utilizável não há configuração.
 export function userHome() {
@@ -53,12 +51,45 @@ function isValidConfig(value) {
   );
 }
 
-// { state: "missing" } antes do setup; { state: "invalid", code } para arquivo
-// alheio, link ou ilegível; { state: "ok", config }. Nunca lança: hooks e
-// ingest decidem pelo estado, sem exceção nem mensagem.
-export async function readObserveConfig({ home = userHome(), io = createStoreIo() } = {}) {
-  if (!absolute(home)) return { state: "missing" };
-  const file = configPath(home);
+export class ObserveConfigError extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+}
+
+// A pasta da configuração é a fronteira de confiança do consentimento (linha
+// "Pasta da configuração" do Landing): o `lstat` do arquivo atravessa uma pasta
+// trocada por link ou junção sem perceber, e o lock e a leitura iam para a
+// configuração de outra pasta (F2 da verificação, rodada 2). Por isso ela é
+// conferida — diretório real, com a mesma identidade — antes e depois de cada
+// leitura e antes de cada efeito nela. Uma troca desfeita entre duas
+// conferências fica fora do alcance, como no `assertUnchanged` do store.
+
+// null sem a pasta; link ou junção no nome: link_refused. `bigint`: no Windows
+// o índice do arquivo passa de 2^53 e perderia precisão como Number.
+async function lstatFolder(io, dir) {
+  let stats;
+  try {
+    stats = await io.lstat(dir, { bigint: true });
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+    throw error;
+  }
+  if (stats.isSymbolicLink()) throw new ObserveConfigError("link_refused");
+  return stats;
+}
+
+const identityOf = (stats) => ({ dev: stats.dev, ino: stats.ino });
+
+// `dir` ainda é a pasta de identidade `identity`; outra pasta, ausente ou não
+// diretório no mesmo nome: foreign_entry.
+async function assertConfigFolder(io, dir, identity) {
+  const stats = await lstatFolder(io, dir);
+  if (stats === null || !stats.isDirectory() || stats.dev !== identity.dev || stats.ino !== identity.ino) throw new ObserveConfigError("foreign_entry");
+}
+
+async function readConfigFile(io, file) {
   try {
     const stats = await io.lstat(file);
     if (stats.isSymbolicLink()) return { state: "invalid", code: "link_refused" };
@@ -73,16 +104,36 @@ export async function readObserveConfig({ home = userHome(), io = createStoreIo(
   }
 }
 
-export class ObserveConfigError extends Error {
-  constructor(code) {
-    super(code);
-    this.code = code;
+// { state: "missing" } antes do setup; { state: "invalid", code } para arquivo
+// alheio, link ou ilegível, ou pasta trocada; { state: "ok", config }. Nunca
+// lança: hooks e ingest decidem pelo estado, sem exceção nem mensagem.
+// `folder` (de configDir): a referência de setup/on/off, conferida antes de
+// criar o lock — a primeira conferência daqui já recusa uma troca anterior a
+// ele. Sem ela, vale a identidade da primeira conferência, e um nome que não é
+// diretório continua sendo nada configurado.
+export async function readObserveConfig({ home = userHome(), io = createStoreIo(), folder = null } = {}) {
+  if (!absolute(home)) return { state: "missing" };
+  const dir = path.join(home, CONFIG_DIR);
+  try {
+    let identity = folder?.identity;
+    if (identity === undefined) {
+      const stats = await lstatFolder(io, dir);
+      if (stats === null || !stats.isDirectory()) return { state: "missing" };
+      identity = identityOf(stats);
+    } else {
+      await assertConfigFolder(io, dir, identity);
+    }
+    const read = await readConfigFile(io, path.join(dir, CONFIG_FILE));
+    await assertConfigFolder(io, dir, identity);
+    return read;
+  } catch (error) {
+    return { state: "invalid", code: error instanceof ObserveConfigError ? error.code : "io_failure" };
   }
 }
 
-// Pasta da configuração, que precisa ser diretório real. Com `create` (só o
-// setup) nasce 0700, não recursiva: o home já existe. Sem `create`, null quando
-// ainda não existe — nada foi configurado.
+// Pasta da configuração, que precisa ser diretório real: { dir, identity }.
+// Com `create` (só o setup) nasce 0700, não recursiva: o home já existe. Sem
+// `create`, null quando ainda não existe — nada foi configurado.
 export async function configDir({ home, io = createStoreIo(), create = false }) {
   if (!absolute(home)) {
     if (create) throw new ObserveConfigError("io_failure");
@@ -96,26 +147,26 @@ export async function configDir({ home, io = createStoreIo(), create = false }) 
       if (error.code !== "EEXIST") throw error;
     }
   }
-  let stats;
-  try {
-    stats = await io.lstat(dir);
-  } catch (error) {
-    if (!create && (error.code === "ENOENT" || error.code === "ENOTDIR")) return null;
-    throw error;
+  const stats = await lstatFolder(io, dir);
+  if (stats === null) {
+    if (create) throw new ObserveConfigError("io_failure");
+    return null;
   }
-  if (stats.isSymbolicLink()) throw new ObserveConfigError("link_refused");
   if (!stats.isDirectory()) throw new ObserveConfigError("config_invalid");
-  return dir;
+  return { dir, identity: identityOf(stats) };
 }
 
-// Só `observe setup` grava. O arquivo entra por temporário `wx` 0600 +
-// `rename`, sem nunca abrir um link no caminho final.
-export async function writeObserveConfig({ home, config, io = createStoreIo() }) {
-  const dir = await configDir({ home, io, create: true });
-  const tmp = path.join(dir, `${CONFIG_FILE}.${randomBytes(4).toString("hex")}.skill-me-tmp`);
+// Só `observe setup` grava, na pasta `folder` conferida antes do lock. O
+// arquivo entra por temporário `wx` 0600 + `rename`, sem nunca abrir um link no
+// caminho final. A pasta é conferida entre os dois: o temporário gravado
+// através de uma pasta trocada sai de lá, e o `rename` pelo nome só acha o
+// temporário na pasta onde ele foi gravado.
+export async function writeObserveConfig({ folder, config, io = createStoreIo() }) {
+  const tmp = path.join(folder.dir, `${CONFIG_FILE}.${randomBytes(4).toString("hex")}.skill-me-tmp`);
   try {
     await io.writeExclusive(tmp, JSON.stringify(config));
-    await io.rename(tmp, configPath(home));
+    await assertConfigFolder(io, folder.dir, folder.identity);
+    await io.rename(tmp, path.join(folder.dir, CONFIG_FILE));
   } catch (error) {
     await io.unlink(tmp).catch(() => {});
     throw error;

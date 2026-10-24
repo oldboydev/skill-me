@@ -121,14 +121,17 @@ const configured = async (home, io) => configFrom(await readObserveConfig({ home
 // dela é aplicada sem soltar o lock da pasta da configuração. Sem ela, um setup
 // concorrente com on deixava a raiz anterior on fora do alcance do off (F1 da
 // verificação, rodada 1; linha "Barreira da configuração" do Landing). Sem a
-// pasta nada foi configurado, e on/off não a criam. `fn` recebe a leitura da
-// configuração. Um lock_present lançado por `fn` (lock da raiz) só chega depois
-// da paciência dela, quando este prazo também já passou: `fn` não é repetida.
+// pasta nada foi configurado, e on/off não a criam. A pasta conferida antes de
+// criar o lock é a referência da leitura sob ele: trocada por junção nesse
+// intervalo, o lock e a leitura iriam para a pasta de outra configuração (F2,
+// rodada 2; linha "Pasta da configuração"). `fn` recebe a leitura e a pasta.
+// Um lock_present lançado por `fn` (lock da raiz) só chega depois da paciência
+// dela, quando este prazo também já passou: `fn` não é repetida.
 async function withConfigLock({ home, io, create = false }, fn) {
-  const dir = await configDir({ home, io, create });
-  if (dir === null) return fn({ state: "missing" });
-  const lock = { io, lockPath: path.join(dir, CONFIG_LOCK_FILE), lostCode: "foreign_entry" };
-  return patiently(() => holdLockFile(lock, async () => fn(await readObserveConfig({ home, io }))));
+  const folder = await configDir({ home, io, create });
+  if (folder === null) return fn({ state: "missing" }, null);
+  const lock = { io, lockPath: path.join(folder.dir, CONFIG_LOCK_FILE), lostCode: "foreign_entry" };
+  return patiently(() => holdLockFile(lock, async () => fn(await readObserveConfig({ home, io, folder }), folder)));
 }
 
 async function setup(tokens, { home, io }) {
@@ -141,7 +144,7 @@ async function setup(tokens, { home, io }) {
   }
   if (!stats.isDirectory()) throw new StoreError("root_not_directory");
   const rootReal = await io.realpath(root);
-  return withConfigLock({ home, io, create: true }, async (read) => {
+  return withConfigLock({ home, io, create: true }, async (read, folder) => {
     // Trocar a raiz com a observação ligada deixaria a autorização sem quem a
     // desligue; uma raiz anterior inacessível não tem o que gravar.
     const previous = read.state === "ok" ? read.config : null;
@@ -154,7 +157,7 @@ async function setup(tokens, { home, io }) {
     }
     const current = await patiently(() => readObservation({ root, expectedReal: rootReal, io }));
     await writeObserveConfig({
-      home,
+      folder,
       io,
       config: { skillMeObserveConfig: CONFIG_VERSION, root, rootReal, hermesDelivery: [process.execPath, CLI_PATH, "ingest", "--agent", "hermes"] },
     });
