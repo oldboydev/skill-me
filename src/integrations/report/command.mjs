@@ -1,4 +1,4 @@
-import { readObserveConfig, userHome } from "../observe/config.mjs";
+import { assertNoOtherAuthorization, ObserveConfigError, readObserveConfig, userHome } from "../observe/config.mjs";
 import { parsePrivacyArgs, PrivacyUsageError } from "../privacy/args.mjs";
 import { latestAutomaticCapture, StoreError } from "../privacy/store.mjs";
 import { createStoreIo } from "../privacy/fs.mjs";
@@ -26,7 +26,7 @@ const FORMATS = new Set(["text", "markdown", "json"]);
 const STORE_EXIT = Object.freeze({
   root_not_found: 3, root_not_directory: 3, store_invalid: 3, capture_not_found: 3, capture_invalid: 3, capture_not_active: 3,
   not_configured: 3, config_invalid: 3, no_automatic_capture: 3,
-  lock_present: 4, link_refused: 4, foreign_entry: 4, root_changed: 4,
+  lock_present: 4, link_refused: 4, foreign_entry: 4, root_changed: 4, observe_on: 4,
   io_failure: 5,
 });
 
@@ -68,13 +68,16 @@ function failure(code, exitCode) {
 }
 
 // Raiz e ID da consulta; com --latest, da configuração deste usuário e da
-// captura automática mais recente, sem criar lock (#23, crit. 5).
+// captura automática mais recente, sem criar lock (#23, crit. 5). Com outra
+// raiz registrada, a observação do usuário pode estar nela, e a captura da
+// configuração não é escolhida (linha "Conflito com o registro").
 async function target(args, { io, home }) {
   if (!args.latest) return { root: args.root, id: args.capture };
   const read = await readObserveConfig({ home, io });
   if (read.state === "missing") throw new StoreError("not_configured");
   if (read.state === "invalid") throw new StoreError(read.code);
   const { root, rootReal } = read.config;
+  await assertNoOtherAuthorization({ home, io }, rootReal);
   return { root, id: await latestAutomaticCapture({ root, expectedReal: rootReal, io }) };
 }
 
@@ -101,7 +104,7 @@ export async function runReportCommand({ argv, io = createStoreIo(), cwd = proce
     return { exitCode: 0, output: renderReport(report, args.format) };
   } catch (error) {
     if (error instanceof SkillSourceError) return failure(error.code, error.code === "skill_io_failure" ? 5 : 3);
-    if (error instanceof StoreError) return failure(error.code, STORE_EXIT[error.code] ?? 5);
+    if (error instanceof StoreError || error instanceof ObserveConfigError) return failure(error.code, STORE_EXIT[error.code] ?? 5);
     return failure("io_failure", 5);
   }
 }

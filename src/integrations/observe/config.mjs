@@ -14,8 +14,9 @@ import { createStoreIo } from "../privacy/fs.mjs";
 export const CONFIG_DIR = ".skill-me";
 export const CONFIG_FILE = "observe.json";
 // Barreira de `setup`, `on` e `off` (linha "Barreira da configuração" do
-// Landing); o lock é tomado em observe/command.mjs.
-export const CONFIG_LOCK_FILE = "observe.lock";
+// Landing), direto no home: dentro da pasta `.skill-me` ela ia junto com a
+// pasta trocada. O lock é tomado em observe/command.mjs.
+export const CONTROL_LOCK_FILE = ".skill-me-observe.lock";
 export const CONFIG_VERSION = 1;
 // Registro da raiz autorizada (linha "Registro da autorização" do Landing),
 // direto no home e fora da pasta `.skill-me`.
@@ -165,9 +166,10 @@ export async function configDir({ home, io = createStoreIo(), create = false }) 
 // mesmo com a pasta `.skill-me` trocada ou apagada depois de qualquer
 // conferência (F3 da verificação, rodada 3). Fica no home, que não se move com
 // a pasta. Só muda sob o lock do store da raiz que nomeia (claim/release, pelo
-// changeObservation de privacy/store.mjs): um on e um off da mesma raiz nunca
-// se cruzam entre o registro e o estado, e a criação exclusiva impede que duas
-// raízes se registrem. Invariante: raiz on ⇒ registro com ela.
+// changeObservation de privacy/store.mjs), dentro de um on ou off que já
+// segura o lock do home: um on e um off nunca se cruzam entre o registro e o
+// estado, e a criação exclusiva impede que duas raízes se registrem.
+// Invariante: raiz on ⇒ registro com ela.
 
 const authorizationPath = (home) => path.join(home, AUTHORIZATION_FILE);
 
@@ -216,6 +218,15 @@ export async function claimAuthorization({ home, io = createStoreIo(), rootReal 
   }
   const current = await readAuthorization({ home, io });
   if (current?.rootReal !== rootReal) throw new ObserveConfigError("observe_on");
+}
+
+// Linha "Conflito com o registro" do Landing: um registro de outra raiz que não
+// `rootReal` — com `rootReal` null, qualquer registro — diz que uma raiz pode
+// estar on fora do alcance desta configuração. status e report --latest não
+// respondem por ela, e setup não a troca: observe_on, sem caminho.
+export async function assertNoOtherAuthorization({ home, io = createStoreIo() }, rootReal) {
+  const recorded = await readAuthorization({ home, io });
+  if (recorded !== null && recorded.rootReal !== rootReal) throw new ObserveConfigError("observe_on");
 }
 
 // Depois de gravar off e encerrar as automáticas, sob o mesmo lock do store

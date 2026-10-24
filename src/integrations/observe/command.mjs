@@ -4,8 +4,9 @@ import { CLI_PATH } from "../install/run.mjs";
 import { createStoreIo } from "../privacy/fs.mjs";
 import { changeObservation, holdLockFile, readObservation, StoreError } from "../privacy/store.mjs";
 import {
-  CONFIG_LOCK_FILE,
+  assertNoOtherAuthorization,
   CONFIG_VERSION,
+  CONTROL_LOCK_FILE,
   claimAuthorization,
   configDir,
   ObserveConfigError,
@@ -129,21 +130,22 @@ function configFrom(read) {
 
 const configured = async (home, io) => configFrom(await readObserveConfig({ home, io }));
 
-// Barreira de setup, on e off: a configuração é lida e a decisão sobre a raiz
-// dela é aplicada sem soltar o lock da pasta da configuração. Sem ela, um setup
-// concorrente com on deixava a raiz anterior on fora do alcance do off (F1 da
-// verificação, rodada 1; linha "Barreira da configuração" do Landing). Sem a
-// pasta nada foi configurado, e on/off não a criam. A pasta conferida antes de
-// criar o lock é a referência da leitura sob ele: trocada por junção nesse
-// intervalo, o lock e a leitura iriam para a pasta de outra configuração (F2,
-// rodada 2; linha "Pasta da configuração"). `fn` recebe a leitura e a pasta.
-// Um lock_present lançado por `fn` (lock da raiz) só chega depois da paciência
-// dela, quando este prazo também já passou: `fn` não é repetida.
-async function withConfigLock({ home, io, create = false }, fn) {
-  const folder = await configDir({ home, io, create });
-  if (folder === null) return fn({ state: "missing" }, null);
-  const lock = { io, lockPath: path.join(folder.dir, CONFIG_LOCK_FILE), lostCode: "foreign_entry" };
-  return patiently(() => holdLockFile(lock, async () => fn(await readObserveConfig({ home, io, folder }), folder)));
+// Barreira de setup, on e off, direto no home (linha "Barreira da
+// configuração" do Landing): sob ela cada um lê a configuração e aplica a
+// decisão sobre a raiz dela. Sem barreira comum, um setup concorrente com on
+// deixava a raiz anterior on fora do alcance do off (F1 da verificação, rodada
+// 1). Dentro da pasta `.skill-me` o lock ia junto com a pasta trocada: um on
+// com o lock da pasta antiga e um off com o da nova não se revezavam, e o on
+// religava a raiz depois de o off pelo registro responder. A pasta conferida
+// antes do lock (configDir) continua a referência da leitura sob ele (F2,
+// rodada 2; linha "Pasta da configuração"). Um lock_present lançado por `fn`
+// (lock da raiz) só chega depois da paciência dela, quando este prazo também já
+// passou: `fn` não é repetida. Sem home absoluto não há configuração nem
+// registro a proteger, e o lock iria para o diretório atual.
+async function withControlLock({ home, io }, fn) {
+  if (!path.isAbsolute(home)) return fn();
+  const lock = { io, lockPath: path.join(home, CONTROL_LOCK_FILE), lostCode: "foreign_entry" };
+  return patiently(() => holdLockFile(lock, fn));
 }
 
 async function setup(tokens, { home, io }) {
@@ -156,9 +158,14 @@ async function setup(tokens, { home, io }) {
   }
   if (!stats.isDirectory()) throw new StoreError("root_not_directory");
   const rootReal = await io.realpath(root);
-  return withConfigLock({ home, io, create: true }, async (read, folder) => {
+  const folder = await configDir({ home, io, create: true });
+  return withControlLock({ home, io }, async () => {
     // Trocar a raiz com a observação ligada deixaria a autorização sem quem a
-    // desligue; uma raiz anterior inacessível não tem o que gravar.
+    // desligue: um registro presente — de qualquer raiz, pois a configuração
+    // pode já ser outra (linha "Conflito com o registro") — ou a raiz anterior
+    // on recusam; uma raiz anterior inacessível não tem o que gravar.
+    await assertNoOtherAuthorization({ home, io }, null);
+    const read = await readObserveConfig({ home, io, folder });
     const previous = read.state === "ok" ? read.config : null;
     if (previous !== null) {
       const old = await patiently(() => readObservation({ root: previous.root, expectedReal: previous.rootReal, io })).catch((error) => {
@@ -194,9 +201,13 @@ function authorizationOf({ home, io }, rootReal) {
 const switchRoot = ({ home, io, nowMs }, action, { root, rootReal }) =>
   patiently(() => changeObservation({ root, expectedReal: rootReal, action, nowMs, io, authorization: authorizationOf({ home, io }, rootReal) }));
 
+// Sem a pasta nada foi configurado, e o on não toma o lock nem cria nada.
 async function on(context) {
-  return withConfigLock(context, async (read) => {
-    const config = configFrom(read);
+  const { home, io } = context;
+  const folder = await configDir({ home, io });
+  if (folder === null) throw new StoreError("not_configured");
+  return withControlLock(context, async () => {
+    const config = configFrom(await readObserveConfig({ home, io, folder }));
     if (config === null) throw new StoreError("not_configured");
     const result = await switchRoot(context, "on", config);
     return ok("on", { observation: view(result.observation, true), changed: result.changed });
@@ -207,28 +218,42 @@ async function on(context) {
 // outra ou a configuração não pôde ser lida — pela própria `rootReal`, que o
 // store confere como em toda operação automática. É assim que a raiz que o on
 // ligou continua ao alcance, troque-se a pasta `.skill-me` antes ou depois do
-// efeito (F3 da verificação, rodada 3). A resposta segue a da configuração;
+// efeito (F3 da verificação, rodada 3). As duas partes ficam sob o mesmo lock
+// do home, também com a pasta recusada: um on em voo termina antes, e nenhum
+// religa a raiz depois deste off. A resposta segue a da configuração;
 // `changed`, `stopped` e `failed` somam as duas, e um erro sai só com o código.
 async function off(context) {
+  const { home, io } = context;
   const results = [];
   const errors = [];
   let observation = view(null, false);
-  let configuredReal = null;
+  let folder = null;
   try {
-    await withConfigLock(context, async (read) => {
-      const config = configFrom(read);
-      if (config === null) return;
-      configuredReal = config.rootReal;
-      const result = await switchRoot(context, "off", config);
-      observation = view(result.observation, true);
-      results.push(result);
-    });
+    folder = await configDir({ home, io });
   } catch (error) {
     errors.push(error);
   }
   try {
-    const recorded = await readAuthorization(context);
-    if (recorded !== null && recorded.rootReal !== configuredReal) results.push(await switchRoot(context, "off", { root: recorded.rootReal, rootReal: recorded.rootReal }));
+    await withControlLock(context, async () => {
+      let configuredReal = null;
+      try {
+        const config = folder === null ? null : configFrom(await readObserveConfig({ home, io, folder }));
+        if (config !== null) {
+          configuredReal = config.rootReal;
+          const result = await switchRoot(context, "off", config);
+          observation = view(result.observation, true);
+          results.push(result);
+        }
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        const recorded = await readAuthorization({ home, io });
+        if (recorded !== null && recorded.rootReal !== configuredReal) results.push(await switchRoot(context, "off", { root: recorded.rootReal, rootReal: recorded.rootReal }));
+      } catch (error) {
+        errors.push(error);
+      }
+    });
   } catch (error) {
     errors.push(error);
   }
@@ -239,8 +264,11 @@ async function off(context) {
   return failure("off", worstOf(failed).code, { ...fields, failed });
 }
 
+// Com outra raiz registrada — ou sem configuração e com registro —, a
+// configuração não diz se a observação está on: observe_on, nunca off.
 async function status({ home, io }) {
   const config = await configured(home, io);
+  await assertNoOtherAuthorization({ home, io }, config?.rootReal ?? null);
   if (config === null) return ok("status", { observation: view(null, false), automaticCaptures: 0, captures: [] });
   const result = await patiently(() => readObservation({ root: config.root, expectedReal: config.rootReal, io }));
   const fields = {
