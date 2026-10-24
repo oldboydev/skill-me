@@ -2,11 +2,14 @@
 
 **Veredito: FAIL**  
 **Perfil:** `light`  
-**Diff completo:** `2fd303f..8f29c4002a4067324e5929928fc7204174326b91`  
-**Rodada:** 1 — completa  
+**Diff da feature:** `2fd303f..788d0bcc78045b8516433ae53b52a8cf7af15187`  
+**Diff da correção:** `1ccfe70..788d0bcc78045b8516433ae53b52a8cf7af15187`  
+**Rodada:** 2 — escopo do diff e vereditos não PASS da rodada 1  
 **Verifier:** subagente independente, separado do builder
 
-## Fontes e alcance
+**Estado atual:** F1 corrigido nas ordens testadas; F2 novo defeito bloqueante no caminho da configuração; gate amplo Windows continua vermelho (G1). As seções “Rodada 1” abaixo preservam a evidência obtida em `8f29c40`; a seção “Rodada 2” registra as provas executadas no HEAD atual.
+
+## Rodada 1 — fontes e alcance (carried from `8f29c40`)
 
 | Fonte vinculante | Leitura | Resultado |
 | --- | --- | --- |
@@ -18,7 +21,7 @@
 
 O perfil `light` não executa a etapa de comparação visual `ui` nem fault injection `standard/ui`. O checklist não contém seções `Coverage` ou `Test policy`; seus `Swept` foram conferidos contra os critérios, as fontes acima e o código afetado. `git diff --check 2fd303f..HEAD` passou. O diff inclui CLI, store, hooks/ingest, plugin Hermes, relatório, documentação e testes; a revisão considerou toda essa faixa, não apenas o último commit.
 
-## Provas C1–C18 no HEAD
+## Rodada 1 — provas C1–C18 (carried from `8f29c40`)
 
 Uma única invocação de `node --test --test-reporter=spec --test-name-pattern='<alternância C1–C18>'` com os oito arquivos de teste nomeados no checklist executou **23 testes, 23 passes, 0 falhas, 0 skips**. Cada nome apareceu individualmente no resultado. A primeira tentativa dentro do sandbox deu `io_failure` em `observe setup` ao usar fixtures temporárias; C1 passou ao ser repetido fora do sandbox, e o alvo completo passou ali. Essa limitação de ambiente não foi contada como defeito do produto.
 
@@ -43,16 +46,60 @@ Uma única invocação de `node --test --test-reporter=spec --test-name-pattern=
 | C17 | `tests/integrations/observe/privacy.e2e.test.mjs:74-83` — sem `on` não persiste, com `on` há entrega; `:96-103` — sensível removido, não suportado/insanitizável omitido, canários ausentes; `:116-121` — sonda registra execução sem operação de rede e restringe escritas. | PASS |
 | C18 | `tests/integrations/observe/docs.test.mjs:63-66,74,80-81` — scripts, setup e fluxo README exatos; `:115-121` — limites e comandos manuais; `:150,161-181` — fluxo documentado executa e produz relatório da captura. | PASS |
 
-## Achados
+## Rodada 1 — achados (carried from `8f29c40`)
 
 **F1 — Bloqueante: `setup` e `on` concorrentes deixam uma autorização ativa sem comando para desligá-la.** Em `src/integrations/observe/command.mjs:131-140`, `setup` lê que a raiz antiga A está `off`, mas não serializa essa decisão com `on`. Em `:140-145` substitui o arquivo de configuração por B. `on`, `off` e `status` leem somente a configuração corrente em `:148-163`. Reprodução determinística com `createStoreIo()` interceptando a escrita temporária da configuração: configurei A, pausei `setup B` imediatamente antes de escrever `observe.json`, executei `on` (ativou A), liberei `setup B`. Resultado observado: `{"first":0,"onOld":0,"changed":0,"status":"off","old":"on"}`. Esperado: `setup B` recusar `observe_on` ou serializar a troca, preservando uma única raiz controlável. Atual: o status e o próximo `off` se referem a B, enquanto A continua `on`; produtores já abertos em A conservam sua geração e podem gravar após esse `off`. Viola a linha “Configuração do usuário” do Landing e o critério de corte da issue. Nenhum arquivo do repositório foi alterado pela reprodução.
 
 **G1 — Gate amplo não verde sob carga.** `npm run test:integrations` executou 437 testes: **429 passes, 1 falha, 7 skips** de recursos de plataforma (sinais POSIX, modos/ACL POSIX e ACL macOS no Windows). `tests/integrations/traces/concurrency.cli.test.mjs:97` (`T8-C15`, captura manual) recebeu `delivery_timeout`, `committed/persisted: 32` e `lost: 8`, contra 40/40/0 esperados na linha `:107`. Reexecutado isoladamente no mesmo HEAD, o teste passou (1/1). Não há prova de regressão determinística da #23 nesse caminho; a falha da suíte ampla permanece registrada e não foi tratada como verde.
 
-## Gate e limites
+## Rodada 1 — gate e limites (carried from `8f29c40`)
 
 - C1–C18: **18/18 nomes encontrados, 23/23 execuções passaram, 0 skips** no HEAD.
 - Limites de 500 eventos e 8 MiB: prova C11 mais asserções literais existentes de #5, executadas; retenção `7` em C3/C6/C11.
 - `npm run test:integrations`: **FAIL**, com G1 acima; `T8-C15` isolado: PASS.
 - UI de fonte vinculante e fault injection `standard/ui`: **não aplicáveis ao perfil `light`**. Sem seção `Coverage` ou `Test policy` no checklist.
-- Veredito permanece **FAIL** por F1, independentemente de G1. Correção, novo commit e nova verificação são necessários antes de avançar a entrega.
+- O veredito naquele HEAD foi **FAIL** por F1, independentemente de G1.
+
+## Rodada 2 — fontes e escopo no HEAD `788d0bc`
+
+| Fonte | Situação nesta rodada |
+| --- | --- |
+| [Issue #23](https://github.com/oldboydev/skill-me/issues/23), `.tasks/issue-23-observacao-on-off.md`, contratos da #5/#8 e [OpenAI Docs: Hooks](https://learn.chatgpt.com/docs/hooks) | Carregados da leitura da rodada 1 em `8f29c40`; nenhum deles mudou no diff `1ccfe70..HEAD`. |
+| `.checks/issue-23-observacao-on-off.md:26` | Aberta no HEAD: a nova linha “Barreira da configuração” exige lock comum e `4 link_refused` para link/junção no lugar da pasta `.skill-me`. |
+| `.checks/issue-23-observacao-on-off.build.md:227-388` | Aberta: correção de F1, reprodução vermelho/verde, mutações, gates Windows/WSL e limitações declaradas pelo builder. Seus resultados foram distinguidos das execuções independentes abaixo. |
+| Diff `1ccfe70..788d0bc` | Lidos `observe/command.mjs`, `observe/config.mjs`, `privacy/store.mjs`, testes C2/C4/C18, checklist, README e `docs/traces.md`. `git diff --check 1ccfe70..HEAD` passou. |
+
+UI de fonte vinculante e fault injection `standard/ui` não se aplicam ao perfil `light`. Não há seção `Coverage` ou `Test policy`. A revisão foi limitada ao diff da correção e aos vereditos não PASS, com todos os proofs novamente executados no HEAD.
+
+## Rodada 2 — provas
+
+Uma invocação independente de `node --test --test-reporter=spec --test-name-pattern='<alternância C1–C18>'` nos oito arquivos do checklist, fora do sandbox que bloqueia as fixtures temporárias, executou **27 testes, 27 passes, 0 falhas, 0 skips**. Cada um dos 18 nomes apareceu; C2 agora seleciona quatro testes e C4, dois. Os demais checks conservam as citações da rodada 1: testes e fontes não mudaram, e todos foram reexecutados no HEAD atual. As citações de arquivos alterados foram atualizadas:
+
+| Check afetado | Asserção no HEAD atual | Veredito da prova |
+| --- | --- | --- |
+| C1 | `tests/integrations/observe/control.cli.test.mjs:61,80,90`: `setup` e `status` retornam `off`, zero capturas e raiz intacta. | PASS |
+| C2 — entrada/raiz trocada | `tests/integrations/observe/control.cli.test.mjs:119-124,144-154`: códigos exatos e `root_changed` sem gravar no destino trocado (mesma lógica da rodada 1, linhas deslocadas). | PASS |
+| C2 — `setup` primeiro | `tests/integrations/observe/control.cli.test.mjs:245,246,248,250-252`: `on` espera, `setup B` conclui, B fica `on`, A `off`, e `off` alcança ambas. | PASS; reproduz a primeira ordem de F1 |
+| C2 — `on` primeiro | `tests/integrations/observe/control.cli.test.mjs:271,274-278`: `setup` espera, recebe `4 observe_on`, configuração mantém os bytes anteriores, A fica `on` até o `off` seguinte. | PASS; reproduz a segunda ordem de F1 |
+| C2 — dois `setup` e `on` | `tests/integrations/observe/control.cli.test.mjs:297-302`: `setup` atrasado relê sob o lock, recebe `4 observe_on`, só B está `on`, `off` alcança todas. | PASS |
+| C3 | `tests/integrations/observe/control.cli.test.mjs:345-372`: geração, conteúdo e idempotência do `on` (asserções anteriores, linhas deslocadas); `:350` confirma `status` em outro processo. | PASS |
+| C4 — barreira com `setup` | `tests/integrations/observe/control.cli.test.mjs:318,320-323`: `off` espera, responde `changed: false` pela B configurada, A/B `off`, lock removido. | PASS; reproduz espera do `off` |
+| C4 — desligamento normal | `tests/integrations/observe/control.cli.test.mjs:388-395,404-418`: estado `off` zera geração/chave, encerra capturas e preserva consulta (asserções anteriores, linhas deslocadas). | PASS |
+| C5 | `tests/integrations/observe/control.cli.test.mjs:422-473`: precedência manual e `binding_invalid` (asserções anteriores, linhas deslocadas). | PASS |
+| C18 | `tests/integrations/observe/docs.test.mjs:90,98`: README cita o lock declarado por `CONFIG_DIR`/`CONFIG_LOCK_FILE`; `:64-81,152-181`: scripts e fluxo real continuam provados. | PASS |
+
+O fluxo novo usa `withConfigLock` em `src/integrations/observe/command.mjs:127-131,144-174`: `setup`, `on` e `off` leem a configuração e mudam a raiz sob `observe.lock`. `src/integrations/privacy/store.mjs:164-200` mantém a forma e liberação do lock do store; `README.md:98-105` e `docs/traces.md:98-107` explicam prazo e lock residual. Isso resolve F1 para comandos concorrentes sem troca externa da pasta da configuração.
+
+## Rodada 2 — achado novo
+
+**F2 — Bloqueante: a pasta da configuração pode ser trocada por junção após a validação e antes da tomada do lock.** `configDir()` faz `lstat` de `<home>/.skill-me` e retorna apenas o caminho em `src/integrations/observe/config.mjs:86-108`. `withConfigLock` monta `observe.lock` com esse caminho e, após tomá-lo, `readObserveConfig` volta a percorrer o nome da pasta em `src/integrations/observe/command.mjs:127-131`; não há nova conferência da pasta real. Reproduzi em diretórios temporários reais, com IO pausado imediatamente antes de `writeExclusive(observe.lock)`: configurei a home A para a raiz A, renomeei `.skill-me` após seu `lstat`, pus uma junção naquele nome para outra pasta de configuração válida que aponta à raiz B e liberei `on`. Resultado observado: `{"onExit":0,"onResponse":"on","originalRoot":"off","redirectedRoot":"on"}`. Esperado pelo Landing em `.checks/issue-23-observacao-on-off.md:26`: `4 link_refused`, sem ativar uma raiz diferente da configurada no começo da operação. Atual: `on` retorna sucesso e ativa B por um caminho trocado. O lock também é tomado no destino da junção, sem assegurar a identidade da pasta antes validada. Isso quebra o isolamento do destino de consentimento e a regra de recusa de links. A reprodução só criou/removou diretórios temporários; não alterou código ou testes.
+
+F1 da rodada 1 está **resolvido** nas duas ordens e na espera de `off` testadas acima. F2 é uma nova falha da fronteira introduzida com o lock; os 27 testes C1–C18 não a cobrem.
+
+## Rodada 2 — G1 e gate
+
+- Execução independente no HEAD: `T8-C15 concurrent producers` isolado passou **1/1, 0 skips**. Na rodada 1, a mesma execução isolada passou **1/1**.
+- A seção de build `:344-369` registra no Windows, no commit `deacc50` da correção, `npm test` com governança 6/6, motor 16/16, doctor 410 pass/7 skip e integrações **441 testes, 433 pass, 1 fail, 7 skip**. O fail foi `T8-C15` sob carga, com `delivery_timeout` e 0/40 confirmados; outra corrida ampla teve dois fails (`T8-C15` e `T7-C10`). O builder executou `T8-C15` isolado 3/3. Essas são evidências do builder, não execuções independentes do Verifier.
+- O mesmo build registra WSL Ubuntu com integrações **441 testes, 428 pass, 0 fail, 13 skip**; nove skips são por ausência do runtime Hermes, incluindo C8. No Windows, o runtime estava presente e C8 passou nesta verificação independente.
+- **G1 permanece um gate vermelho no Windows.** O teste isolado verde e o WSL verde mostram sensibilidade à carga/plataforma, mas não tornam `npm test` verde no ambiente Windows. O `AGENTS.md` determina que falha de verificação impede entrega. A divisão de `withLock` tocou código compartilhado pela captura manual, portanto não há base para dispensar o fail como comprovadamente alheio ao diff. Não atribuo uma causa de produto que os dados não provam.
+- **Veredito final desta rodada: FAIL**, por F2 e, separadamente, pelo gate Windows não verde. Nenhum commit, push ou correção foi feito pelo Verifier.
