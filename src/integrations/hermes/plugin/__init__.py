@@ -22,6 +22,7 @@ inativa: nenhuma fila, thread ou processo.
 import json
 import os
 import queue
+import stat
 import subprocess
 import threading
 from pathlib import Path
@@ -81,7 +82,8 @@ def _load_config():
         return None
 
 
-_CONFIG_PATH = (".skill-me", "observe.json")
+_CONFIG_DIR = ".skill-me"
+_CONFIG_FILE = "observe.json"
 _MAX_CONFIG_BYTES = 64 * 1024
 
 
@@ -91,16 +93,32 @@ def _argv(value):
     return None
 
 
+def _folder_identity(folder):
+    # Diretório real, nunca link nem junção: o Python do Hermes (3.11) reporta a
+    # junção como diretório, só com a marca de reparse, e `is_symlink()` a aceita.
+    info = os.lstat(folder)
+    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT:
+        return None
+    if not stat.S_ISDIR(info.st_mode):
+        return None
+    return (info.st_dev, info.st_ino)
+
+
 def _configured_delivery():
     # Mesmo home do Node (USERPROFILE no Windows, HOME no POSIX); só o argv é
-    # lido. Link no lugar do arquivo é recusado, como no Node.
+    # lido. Como no Node, link no lugar do arquivo ou da pasta é recusado, e a
+    # pasta é conferida de novo depois da leitura: trocada no meio, o argv lido
+    # seria o de outra configuração (linha "Pasta da configuração" do Landing da
+    # issue #23).
     try:
-        path = Path.home().joinpath(*_CONFIG_PATH)
-        if path.is_symlink():
+        folder = Path.home().joinpath(_CONFIG_DIR)
+        identity = _folder_identity(folder)
+        path = folder.joinpath(_CONFIG_FILE)
+        if identity is None or path.is_symlink():
             return None
         with open(path, "rb") as handle:
             data = handle.read(_MAX_CONFIG_BYTES + 1)
-        if len(data) > _MAX_CONFIG_BYTES:
+        if _folder_identity(folder) != identity or len(data) > _MAX_CONFIG_BYTES:
             return None
         config = json.loads(data.decode("utf-8"))
         return _argv(config.get("hermesDelivery")) if isinstance(config, dict) else None
