@@ -101,22 +101,23 @@ arquivos nem lock da captura.
 com os códigos 0 concluído, 2 uso inválido, 3 sem `setup` ou estado inválido,
 4 conflito, lock ocupado ou raiz trocada, 5 falha de E/S. Um lock ocupado por um
 hook que está gravando é esperado por até 2 s antes de responder 4. `setup`,
-`on` e `off` também se revezam pelo lock `.skill-me/observe.lock` do home, com o
-mesmo prazo. Se um deles for interrompido no meio, esse arquivo pode ficar, e os
-três respondem 4 (`lock_present`) até você conferir que nenhum está em execução
-e removê-lo.
+`on` e `off` também se revezam pelo lock `.skill-me-observe.lock`, direto no
+home e fora da pasta `.skill-me`, com o mesmo prazo: um `off` que chega com um
+`on` em andamento espera o `on` terminar e depois desliga. Se um deles for
+interrompido no meio, esse arquivo pode ficar, e os três respondem 4
+(`lock_present`) até você conferir que nenhum está em execução e removê-lo.
 
 `npm run on` também registra a raiz ligada em `.skill-me-authorization.json`,
 direto no home e fora da `.skill-me`, e `npm run off` desliga a raiz por esse
 registro e o apaga, mesmo que a pasta `.skill-me` tenha sido trocada ou apagada
 depois do `on`; isso vale até quando o `off` responde um erro da configuração.
-Um `on` que responde erro por causa dessa troca pode já ter ligado a raiz: rode
-`npm run off`. Enquanto o registro apontar outra raiz, `on` responde 4
-(`observe_on`): rode `npm run off`. Se a raiz registrada não existir mais, o
-`off` responde o erro dela e mantém o registro; remova-o à mão só se essa raiz
-não for voltar. Se ele estiver ilegível (3, `config_invalid`), como depois de
-uma queda no meio do `on`, esse `on` não chegou a ligar a raiz: confira o
-arquivo e remova-o.
+Enquanto o registro apontar outra raiz, `on`, `npm run status` e
+`report --latest` respondem 4 (`observe_on`), sem dizer `off` nem escolher uma
+captura, e o `setup` recusa a troca enquanto houver registro: rode
+`npm run off`. Se a raiz registrada não existir mais, o `off` responde o erro
+dela e mantém o registro; remova-o à mão só se essa raiz não for voltar. Se ele
+estiver ilegível (3, `config_invalid`), como depois de uma queda no meio do
+`on`, esse `on` não chegou a ligar a raiz: confira o arquivo e remova-o.
 
 ### 3. Limites reais
 

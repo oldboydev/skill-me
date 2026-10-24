@@ -97,14 +97,18 @@ arquivo `.skill-me/observe.json`:
 A gravação usa temporário exclusivo e `rename`; no POSIX, pasta e arquivo são
 só do dono. Toda operação automática confere que o caminho real da raiz ainda é
 `rootReal`: trocada por link ou junção, responde `root_changed` e nada é
-gravado. Com a raiz configurada `on`, um novo `setup` é recusado (4,
-`observe_on`): desligue antes. `setup`, `on` e `off` se revezam pelo lock
-`.skill-me/observe.lock` do home (a forma e a regra do `.lock` do store,
-esperado por até 2 s): cada um lê a configuração e liga, desliga ou troca a raiz
-sem soltá-lo, então um `setup` concorrente com `on` nunca deixa a raiz anterior
-ligada fora do alcance do `off`. Se um deles sair no meio, o lock pode ficar, e
-os três respondem 4 (`lock_present`) até você conferir que nenhum está ativo e
-removê-lo. `status`, `report --latest`, hooks e ingest não usam esse lock.
+gravado. Com a raiz configurada `on`, ou com qualquer registro da autorização
+(abaixo), um novo `setup` é recusado (4, `observe_on`): desligue antes. `setup`,
+`on` e `off` se revezam pelo lock `.skill-me-observe.lock`, direto no home e
+fora da pasta `.skill-me` (a forma e a regra do `.lock` do store, esperado por
+até 2 s): cada um lê a configuração e liga, desliga ou troca a raiz sem
+soltá-lo, então um `setup` concorrente com `on` nunca deixa a raiz anterior
+ligada fora do alcance do `off`, e um `off` que chega com um `on` em andamento
+espera e desliga depois dele, mesmo que a pasta `.skill-me` seja trocada no
+meio. Se um deles sair no meio, o lock pode ficar, e os três respondem 4
+(`lock_present`) até você conferir que nenhum está ativo e removê-lo. `status`,
+`report --latest`, hooks e ingest não usam esse lock; os produtores continuam
+só com o `.lock` do store.
 
 A pasta `.skill-me` precisa ser um diretório real. Toda leitura da configuração
 — `setup`, `on`, `off`, `status`, `report --latest`, hooks, ingest e o plugin
@@ -114,8 +118,7 @@ dela é `link_refused`; outra pasta posta no mesmo nome durante a leitura é
 plugin fica sem destino). `setup`, `on` e `off` comparam com a pasta conferida
 antes de criar o lock, então uma troca entre essa conferência e o lock também é
 recusada, e nenhuma raiz de outra configuração é ligada, desligada ou
-configurada. Se a pasta for trocada depois de o lock ser criado, ele vai junto
-com a pasta movida e fica nela até a remoção manual.
+configurada. O lock fica no home e não se move com a pasta.
 
 **Registro da autorização.** Uma troca da pasta depois da última conferência
 não é vista por ninguém. Por isso a raiz que o `on` liga fica registrada fora
@@ -134,15 +137,26 @@ gravar `off` e encerrar as automáticas, apaga o registro. A resposta continua a
 da configuração, com `changed`, `stopped` e `failed` das duas raízes, e um erro
 sai só com o código, mesmo que a raiz registrada tenha sido desligada. Assim, no
 máximo uma raiz fica `on`, e o `off` a alcança qualquer que seja a pasta
-`.skill-me` antes ou depois do `on`. Um `on` que só percebe a troca ao soltar o
-lock (4, `foreign_entry`) pode já ter ligado a raiz; ela está no registro e o
-`off` a desliga. Se a raiz registrada não existir mais ou não for mais o mesmo
-caminho real, o `off` responde o código dela e mantém o registro, que só sai à
-mão quando essa raiz não for voltar. Link ou junção no lugar do registro é 4
-(`link_refused`); registro ilegível ou fora da forma é 3 (`config_invalid`) e
-fica no lugar — depois de uma queda no meio da criação, aquele `on` não chegou a
-ligar a raiz, e a remoção é manual. `setup`, `status`, `report --latest`, hooks,
-ingest e o plugin Hermes não leem o registro.
+`.skill-me` antes ou depois do `on`. As duas partes do `off` ficam sob o lock do
+home: um `on` que já leu a configuração antes da troca termina primeiro, e
+nenhum `on` religa a raiz depois do `off`. Se a raiz registrada não existir mais
+ou não for mais o mesmo caminho real, o `off` responde o código dela e mantém o
+registro, que só sai à mão quando essa raiz não for voltar. Link ou junção no
+lugar do registro é 4 (`link_refused`); registro ilegível ou fora da forma é 3
+(`config_invalid`) e fica no lugar — depois de uma queda no meio da criação,
+aquele `on` não chegou a ligar a raiz, e a remoção é manual.
+
+**Conflito com o registro.** `setup`, `status` e `report --latest` também leem
+o registro, com os mesmos códigos. Se ele aponta outra raiz que não a
+configurada, ou existe sem configuração (a pasta `.skill-me` trocada ou apagada
+depois do `on`), a configuração não diz se a observação está ligada: `status`
+responde 4 (`observe_on`) sem o campo `observation`, nunca `off`, e
+`report --latest` responde 4 (`observe_on`) sem escolher captura (sem
+configuração, continua 3 `not_configured`). O `setup` recusa com 4
+(`observe_on`) qualquer registro presente, sem mudar a configuração. Nenhuma
+dessas respostas traz caminho; o `off` desfaz o conflito. Hooks, ingest e o
+plugin Hermes não leem o registro: com outra raiz registrada, a configurada não
+pode estar `on`, e eles respondem `observe_off`.
 
 **Estado e consentimento.** `on` grava `<raiz>/skill-me-privacy/observe.json`
 sob o lock do store, com o estado, uma geração aleatória e uma chave das
@@ -212,8 +226,9 @@ relatório de fixture dos testes, a entrega automática usa estes códigos:
 `origin: automatic` de maior (`createdAt`, `id`) da raiz configurada e a nomeia
 na linha `Captura:` do texto e do Markdown (`timeline.capture.id` no JSON).
 Nunca escolhe uma captura manual: sem automática, sai com 3
-(`no_automatic_capture`); sem `setup`, com 3 (`not_configured`). `--latest`
-junto com `--root` ou `--capture` é uso inválido (2).
+(`no_automatic_capture`); sem `setup`, com 3 (`not_configured`); com outra raiz
+no registro da autorização, com 4 (`observe_on`). `--latest` junto com `--root`
+ou `--capture` é uso inválido (2).
 
 ## O que cada integração grava
 

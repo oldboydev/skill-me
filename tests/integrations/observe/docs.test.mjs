@@ -5,7 +5,7 @@ import { after, test } from "node:test";
 import { HELP_TEXT } from "../../../src/integrations/cli-args.mjs";
 import { MAX_SESSIONS } from "../../../src/integrations/observe/authorization.mjs";
 import { OBSERVE_HELP_TEXT, OBSERVE_LOCK_PATIENCE_MS, RECENT_CAPTURES } from "../../../src/integrations/observe/command.mjs";
-import { AUTHORIZATION_FILE, CONFIG_DIR, CONFIG_LOCK_FILE } from "../../../src/integrations/observe/config.mjs";
+import { AUTHORIZATION_FILE, CONTROL_LOCK_FILE } from "../../../src/integrations/observe/config.mjs";
 import { AUTOMATIC_DELIVERY_CODES } from "../../../src/integrations/observe/delivery.mjs";
 import { DEFAULT_RETENTION_DAYS, PRIVACY_LIMITS } from "../../../src/integrations/privacy/lifecycle.mjs";
 import { REPORT_HELP } from "../../../src/integrations/report/command.mjs";
@@ -87,9 +87,10 @@ test("I23-C18 README descreve on off real: preparação única, uma linha por a�
     `retidas por ${DEFAULT_RETENTION_DAYS} dias`,
     `as ${RECENT_CAPTURES} capturas automáticas mais recentes`,
     `esperado por até ${OBSERVE_LOCK_PATIENCE_MS / 1000} s`,
-    `\`setup\`, \`on\` e \`off\` também se revezam pelo lock \`${CONFIG_DIR}/${CONFIG_LOCK_FILE}\``,
+    `\`setup\`, \`on\` e \`off\` também se revezam pelo lock \`${CONTROL_LOCK_FILE}\`, direto no home e fora da pasta \`.skill-me\``,
+    "um `off` que chega com um `on` em andamento espera o `on` terminar e depois desliga",
     `\`npm run on\` também registra a raiz ligada em \`${AUTHORIZATION_FILE}\``,
-    "Enquanto o registro apontar outra raiz, `on` responde 4 (`observe_on`)",
+    "Enquanto o registro apontar outra raiz, `on`, `npm run status` e `report --latest` respondem 4 (`observe_on`), sem dizer `off` nem escolher uma captura, e o `setup` recusa a troca enquanto houver registro",
     "nunca escolhe uma captura manual",
     "depois da sanitização",
     "inclusive para hooks ou plugin já em execução",
