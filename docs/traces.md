@@ -134,7 +134,11 @@ gravar `off` e encerrar as automáticas, apaga o registro. A resposta continua a
 da configuração, com `changed`, `stopped` e `failed` das duas raízes, e um erro
 sai só com o código, mesmo que a raiz registrada tenha sido desligada. Assim, no
 máximo uma raiz fica `on`, e o `off` a alcança qualquer que seja a pasta
-`.skill-me` antes ou depois do `on`. Link ou junção no lugar do registro é 4
+`.skill-me` antes ou depois do `on`. Um `on` que só percebe a troca ao soltar o
+lock (4, `foreign_entry`) pode já ter ligado a raiz; ela está no registro e o
+`off` a desliga. Se a raiz registrada não existir mais ou não for mais o mesmo
+caminho real, o `off` responde o código dela e mantém o registro, que só sai à
+mão quando essa raiz não for voltar. Link ou junção no lugar do registro é 4
 (`link_refused`); registro ilegível ou fora da forma é 3 (`config_invalid`) e
 fica no lugar — depois de uma queda no meio da criação, aquele `on` não chegou a
 ligar a raiz, e a remoção é manual. `setup`, `status`, `report --latest`, hooks,

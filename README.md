@@ -110,10 +110,13 @@ e removê-lo.
 direto no home e fora da `.skill-me`, e `npm run off` desliga a raiz por esse
 registro e o apaga, mesmo que a pasta `.skill-me` tenha sido trocada ou apagada
 depois do `on`; isso vale até quando o `off` responde um erro da configuração.
-Enquanto o registro apontar outra raiz, `on` responde 4 (`observe_on`): rode
-`npm run off`. Se ele estiver ilegível (3, `config_invalid`), como depois de uma
-queda no meio do `on`, esse `on` não chegou a ligar a raiz: confira o arquivo e
-remova-o.
+Um `on` que responde erro por causa dessa troca pode já ter ligado a raiz: rode
+`npm run off`. Enquanto o registro apontar outra raiz, `on` responde 4
+(`observe_on`): rode `npm run off`. Se a raiz registrada não existir mais, o
+`off` responde o erro dela e mantém o registro; remova-o à mão só se essa raiz
+não for voltar. Se ele estiver ilegível (3, `config_invalid`), como depois de
+uma queda no meio do `on`, esse `on` não chegou a ligar a raiz: confira o
+arquivo e remova-o.
 
 ### 3. Limites reais
 
