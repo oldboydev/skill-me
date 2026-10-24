@@ -202,6 +202,11 @@ const switchRoot = ({ home, io, nowMs }, action, { root, rootReal }) =>
   patiently(() => changeObservation({ root, expectedReal: rootReal, action, nowMs, io, authorization: authorizationOf({ home, io }, rootReal) }));
 
 // Sem a pasta nada foi configurado, e o on não toma o lock nem cria nada.
+// Registro de outra raiz, ilegível ou link recusa antes de abrir o store: o
+// claim, sob o lock da raiz, só recusava depois de criar a pasta do store e o
+// marcador na raiz configurada (linha "Conflito com o registro"). Sob o lock do
+// home nenhum on ou off muda o registro entre as duas conferências; a do claim
+// continua para um registro alterado fora destes comandos.
 async function on(context) {
   const { home, io } = context;
   const folder = await configDir({ home, io });
@@ -209,6 +214,7 @@ async function on(context) {
   return withControlLock(context, async () => {
     const config = configFrom(await readObserveConfig({ home, io, folder }));
     if (config === null) throw new StoreError("not_configured");
+    await assertNoOtherAuthorization({ home, io }, config.rootReal);
     const result = await switchRoot(context, "on", config);
     return ok("on", { observation: view(result.observation, true), changed: result.changed });
   });

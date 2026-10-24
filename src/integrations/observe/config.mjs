@@ -223,7 +223,8 @@ export async function claimAuthorization({ home, io = createStoreIo(), rootReal 
 // Linha "Conflito com o registro" do Landing: um registro de outra raiz que não
 // `rootReal` — com `rootReal` null, qualquer registro — diz que uma raiz pode
 // estar on fora do alcance desta configuração. status e report --latest não
-// respondem por ela, e setup não a troca: observe_on, sem caminho.
+// respondem por ela, setup não a troca e on não abre a raiz configurada:
+// observe_on, sem caminho.
 export async function assertNoOtherAuthorization({ home, io = createStoreIo() }, rootReal) {
   const recorded = await readAuthorization({ home, io });
   if (recorded !== null && recorded.rootReal !== rootReal) throw new ObserveConfigError("observe_on");
