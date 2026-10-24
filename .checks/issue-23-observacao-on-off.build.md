@@ -1321,3 +1321,232 @@ foi repetido.
   `wsl-run.sh`, arquivo do `git archive`) e `%TEMP%\i23f5-mutations.mjs` no
   Windows; `/tmp/skill-me-i23-f5-dpqk8c`, o `.tar` dela e `/tmp/i23f5/` no WSL.
 - Árvore: limpa antes deste registro.
+
+## Correção dos achados P1 e P2 da revisão formal
+
+Base: `941b059`, árvore limpa, com a resposta `changes_requested` da primeira
+revisão formal em `.checks/code-review/issue-23/response.json` (contexto
+`cb9369ca…df988f55`): P1 bloqueante no plugin Hermes (AC2) e P2 bloqueante no
+README (AC7). Escopo autorizado pelo orquestrador: corrigir só esses dois
+achados e as provas necessárias, sem alterar o motor de revisão, os pilotos nem
+a semântica de isolamento das gerações; não reabrir a entrega Hermes na geração
+seguinte. Builder: Claude, perfil `light`. As seções anteriores deste arquivo
+não foram alteradas, e `.verified.md` não foi tocado. `CONTRIBUTING.md`, citado
+no pedido, não existe no repositório (nem na raiz nem em subpastas); valeram
+`AGENTS.md`/`CLAUDE.md`, a task e o checklist.
+
+### Commits
+
+- `a892ab1` fix(hermes): ler a configuração única do plugin também no POSIX
+- `f13eb03` test(hermes): provar a configuração única do plugin pelo Python do sistema
+- `d64a81b` docs(observe): exigir nova instância do Hermes depois de um off
+- `aed2dfc` test(observe): exigir no C18 o limite real da entrega Hermes
+- o commit deste registro (docs(checks))
+
+Nenhuma linha do Landing mudou: nenhum formato persistido, lock ou decisão nova.
+
+### P1: plugin Hermes inativo em Linux/macOS
+
+O defeito: `_folder_identity` avaliava
+`getattr(info, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT` sempre
+que a pasta não era link. A constante só existe no `stat` do Windows; no POSIX,
+numa `.skill-me` comum, o `AttributeError` era absorvido por
+`_configured_delivery`, que devolvia `None`, e o `register(ctx)` deixava o
+plugin sem destino.
+
+Falha anterior em Python POSIX real, antes de qualquer mudança: WSL Ubuntu
+24.04, Python 3.12.3, uid 1000, `git archive 941b059` (sha256
+`e58e4732…25a78712`, `git get-tar-commit-id` = `941b0591…`) com o
+`node_modules` da cópia anterior; `observe setup` real num home temporário
+(pasta 0700, `observe.json` 0600), depois a fonte do plugin carregada com
+`python3 -I -B` por um script fora do repositório (`/tmp/i23r1/repro.py`,
+saída em `/tmp/i23r1/red-posix.txt`):
+
+| Medida | `941b059` | com a correção (`green-posix.txt`) |
+| --- | --- | --- |
+| `hasattr(stat, "IO_REPARSE_TAG_MOUNT_POINT")` | `False` | `False` |
+| `_folder_identity(<home>/.skill-me)` | `AttributeError: module 'stat' has no attribute 'IO_REPARSE_TAG_MOUNT_POINT'` | `(2112, 1295368)` |
+| `_load_delivery()` | `null` | o argv do `setup` (`node`, `cli.mjs`, `ingest`, `--agent`, `hermes`) |
+| `register(ctx)` → hooks / `observer_stats()["active"]` | 7 / `false` | 7 / `true` |
+
+A constante também falta no Python 3.10.12 do WSL Ubuntu 22.04 e existe no
+Python 3.11.16 do Hermes no Windows (conferido com `hasattr`).
+
+Correção (`a892ab1`): `_JUNCTION_TAG = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)`
+no carregamento do módulo; a junção só é reconhecida quando a constante existe.
+`S_ISLNK`, a recusa da junção no Windows, a exigência de diretório e a
+conferência de `(st_dev, st_ino)` antes e depois da leitura não mudaram.
+
+Prova nova (`f13eb03`), em `hermes-plugin.native.test.mjs`, com o padrão do C8
+(selecionada pelo comando literal do checklist): `I23-C8 … pelo Python do
+sistema, sem o runtime do Hermes, o plugin lê o destino da configuração única
+numa pasta comum e recusa link ou junção no lugar dela`. Para cada linha, um
+home temporário, `observe setup` real pelo CLI e a fonte do plugin carregada por
+`register(ctx)` (o contrato do Hermes, com um contexto que só anota os hooks) no
+Python do sistema, `-I -B`; afirma código 0, stderr vazio, os 7 hooks,
+`observer_stats()["active"]` e o `_load_delivery()`:
+
+| Linha | Esperado |
+| --- | --- |
+| sem configuração | inativo, `null` |
+| pasta comum | ativo, `[node, cli.mjs, "ingest", "--agent", "hermes"]` |
+| junção (Windows) / link de diretório (POSIX) no lugar da pasta, apontando para a mesma configuração movida | inativo, `null` |
+
+O link aponta para a própria configuração, para que só a forma da pasta mude
+entre as linhas 2 e 3. O Python vem de `locateSystemPython()`
+(`helpers/hermes-runtime.mjs`): `python`, depois `py -3` no Windows; `python3`,
+depois `python` no POSIX; cada candidato precisa responder `3` antes de ser
+aceito (o `python3` do Windows pode ser o atalho da loja). Sem nenhum, o teste
+fica `skipped` com o motivo `python-ausente`; nesta rodada ele rodou nos dois
+ambientes (Windows: `C:\Python312\python.exe`, 3.12.10; WSL: Python 3.12.3). Os três runners da CI
+têm Python 3 no PATH, mas a CI não foi executada.
+
+- Vermelho, WSL, `941b059` + os dois arquivos de teste (overlay sha256
+  `ff6e3c17…6086ec`): 0/1 — só a linha "pasta comum" diverge (`active: false`,
+  `delivery: null` em vez do argv); as outras passam, porque link e ausência já
+  davam `None` (`/tmp/i23r1/red-wsl-test.txt`).
+- No Windows, o mesmo teste passou antes da correção (1/1): o defeito é só do
+  POSIX, e por isso a prova precisa rodar nos dois.
+- Verde, WSL, com o plugin corrigido (overlay `92ba8693…ef3edeb`): 1/1
+  (`green-wsl-test.txt`); de novo em `aed2dfc` por `git archive` (abaixo).
+- Windows, o padrão do C8 com o plugin corrigido: 3/3, com o Hermes 0.21.4
+  local nas duas provas nativas (`green-win-c8.txt`) — a entrega real pela
+  configuração única e a junção recusada pelo Python 3.11 do Hermes continuam
+  passando.
+
+Mutação M48 (`_JUNCTION_TAG = None`, a junção deixa de ser reconhecida),
+aplicada e restaurada por script (sha256 do arquivo igual antes e depois): no
+Windows, a prova portátil 0/1 e a prova F2 do plugin com o Python do Hermes 0/1
+(`mutation-m48.txt`). A prova nova distingue a pasta comum da junção no Windows
+e do link no POSIX; a falha anterior no POSIX é o vermelho acima.
+
+### P2: README prometia on/off no mesmo Hermes aberto
+
+O defeito: o README dizia "o `on`/`off` vale sem reiniciar". O plugin inicia um
+único processo de entrega por instância do Hermes, no primeiro evento (o
+`on_session_start` do Hermes 0.21.4 dispara no primeiro turno,
+`agent/conversation_loop.py:774`), e nunca o reinicia (I4-C22, "um único
+spawn"); esse `ingest` abre a observação uma vez (`observe/delivery.mjs:102-110`)
+e, depois de `observe_off` — off, ou outra geração depois de off/on —, descarta
+toda entrada até o EOF (`:119`). Um novo `on` não o reabre. O produto não foi
+alterado.
+
+README (`d64a81b`), item Hermes de "Limites reais": cada instância do Hermes
+tem uma só entrega, que segue a observação vigente no primeiro evento dela;
+inicie (ou reinicie) o Hermes depois do `setup` e do `npm run on`; uma
+instância cujo primeiro evento ocorreu com a observação `off`, como uma aberta e
+usada antes do `on`, ou que atravessou um `npm run off` não volta a capturar
+depois de um novo `npm run on`, mesmo com o `npm run status` em `on`: feche-a e
+abra outra; o `off` continua cortando na hora a gravação dessa instância. A
+forma "cujo primeiro evento ocorreu com a observação `off`" é a exata: um Hermes
+aberto antes do `on` e só usado depois dele captura, porque a entrega só começa
+no primeiro turno. Os guias (`docs/traces.md`, `docs/agent-observation.md`) não
+tinham a promessa e não mudaram.
+
+C18 (`aed2dfc`), em `observe/docs.test.mjs`:
+
+- O primeiro teste exige as quatro frases novas (no lugar do antigo "inicie o
+  Hermes depois do `setup`") e recusa `sem reiniciar` no README,
+  `docs/traces.md` e `docs/agent-observation.md`.
+- Teste novo, `I23-C18 … a instância Hermes que atravessou um off não volta a
+  capturar com um novo on, e outra instância volta`: com `setup` e
+  `npm run on` num home temporário, inicia o argv gravado em `hermesDelivery`
+  (o processo que o plugin iniciaria), com o stdin aberto como o plugin o
+  mantém e stdout/stderr descartados como no plugin. O primeiro evento é
+  gravado com o processo aberto (`status` com 1 persistido); `npm run off`
+  encerra exatamente essa captura; `npm run on`; dois eventos (a mesma sessão e
+  outra) no mesmo processo, que sai com 0 no EOF; `npm run status` diz `on` e
+  só a captura encerrada, com 1 registro. Um processo novo ("feche-a e abra
+  outra") grava: duas capturas, a nova `active` com 1 registro.
+
+Vermelho e verde, Windows:
+
+- README de `941b059` posto na árvore e restaurado em seguida (sha256 conferido):
+  C18 2/3 — o primeiro teste falha na frase nova (`/tmp/i23r1/red-c18.txt`); o
+  teste comportamental passa, porque mede o produto, que já tinha a limitação.
+- README novo: C18 3/3 (`green-c18.txt`).
+- M49, a promessa antiga devolvida ao README novo ("(o `on`/`off` vale sem
+  reiniciar)"): 2/3, falha `doesNotMatch` em `README.md`
+  (`mutation-m49.txt`).
+- M50, o store ignora a geração na gravação automática (só confere `on`, em
+  `appendAutomatic`): 2/3, falha "nada gravado pela instância que atravessou o
+  off" (`mutation-m50.txt`) — se o produto passar a gravar pelo processo
+  antigo, o C18 obriga a rever o README. Arquivos restaurados com sha256
+  conferido; `store.mjs` não aparece no `git status`.
+
+### Provas do checklist
+
+Windows 11, Node 24.22.1, HEAD `aed2dfc`, árvore limpa, comando literal de cada
+check em sequência (`/tmp/i23r1/checks.sh`, 19:28:26–19:29:36,
+`/tmp/i23r1/win/proof-C*.txt`): C1 1, C2 5, C3 1, C4 7, C5 1, C6 1, C7 1, C8 3,
+C9 2, C10 1, C11 2, C12 2, C13 1, C14 1, C15 2, C16 2, C17 1, C18 3 — 18/18
+checks, 37 testes, 37 pass, 0 fail, 0 skip. O C8 rodou as duas provas nativas
+com o Hermes 0.21.4 local (versão e hashes conferidos por
+`locateHermesRuntime`) e a portátil com o Python do sistema.
+
+WSL Ubuntu 24.04, Node 24.15.0 (nvm), Python 3.12.3, uid 1000 —
+`/tmp/skill-me-i23-r1-mQmJkJ`, de `git archive aed2dfc` (sha256
+`a7c3b7b8…a34305af9` igual nos dois lados; `git get-tar-commit-id` =
+`aed2dfcd…`), `node_modules` copiado de `/tmp/skill-me-i23-f5-dpqk8c`:
+
+- a prova nova, explicitamente (`--test-name-pattern="pelo Python do sistema"`):
+  1 pass, 0 fail, 0 skip — link de diretório POSIX real;
+- os mesmos 18 checks (19:34:01–19:34:29): 37 testes, 35 pass, 0 fail, 2 skip
+  (as duas provas nativas do C8, sem o runtime Hermes no WSL).
+
+### Suítes
+
+| Ambiente | Alvo | Resultado |
+| --- | --- | --- |
+| Windows 11, Node 24.22.1 — HEAD `aed2dfc`, árvore limpa | `npm test` (`/tmp/i23r1/npm-test-win.txt`, 19:29:44–19:33:44) | exit 0 — governança 6/6; motor 16/16; doctor 417 (410 pass, 0 fail, 7 skip); integrações 452 (445 pass, 0 fail, 7 skip) |
+| WSL (acima) | `npm test` (`/tmp/i23r1-wsl-out/npm-test.txt` no WSL, 19:34:29–19:35:14) | exit 0 — governança 6/6; motor 16/16; doctor 417 (416 pass, 0 fail, 1 skip); integrações 452 (438 pass, 0 fail, 14 skip) |
+
+As integrações passam de 450 para 452: a prova portátil do C8 e a prova
+comportamental do C18. Skips iguais aos da seção anterior, todos de plataforma
+ou de runtime: no Windows, os 7 de integrações (`I4-C15`, `T8-C4`, `I4-C25b`,
+`I4-C25j`, `I4-C25k`, `I4-C25l`, `I4-C25m`) e os 7 do doctor (POSIX/FIFO); no
+WSL, 10 por falta do runtime Hermes (`I4-C18` a `I4-C23`, `I4-C37`, `I4-C44b`
+e as duas nativas do `I23-C8`), 3 de DACL do Windows (`I4-C25g`/`h`/`i`), 1 de
+ACL do macOS (`I4-C25m`) e, no doctor, o `hermes_cli.PYD`. A prova portátil do
+C8 não pulou em nenhum dos dois. `git diff --check`: exit 0 antes de cada
+commit.
+
+### Limitações
+
+- A prova nativa do C8 com o Hermes continua só no Windows; no POSIX, a
+  fronteira provada é a fonte do plugin carregada pelo `register(ctx)` no
+  Python do sistema, sem o `PluginManager` do Hermes. macOS não foi executado,
+  e a CI não rodou (sem push).
+- A prova comportamental do C18 usa o processo de entrega com o argv do
+  `hermesDelivery`, sem o Hermes; que o plugin mantém um único processo por
+  instância vem do I4-C22 e do código (`_worker`). O caso "primeiro evento com
+  a observação `off`" não tem prova comportamental própria: não há sinal
+  observável de que o `ingest` já abriu a observação antes de um `on` sem
+  depender de tempo. Ele é o mesmo fechamento (`observe_off` na abertura), já
+  afirmado pelo C1 (hook e ingest antes do `on` saem `observe_off`), e o
+  "não reabre" é o mesmo provado pelo teste novo.
+- A prova portátil fica `skipped` (`python-ausente`) numa máquina sem Python 3
+  no PATH; não houve skip nesta rodada.
+- Os dois arquivos de teste alterados ficaram com LF na cópia de trabalho do
+  Windows (o índice guarda LF em todos; `git diff --check` limpo).
+- O item "Uso normal" do README continua dizendo que, até o `off`, hooks e
+  plugin gravam cada sessão; a exceção do Hermes está no item dele em "Limites
+  reais", que é onde o README reúne as limitações por integração. Não foi
+  alterado.
+- Nenhuma sessão real de agente; nenhum hook pessoal instalado; nenhum `on` no
+  home real: `.skill-me`, `.skill-me-authorization.json` e
+  `.skill-me-observe.lock` não existem no home do Windows nem no do uid 1000 do
+  WSL. Todo `npm run on` desta rodada foi num home temporário. Core vendorizado,
+  pilotos e `.verified.md` não foram tocados.
+
+### Estado ao final
+
+- Processos: todas as execuções foram em primeiro plano e terminaram; nenhum
+  `node.exe` ou `python.exe` iniciado depois do início desta sessão (19:17) está
+  vivo além do par da própria sessão (`ps -W`); os processos de entrega do C18
+  saem no EOF dentro do teste.
+- Fora do repositório: `%TEMP%\i23r1` (`/tmp/i23r1/`: `repro.py`,
+  `repro-wsl.sh`, `run-wsl.sh`, `checks.sh`, os `.tar` e os logs citados) no
+  Windows; `/tmp/skill-me-i23-r1-*` e `/tmp/i23r1-wsl-out/` no WSL. A pasta do
+  plugin no checkout não ganhou `__pycache__`.
+- Árvore: limpa antes deste registro.
