@@ -26,9 +26,11 @@ export mostra os registros sanitizados da captura. list mostra as capturas da
 raiz em páginas de 100, por criação (--after <id> continua depois da última
 mostrada). follow acompanha a captura: uma linha JSON por registro, já gravado
 ou novo, e uma linha de fim quando ela é encerrada. Produtores locais (hooks,
-ingest Hermes, integrations run) gravam numa captura ativa só quando recebem
-SKILL_ME_CAPTURE_ROOT (absoluto) e SKILL_ME_CAPTURE_ID juntos; ver
-docs/traces.md. timeline calcula, só a partir dos registros da captura, a
+ingest Hermes, integrations run) gravam numa captura manual ativa só quando
+recebem SKILL_ME_CAPTURE_ROOT (absoluto) e SKILL_ME_CAPTURE_ID juntos; sem
+nenhuma das duas, hooks e ingest Hermes seguem a observação automática
+(integrations observe, origin automatic); ver docs/traces.md. timeline
+calcula, só a partir dos registros da captura, a
 timeline v1: entradas na ordem gravada, operações de ferramenta, skill e
 subagente com a força de cada vínculo (native, heuristic, inconclusive) e a
 cobertura (lacunas, operações abertas ou órfãs, partial); não escreve nada,

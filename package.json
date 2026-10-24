@@ -17,7 +17,10 @@
     "test:integrations": "node --test \"tests/integrations/**/*.test.mjs\"",
     "doctor": "node src/doctor/cli.mjs",
     "integrations": "node src/integrations/cli.mjs",
-    "privacy": "node src/integrations/cli.mjs privacy"
+    "privacy": "node src/integrations/cli.mjs privacy",
+    "on": "node src/integrations/cli.mjs observe on",
+    "off": "node src/integrations/cli.mjs observe off",
+    "status": "node src/integrations/cli.mjs observe status"
   },
   "devDependencies": {
     "yaml": "2.9.0"

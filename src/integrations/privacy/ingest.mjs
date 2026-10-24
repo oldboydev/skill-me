@@ -19,7 +19,11 @@ const increment = (counts, reason, by = 1) => {
 };
 
 // Decisão por linha, sem E/S: o lote acumulado e os contadores do comando.
-export function createIngestBatch({ agent, key, content, usage }) {
+// `rollover` (observação automática, #23): o registro que não cabe numa captura
+// já usada não é descartado nem contado; o lote fica `full()` e quem chama leva
+// essa entrada e as seguintes para a captura sucessora. Numa captura vazia o
+// limite continua sendo descarte, como sem `rollover`.
+export function createIngestBatch({ agent, key, content, usage, rollover = false }) {
   const adapter = INGEST_AGENTS[agent];
   const records = [];
   const malformed = {};
@@ -28,6 +32,7 @@ export function createIngestBatch({ agent, key, content, usage }) {
   let current = { ...usage };
   // Primeiro motivo de limite: daí em diante nada é guardado (o uso só cresce).
   let overflow = null;
+  let full = false;
 
   function admit(record) {
     if (overflow === null) {
@@ -36,6 +41,10 @@ export function createIngestBatch({ agent, key, content, usage }) {
         records.push(record);
         current = { events: current.events + 1, bytes: current.bytes + Buffer.byteLength(JSON.stringify(record) + "\n") };
         for (const entry of record.privacy) increment(contentOmitted, entry.slice(entry.lastIndexOf(":") + 1));
+        return;
+      }
+      if (rollover && current.events > 0) {
+        full = true;
         return;
       }
       overflow = decision.reason;
@@ -74,6 +83,7 @@ export function createIngestBatch({ agent, key, content, usage }) {
     malformed: (reason) => increment(malformed, reason),
     oversize: () => increment(malformed, "oversize_line"),
     partial: () => increment(malformed, "partial_trailing_line"),
+    full: () => full,
     result: () => ({ records, malformed, dropped, contentOmitted }),
   };
 }

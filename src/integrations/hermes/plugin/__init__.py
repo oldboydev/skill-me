@@ -12,8 +12,11 @@ destino é uma thread daemon. Destino travado ou fila cheia viram contagem, nunc
 Este arquivo não tem regra de privacidade, limite de tamanho de campo, enum, envelope,
 atribuição ou persistência: projeta só os nomes listados em ``kwargs.json`` (o mesmo
 arquivo lido pelo adaptador Node) e entrega ao comando ``integrations ingest``, onde a
-fronteira compartilhada decide tudo. Sem ``SKILL_ME_HERMES_DELIVERY`` (argv JSON), a
-observação fica inativa: nenhuma fila, thread ou processo.
+fronteira compartilhada decide tudo. O destino é o argv JSON de
+``SKILL_ME_HERMES_DELIVERY``; sem ela, o ``hermesDelivery`` gravado uma vez por
+``integrations observe setup`` em ``~/.skill-me/observe.json`` (issue #23). On/off,
+raiz e sessão continuam decididos no ingest. Sem nenhum dos dois, a observação fica
+inativa: nenhuma fila, thread ou processo.
 """
 
 import json
@@ -78,17 +81,41 @@ def _load_config():
         return None
 
 
+_CONFIG_PATH = (".skill-me", "observe.json")
+_MAX_CONFIG_BYTES = 64 * 1024
+
+
+def _argv(value):
+    if isinstance(value, list) and value and all(isinstance(item, str) and item for item in value):
+        return value
+    return None
+
+
+def _configured_delivery():
+    # Mesmo home do Node (USERPROFILE no Windows, HOME no POSIX); só o argv é
+    # lido. Link no lugar do arquivo é recusado, como no Node.
+    try:
+        path = Path.home().joinpath(*_CONFIG_PATH)
+        if path.is_symlink():
+            return None
+        with open(path, "rb") as handle:
+            data = handle.read(_MAX_CONFIG_BYTES + 1)
+        if len(data) > _MAX_CONFIG_BYTES:
+            return None
+        config = json.loads(data.decode("utf-8"))
+        return _argv(config.get("hermesDelivery")) if isinstance(config, dict) else None
+    except Exception:
+        return None
+
+
 def _load_delivery():
     raw = os.environ.get("SKILL_ME_HERMES_DELIVERY")
     if not raw:
-        return None
+        return _configured_delivery()
     try:
-        argv = json.loads(raw)
+        return _argv(json.loads(raw))
     except Exception:
         return None
-    if isinstance(argv, list) and argv and all(isinstance(item, str) and item for item in argv):
-        return argv
-    return None
 
 
 def _is_scalar(value):

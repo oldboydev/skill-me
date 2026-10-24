@@ -22,13 +22,31 @@ export function captureBinding(env) {
   return { kind: "bound", root, id };
 }
 
-// Entrega do processo, ou null sem vínculo. O store só é carregado quando o
-// ambiente pede uma captura: o hook de cada evento continua carregando o mínimo.
-// `publish`, chamado depois de `settle`, leva o resumo final ao arquivo de
-// diagnóstico do usuário (delivery-report.mjs), quando houver um.
+// Produtores que, sem nenhuma das duas variáveis, entram na observação
+// automática da #23; o wrapper `integrations run` continua só com o vínculo
+// explícito (linha "Roteamento" do Landing em .checks/issue-23-observacao-on-off.md).
+export const AUTOMATIC_AGENTS = Object.freeze(["claude", "codex-hooks", "hermes"]);
+
+// Sem vínculo: a observação automática, se este usuário fez o setup; sem setup,
+// null, e o processo fica como na #4. O par explícito, completo ou não, nunca
+// cai na rota automática.
+async function automaticDeliveryFor(agent) {
+  if (!AUTOMATIC_AGENTS.includes(agent)) return null;
+  const { readObserveConfig } = await import("../observe/config.mjs");
+  const read = await readObserveConfig();
+  if (read.state === "missing") return null;
+  const { createAutomaticDelivery } = await import("../observe/delivery.mjs");
+  return read.state === "ok" ? createAutomaticDelivery({ config: read.config, agent }) : createAutomaticDelivery({ failure: read.code, agent });
+}
+
+// Entrega do processo, ou null sem vínculo nem observação automática. O store
+// só é carregado quando o ambiente pede uma captura ou o setup existe: o hook de
+// cada evento continua carregando o mínimo. `publish`, chamado depois de
+// `settle`, leva o resumo final ao arquivo de diagnóstico do usuário
+// (delivery-report.mjs), quando houver um.
 export async function captureDeliveryFor({ env, agent }) {
   const binding = captureBinding(env);
-  if (binding.kind === "none") return null;
+  if (binding.kind === "none") return automaticDeliveryFor(agent);
   const [{ createCaptureDelivery, refusedDelivery }, report] = await Promise.all([import("./delivery.mjs"), import("./delivery-report.mjs")]);
   const delivery = binding.kind === "invalid" ? refusedDelivery(binding.code) : createCaptureDelivery({ root: binding.root, id: binding.id, agent });
   const file = report.deliveryReportFile(env);
