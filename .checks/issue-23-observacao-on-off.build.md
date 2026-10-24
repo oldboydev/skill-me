@@ -223,3 +223,166 @@ Nenhuma asserção foi enfraquecida para obter verde.
   alterada.
 - `.checks/skill-me i5 c7 gGu6mp/` é uma pasta vazia de 20/10, fora do Git; não foi
   tocada.
+
+## Correção do F1 (verificação independente, rodada 1)
+
+Base: `1ccfe70`, com o veredito FAIL do Verifier em
+`.checks/issue-23-observacao-on-off.verified.md` (não editado aqui). Escopo
+autorizado pelo orquestrador: corrigir só o F1 e as provas necessárias,
+preservando o registro do G1. Builder: Claude, mesmo perfil `light`. As seções
+anteriores deste arquivo descrevem `dccb2b1` e não foram alteradas.
+
+### Commits
+
+- `0d915a6` docs(checks): registrar barreira comum de setup, on e off — linha
+  "Barreira da configuração" do Landing, commitada antes de qualquer mudança de
+  produto (arquivo de lock novo).
+- `7f671e3` fix(observe): serializar setup, on e off pelo lock da configuração
+- `59c7236` test(observe): provar a barreira entre setup, on e off
+- `d2b49cf` docs(observe): documentar o lock comum de setup, on e off
+- `deacc50` test(observe): provar que setup relê a configuração sob o lock
+- o commit deste registro (docs(checks))
+
+### Correção
+
+`setup`, `on` e `off` tomam `<home>/.skill-me/observe.lock` e, sem soltá-lo, leem
+a configuração e aplicam a decisão sobre a raiz dela (`observe/command.mjs`,
+`withConfigLock`). O `setup` valida a raiz nova antes, cria a pasta 0700, toma o
+lock e, sob ele, relê a configuração anterior, recusa `observe_on` se a raiz
+anterior estiver `on`, lê o estado da nova e grava a configuração. Sem a pasta
+`.skill-me`, `on`/`off` respondem como antes (não configurado) sem criar nada.
+`status`, `report --latest`, hooks e ingest não tomam o lock.
+
+O lock reaproveita o ciclo do `.lock` do store: `withLock` (store.mjs) foi
+dividido em `holdLockFile` — criação `wx` sem flush, mesma forma
+`{"lockVersion":1,"pid":…,"nonce":…}`, liberação só com os bytes gravados — e
+o envoltório da raiz (`onLock`, `assertUnchanged`, código `root_changed`). O
+lock da configuração usa `foreign_entry` quando a liberação encontra outra
+entrada. `observe/config.mjs` ganhou `configDir` (pasta real, link recusado),
+usado pelo `writeObserveConfig` e pela barreira.
+
+Documentação: README (seção "2. Uso normal") e `docs/traces.md` ("Configuração
+única") passam a citar o lock, o prazo e a remoção manual depois de uma
+interrupção; o C18 confere a frase do README com `CONFIG_DIR`/`CONFIG_LOCK_FILE`.
+
+### Regressão: vermelho e verde
+
+Quatro testes novos, em processo sobre home e raízes temporários reais, com a
+ordem fixada pelo io de cada comando (pausa numa operação de disco escolhida e
+aviso quando o outro comando encontra um arquivo exclusivo ocupado), sem
+depender de tempo:
+
+| Teste | Ordem | Esperado com a correção |
+| --- | --- | --- |
+| I23-C2 … setup já leu a raiz anterior off, on chega, setup grava a nova | `setup B` pausado antes de gravar `observe.json`; `on` iniciado | `on` espera; `setup` 0 com `off`; `on` 0 liga B; A `off`; configuração B; `off` alcança as duas |
+| I23-C2 … on já leu a raiz anterior, setup tenta trocar, on liga | `on` pausado ao abrir A, depois de ler a configuração; `setup B` iniciado | `setup` espera; `on` 0 liga A; `setup` 4 `observe_on`; configuração com os mesmos bytes; `off` alcança A |
+| I23-C2 … troca concorrente com outro setup e on | `setup C` pausado antes do lock; `setup B` e `on` concluem | `setup C` 4 `observe_on` pela configuração relida sob o lock; B `on`, A/C `off` |
+| I23-C4 … off espera a barreira | `setup B` pausado antes de gravar; `off` iniciado | `off` espera e responde 0, `changed: false`; configuração B |
+
+Os nomes contêm os padrões das provas C2 e C4 do checklist, que os selecionam.
+Os três de C2 também conferem que só a raiz configurada pode estar `on` e que o
+`off` seguinte alcança todas; os quatro, que a pasta `.skill-me` termina só com
+`observe.json`.
+
+- Vermelho, Windows 11, Node 24.22.1: os três primeiros contra o produto de
+  `0d915a6` (idêntico ao de `1ccfe70`), antes de mudar o código: 0 pass, 3 fail —
+  "raiz anterior ação ficou on fora da configuração" (`'on' !== 'off'`) nas duas
+  ordens do F1 e `'off concluído' !== 'off esperou'`. Depois de escrito o quarto, os
+  quatro contra os três arquivos de produto de `0d915a6` restaurados na árvore (e
+  devolvidos ao HEAD em seguida, `git status` limpo): 0 pass, 4 fail; o quarto com
+  "raiz nova ação ficou on fora da configuração".
+- Verde: os três primeiros logo depois da correção (3 pass, 0 fail, 0 skip); os
+  quatro com o conteúdo de `deacc50` antes do commit (4 pass, 0 fail, 0 skip) e de
+  novo no `npm test` e no WSL em `deacc50` (abaixo).
+- Reprodução literal do Verifier (script fora do repositório, `on` aguardado antes
+  de soltar o `setup B`): produto de `0d915a6` →
+  `{"first":0,"onOld":0,"changed":0,"configured":"B","status":"off","old":"on","new":"off"}`,
+  o resultado do relatório; produto corrigido → `on` 4 `lock_present` depois de
+  2011 ms de espera, `setup B` 0, A e B `off`.
+
+### Mutações
+
+Cada mutação em `observe/command.mjs`, rodando os quatro testes e restaurando os
+bytes (conferido: `git diff -- src` vazio depois):
+
+| Mutação | Resultado (pass/4) | Detectada por |
+| --- | --- | --- |
+| M17 `on`/`off` sem a barreira | 1/4 | as duas ordens do F1 e a espera do `off` |
+| M18 `setup` lê a configuração anterior antes do lock | 3/4 | dois setups e `on` |
+| M18b `setup` confere a raiz anterior antes do lock | 2/4 | `on` já leu a anterior; dois setups e `on` |
+| M19 `off` sem a barreira | 3/4 | espera do `off` |
+| M20 `on`/`off` soltam o lock antes de mudar a raiz | 3/4 | `on` já leu a anterior |
+
+A M18 passou nos três primeiros testes (3/3): sem um segundo `setup`, ler a
+configuração antes do lock não muda nada. O quarto teste foi escrito por isso
+(`deacc50`); a M18b, uma primeira montagem quebrada pelo CRLF do arquivo
+restaurado, foi refeita com as quebras normalizadas e os resultados acima são os
+dessa versão.
+
+### Provas do checklist
+
+Windows 11, Node 24.22.1, comando literal de cada check, na árvore ainda não
+commitada equivalente a `d2b49cf`, exceto por um comentário de `withConfigLock`
+reescrito depois (sem efeito no código) e sem o quarto teste:
+
+| Check | Testes | Resultado |
+| --- | --- | --- |
+| C1 | 1 | 1 pass, 0 fail, 0 skip |
+| C2 | 3 (o original e as duas ordens do F1) | 3 pass, 0 fail, 0 skip |
+| C3 | 1 | 1 pass, 0 fail, 0 skip |
+| C4 | 2 (o original e a espera do `off`) | 2 pass, 0 fail, 0 skip |
+| C12 | 2 | 2 pass, 0 fail, 0 skip |
+| C13 | 1 | 1 pass, 0 fail, 0 skip |
+| C18 | 2 (afetado pela documentação) | 2 pass, 0 fail, 0 skip |
+
+WSL Ubuntu 22.04 (Node 24.13.0, uid 1000), `git archive deacc50` em
+`/tmp/skill-me-i23-f1-IHLr5j` (sha256 `81d8ca80…de4182763` igual nos dois lados;
+`git get-tar-commit-id` = `deacc501…`), `node_modules` copiado do checkout: C1 1/1,
+C2 4/4, C3 1/1, C4 2/2, C12 2/2, C13 1/1, C18 2/2 — 13 pass, 0 fail, 0 skip;
+C1 afirma 0700/0600 da pasta e do arquivo de configuração no POSIX.
+
+### Suítes
+
+| Ambiente | Alvo | Resultado |
+| --- | --- | --- |
+| Windows — a mesma árvore das provas acima | `node --test "tests/integrations/**/*.test.mjs"` | exit 1 — 440 tests, 431 pass, 2 fail, 7 skip |
+| Windows — HEAD `deacc50`, árvore limpa | `npm test` | exit 1 — governança 6/6; motor 16/16; doctor 417 (410 pass, 7 skip); integrações 441 (433 pass, 1 fail, 7 skip) |
+| WSL Ubuntu — `deacc50` (arquivo acima) | `node --test "tests/integrations/**/*.test.mjs"` | exit 0 — 441 tests, 428 pass, 0 fail, 13 skip |
+
+Falhas no Windows, ambas por prazo de entrega sob a carga da suíte paralela:
+
+- `T8-C15` (o G1 do relatório, captura manual) nas duas rodadas:
+  `delivery_timeout` com 39/40 e depois 0/40 confirmados. Isolado no código
+  corrigido, 3 de 3 rodadas passaram. O teste não foi alterado; o G1 continua
+  registrado como no relatório do Verifier, que já o viu em `1ccfe70`, antes desta
+  correção.
+- `T7-C10` (relatório de captura manual) só na primeira rodada: `report` respondeu
+  4 `lock_present` logo depois dos hooks vinculados; o teste levou 7987 ms, contra
+  ~1450 ms isolado. Isolado, 3 de 3 passaram, e passou na segunda rodada completa e
+  no WSL. O caminho manual só mudou pela divisão de `withLock` em `holdLockFile`,
+  com as mesmas operações na mesma ordem; o comportamento documentado de um hook
+  que sai no prazo segurando o lock (`docs/traces.md`, "Falhas de entrega") explica
+  o lock encontrado, mas não houve prova direta da causa nesta rodada.
+
+Skips: no Windows, os 7 de integrações e os 7 do doctor são os POSIX/FIFO de
+antes; no WSL, 9 por falta do runtime Hermes (`I4-C18`…`I4-C44b` e `I23-C8`), 3 de
+DACL do Windows e 1 de ACL do macOS. `git diff --check`: exit 0.
+
+### Limitações e mudanças de comportamento
+
+- O lock da configuração, como o do store, nunca é removido por outro processo:
+  depois de uma interrupção no meio de `setup`/`on`/`off`, os três respondem 4
+  `lock_present` até a remoção manual, agora documentada.
+- `on`/`off` podem esperar até 2 s pelo lock da configuração e depois até 2 s pelo
+  da raiz.
+- `setup` cria a pasta `.skill-me` antes de ler o estado da raiz nova (que agora
+  ocorre sob o lock): um primeiro `setup` recusado por um store inválido na raiz
+  nova deixa a pasta vazia, sem configuração.
+- `on`/`off` passam a recusar com `link_refused` uma `.skill-me` trocada por link ou
+  junção, como o `setup` já fazia; antes eles seguiam o link para ler a
+  configuração. Hooks e ingest continuam lendo pelo caminho como antes.
+- `status` não toma o lock: durante um `setup` em curso ele pode descrever a
+  configuração anterior.
+- Nenhuma sessão real de agente; nenhum hook pessoal instalado nem `on` real:
+  `~/.skill-me` continua inexistente no Windows e no WSL. Core vendorizado e pilotos
+  não foram tocados.
