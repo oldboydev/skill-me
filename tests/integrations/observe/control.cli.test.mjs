@@ -615,6 +615,12 @@ function isLink(file) {
   }
 }
 
+// A árvore inteira de cada raiz, com bytes e mtime: um on recusado pelo registro
+// não cria, muda nem apaga nada nelas.
+const rootTrees = (roots) => Object.fromEntries(Object.entries(roots).map(([label, root]) => [label, snapshotTree(root)]));
+// Recusas do on pelo registro: outra raiz, ilegível ou fora da forma, link ou junção.
+const REGISTRY_REFUSALS = ["observe_on", "config_invalid", "link_refused"];
+
 // io cuja primeira gravação exclusiva em `matches` falha; com `leaveEmpty`, o
 // arquivo é criado vazio antes da falha, como numa queda entre criar e gravar.
 function failingWrite(matches, { leaveEmpty = false } = {}) {
@@ -725,6 +731,7 @@ test("I23-C4 off encerra e é idempotente: registro da autorização — falha a
     if (row.before) await row.before(names);
     else assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home })).exitCode, 0);
     const records = [];
+    const refusedOn = [];
     for (const [step, io] of row.steps(names)) {
       if (step === "remover o registro") {
         // A remoção manual: o registro é apagado sem seguir um link.
@@ -732,11 +739,16 @@ test("I23-C4 off encerra e é idempotente: registro da autorização — falha a
         records.push(["removido", registryOf(home)]);
         continue;
       }
+      const before = step === "on" ? rootTrees({ original, other }) : null;
       const result = await runObserveCommand({ argv: [step], home, ...(io ? { io } : {}) });
+      if (before !== null && REGISTRY_REFUSALS.includes(result.body.error?.code)) refusedOn.push({ before, after: rootTrees({ original, other }) });
       records.push([result.exitCode, result.body.error?.code ?? result.body.status, result.body.changed ?? null, stateOf(original), stateOf(other), registryOf(home)]);
     }
-    observed.push({ label: row.when, records, target: readdirSync(target) });
-    expected.push({ label: row.when, records: row.expect(names), target: [] });
+    // O on recusado pelo registro (de outra raiz, ilegível ou link; os códigos
+    // estão em records) deixa as duas raízes como estavam: a configurada não
+    // ganha a pasta do store nem o marcador, e a registrada continua on.
+    observed.push({ label: row.when, records, refusedOn: refusedOn.map(({ after }) => after), target: readdirSync(target) });
+    expected.push({ label: row.when, records: row.expect(names), refusedOn: refusedOn.map(({ before }) => before), target: [] });
   }
   assert.deepEqual(observed, expected);
 
@@ -746,6 +758,37 @@ test("I23-C4 off encerra e é idempotente: registro da autorização — falha a
     assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
     assert.equal(statSync(authorizationFile(home)).mode & 0o777, 0o600, "registro só do dono");
   }
+});
+
+// Registro gravado fora destes comandos depois de o on conferi-lo sob o lock do
+// home: a conferência do claim, sob o lock da raiz, continua recusando. A pasta
+// do store e o marcador, criados antes do claim, ficam (linha "Conflito com o
+// registro").
+test("I23-C4 off encerra e é idempotente: registro de outra raiz gravado depois da conferência do on — o lock da raiz ainda recusa, nada é ligado e o registro alheio fica", async () => {
+  const { home, original, foreign } = homesWithRoots("i23 c4 registro tardio");
+  assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home })).exitCode, 0);
+  const alien = JSON.stringify(authorized(foreign));
+  // O primeiro acesso do on à raiz, já depois da conferência do registro.
+  const io = swappingAfter(["stat", (file) => path.resolve(file) === original], () => writeFileSync(authorizationFile(home), alien));
+  const on = await runObserveCommand({ argv: ["on"], home, io });
+  const after = { original: stateOf(original), store: readdirSync(storeDir(original)).sort(), foreign: snapshotTree(foreign), registry: registryOf(home) };
+  unlinkSync(authorizationFile(home));
+  const control = [];
+  for (const step of ["on", "off"]) {
+    const done = await runObserveCommand({ argv: [step], home });
+    control.push([step, done.exitCode, stateOf(original), registryOf(home)]);
+  }
+  assert.deepEqual(
+    { on, after, control },
+    {
+      on: { exitCode: 4, body: { schemaVersion: 1, command: "on", status: "error", error: { code: "observe_on" } } },
+      after: { original: "off", store: ["store.json"], foreign: {}, registry: alien },
+      control: [
+        ["on", 0, "on", JSON.stringify(authorized(original))],
+        ["off", 0, "off", null],
+      ],
+    },
+  );
 });
 
 // on em voo e off pelo registro, com a pasta `.skill-me` trocada no meio por
@@ -820,9 +863,10 @@ test("I23-C4 off encerra e é idempotente: off que entra com o on em voo e a pas
 
 // Raiz registrada on enquanto a configuração aponta outra raiz ou sumiu, e
 // registro ilegível (linha "Conflito com o registro"): status não responde pela
-// configuração, setup não a troca, e o off desfaz o conflito. As respostas de
-// erro são comparadas inteiras: nenhuma traz caminho.
-test("I23-C4 off encerra e é idempotente: com a raiz registrada on e a pasta da configuração trocada por outra real ou apagada, status não afirma off, setup não troca a configuração e o off desfaz o conflito", async () => {
+// configuração, setup não a troca, on recusa antes de tocar a raiz configurada,
+// e o off desfaz o conflito. As respostas de erro são comparadas inteiras:
+// nenhuma traz caminho.
+test("I23-C4 off encerra e é idempotente: com a raiz registrada on e a pasta da configuração trocada por outra real ou apagada, status não afirma off, setup não troca a configuração, on recusado não toca raiz nenhuma e o off desfaz o conflito", async () => {
   const error = (command, code) => ({ exitCode: EXIT_OF[code], body: { schemaVersion: 1, command, status: "error", error: { code } } });
   const okStatus = (configured) => ({ exitCode: 0, body: { schemaVersion: 1, command: "status", status: "ok", observation: { ...OFF, configured }, automaticCaptures: 0, captures: [] } });
   const rows = [
@@ -881,10 +925,11 @@ test("I23-C4 off encerra e é idempotente: com a raiz registrada on e a pasta da
       when: "registro ilegível",
       startOn: false,
       replace: ({ home }) => writeFileSync(authorizationFile(home), ""),
-      steps: ["status", "setup"],
+      steps: ["status", "setup", "on"],
       expect: () => [
         [error("status", "config_invalid"), "original", "off", true],
         [error("setup", "config_invalid"), "original", "off", true],
+        [error("on", "config_invalid"), "original", "off", true],
       ],
     },
     {
@@ -895,10 +940,11 @@ test("I23-C4 off encerra e é idempotente: com a raiz registrada on e a pasta da
         mkdirSync(target);
         symlinkSync(target, authorizationFile(home), DIR_LINK);
       },
-      steps: ["status", "setup"],
+      steps: ["status", "setup", "on"],
       expect: () => [
         [error("status", "link_refused"), "original", "off", true],
         [error("setup", "link_refused"), "original", "off", true],
+        [error("on", "link_refused"), "original", "off", true],
       ],
     },
   ];
@@ -928,6 +974,7 @@ test("I23-C4 off encerra e é idempotente: com a raiz registrada on e a pasta da
     };
 
     const records = [];
+    const refusedOn = [];
     for (const step of row.steps) {
       let outcome;
       if (step === "hook") {
@@ -938,14 +985,18 @@ test("I23-C4 off encerra e é idempotente: com a raiz registrada on e a pasta da
         assert.equal(run.stderr, "");
         outcome = { exitCode: run.status, body: run.body };
       } else {
+        const before = step === "on" ? rootTrees({ original, foreign }) : null;
         outcome = await runObserveCommand({ argv: step === "setup" ? ["setup", "--root", next] : [step], home });
+        if (before !== null) refusedOn.push({ before, after: rootTrees({ original, foreign }) });
       }
       records.push([outcome, configNow(), stateOf(original), existsSync(authorizationFile(home)) || isLink(authorizationFile(home))]);
     }
-    // O on recusado pelo registro já criou a pasta do store da raiz alheia (como
-    // desde o F3), sem ligá-la nem abrir captura.
-    observed.push({ label: row.when, records, foreign: [stateOf(foreign), existsSync(path.join(storeDir(foreign), "captures"))], controlLock: existsSync(controlLockFile(home)) });
-    expected.push({ label: row.when, records: row.expect({ captures }), foreign: ["off", false], controlLock: false });
+    // Todo on desta prova é recusado (records), e nenhum toca as raízes: a árvore
+    // inteira de cada uma fica como antes dele — sem a pasta do store e o
+    // marcador na raiz configurada, que o on criava antes de o registro recusar
+    // —, e a raiz alheia, nunca ligada, termina vazia.
+    observed.push({ label: row.when, records, refusedOn: refusedOn.map(({ after }) => after), foreign: snapshotTree(foreign), controlLock: existsSync(controlLockFile(home)) });
+    expected.push({ label: row.when, records: row.expect({ captures }), refusedOn: refusedOn.map(({ before }) => before), foreign: {}, controlLock: false });
   }
   assert.deepEqual(observed, expected);
 });
