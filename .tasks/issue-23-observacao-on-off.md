@@ -15,14 +15,14 @@ Após a entrega, o usuário liga a observação local com `on`, usa Claude Code,
 
 ### Ativar e desligar
 
-1. Depois de uma configuração local explícita da raiz de dados e das integrações, quando o usuário executa `on` sem argumentos, `status` informa `on` em outro processo deste usuário; repetir `on` mantém uma só autorização ativa e não cria uma nova captura por repetição.
+1. Depois de `integrations observe setup --root <diretório-absoluto>` e da instalação/confiança única das integrações, quando o usuário executa `npm run on` sem argumentos, `npm run status` informa `on` em outro processo deste usuário; repetir `on` mantém uma só autorização ativa e não cria uma nova captura por repetição.
 2. Dado `on`, quando um hook de Claude/Codex ou a entrega Hermes de uma integração instalada e confiável recebe um evento com identidade de sessão válida, a observação o envia à política local e o persiste sem `SKILL_ME_CAPTURE_ROOT` ou `SKILL_ME_CAPTURE_ID` no processo do agente.
 3. Quando duas sessões emitem eventos intercalados, a consulta não mistura IDs pseudonimizados nem atribui evento sem identidade segura à outra sessão.
-4. Quando o usuário executa `off`, `status` informa `off` e produtores ainda abertos não acrescentam eventos à observação automática; repetir `off` mantém `off`. Capturas existentes continuam disponíveis para consulta, e capturas manuais explicitamente vinculadas seguem seus comandos `privacy stop/disable`.
+4. Quando o usuário executa `npm run off`, `npm run status` informa `off` e produtores ainda abertos não acrescentam eventos à observação automática; repetir `off` mantém `off`. Capturas existentes continuam disponíveis para consulta, e capturas manuais explicitamente vinculadas seguem seus comandos `privacy stop/disable`.
 
 ### Consultar o uso normal
 
-5. Após uma sessão observada, o usuário localiza a captura e emite um relatório sem ter anotado previamente raiz e ID; o relatório distingue evidência nativa de atribuição heurística e lacunas.
+5. Após uma sessão observada, `integrations report --latest [--skill <SKILL.md>]` emite o relatório da captura automática mais recente sem raiz/ID anotados; `npm run status` expõe as capturas recentes para conferir a seleção. O relatório distingue evidência nativa de atribuição heurística e lacunas.
 
 ### Preservar privacidade e explicar o contrato
 
@@ -86,6 +86,7 @@ stateDiagram-v2
 | Decisão | Forma | Alternativa descartada |
 | --- | --- | --- |
 | Preparação única | Raiz local escolhida explicitamente e integrações instaladas/confiáveis uma vez; depois `on/off/status` sem argumentos, persistentes para o usuário. | Repetir `--root`, ID e variáveis em cada sessão, que é o problema apontado pelo proprietário. |
+| Superfície CLI | `integrations observe setup --root <diretório-absoluto>` guarda a raiz; `npm run on`, `npm run off`, `npm run status` controlam o modo; `integrations report --latest` consulta a última captura automática. | Exigir argumentos por sessão ou copiar um ID antes de usar o agente. |
 | Consentimento duradouro | `on` autoriza capturas locais sucessivas até `off`, preservando limite, chave e retenção por captura. | Uma captura por ativação pararia de observar ao atingir 500 eventos/8 MiB. |
 | Preservar evidência de skill | Native/heuristic/inconclusive continuam separados no relatório atual. | Dizer que leitura de `SKILL.md` prova ativação de skill; hooks Codex não oferecem tal evento. |
 
@@ -93,10 +94,11 @@ stateDiagram-v2
 
 | Comando | Entrada | Saída | Código | Critérios |
 | --- | --- | --- | --- | --- |
-| `on` | nenhum argumento após configuração única | JSON `schemaVersion: 1`, estado on e configuração efetiva | 0/2/3/4/5 | 1, 2, 6 |
-| `off` | nenhum argumento no uso normal | JSON `schemaVersion: 1`, estado off | 0/2/3/4/5 | 4 |
-| `status` | nenhum argumento no uso normal | JSON `schemaVersion: 1`, on/off, integração/capturas | 0/2/3/4/5 | 1, 4 |
-| consulta | sem raiz/ID anotados | relatório existente | 0/2/3/4/5 | 5 |
+| `integrations observe setup --root <dir>` | diretório absoluto existente | JSON `schemaVersion: 1`, raiz configurada | 0/2/3/4/5 | 1 |
+| `npm run on` | nenhum argumento após configuração única | JSON `schemaVersion: 1`, estado on | 0/2/3/4/5 | 1, 2, 6 |
+| `npm run off` | nenhum argumento no uso normal | JSON `schemaVersion: 1`, estado off | 0/2/3/4/5 | 4 |
+| `npm run status` | nenhum argumento no uso normal | JSON `schemaVersion: 1`, on/off e capturas recentes | 0/2/3/4/5 | 1, 4, 5 |
+| `integrations report --latest` | `--skill` opcional conforme regra atual | relatório existente | código existente de `report` | 5 |
 
 ## Sources
 
