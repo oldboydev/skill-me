@@ -1,13 +1,13 @@
 # Verificação independente — observação local `on/off` (issue #23)
 
-**Veredito: FAIL**  
-**Perfil:** `light`  
-**Diff da feature:** `2fd303f..998235bb2e6844b3ef7ab791adacc0da00a6bff7`  
-**Diff da correção:** `7a8553c..998235bb2e6844b3ef7ab791adacc0da00a6bff7`  
-**Rodada:** 3 — escopo do diff e vereditos não PASS da rodada 2  
+**Veredito: PASS**
+**Perfil:** `light`
+**Diff da feature:** `a2400c3..ae0111b9db7002b7e1e84860e2a610c590c87407`
+**Diff da correção:** `8b5b62d..ae0111b9db7002b7e1e84860e2a610c590c87407`
+**Rodada:** 4 — escopo do diff e vereditos não PASS da rodada 3
 **Verifier:** subagente independente, separado do builder
 
-**Estado atual:** F1 e a janela F2 foram corrigidos nos cenários testados. F3 é novo defeito bloqueante de isolamento depois da leitura da configuração; o gate amplo Windows permanece vermelho (G1). Rodadas 1 e 2 preservam evidência dos SHAs `8f29c40` e `788d0bc`; a rodada 3 registra a verificação do HEAD atual.
+**Estado atual:** F1 e F2 permanecem corrigidos nas janelas provadas; F3 e o intercalamento posterior de `on/off` passam nos cenários determinísticos. O gate Windows G1 passou no HEAD com paralelismo limitado a oito arquivos. As rodadas 1–3 abaixo preservam seus vereditos e evidências nos SHAs anteriores; a rodada 4 documenta a verificação do HEAD atual.
 
 ## Rodada 1 — fontes e alcance (carried from `8f29c40`)
 
@@ -156,3 +156,36 @@ Reprodução determinística independente: configurei A e B em homes/raízes tem
 - Os **7 skips de integrações Windows** são sinais POSIX (2), modos POSIX (1), ACL POSIX/Linux (3) e ACL macOS (1); os **7 do doctor** são POSIX/FIFO. O runtime Hermes está presente no Windows e os dois C8 passaram sem skip. Nesta rodada **WSL não rodou os novos testes F2**; o verde WSL da rodada 2 não lhes é atribuído.
 - Provas C1–C18 no HEAD: **18/18 nomes, 29/29 execuções PASS, 0 skips**. A comparação de fonte vinculante UI e fault injection `standard/ui` não se aplicam ao perfil `light`. Nenhuma mutação de código/testes, commit, push, PR ou merge foi feita pelo Verifier.
 - **Veredito final no HEAD `998235b`: FAIL**, por F3 e pelo gate Windows G1. F1/F2 passam nas janelas reproduzidas, mas isso não encerra a entrega.
+
+## Rodada 4 — fontes e escopo no HEAD `ae0111b9db7002b7e1e84860e2a610c590c87407`
+
+**Veredito desta rodada: PASS.** Perfil `light`; base da feature `a2400c3`, último verificado `8b5b62d`. A issue #23 e seu comentário foram relidos pelo conector GitHub. Também foram lidos `AGENTS.md`, o procedimento `tlc-implement/references/verify.md`, a task, o checklist, o build report, o FAIL da rodada 3 e os contratos da #5/#8 afetados. Não há `CONTRIBUTING.md` neste checkout (`rg --files -g '*CONTRIBUTING*'` não encontrou arquivo). As fontes de produto da issue mantêm o consentimento de `on` até `off`, isolamento e limite por captura. A comparação de interface `ui`, `Coverage`, `Test policy` e fault injection formal não se aplicam a este perfil/checklist; os `Swept` de concorrência, estado, autorização, consulta e ciclo dos dados foram confrontados com as provas abaixo.
+
+O diff `8b5b62d..HEAD` introduz o registro fora de `.skill-me`, o lock de controle estável no home, a leitura do registro por `setup/status/report --latest`, o `off` que alcança a raiz registrada e a recusa do `on` antes de abrir o store da raiz configurada. `src/integrations/observe/config.mjs:19,23,179-242`, `observe/command.mjs:145-148,162-180,210-260,277`, `privacy/store.mjs:810,820` e `report/command.mjs:80` foram inspecionados. README e `docs/traces.md` agora descrevem o lock, o registro e os códigos de conflito; `docs/report.md` descreve a recusa de consulta divergente. Os arquivos do core vendorizado e os dois pilotos não foram alterados nesta verificação.
+
+## Rodada 4 — provas no HEAD
+
+Executei **cada comando literal de C1–C18**, em sequência, no HEAD: **18/18 checks encontrados, 35 testes, 35 passes, 0 falhas, 0 skips**. C8 executou 2/2 testes com o runtime Hermes local. A primeira tentativa de C1 no sandbox retornou `io_failure` ao criar fixture temporária, como nas rodadas anteriores; reexecutei C1 e os demais comandos fora desse sandbox, todos com saída 0. Esse erro de ambiente não foi contado como prova do produto. As citações de C6–C14 em arquivos não tocados vêm da rodada 3 (`998235b`) e seus comandos foram executados novamente neste HEAD; as asserções em arquivos tocados foram conferidas de novo:
+
+| Check | Asserção decisiva executada no HEAD | Resultado |
+| --- | --- | --- |
+| C1 | `tests/integrations/observe/control.cli.test.mjs:68,87,97`: `setup`/`status` exatos em `off`, raiz intacta antes de `on`. | PASS 1/1 |
+| C2 | `control.cli.test.mjs:119-124,151-162,256-261,282-287,469-482`: entradas inválidas, `root_changed`, revezamento de `setup/on` e tabela literal de pasta trocada sem raiz alheia alterada. | PASS 5/5 |
+| C3 | `control.cli.test.mjs:1028,1049-1050`: outro processo vê `on`; repetição preserva geração e apenas uma captura. | PASS 1/1 |
+| C4 | `control.cli.test.mjs:584-601,742-753,773-785,848-861,988-1001,1066-1095`: `off` pelo registro, registro inválido, espera do `on` em voo, raiz alheia intacta e capturas encerradas. | PASS 7/7 |
+| C5 | `control.cli.test.mjs:1109-1111,1124-1131,1141-1151`: par manual prevalece, incompleto recusa e `off` preserva a manual. | PASS 1/1 |
+| C6–C14 | Asserções individuais da tabela da rodada 3 nos arquivos `agents.e2e`, `hermes-plugin.native`, `routing.unit` e `rollover.e2e`, todos não tocados desde `8b5b62d`. | PASS 13/13; sem skip |
+| C15 | `tests/integrations/observe/report.cli.test.mjs:59-73,91-93`: `--latest` seleciona a automática mais recente, identifica-a nos três formatos e mantém consulta após `off`. | PASS 2/2 |
+| C16 | `report.cli.test.mjs:102-128,159-180`: erro sem automática/manual, `4 observe_on` sem escolher outra raiz, `3 config_invalid` e `4 link_refused`. | PASS 2/2 |
+| C17 | `tests/integrations/observe/privacy.e2e.test.mjs:96-128`: conteúdo sensível omitido, sonda sem rede, registro e lock gravados, lock não residual. | PASS 1/1 |
+| C18 | `tests/integrations/observe/docs.test.mjs:63-98,115-121,140-181`: scripts e fluxo README, lock/registro declarados e fluxo de exemplo executado. | PASS 2/2 |
+
+Os casos novos discriminam regressões concretas: `control.cli.test.mjs:848-861` exige `off esperou`, A `off`, captura `stopped`, produtor tardio `observe_off` e ausência do lock; `:988-1001` compara a árvore inteira de ambas as raízes antes e depois de cada `on` recusado; `report.cli.test.mjs:159-180` exige erro fechado em três formatos, nenhuma escrita e nenhuma captura escolhida. O caso de registro inserido depois da primeira conferência (`control.cli.test.mjs:767-785`) conserva a barreira sob o lock do store. Essas asserções usam valores literais e distinguem os defeitos F3 e o `on` que criava store na raiz alheia. O build report registra vermelho/verde 0/3 e depois 0/2 contra versões anteriores, além de mutações mortas; são evidências do builder, não execuções minhas. Não fiz fault injection, conforme perfil `light`.
+
+## Rodada 4 — F3, G1 e gate
+
+- **F3 resolvido no cenário de falha:** o registro em `config.mjs:211-241` é criado antes do estado `on` (`store.mjs:810`) e removido após o estado `off` e encerramento (`:820`). Mesmo se `.skill-me` muda depois da leitura, `off` procura a raiz registrada em `command.mjs:257-258`. O teste C4 das quatro trocas exige A `off` e produtor tardio sem gravação (`control.cli.test.mjs:584-601`). O caso posterior, com `on` e `off` simultâneos, exige espera no lock do home e o mesmo resultado (`:848-861`).
+- **Configuração divergente e raiz alheia:** `setup/status/report --latest` recusam o registro divergente; `on` o consulta antes de `switchRoot` (`command.mjs:217-218`). C4 compara bytes, tipo e mtime das árvores das duas raízes antes/depois de cada recusa (`control.cli.test.mjs:988-1001`); C16 recusa relatório de outra configuração (`report.cli.test.mjs:159-180`). Os cinco cenários incluem pasta real trocada, pasta apagada, registro da própria raiz após queda, registro ilegível e link.
+- **G1:** `npm test` executado por mim no HEAD encerrou com **exit 0**: governança **6/6**, code review **16/16**, doctor **417 testes, 410 pass, 7 skip, 0 fail** (contagens também reconfirmadas por `npm run test:doctor`), integrações **450 testes, 443 pass, 7 skip, 0 fail**. O `T8-C15` isolado passou **1/1, 0 skip**. `scripts/test-integrations.mjs:14-20` limita o runner a oito arquivos sem aumentar a concorrência em hosts menores; `tests/integrations/fixtures-inventory.test.mjs:64-66` afirma os argumentos e limites. Os sete skips Windows de integrações continuam restrições POSIX/ACL já nomeadas na rodada 3; os sete do doctor são POSIX/FIFO. Um gate verde não mede a taxa futura do antigo flake sob carga, mas não há falha observada neste HEAD.
+
+Nenhum check foi omitido e não há achado bloqueante novo. `git diff --check main` e `git diff --check` passaram após remover os espaços finais de hard-break do cabeçalho; `git diff --check main...HEAD` só refletirá essa correção depois do commit do relatório. Nenhum arquivo além deste `.verified.md` foi editado pelo Verifier; não houve commit, push, PR ou merge.
