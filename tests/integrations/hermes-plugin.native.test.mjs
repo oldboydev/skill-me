@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { INTEGRATIONS_CLI, assertPseudonymIds, baseEnv, makeScratch, parseReport, runIntegrations, runIntegrationsJson } from "./helpers/cli.mjs";
+import { INTEGRATIONS_CLI, REPO_ROOT, assertPseudonymIds, baseEnv, makeScratch, parseReport, runIntegrations, runIntegrationsJson } from "./helpers/cli.mjs";
 import { expectedPseudonym } from "./helpers/traces.mjs";
 import { fixtureCase } from "./helpers/fixtures.mjs";
 import { DELIVERY_FIXTURE, FIXTURE_PLUGINS, bytecodeState, harnessEnv, locateHermesRuntime, runHarness } from "./helpers/hermes-runtime.mjs";
@@ -424,6 +424,65 @@ test("I23-C8 Hermes entrega sem variável por sessão: com a configuração úni
   assert.ok(broken.deliveryFailed >= 1, JSON.stringify(broken));
   assert.equal(broken.active, false);
   assert.equal(automaticCaptures(roots.destino)?.length ?? 0, 0);
+});
+
+// Pasta da configuração trocada (F2 da verificação, rodada 2; linha "Pasta da
+// configuração" do Landing da #23): a decisão do plugin sobre o destino, na
+// própria camada, com o Python do Hermes. No lugar de `.skill-me` fica uma
+// junção (Windows) / link (POSIX) para a pasta de outra configuração, de outro
+// argv — antes da leitura, ou posta pelo `open` do módulo ao abrir o arquivo.
+// Sem destino, o plugin fica inativo (I4-C44b).
+const PLUGIN_SOURCE = path.join(REPO_ROOT, "src", "integrations", "hermes", "plugin", "__init__.py");
+const DIR_LINK = process.platform === "win32" ? "junction" : "dir";
+const LOAD_DELIVERY = `
+import builtins, importlib.util, json, os, sys
+plugin, folder, moved, foreign, when = sys.argv[1:6]
+spec = importlib.util.spec_from_file_location("skill_me_observer_pasta", plugin)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+def swap():
+    os.rename(folder, moved)
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(foreign, folder)
+    else:
+        os.symlink(foreign, folder, target_is_directory=True)
+if when == "durante":
+    real_open = builtins.open
+    def swapping_open(file, *args, **kwargs):
+        if os.path.basename(os.fspath(file)) == "observe.json":
+            swap()
+        return real_open(file, *args, **kwargs)
+    module.open = swapping_open
+print(json.dumps(module._load_delivery()))
+`;
+
+test("I23-C8 Hermes entrega sem variável por sessão: pasta da configuração trocada por junção, antes ou durante a leitura, deixa o plugin sem destino", { skip: SKIP }, () => {
+  const rows = { "pasta real (controle)": null, "junção antes da leitura": "antes", "junção durante a leitura": "durante" };
+  const observed = {};
+  const expected = {};
+  for (const [label, when] of Object.entries(rows)) {
+    const sandbox = makeScratch(`hermes-i23-pasta-${when ?? "controle"}`);
+    scratches.push(sandbox);
+    const env = harnessEnv(sandbox);
+    const root = path.join(sandbox, "capturas ação");
+    mkdirSync(root);
+    assert.equal(runIntegrations(["observe", "setup", "--root", root], { env: baseEnv({ HOME: env.HOME, USERPROFILE: env.USERPROFILE }) }).status, 0);
+    const folder = path.join(env.USERPROFILE, ".skill-me");
+    const own = JSON.parse(readFileSync(path.join(folder, "observe.json"), "utf8"));
+    const foreign = path.join(sandbox, "home alheio", ".skill-me");
+    mkdirSync(foreign, { recursive: true });
+    writeFileSync(path.join(foreign, "observe.json"), JSON.stringify({ ...own, hermesDelivery: [NODE, DELIVERY_FIXTURE, "capture", path.join(sandbox, "alheio.ndjson")] }));
+    const moved = path.join(sandbox, "pasta da configuração movida");
+    if (when === "antes") {
+      renameSync(folder, moved);
+      symlinkSync(foreign, folder, DIR_LINK);
+    }
+    const run = spawnSync(runtime.python, ["-I", "-B", "-c", LOAD_DELIVERY, PLUGIN_SOURCE, folder, moved, foreign, when ?? "-"], { env, encoding: "utf8", timeout: 60_000 });
+    observed[label] = { status: run.status, stderr: run.stderr, delivery: run.status === 0 ? JSON.parse(run.stdout) : run.stdout, swapped: lstatSync(folder).isSymbolicLink() };
+    expected[label] = { status: 0, stderr: "", delivery: when === null ? [NODE, INTEGRATIONS_CLI, "ingest", "--agent", "hermes"] : null, swapped: when !== null };
+  }
+  assert.deepEqual(observed, expected);
 });
 
 test("I4-C44b Hermes sem entrega configurada fica inativo", { skip: SKIP }, () => {
