@@ -795,7 +795,10 @@ const stopCapture = (ctx, { dir, state }, nowIso) => writeStateAtomic(ctx.io, di
 // on/off. Só o `on` cria a pasta do store; `off` sem store não tem o que
 // desligar. Depois de gravar off, encerra toda captura automática ativa —
 // também as de um off anterior interrompido —, e a retenção delas começa.
-export function changeObservation({ root, expectedReal, action, nowMs = Date.now(), io = createStoreIo() }) {
+// `authorization` (linha "Registro da autorização" do Landing da #23): o
+// registro da raiz on, fora deste módulo, que só muda sob este lock — `claim`
+// antes de gravar on (mesmo repetido), `release` depois do off concluído.
+export function changeObservation({ root, expectedReal, action, nowMs = Date.now(), io = createStoreIo(), authorization = null }) {
   return storeOp(async () => {
     const ctx = await openStore(root, io, { create: action === "on", expectedReal });
     if (ctx === null) return { observation: null, changed: false, stopped: [], failed: [] };
@@ -804,6 +807,7 @@ export function changeObservation({ root, expectedReal, action, nowMs = Date.now
       const nowIso = new Date(nowMs).toISOString();
       const fresh = { nowIso, generation: randomBytes(16).toString("hex"), sessionKey: randomBytes(32).toString("hex") };
       const { next, changed } = switchObservation(await readObservationFile(ctx), action, fresh);
+      if (action === "on") await authorization?.claim();
       if (changed) await writeObservationFile(ctx, next);
       if (action === "on") return { observation: next, changed, stopped: [], failed: [] };
       const { found, failed } = await automaticCaptures(ctx);
@@ -813,6 +817,7 @@ export function changeObservation({ root, expectedReal, action, nowMs = Date.now
         await stopCapture(ctx, capture, nowIso);
         stopped.push(capture.state.id);
       }
+      await authorization?.release();
       return { observation: next, changed, stopped, failed };
     });
   });

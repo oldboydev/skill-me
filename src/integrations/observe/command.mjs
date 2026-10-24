@@ -3,7 +3,18 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { CLI_PATH } from "../install/run.mjs";
 import { createStoreIo } from "../privacy/fs.mjs";
 import { changeObservation, holdLockFile, readObservation, StoreError } from "../privacy/store.mjs";
-import { CONFIG_LOCK_FILE, CONFIG_VERSION, configDir, ObserveConfigError, readObserveConfig, userHome, writeObserveConfig } from "./config.mjs";
+import {
+  CONFIG_LOCK_FILE,
+  CONFIG_VERSION,
+  claimAuthorization,
+  configDir,
+  ObserveConfigError,
+  readAuthorization,
+  readObserveConfig,
+  releaseAuthorization,
+  userHome,
+  writeObserveConfig,
+} from "./config.mjs";
 
 export const OBSERVE_HELP_TEXT = `Uso:
   integrations observe setup --root <diretório-absoluto>
@@ -64,6 +75,7 @@ const failure = (command, code, fields = {}) => ({
   body: { schemaVersion: 1, command, status: "error", ...fields, error: { code: Object.hasOwn(EXIT_BY_CODE, code) ? code : "io_failure" } },
 });
 const worstOf = (failed) => failed.reduce((a, b) => ((EXIT_BY_CODE[b.code] ?? 5) > (EXIT_BY_CODE[a.code] ?? 5) ? b : a));
+const codeOf = (error) => ((error instanceof StoreError || error instanceof ObserveConfigError) && Object.hasOwn(EXIT_BY_CODE, error.code) ? error.code : "io_failure");
 
 // Nunca expõe a chave das sessões nem o mapa: só estado, geração e instante.
 function view(observation, configured) {
@@ -165,18 +177,66 @@ async function setup(tokens, { home, io }) {
   });
 }
 
-async function change(action, { home, io, nowMs }) {
-  return withConfigLock({ home, io }, async (read) => {
-    const config = configFrom(read);
-    if (config === null) {
-      if (action === "on") throw new StoreError("not_configured");
-      return ok(action, { observation: view(null, false), changed: false, stopped: [] });
+// O registro da autorização de `rootReal`, para o store mudá-lo sob o lock da
+// raiz (linha "Registro da autorização" do Landing); o código do erro passa
+// pelo store como StoreError.
+function authorizationOf({ home, io }, rootReal) {
+  const asStore = (fn) => async () => {
+    try {
+      await fn({ home, io, rootReal });
+    } catch (error) {
+      throw error instanceof ObserveConfigError ? new StoreError(error.code) : error;
     }
-    const result = await patiently(() => changeObservation({ root: config.root, expectedReal: config.rootReal, action, nowMs, io }));
-    const fields = { observation: view(result.observation, true), changed: result.changed, ...(action === "off" ? { stopped: result.stopped } : {}) };
-    if (result.failed.length === 0) return ok(action, fields);
-    return failure(action, worstOf(result.failed).code, { ...fields, failed: result.failed });
+  };
+  return { claim: asStore(claimAuthorization), release: asStore(releaseAuthorization) };
+}
+
+const switchRoot = ({ home, io, nowMs }, action, { root, rootReal }) =>
+  patiently(() => changeObservation({ root, expectedReal: rootReal, action, nowMs, io, authorization: authorizationOf({ home, io }, rootReal) }));
+
+async function on(context) {
+  return withConfigLock(context, async (read) => {
+    const config = configFrom(read);
+    if (config === null) throw new StoreError("not_configured");
+    const result = await switchRoot(context, "on", config);
+    return ok("on", { observation: view(result.observation, true), changed: result.changed });
   });
+}
+
+// O off desliga a raiz configurada e depois, uma vez, a do registro quando é
+// outra ou a configuração não pôde ser lida — pela própria `rootReal`, que o
+// store confere como em toda operação automática. É assim que a raiz que o on
+// ligou continua ao alcance, troque-se a pasta `.skill-me` antes ou depois do
+// efeito (F3 da verificação, rodada 3). A resposta segue a da configuração;
+// `changed`, `stopped` e `failed` somam as duas, e um erro sai só com o código.
+async function off(context) {
+  const results = [];
+  const errors = [];
+  let observation = view(null, false);
+  let configuredReal = null;
+  try {
+    await withConfigLock(context, async (read) => {
+      const config = configFrom(read);
+      if (config === null) return;
+      configuredReal = config.rootReal;
+      const result = await switchRoot(context, "off", config);
+      observation = view(result.observation, true);
+      results.push(result);
+    });
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    const recorded = await readAuthorization(context);
+    if (recorded !== null && recorded.rootReal !== configuredReal) results.push(await switchRoot(context, "off", { root: recorded.rootReal, rootReal: recorded.rootReal }));
+  } catch (error) {
+    errors.push(error);
+  }
+  if (errors.length > 0) return failure("off", worstOf(errors.map((error) => ({ code: codeOf(error) }))).code);
+  const fields = { observation, changed: results.some((result) => result.changed), stopped: results.flatMap((result) => result.stopped) };
+  const failed = results.flatMap((result) => result.failed);
+  if (failed.length === 0) return ok("off", fields);
+  return failure("off", worstOf(failed).code, { ...fields, failed });
 }
 
 async function status({ home, io }) {
@@ -204,10 +264,9 @@ export async function runObserveCommand({ argv, home = userHome(), now = Date.no
     if (command === "setup") return await setup(tokens, { home, io });
     if (tokens.length > 0) throw new UsageError("unexpected_argument");
     if (command === "status") return await status({ home, io });
-    return await change(command, { home, io, nowMs: now() });
+    return await (command === "on" ? on : off)({ home, io, nowMs: now() });
   } catch (error) {
     if (error instanceof UsageError) return { exitCode: 2, body: { schemaVersion: 1, command, status: "error", error: { code: error.code } } };
-    const code = (error instanceof StoreError || error instanceof ObserveConfigError) && Object.hasOwn(EXIT_BY_CODE, error.code) ? error.code : "io_failure";
-    return failure(command, code);
+    return failure(command, codeOf(error));
   }
 }

@@ -17,10 +17,15 @@ export const CONFIG_FILE = "observe.json";
 // Landing); o lock é tomado em observe/command.mjs.
 export const CONFIG_LOCK_FILE = "observe.lock";
 export const CONFIG_VERSION = 1;
+// Registro da raiz autorizada (linha "Registro da autorização" do Landing),
+// direto no home e fora da pasta `.skill-me`.
+export const AUTHORIZATION_FILE = ".skill-me-authorization.json";
+const AUTHORIZATION_VERSION = 1;
 const MAX_CONFIG_BYTES = 64 * 1024;
 const MAX_ARGV = 32;
 const MAX_ARG_LENGTH = 4096;
 const KEYS = ["hermesDelivery", "root", "rootReal", "skillMeObserveConfig"];
+const AUTHORIZATION_KEYS = ["rootReal", "skillMeObserveAuthorization"];
 
 // `os.homedir()` segue USERPROFILE (Windows) ou HOME (POSIX), como o
 // `Path.home()` do plugin. Sem home utilizável não há configuração.
@@ -154,6 +159,75 @@ export async function configDir({ home, io = createStoreIo(), create = false }) 
   }
   if (!stats.isDirectory()) throw new ObserveConfigError("config_invalid");
   return { dir, identity: identityOf(stats) };
+}
+
+// Registro da autorização: a raiz que pode estar on, para o `off` alcançá-la
+// mesmo com a pasta `.skill-me` trocada ou apagada depois de qualquer
+// conferência (F3 da verificação, rodada 3). Fica no home, que não se move com
+// a pasta. Só muda sob o lock do store da raiz que nomeia (claim/release, pelo
+// changeObservation de privacy/store.mjs): um on e um off da mesma raiz nunca
+// se cruzam entre o registro e o estado, e a criação exclusiva impede que duas
+// raízes se registrem. Invariante: raiz on ⇒ registro com ela.
+
+const authorizationPath = (home) => path.join(home, AUTHORIZATION_FILE);
+
+// null sem registro; senão { rootReal }. Link ou junção: link_refused; outra
+// entrada, ilegível ou fora da forma: config_invalid, e o arquivo fica — nunca
+// se apaga o que não é nosso.
+export async function readAuthorization({ home, io = createStoreIo() }) {
+  if (!absolute(home)) return null;
+  const file = authorizationPath(home);
+  try {
+    const stats = await io.lstat(file);
+    if (stats.isSymbolicLink()) throw new ObserveConfigError("link_refused");
+    if (!stats.isFile()) throw new ObserveConfigError("config_invalid");
+    const bytes = await io.readBounded(file, MAX_CONFIG_BYTES);
+    if (bytes === null) throw new ObserveConfigError("config_invalid");
+    const value = JSON.parse(bytes.toString("utf8"));
+    const valid =
+      value !== null &&
+      typeof value === "object" &&
+      isDeepStrictEqual(Object.keys(value).sort(), AUTHORIZATION_KEYS) &&
+      value.skillMeObserveAuthorization === AUTHORIZATION_VERSION &&
+      absolute(value.rootReal);
+    if (!valid) throw new ObserveConfigError("config_invalid");
+    return { rootReal: value.rootReal };
+  } catch (error) {
+    // Apagado entre o lstat e a leitura por um off concorrente: não há registro.
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+    if (error instanceof SyntaxError) throw new ObserveConfigError("config_invalid");
+    throw error;
+  }
+}
+
+// Antes de gravar on, sob o lock do store de `rootReal`. Sem temporário: a
+// criação exclusiva é a própria decisão, e o flush a deixa no disco antes do
+// estado on. Registro de outra raiz (ou que sumiu no meio, por um off
+// concorrente): observe_on. Uma falha depois de criar o arquivo deixa-o
+// incompleto (config_invalid até a remoção manual): apagá-lo depois de uma
+// falha da abertura poderia apagar o registro que outra raiz acabou de criar.
+export async function claimAuthorization({ home, io = createStoreIo(), rootReal }) {
+  if (!absolute(home)) throw new ObserveConfigError("io_failure");
+  try {
+    await io.writeExclusive(authorizationPath(home), JSON.stringify({ skillMeObserveAuthorization: AUTHORIZATION_VERSION, rootReal }));
+    return;
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  const current = await readAuthorization({ home, io });
+  if (current?.rootReal !== rootReal) throw new ObserveConfigError("observe_on");
+}
+
+// Depois de gravar off e encerrar as automáticas, sob o mesmo lock do store
+// de `rootReal`: apaga o registro só se ele nomeia esta raiz.
+export async function releaseAuthorization({ home, io = createStoreIo(), rootReal }) {
+  const current = await readAuthorization({ home, io });
+  if (current === null || current.rootReal !== rootReal) return;
+  try {
+    await io.unlink(authorizationPath(home));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
 }
 
 // Só `observe setup` grava, na pasta `folder` conferida antes do lock. O
