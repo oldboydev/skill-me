@@ -14,7 +14,7 @@
     "test:code-review": "node --test scripts/code-review/review.test.mjs",
     "test:governance": "node --test scripts/governance-ci.test.mjs",
     "test:doctor": "node --test \"tests/doctor/**/*.test.mjs\"",
-    "test:integrations": "node --test \"tests/integrations/**/*.test.mjs\"",
+    "test:integrations": "node scripts/test-integrations.mjs",
     "doctor": "node src/doctor/cli.mjs",
     "integrations": "node src/integrations/cli.mjs",
     "privacy": "node src/integrations/cli.mjs privacy",
