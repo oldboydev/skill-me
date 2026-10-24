@@ -85,6 +85,10 @@ def _load_config():
 _CONFIG_DIR = ".skill-me"
 _CONFIG_FILE = "observe.json"
 _MAX_CONFIG_BYTES = 64 * 1024
+# Junção só existe no Windows, o único que exporta a constante: no POSIX, `stat`
+# não a define e acessá-la direto deixava o plugin sem destino numa pasta comum
+# (achado P1 da revisão formal da issue #23).
+_JUNCTION_TAG = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
 
 
 def _argv(value):
@@ -97,7 +101,8 @@ def _folder_identity(folder):
     # Diretório real, nunca link nem junção: o Python do Hermes (3.11) reporta a
     # junção como diretório, só com a marca de reparse, e `is_symlink()` a aceita.
     info = os.lstat(folder)
-    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT:
+    junction = _JUNCTION_TAG is not None and getattr(info, "st_reparse_tag", 0) == _JUNCTION_TAG
+    if stat.S_ISLNK(info.st_mode) or junction:
         return None
     if not stat.S_ISDIR(info.st_mode):
         return None
