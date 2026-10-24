@@ -932,3 +932,235 @@ em cada commit.
   `git archive`) no Windows e `/tmp/skill-me-i23-f3-qKxDIp` e
   `/tmp/skill-me-i23-f3-out` no WSL.
 - Árvore: limpa antes deste registro.
+
+## Correção do intercalamento on/off e do conflito com o registro (depois do F3)
+
+Base: `db7921a`. Escopo pedido pelo orquestrador nesta sessão: corrigir o
+intercalamento do teste `on repetido e off pelo registro se revezam pelo lock da
+raiz` — que esperava um `on` religar a raiz depois de o `off` responder —, sem só
+trocar a expectativa nem acrescentar outra conferência tardia; tornar explícito o
+conflito de `status`, `setup` e `report --latest` com uma raiz registrada `on`
+fora da configuração; registrar o formato novo no Landing antes do código; manter
+o G1 proporcional, sem repetir o A/B sintético. Builder: Claude, perfil `light`.
+As seções anteriores deste arquivo não foram alteradas, e `.verified.md` não foi
+tocado. Nenhuma nova verificação foi convocada: ela depende do proprietário.
+
+### Commits
+
+- `18122b8` docs(checks): registrar o lock do controle no home e o conflito com o
+  registro — linhas "Configuração do usuário", "Barreira da configuração",
+  "Pasta da configuração", "Registro da autorização" e "Consulta" revistas e a
+  linha nova "Conflito com o registro", commitadas antes de qualquer código.
+- `626129e` fix(observe): serializar on e off pelo lock no home e recusar conflito com o registro
+- `223ffb3` docs(observe): documentar o lock no home e o conflito com o registro
+- `25bc8a0` test(observe): provar o off depois do on em voo e o conflito com o registro
+- o commit deste registro (docs(checks))
+
+### O defeito
+
+O lock de `setup`/`on`/`off` ficava em `<home>/.skill-me/observe.lock`, dentro
+da pasta móvel. Com a pasta trocada por outra real B entre a leitura do `on` e o
+lock da raiz A, o `on` segurava o lock da pasta antiga e o `off` tomava o da
+nova: os dois não se revezavam. O `off` lia B, desligava A pelo registro e o
+apagava; o `on` retomava, recriava o registro, ligava A com outra geração e
+respondia 4 `foreign_entry` ao soltar o lock da pasta movida. O `status`, lendo
+B, respondia `0 off` com A ligada. Do mesmo modo, com o registro apontando A
+`on`, `setup` gravava uma raiz nova e `report --latest` relatava, com código 0,
+a captura automática da raiz de B.
+
+### Escolha e alternativas
+
+`setup`, `on` e `off` passam a tomar `<home>/.skill-me-observe.lock`, direto no
+home, ao lado do registro e fora da pasta móvel, na forma e na regra do `.lock`
+do store (sem flush, 2 s de paciência, nunca removido por outro processo,
+`foreign_entry` se os bytes mudarem). As duas partes do `off` — raiz configurada
+e raiz do registro — ficam sob esse lock, também com a pasta recusada. Os
+produtores continuam só com o `.lock` do store; `status`, `report --latest`,
+hooks e ingest não tomam o lock novo. A pasta conferida antes do lock continua
+a referência da leitura sob ele (F2).
+
+| Alternativa | Por que não |
+| --- | --- |
+| Manter o lock em `.skill-me` | Vai junto com a pasta movida: é a causa do intercalamento. |
+| Mais uma conferência da pasta no `on`, sob o lock da raiz | A troca pode vir depois dela (pedido explícito: sem conferência tardia). |
+| Marcar o registro no `off` em vez de apagá-lo | Mais um estado persistido e a limpeza dele para obter a ordem que o lock já dá. |
+| Dois locks (pasta e home) | O da pasta não protege mais nada e acrescenta um estado de queda. |
+
+Conflito (linha "Conflito com o registro"): `setup`, `status` e
+`report --latest` leem o registro com a mesma leitura e os mesmos códigos.
+
+| Registro | `status` | `report --latest` | `setup` |
+| --- | --- | --- | --- |
+| ausente | uso normal | uso normal | segue (e recusa se a raiz anterior estiver `on`, como antes) |
+| nomeia a raiz configurada | uso normal | uso normal | 4 `observe_on` |
+| nomeia outra raiz | 4 `observe_on`, sem `observation` | 4 `observe_on`, nenhuma captura | 4 `observe_on` |
+| presente, sem configuração | 4 `observe_on` | 3 `not_configured` (como antes) | 4 `observe_on` |
+| ilegível ou fora da forma | 3 `config_invalid` | 3 `config_invalid` | 3 `config_invalid` |
+| link ou junção | 4 `link_refused` | 4 `link_refused` | 4 `link_refused` |
+
+As respostas de erro trazem só o código, sem caminho. `npm run off` desfaz o
+conflito. Hooks, ingest e plugin não leem o registro: com outra raiz registrada,
+a configurada não pode estar `on` (o `on` dela recusa), e eles respondem
+`observe_off`. `status` não informa a raiz registrada como `on` porque exporia
+estado, geração e capturas de uma raiz fora da configuração.
+
+### Provas e testes alterados
+
+| Teste (padrão do check) | O que afirma |
+| --- | --- |
+| I23-C4 … off que entra com o on em voo e a pasta da configuração trocada espera o lock do home (substitui o `se revezam pelo lock da raiz`) | Duas linhas: `on` repetido parado antes do lock da raiz A, e `on` (A `off`) parado logo depois de soltar o lock de A. Com o `on` parado, um produtor abre na geração ligada e grava 1; a pasta é trocada por uma real que aponta outra raiz; o `off` encontra o lock do home ocupado (`off esperou`). Solto, o `on` responde 0 (`changed` false/true) com a geração que estava no disco; o `off` responde 0, `changed: true`, `stopped` com a captura; A termina `off`, sem registro, captura `stopped`; o produtor tardio sai `observe_off` com o store intacto; `status` 0 `off`; o lock do home não sobra. |
+| I23-C4 … status não afirma off, setup não troca a configuração e o off desfaz o conflito (novo) | Cinco linhas, com a resposta inteira de cada passo, a configuração, o estado de A e a presença do registro: pasta trocada por outra real (`status`, `setup`, `on` 4 `observe_on`; hook `observe_off` sem gravar; `off` 0 com a captura; depois `status` 0 `off` e `setup` grava); pasta apagada (`status`/`setup` 4 `observe_on`, `on` 3 `not_configured`, `off` 0, depois `status` 0 e `setup` grava); registro da raiz configurada sem `on`, depois de uma queda injetada (`status` 0 `off`, `setup` 4 `observe_on`, `off` apaga, `setup` grava); registro ilegível (3 `config_invalid`); registro como link/junção (4 `link_refused`). A raiz alheia termina `off` e sem capturas. |
+| I23-C16 … nem a automática de outra configuração enquanto a raiz registrada está on (novo) | Com A `on` e a pasta trocada por outra real que aponta F, com uma captura automática: `report --latest` 4 `observe_on` nos três formatos, resposta inteira sem ID, sem escrita nas raízes; depois do `off`, escolhe a captura de F; registro ilegível 3 `config_invalid`; link 4 `link_refused`. |
+
+Testes existentes alterados, e por quê:
+
+- O teste `se revezam pelo lock da raiz` (F3) esperava o defeito — `on` 4
+  `foreign_entry` com A `on` em outra geração depois do `off` — e foi
+  substituído pelo primeiro da tabela acima, que exige A `off`.
+- `I23-C2 … pasta da configuração trocada por junção` (F2): o gatilho "antes de
+  criar o lock" passa a ser a criação do lock do home, e a pasta movida deixa
+  de guardar `observe.lock` (nenhuma pasta o recebe; o observado ganhou
+  `controlLock: false`). Códigos, raízes alheias, leitores e controle depois da
+  restauração não mudaram; `removeOwnLock` saiu por não haver mais o que
+  remover.
+- `I23-C4 … pasta da configuração trocada depois da leitura do on` (F3): o
+  `on` passa a responder 0 (`changed: true`, a geração gravada) em vez de 4
+  `foreign_entry`, que vinha só da liberação do lock na pasta movida; a raiz
+  continua no registro e o `off` seguinte a desliga, como antes. A pasta movida
+  guarda só a configuração.
+- `I23-C4 … registro da autorização`, linha "registro de outra raiz": a
+  preparação fazia `setup` com outro registro presente, agora recusado; a
+  configuração da raiz original entra por uma pasta real trocada (feita num home
+  auxiliar). O passo `status` passa de `0 ok` para 4 `observe_on`.
+- `I23-C17`: a sonda admite também o caminho literal do lock do home e afirma
+  que ele foi gravado e não sobrou.
+- `I23-C18`: confere as frases novas do README pelas constantes.
+
+Nenhuma asserção foi enfraquecida. A única expectativa minha corrigida antes do
+commit: a primeira versão do teste de conflito exigia que a raiz alheia nem
+tivesse pasta do store, mas o `on` recusado pelo registro já a cria antes de
+recusar (comportamento do F3, sem estado `on` nem captura); a prova passou a
+afirmar raiz alheia `off` e sem capturas.
+
+### Vermelho e verde
+
+Windows 11, Node 24.22.1. Antes do código, as três provas novas contra o
+produto de `db7921a` (igual ao de `18122b8`): 0/3 (`/tmp/i23f4/red-control.txt`,
+`red-report.txt`). Na linha 1 do teste do `on` em voo: `off concluído` em vez de
+`off esperou`, `on` 4 `foreign_entry`, A `on` com outra geração e o registro
+dela. No conflito: `status` 0 `off` com A ligada, `setup` 0 gravando a raiz
+nova. No `report --latest`: 0, com o relatório da captura de F.
+
+Final, com os três arquivos de produto de `18122b8` postos na árvore
+(`git checkout 18122b8 -- …` e devolvidos com `git checkout HEAD -- …`,
+`git status` limpo): `control.cli`, `report.cli`, `privacy.e2e` e `docs` — 20
+testes, 12 pass, 8 fail (`/tmp/i23f4/red-final.txt`): as três provas novas, as
+quatro ajustadas (F2, F3, registro e C17, pelo lock e pelo `status`) e o
+arquivo do C18, que não carrega sem a constante nova. Verde: os 19 testes de
+`control.cli`, `report.cli` e `privacy.e2e` (`green-observe-a.txt`) e o C18
+(`green-docs-1.txt`).
+
+### Mutações
+
+Script fora do repositório (`%TEMP%\i23f4-mutations.mjs`): aplica a mutação
+(com o fim de linha do arquivo), roda as provas indicadas e restaura os bytes,
+conferindo o sha256; `git status` limpo e hashes iguais depois
+(`/tmp/i23f4/mutations.txt`).
+
+| Mutação | Resultado (pass/testes) |
+| --- | --- |
+| M35 lock do controle de volta em `.skill-me/observe.lock` | on em voo 0/1; F2 0/1; F3 0/1; conflito 1/1 |
+| M36 `off` sem o lock do home | on em voo 0/1 |
+| M37 `on` sem o lock do home | on em voo 0/1 |
+| M38 `status` sem conferir o registro | conflito 0/1; registro 0/1 |
+| M39 `status` confere o registro só com configuração | conflito 0/1 |
+| M40 `setup` sem conferir o registro | conflito 0/1 |
+| M41 `setup` aceita o registro da raiz configurada | conflito 0/1 |
+| M42 `report --latest` sem conferir o registro | report 0/1 |
+| M43 `report` trata o erro do registro como E/S | report 0/1 |
+
+Na M35 o teste de conflito passa: ele não exercita comandos concorrentes, e na
+linha da pasta apagada o `setup` recusado recria a pasta antes do `off`, onde o
+lock mutado é criado; as outras três provas a detectam. Rodar a parte do registro do `off`
+fora do lock, depois da parte da configuração, não tem mutação detectável: a
+parte da configuração já espera o `on` em voo, e um `on` entre as duas partes
+seria concorrente com o `off`.
+
+### Provas do checklist
+
+Windows 11, Node 24.22.1, HEAD `25bc8a0`, árvore limpa, comando literal de cada
+check em sequência (`/tmp/i23f4/checks.sh`, 15:19:44–15:20:55,
+`/tmp/i23f4/proof-C*.txt`): C1 1, C2 5, C3 1, C4 6, C5 1, C6 1, C7 1, C8 2, C9 2,
+C10 1, C11 2, C12 2, C13 1, C14 1, C15 2, C16 2, C17 1, C18 2 — 18/18 checks, 34
+testes, 34 pass, 0 fail, 0 skip; o C8 rodou com o runtime Hermes local, sem
+skip (a versão dele não foi conferida nesta rodada).
+
+WSL Ubuntu 24.04.3, Node 24.13.0, uid 1000 — `/tmp/skill-me-i23-f4-zfyydJ`, de
+`git archive 25bc8a0` (sha256 `554ce2ad5a6115e6…8e27834e` igual nos dois lados;
+`git get-tar-commit-id` = `25bc8a0a…`), `node_modules` copiado do checkout: os
+mesmos 18 checks, 34 testes, 32 pass, 0 fail, 2 skip (os dois C8, sem runtime
+Hermes). Ali rodou o lado POSIX das provas novas: registro como link simbólico
+no `status`, no `setup` e no `report --latest`, e a pasta trocada por pasta real.
+
+### Suítes
+
+| Ambiente | Alvo | Resultado |
+| --- | --- | --- |
+| Windows 11, Node 24.22.1 — HEAD `25bc8a0`, árvore limpa | `npm test` (`/tmp/i23f4/npm-test-1.txt`, 15:21:00–15:25:12) | exit 0, 4 min 12 s — governança 6/6; motor 16/16; doctor 417 (410 pass, 0 fail, 7 skip); integrações 449 (442 pass, 0 fail, 7 skip) |
+| WSL (acima) | `node scripts/test-integrations.mjs` | exit 0, 33 s — 449 testes, 435 pass, 0 fail, 14 skip |
+
+As integrações passam de 447 para 449: o teste do `on` em voo substitui o
+anterior, e entram o do conflito e o do `report --latest`. Skips: no Windows, os
+7 de integrações e os 7 do doctor de antes, todos de plataforma (`I4-C15`,
+`T8-C4`, `I4-C25b`, `I4-C25j`, `I4-C25k`, `I4-C25l`, `I4-C25m`; POSIX/FIFO no
+doctor). No WSL, os 14 de antes: 10 por falta do runtime Hermes (`I23-C8` duas
+vezes, `I4-C18` a `I4-C23`, `I4-C37`, `I4-C44b`), 3 de DACL do Windows
+(`I4-C25g`/`h`/`i`) e 1 de ACL do macOS (`I4-C25m`). O doctor não rodou no WSL
+(não foi tocado). `git diff --check`: exit 0 antes de cada commit.
+
+G1, proporcional: o A/B sintético não foi repetido. Uma execução do
+`npm test` no Windows, com o lançador de `a3a76d8`, terminou sem falha; uma
+rodada não mede taxa e não muda o que a seção do F3 registrou. A mudança só
+acrescenta a criação e a remoção de um lock sem flush por `setup`/`on`/`off`;
+produtores e entregas não mudaram.
+
+### Limitações e mudanças de comportamento
+
+- Lock do home residual depois de uma interrupção: `setup`, `on` e `off`
+  respondem 4 `lock_present` até a remoção manual, agora de
+  `.skill-me-observe.lock` no home (documentado). Diferente de antes, isso vale
+  também para o `off` sem a pasta `.skill-me`, que precisa do lock para
+  alcançar a raiz do registro.
+- Sem a pasta `.skill-me`, o `on` responde 3 `not_configured` sem tomar o lock;
+  o `off` cria e remove o lock no home. Sem home absoluto não há lock.
+- O `on` que lê a configuração antes de uma troca da pasta responde 0 e liga a
+  raiz que leu; a partir daí `status` e `report --latest` respondem
+  `observe_on` e o `off` a desliga. Uma troca antes do lock continua recusada
+  (F2).
+- `setup` recusa com qualquer registro presente, inclusive o de uma queda do
+  `on` sem estado `on`: rode `npm run off` antes.
+- `status`, `setup` e `report --latest` passam a falhar com o código do
+  registro quando ele está ilegível (3) ou é link (4), em vez de responder pela
+  configuração.
+- O `on` recusado com `observe_on` cria a pasta do store da raiz configurada
+  antes de recusar (comportamento do F3, sem estado nem captura); não foi
+  alterado.
+- Uma troca desfeita entre duas conferências continua fora do alcance, como no
+  `assertUnchanged` do store; o registro apagado ou trocado à mão junto com a
+  configuração também.
+- Nenhuma sessão real de agente; nenhum hook pessoal instalado; nenhum `on` no
+  home real: `.skill-me`, `.skill-me-authorization.json` e
+  `.skill-me-observe.lock` não existem no home do Windows nem no do uid 1000 do
+  WSL, e as configurações de Claude e Codex do usuário não citam o skill-me.
+  Core vendorizado, pilotos e `.verified.md` não foram tocados.
+
+### Estado ao final
+
+- Processos: todas as execuções foram em primeiro plano e terminaram; nenhum
+  `node.exe` iniciado depois das 15:00:46 está vivo (a primeira prova desta
+  rodada é das 15:11). A consulta de processos pelo PowerShell foi negada pela
+  sessão; a conferência usou `ps -W`.
+- Fora do repositório: `/tmp/i23f4/` (`%TEMP%\i23f4`: logs, `checks.sh`,
+  arquivo do `git archive`) e `%TEMP%\i23f4-mutations.mjs` no Windows;
+  `/tmp/skill-me-i23-f4-zfyydJ`, o `.tar` dela e `/tmp/i23f4/` no WSL.
+- Árvore: limpa antes deste registro.
