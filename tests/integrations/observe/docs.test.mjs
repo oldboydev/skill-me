@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { HELP_TEXT } from "../../../src/integrations/cli-args.mjs";
 import { MAX_SESSIONS } from "../../../src/integrations/observe/authorization.mjs";
 import { OBSERVE_HELP_TEXT, OBSERVE_LOCK_PATIENCE_MS, RECENT_CAPTURES } from "../../../src/integrations/observe/command.mjs";
@@ -11,7 +13,7 @@ import { DEFAULT_RETENTION_DAYS, PRIVACY_LIMITS } from "../../../src/integration
 import { REPORT_HELP } from "../../../src/integrations/report/command.mjs";
 import { REPO_ROOT, makeScratch, runIntegrations } from "../helpers/cli.mjs";
 import { claudePayload } from "../helpers/privacy-canaries.mjs";
-import { DELIVERED_AUTO, homeEnv, runNpmScript } from "../helpers/observe.mjs";
+import { DELIVERED_AUTO, configFile, homeEnv, prepareObservation, runNpmScript, runObserve } from "../helpers/observe.mjs";
 import { runHook } from "../helpers/traces.mjs";
 
 // Prova C18 da issue #23: o README ensina a preparação única, o fluxo de uma
@@ -110,7 +112,10 @@ test("I23-C18 README descreve on off real: preparação única, uma linha por a�
     /não tem evento de ativação de skill/,
     /`SKILL\.md` aparece só como operação de ferramenta, nunca como prova de que a skill foi carregada/,
     /`integrations run --agent codex` continua só com a captura manual/,
-    /inicie o Hermes depois do `setup`/,
+    /cada instância do Hermes tem uma só entrega, que segue a observação vigente no primeiro evento dela/,
+    /Inicie \(ou reinicie\) o Hermes depois do `setup` e do `npm run on`/,
+    /Uma instância cujo primeiro evento ocorreu com a observação `off`, como uma aberta e usada antes do `on`, ou que atravessou um `npm run off` não volta a capturar depois de um novo `npm run on`, mesmo com o `npm run status` em `on`: feche-a e abra outra/,
+    /O `off` continua cortando na hora a gravação dessa instância/,
     /eventos Hermes não incluem conteúdo de comandos/,
     /raciocínio interno do agente nunca é capturado/,
     /evento sem identidade de sessão aceita pela fronteira não é gravado nem atribuído a outra sessão/i,
@@ -118,6 +123,11 @@ test("I23-C18 README descreve on off real: preparação única, uma linha por a�
     /Para parar, use `npm run off`/,
   ]) {
     assert.match(limits, pattern);
+  }
+  // A promessa anterior (achado P2 da revisão formal): on/off no mesmo Hermes
+  // aberto, sem reiniciar. A entrega dele não reabre depois de um off.
+  for (const [name, text] of [["README.md", README], ["docs/traces.md", TRACES], ["docs/agent-observation.md", read("docs/agent-observation.md")]]) {
+    assert.doesNotMatch(prose(text), /sem reiniciar/, name);
   }
 
   // Os comandos manuais avançados continuam documentados.
@@ -184,4 +194,67 @@ test("I23-C18 README descreve on off real: seguir o README como está escrito li
   }
   assert.match(captureId ?? "", /^[0-9a-f]{32}$/, "o off encerrou a captura da sessão");
   assert.ok(readFileSync(path.join(root, "skill-me-privacy", "captures", captureId, "state.json"), "utf8").includes('"origin":"automatic"'));
+});
+
+// Uma instância do Hermes tem um só processo de entrega: o plugin inicia o
+// `hermesDelivery` do `setup` no primeiro evento e nunca o reinicia (I4-C22,
+// "um único spawn"). Aqui esse mesmo argv, com o stdin aberto como o plugin o
+// mantém, atravessa off e on; a "outra instância" é um processo novo.
+const hermesLine = (sessionId) => JSON.stringify({ hook: "on_session_start", kwargs: { session_id: sessionId, platform: "cli" }, nonScalar: [] }) + "\n";
+
+function startHermesDelivery(home, env) {
+  const [command, ...args] = JSON.parse(readFileSync(configFile(home), "utf8")).hermesDelivery;
+  const child = spawn(command, args, { env, stdio: ["pipe", "ignore", "ignore"], windowsHide: true });
+  const exited = new Promise((resolve) => child.on("close", (status) => resolve(status)));
+  return {
+    send: (line) => child.stdin.write(line),
+    close: () => {
+      child.stdin.end();
+      return exited;
+    },
+  };
+}
+
+const capturesOf = (body) => body.captures.map((c) => [c.id, c.state, c.counters.persisted]);
+
+test("I23-C18 README descreve on off real: a instância Hermes que atravessou um off não volta a capturar com um novo on, e outra instância volta", async () => {
+  const { home, env } = prepareObservation((label) => {
+    const dir = makeScratch(label);
+    scratches.push(dir);
+    return dir;
+  }, "i23 c18 hermes");
+  assert.equal(runNpmScript("on", { env }).body.observation.state, "on");
+
+  const open = startHermesDelivery(home, env);
+  open.send(hermesLine("hermes-c18-sessão"));
+  // O primeiro evento é gravado com o processo ainda aberto.
+  let first = null;
+  for (const deadline = Date.now() + 15_000; Date.now() < deadline; await sleep(100)) {
+    const status = runObserve(["status"], { env });
+    if (status.status === 0 && status.body.captures.length === 1 && status.body.captures[0].counters.persisted === 1) {
+      first = status.body.captures[0].id;
+      break;
+    }
+  }
+  assert.ok(first, "a instância aberta gravou o primeiro evento");
+
+  // O off vale na hora para ela; o novo on não a reabre, mesmo com status on.
+  assert.deepEqual(runNpmScript("off", { env }).body.stopped, [first]);
+  assert.equal(runNpmScript("on", { env }).body.observation.state, "on");
+  open.send(hermesLine("hermes-c18-sessão"));
+  open.send(hermesLine("hermes-c18-outra sessão"));
+  assert.equal(await open.close(), 0);
+  const crossed = runNpmScript("status", { env }).body;
+  assert.equal(crossed.observation.state, "on");
+  assert.deepEqual(capturesOf(crossed), [[first, "stopped", 1]], "nada gravado pela instância que atravessou o off");
+
+  // "Feche-a e abra outra": o processo novo grava na geração do novo on.
+  const fresh = startHermesDelivery(home, env);
+  fresh.send(hermesLine("hermes-c18-sessão"));
+  assert.equal(await fresh.close(), 0);
+  const final = runNpmScript("status", { env }).body;
+  assert.equal(final.captures.length, 2);
+  const [newest] = final.captures;
+  assert.deepEqual(capturesOf(final), [[newest.id, "active", 1], [first, "stopped", 1]]);
+  assert.notEqual(newest.id, first);
 });
