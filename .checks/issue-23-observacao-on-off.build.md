@@ -849,8 +849,8 @@ operações, `sync` de até 125 ms, `close` 96 ms, `read` 79 ms e `lstat` 65 ms 
 operação, 16 ms de CPU do processo. Com 31 arquivos em paralelo, os processos das
 provas saturam o disco e o prazo de 750 ms da entrega estoura em qualquer
 caminho que grave; não há falha determinística. Três rodadas de cada lado não
-medem uma taxa: mostram que o limite de 8 removeu a falha nessas rodadas, sem a
-custo relevante de tempo, e o histórico acima aponta a mesma causa. Outras
+medem uma taxa: mostram que o limite de 8 removeu a falha nessas rodadas, com
+média de 239 s contra 201 s do padrão, e o histórico acima aponta a mesma causa. Outras
 sessões de agentes nesta máquina podem ter somado carga; ela não foi medida.
 
 Decisão sobre o script (`a3a76d8`): `npm run test:integrations` passa a ser
