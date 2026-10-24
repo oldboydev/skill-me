@@ -13,6 +13,8 @@ import { exportOf, startCapture, storeDir } from "./traces.mjs";
 // .checks/issue-23-observacao-on-off.md, não do código.
 
 export const configFile = (home) => path.join(home, ".skill-me", "observe.json");
+// Registro da raiz autorizada, direto no home (linha "Registro da autorização").
+export const authorizationFile = (home) => path.join(home, ".skill-me-authorization.json");
 export const observeFile = (root) => path.join(storeDir(root), "observe.json");
 export const HEX32 = /^[0-9a-f]{32}$/;
 export const HEX64 = /^[0-9a-f]{64}$/;

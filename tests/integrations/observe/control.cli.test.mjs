@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { after, test } from "node:test";
+import { claudeHookDraft } from "../../../src/integrations/adapters/claude.mjs";
 import { runObserveCommand } from "../../../src/integrations/observe/command.mjs";
+import { createAutomaticDelivery } from "../../../src/integrations/observe/delivery.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
 import { INTEGRATIONS_CLI, makeScratch, runIntegrations } from "../helpers/cli.mjs";
 import { SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks } from "../helpers/privacy-canaries.mjs";
@@ -10,6 +13,7 @@ import {
   DELIVERED_AUTO,
   HEX32,
   HEX64,
+  authorizationFile,
   automaticOf,
   configFile,
   homeEnv,
@@ -376,6 +380,34 @@ function describeConfigFolder(dir, configBytes, label) {
     });
 }
 
+// A pasta `.skill-me` de `home` vai para `moved`, e no lugar fica uma junção
+// (Windows) / link (POSIX) para `foreignDir` ou outra pasta real com
+// `foreignBytes`; `restore` devolve a original.
+function configSwap({ home, foreignDir, foreignBytes, moved, realFolder }) {
+  const dir = path.dirname(configFile(home));
+  return {
+    swap() {
+      renameSync(dir, moved);
+      if (!realFolder) return symlinkSync(foreignDir, dir, DIR_LINK);
+      mkdirSync(dir);
+      writeFileSync(configFile(home), foreignBytes);
+    },
+    restore() {
+      if (!existsSync(moved)) return;
+      if (lstatSync(dir).isSymbolicLink()) unlinkSync(dir);
+      else rmSync(dir, { recursive: true });
+      renameSync(moved, dir);
+    },
+  };
+}
+
+// O lock que a troca levou junto não é apagado por processo nenhum: sai pela
+// remoção manual documentada, depois de a pasta original voltar.
+function removeOwnLock(home) {
+  const ownLock = path.join(path.dirname(configFile(home)), "observe.lock");
+  if (existsSync(ownLock) && isOwnLock(readFileSync(ownLock))) unlinkSync(ownLock);
+}
+
 test("I23-C2 setup recusa raiz inválida: pasta da configuração trocada por junção depois da primeira conferência — on, off e setup recusam, nenhuma raiz alheia muda e a raiz original continua controlável", async () => {
   const lockAt = (dir) => ["writeExclusive", (file) => file === path.join(dir, "observe.lock")];
   const configAt = (op) => (dir) => [op, (file) => file === path.join(dir, "observe.json")];
@@ -409,18 +441,7 @@ test("I23-C2 setup recusa raiz inválida: pasta da configuração trocada por ju
     const foreignBytes = readFileSync(configFile(foreignHome));
     const before = { original: rootState(original), foreign: rootState(foreign) };
 
-    const swap = () => {
-      renameSync(dir, moved);
-      if (!row.realFolder) return symlinkSync(foreignDir, dir, DIR_LINK);
-      mkdirSync(dir);
-      writeFileSync(configFile(home), foreignBytes);
-    };
-    const restore = () => {
-      if (!existsSync(moved)) return;
-      if (lstatSync(dir).isSymbolicLink()) unlinkSync(dir);
-      else rmSync(dir, { recursive: true });
-      renameSync(moved, dir);
-    };
+    const { swap, restore } = configSwap({ home, foreignDir, foreignBytes, moved, realFolder: row.realFolder });
     const io = swappingIo({ before: row.before(dir), swap, after: row.after?.(dir) ?? null, undo: restore });
     const result = await runObserveCommand({ argv: command === "setup" ? [...row.argv, next] : row.argv, home, io });
     const afterSwap = { original: rootState(original), foreign: rootState(foreign) };
@@ -441,11 +462,9 @@ test("I23-C2 setup recusa raiz inválida: pasta da configuração trocada por ju
     }
     const folders = { foreign: describeConfigFolder(foreignDir, foreignBytes, "configuração alheia"), moved: existsSync(moved) ? describeConfigFolder(moved, originalBytes, "configuração original") : "restaurada" };
 
-    // A pasta original volta ao lugar. O lock que a troca levou junto não é
-    // apagado por processo nenhum: sai pela remoção manual documentada.
+    // A pasta original volta ao lugar, sem o lock próprio que a troca levou.
     restore();
-    const ownLock = path.join(dir, "observe.lock");
-    if (existsSync(ownLock) && isOwnLock(readFileSync(ownLock))) unlinkSync(ownLock);
+    removeOwnLock(home);
     const control = [];
     for (const step of ["on", "off"]) {
       const done = await runObserveCommand({ argv: [step], home });
@@ -457,7 +476,10 @@ test("I23-C2 setup recusa raiz inválida: pasta da configuração trocada por ju
     expected.push({
       label,
       result: { exitCode: 4, body: { schemaVersion: 1, command, status: "error", error: { code: row.realFolder ? "foreign_entry" : "link_refused" } } },
-      afterSwap: before,
+      // O off recusa a configuração trocada, mas o registro da autorização, no
+      // home, o leva à raiz original que o on deste home ligou (F3, rodada 3).
+      // A raiz alheia não muda em nenhuma linha.
+      afterSwap: command === "off" ? { original: { state: "off", generation: null }, foreign: before.foreign } : before,
       readers: row.realFolder ? null : { status: [4, "link_refused"], report: [4, "link_refused"], hook: lostAll("link_refused"), foreignCaptures: false },
       // Trocada antes do lock, ele foi criado através da junção e saiu por ela;
       // trocada depois, ele foi junto com a pasta movida.
@@ -470,6 +492,302 @@ test("I23-C2 setup recusa raiz inválida: pasta da configuração trocada por ju
     });
   }
   assert.deepEqual(observed, expected);
+});
+
+// Pasta da configuração trocada depois da leitura (F3 da verificação, rodada
+// 3): o `on` já leu a configuração e conferiu a pasta pela última vez, e a troca
+// vem no primeiro acesso dele à raiz, antes de ligá-la, ou logo depois do commit
+// do estado `on`. Nenhuma conferência alcança esse intervalo; o `off` seguinte
+// encontra a raiz pelo registro da autorização, no home. Linha "Registro da
+// autorização" do Landing.
+
+const authorizationOf = (home) => (existsSync(authorizationFile(home)) ? JSON.parse(readFileSync(authorizationFile(home), "utf8")) : null);
+const authorized = (root) => ({ skillMeObserveAuthorization: 1, rootReal: root });
+
+// io que chama `swap` logo depois da primeira chamada `op` cujo caminho satisfaz `matches`.
+function swappingAfter([op, matches], swap) {
+  const base = createStoreIo();
+  let swapped = false;
+  return {
+    ...base,
+    async [op](file, ...rest) {
+      const value = await base[op](file, ...rest);
+      if (!swapped && matches(file)) {
+        swapped = true;
+        swap();
+      }
+      return value;
+    },
+  };
+}
+
+function homesWithRoots(label) {
+  const base = scratch(label);
+  const [home, foreignHome, original, foreign] = ["home", "home alheio", "raiz original ação", "raiz alheia ação"].map((name) => path.join(base, name));
+  for (const dir of [home, foreignHome, original, foreign]) mkdirSync(dir);
+  return { base, home, foreignHome, original, foreign, moved: path.join(base, "pasta da configuração movida") };
+}
+
+test("I23-C4 off encerra e é idempotente: pasta da configuração trocada depois da leitura do on, antes ou depois de ligar a raiz — o off seguinte a desliga pelo registro e o produtor aberto não grava mais", async () => {
+  const rows = [
+    { when: "junção antes de ligar", realFolder: false, effect: false },
+    { when: "pasta real antes de ligar", realFolder: true, effect: false },
+    { when: "junção depois de ligar", realFolder: false, effect: true },
+    { when: "pasta real depois de ligar", realFolder: true, effect: true },
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [index, row] of rows.entries()) {
+    const { home, foreignHome, original, foreign, moved } = homesWithRoots(`i23 c4 pasta trocada ${index}`);
+    for (const [owner, root] of [[home, original], [foreignHome, foreign]]) {
+      assert.equal((await runObserveCommand({ argv: ["setup", "--root", root], home: owner })).exitCode, 0);
+    }
+    const dir = path.dirname(configFile(home));
+    const originalBytes = readFileSync(configFile(home));
+    const foreignBytes = readFileSync(configFile(foreignHome));
+    const { swap, restore } = configSwap({ home, foreignDir: path.dirname(configFile(foreignHome)), foreignBytes, moved, realFolder: row.realFolder });
+    // Antes de ligar: o primeiro acesso do on à raiz, já depois da última
+    // conferência da pasta. Depois de ligar: o rename que grava o estado on.
+    const trigger = row.effect
+      ? ["rename", (file) => path.dirname(file) === storeDir(original) && path.basename(file).startsWith("observe.json.")]
+      : ["stat", (file) => path.resolve(file) === original];
+    const on = await runObserveCommand({ argv: ["on"], home, io: swappingAfter(trigger, swap) });
+    const afterOn = { original: stateOf(original), foreign: stateOf(foreign), authorization: authorizationOf(home) };
+
+    // Um produtor que leu a configuração antes da troca abre na geração ligada e grava.
+    const producer = createAutomaticDelivery({ config: { root: original, rootReal: original }, agent: "claude" });
+    await producer.open();
+    const first = claudePayload("pre_tool_bash", { tool_use_id: "chamada-antes-do-off" });
+    producer.submit(claudeHookDraft(first), first);
+    await producer.settle();
+    const opened = producer.report();
+    const captures = automaticOf(original).map((capture) => capture.id);
+
+    const off = await runObserveCommand({ argv: ["off"], home });
+    const afterOff = { original: rootState(original), foreign: stateOf(foreign), authorization: authorizationOf(home), captures: automaticOf(original).map((c) => [c.id, c.state]) };
+    const storeBefore = snapshotTree(storeDir(original));
+    const late = claudePayload("post_tool_bash", { tool_use_id: "chamada-depois-do-off" });
+    producer.submit(claudeHookDraft(late), late);
+    await producer.settle();
+    const afterLate = { report: producer.report(), storeUnchanged: isDeepStrictEqual(snapshotTree(storeDir(original)), storeBefore) };
+    const again = await runObserveCommand({ argv: ["off"], home });
+    const afterAgain = { original: rootState(original), authorization: authorizationOf(home) };
+    const folders = { current: describeConfigFolder(dir, foreignBytes, "configuração alheia"), moved: describeConfigFolder(moved, originalBytes, "configuração original") };
+
+    restore();
+    removeOwnLock(home);
+    const control = [];
+    for (const step of ["on", "off"]) {
+      const done = await runObserveCommand({ argv: [step], home });
+      control.push([step, done.exitCode, stateOf(original), authorizationOf(home)]);
+    }
+
+    const offOk = (changed, stopped) => ({ exitCode: 0, body: { schemaVersion: 1, command: "off", status: "ok", observation: OFF, changed, stopped } });
+    const offRefused = { exitCode: 4, body: { schemaVersion: 1, command: "off", status: "error", error: { code: "link_refused" } } };
+    observed.push({ label: row.when, on, afterOn, opened, captureCount: captures.length, off, afterOff, afterLate, again, afterAgain, folders, control });
+    expected.push({
+      label: row.when,
+      // O on só percebe a troca ao soltar o lock que ela levou; a raiz já está no registro.
+      on: { exitCode: 4, body: { schemaVersion: 1, command: "on", status: "error", error: { code: "foreign_entry" } } },
+      afterOn: { original: "on", foreign: "off", authorization: authorized(original) },
+      opened: DELIVERED_AUTO(1),
+      captureCount: 1,
+      // Com a junção no lugar a configuração é recusada; a pasta real no lugar já
+      // é a configuração, de outra raiz, que estava off. Nos dois, o registro leva o
+      // off à raiz original.
+      off: row.realFolder ? offOk(true, captures) : offRefused,
+      afterOff: { original: { state: "off", generation: null }, foreign: "off", authorization: null, captures: captures.map((id) => [id, "stopped"]) },
+      afterLate: { report: { automatic: true, code: "observe_off", entries: 2, committed: 1, persisted: 1, lost: 1, unrouted: 0 }, storeUnchanged: true },
+      again: row.realFolder ? offOk(false, []) : offRefused,
+      afterAgain: { original: { state: "off", generation: null }, authorization: null },
+      folders: { current: ["observe.json: configuração alheia"], moved: ["observe.json: configuração original", "observe.lock: lock próprio"] },
+      control: [
+        ["on", 0, "on", authorized(original)],
+        ["off", 0, "off", null],
+      ],
+    });
+  }
+  assert.deepEqual(observed, expected);
+});
+
+// O registro como o disco o tem: ausente, link/junção ou os bytes.
+function registryOf(home) {
+  const file = authorizationFile(home);
+  if (!existsSync(file) && !isLink(file)) return null;
+  return isLink(file) ? "link" : readFileSync(file, "utf8");
+}
+function isLink(file) {
+  try {
+    return lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+// io cuja primeira gravação exclusiva em `matches` falha; com `leaveEmpty`, o
+// arquivo é criado vazio antes da falha, como numa queda entre criar e gravar.
+function failingWrite(matches, { leaveEmpty = false } = {}) {
+  const base = createStoreIo();
+  let armed = true;
+  return {
+    ...base,
+    async writeExclusive(file, data, options) {
+      if (armed && matches(file)) {
+        armed = false;
+        if (leaveEmpty) await base.writeExclusive(file, "", options);
+        throw Object.assign(new Error("falha injetada"), { code: "EIO" });
+      }
+      return base.writeExclusive(file, data, options);
+    },
+  };
+}
+
+test("I23-C4 off encerra e é idempotente: registro da autorização — falha ao gravá-lo não liga a raiz, outra raiz registrada recusa on até o off, e queda antes de ligar, registro incompleto ou link não deixam raiz on fora do off", async () => {
+  const observed = [];
+  const expected = [];
+  const rows = [
+    {
+      when: "falha ao criar o registro",
+      steps: ({ home }) => [["on", failingWrite((file) => file === authorizationFile(home))], ["off"], ["on"], ["on"], ["off"]],
+      expect: ({ original }) => [
+        [5, "io_failure", null, "off", "off", null],
+        [0, "ok", false, "off", "off", null],
+        [0, "ok", true, "on", "off", JSON.stringify(authorized(original))],
+        [0, "ok", false, "on", "off", JSON.stringify(authorized(original))],
+        [0, "ok", true, "off", "off", null],
+      ],
+    },
+    {
+      when: "registro criado vazio e a gravação falha",
+      steps: ({ home }) => [["on", failingWrite((file) => file === authorizationFile(home), { leaveEmpty: true })], ["on"], ["off"], ["remover o registro"], ["on"], ["off"]],
+      expect: ({ original }) => [
+        [5, "io_failure", null, "off", "off", ""],
+        [3, "config_invalid", null, "off", "off", ""],
+        [3, "config_invalid", null, "off", "off", ""],
+        ["removido", null],
+        [0, "ok", true, "on", "off", JSON.stringify(authorized(original))],
+        [0, "ok", true, "off", "off", null],
+      ],
+    },
+    {
+      when: "queda entre o registro e o estado on, depois off",
+      steps: ({ original }) => [["on", failingWrite((file) => path.dirname(file) === storeDir(original) && path.basename(file).startsWith("observe.json."))], ["off"], ["on"], ["off"]],
+      expect: ({ original }) => [
+        [5, "io_failure", null, "off", "off", JSON.stringify(authorized(original))],
+        [0, "ok", false, "off", "off", null],
+        [0, "ok", true, "on", "off", JSON.stringify(authorized(original))],
+        [0, "ok", true, "off", "off", null],
+      ],
+    },
+    {
+      when: "queda entre o registro e o estado on, depois on",
+      steps: ({ original }) => [["on", failingWrite((file) => path.dirname(file) === storeDir(original) && path.basename(file).startsWith("observe.json."))], ["on"], ["off"]],
+      expect: ({ original }) => [
+        [5, "io_failure", null, "off", "off", JSON.stringify(authorized(original))],
+        [0, "ok", true, "on", "off", JSON.stringify(authorized(original))],
+        [0, "ok", true, "off", "off", null],
+      ],
+    },
+    {
+      // A pasta `.skill-me` apagada com a outra raiz on e um novo setup.
+      when: "registro de outra raiz",
+      before: async ({ home, other, original }) => {
+        assert.equal((await runObserveCommand({ argv: ["setup", "--root", other], home })).exitCode, 0);
+        assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
+        rmSync(path.dirname(configFile(home)), { recursive: true });
+        assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home })).exitCode, 0);
+      },
+      steps: () => [["on"], ["status"], ["off"], ["on"], ["off"]],
+      expect: ({ original, other }) => [
+        [4, "observe_on", null, "off", "on", JSON.stringify(authorized(other))],
+        [0, "ok", null, "off", "on", JSON.stringify(authorized(other))],
+        [0, "ok", true, "off", "off", null],
+        [0, "ok", true, "on", "off", JSON.stringify(authorized(original))],
+        [0, "ok", true, "off", "off", null],
+      ],
+    },
+    {
+      when: "registro é link ou junção",
+      before: async ({ home, original, target }) => {
+        assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home })).exitCode, 0);
+        symlinkSync(target, authorizationFile(home), DIR_LINK);
+      },
+      steps: () => [["on"], ["off"], ["remover o registro"], ["on"], ["off"]],
+      expect: ({ original }) => [
+        [4, "link_refused", null, "off", "off", "link"],
+        [4, "link_refused", null, "off", "off", "link"],
+        ["removido", null],
+        [0, "ok", true, "on", "off", JSON.stringify(authorized(original))],
+        [0, "ok", true, "off", "off", null],
+      ],
+    },
+  ];
+  for (const [index, row] of rows.entries()) {
+    const base = scratch(`i23 c4 registro ${index}`);
+    const [home, original, other, target] = ["home", "raiz ação", "outra raiz ação", "destino do link"].map((name) => path.join(base, name));
+    for (const dir of [home, original, other, target]) mkdirSync(dir);
+    const names = { home, original, other, target };
+    if (row.before) await row.before(names);
+    else assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home })).exitCode, 0);
+    const records = [];
+    for (const [step, io] of row.steps(names)) {
+      if (step === "remover o registro") {
+        // A remoção manual: o registro é apagado sem seguir um link.
+        unlinkSync(authorizationFile(home));
+        records.push(["removido", registryOf(home)]);
+        continue;
+      }
+      const result = await runObserveCommand({ argv: [step], home, ...(io ? { io } : {}) });
+      records.push([result.exitCode, result.body.error?.code ?? result.body.status, result.body.changed ?? null, stateOf(original), stateOf(other), registryOf(home)]);
+    }
+    observed.push({ label: row.when, records, target: readdirSync(target) });
+    expected.push({ label: row.when, records: row.expect(names), target: [] });
+  }
+  assert.deepEqual(observed, expected);
+
+  if (process.platform !== "win32") {
+    const { home, original } = homesWithRoots("i23 c4 registro modo");
+    assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home })).exitCode, 0);
+    assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
+    assert.equal(statSync(authorizationFile(home)).mode & 0o777, 0o600, "registro só do dono");
+  }
+});
+
+test("I23-C4 off encerra e é idempotente: on repetido e off pelo registro se revezam pelo lock da raiz — o off que chega antes do on não deixa a raiz ligada sem registro", async () => {
+  const { home, foreignHome, original, foreign, moved } = homesWithRoots("i23 c4 on e off pelo registro");
+  for (const [owner, root] of [[home, original], [foreignHome, foreign]]) {
+    assert.equal((await runObserveCommand({ argv: ["setup", "--root", root], home: owner })).exitCode, 0);
+  }
+  assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
+  const firstGeneration = readObserveState(original).generation;
+  const { swap } = configSwap({ home, foreignDir: path.dirname(configFile(foreignHome)), foreignBytes: readFileSync(configFile(foreignHome)), moved, realFolder: true });
+
+  // O on repetido já leu a configuração e para antes de tomar o lock da raiz; a
+  // pasta é trocada e o off, pela configuração nova, chega primeiro à raiz.
+  const paused = pausedAt("writeExclusive", (file) => file === path.join(storeDir(original), ".lock"));
+  const repeated = runObserveCommand({ argv: ["on"], home, io: paused.io });
+  await paused.reached;
+  swap();
+  const off = await runObserveCommand({ argv: ["off"], home });
+  const afterOff = [stateOf(original), authorizationOf(home)];
+  paused.release();
+  const onResult = await repeated;
+  const state = readObserveState(original);
+  const afterOn = { state: state.state, newGeneration: state.generation !== firstGeneration, authorization: authorizationOf(home) };
+  const last = await runObserveCommand({ argv: ["off"], home });
+
+  assert.deepEqual(
+    { off, afterOff, onResult, afterOn, last: [last.exitCode, last.body.changed], end: [stateOf(original), stateOf(foreign), authorizationOf(home)] },
+    {
+      off: { exitCode: 0, body: { schemaVersion: 1, command: "off", status: "ok", observation: OFF, changed: true, stopped: [] } },
+      afterOff: ["off", null],
+      // O on serializado depois do off liga de novo, com outra geração e o registro dele.
+      onResult: { exitCode: 4, body: { schemaVersion: 1, command: "on", status: "error", error: { code: "foreign_entry" } } },
+      afterOn: { state: "on", newGeneration: true, authorization: authorized(original) },
+      last: [0, true],
+      end: ["off", "off", null],
+    },
+  );
 });
 
 test("I23-C3 on persiste e é idempotente: outro processo vê on com conteúdo sanitizado; repetir on mantém geração e não cria captura", async () => {

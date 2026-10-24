@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { REPO_ROOT, makeScratch, runIntegrations } from "../helpers/cli.mjs";
 import { COMPOSED_COMMAND, MARKER, SECRET_TEXT, claudePayload, codexHookPayload, hermesRecord, leaks } from "../helpers/privacy-canaries.mjs";
-import { DELIVERED_AUTO, assertSameAsIngest, automaticOf, configFile, homeEnv } from "../helpers/observe.mjs";
+import { DELIVERED_AUTO, assertSameAsIngest, authorizationFile, automaticOf, configFile, homeEnv } from "../helpers/observe.mjs";
 import { exportOf, filesUnder, runHermesIngest, runHook, storeDir } from "../helpers/traces.mjs";
 
 // Prova C17 da issue #23: com a observação ligada, cada evento passa pela
@@ -110,13 +110,16 @@ test("I23-C17 modo automático respeita privacidade: conteúdo sensível, não s
   const report = cli(["report", "--latest", "--skill", skill]);
   assert.deepEqual(leaks(report.stdout), []);
   cli(["observe", "off"]);
+  assert.ok(!existsSync(authorizationFile(home)), "o off apagou o registro");
 
-  // Nenhuma rede, e só o store e a configuração recebem escrita.
+  // Nenhuma rede, e só o store, a configuração e o registro da autorização
+  // (só a raiz, sem conteúdo; linha "Registro da autorização") recebem escrita.
   const entries = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
   assert.ok(entries.length > 0, "a sonda registrou a execução");
   assert.deepEqual(entries.filter((e) => e.op === "network"), [], "nenhuma chamada de rede");
   const allowed = [storeDir(root) + path.sep, path.dirname(configFile(home)) + path.sep];
   const written = [...new Set(entries.filter((e) => e.op === "closed_written").map((e) => e.file))];
   assert.ok(written.length > 0);
-  for (const file of written) assert.ok(allowed.some((dir) => file.startsWith(dir)), `escrita fora do store: ${file}`);
+  for (const file of written) assert.ok(file === authorizationFile(home) || allowed.some((dir) => file.startsWith(dir)), `escrita fora do store: ${file}`);
+  assert.ok(written.includes(authorizationFile(home)), "o on gravou o registro");
 });
