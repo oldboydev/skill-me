@@ -19,10 +19,16 @@ export function makeScratch(label) {
   return realpathSync.native(mkdtempSync(path.join(tmpdir(), `skill-me i4 ${label} ação-`)));
 }
 
+// Home que não existe. Desde a #23 hooks e ingest leem a observação automática
+// em <home>/.skill-me/observe.json, e o `os.homedir()` sem HOME/USERPROFILE
+// cai no perfil real: um `npm run on` de quem roda os testes faria as fixtures
+// gravarem na raiz dele. As provas que precisam de home passam o seu.
+export const NO_HOME = path.join(REPO_ROOT, "tests", "integrations", "fixtures", "home inexistente");
+
 // Ambiente mínimo e explícito: nada do perfil de quem roda os testes
-// (CLAUDE_CONFIG_DIR, CODEX_HOME, HERMES_HOME…) chega aos processos.
+// (CLAUDE_CONFIG_DIR, CODEX_HOME, HERMES_HOME, home…) chega aos processos.
 export function baseEnv(extra = {}) {
-  const env = { PATH: process.env.PATH ?? "" };
+  const env = { PATH: process.env.PATH ?? "", HOME: NO_HOME, USERPROFILE: NO_HOME };
   for (const key of ["SystemRoot", "SYSTEMROOT", "ComSpec", "COMSPEC", "PATHEXT", "WINDIR", "windir"]) {
     if (process.env[key] !== undefined) env[key] = process.env[key];
   }

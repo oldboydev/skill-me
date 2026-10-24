@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { INTEGRATIONS_CLI, assertPseudonymIds, baseEnv, makeScratch, parseReport, runIntegrationsJson } from "./helpers/cli.mjs";
+import { INTEGRATIONS_CLI, assertPseudonymIds, baseEnv, makeScratch, parseReport, runIntegrations, runIntegrationsJson } from "./helpers/cli.mjs";
+import { expectedPseudonym } from "./helpers/traces.mjs";
 import { fixtureCase } from "./helpers/fixtures.mjs";
 import { DELIVERY_FIXTURE, FIXTURE_PLUGINS, bytecodeState, harnessEnv, locateHermesRuntime, runHarness } from "./helpers/hermes-runtime.mjs";
 import { snapshotTree } from "./helpers/tree.mjs";
@@ -40,10 +41,13 @@ function homeChanges(before, after) {
   return changes;
 }
 
-async function prepareAndRun(name, { delivery, enable = ["skill-me-observer", "skillme-fixture-tool"], installObserver = enable.includes("skill-me-observer"), timeout = 30, scenario }) {
+// `beforeRun(sandbox, env)`: preparação do usuário no sandbox (ex.: a
+// configuração única da #23 no home dele) antes de o Hermes iniciar.
+async function prepareAndRun(name, { delivery, enable = ["skill-me-observer", "skillme-fixture-tool"], installObserver = enable.includes("skill-me-observer"), timeout = 30, scenario, beforeRun }) {
   const sandbox = makeScratch(`hermes-${name}`);
   scratches.push(sandbox);
   const env = harnessEnv(sandbox, delivery ? { SKILL_ME_HERMES_DELIVERY: JSON.stringify(delivery(sandbox)) } : {});
+  await beforeRun?.(sandbox, env);
   const home = env.HERMES_HOME;
   mkdirSync(home, { recursive: true });
   if (installObserver) {
@@ -319,6 +323,107 @@ test("I4-C37 Hermes: seis casos de falha mantêm callbacks neutros e ferramenta 
   }
   assert.ok(runs.stall.result.stats.droppedQueueFull > 0);
   assert.equal(runs.capture.result.stats.oversize, 1);
+});
+
+// Capturas automáticas legíveis da raiz, pelo CLI (sem assert: usado na espera).
+function automaticCaptures(root) {
+  const run = runIntegrations(["privacy", "list", "--root", root]);
+  if (run.status !== 0) return null;
+  return JSON.parse(run.stdout).captures.filter((capture) => capture.origin === "automatic");
+}
+
+// O ingest grava depois de o Hermes sair (EOF do pipe): espera os registros.
+async function waitForPersisted(root, total, ms = 15_000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const captures = automaticCaptures(root);
+    if (captures !== null && captures.reduce((sum, c) => sum + c.counters.persisted, 0) >= total) return captures;
+    if (Date.now() > deadline) return captures;
+    await sleep(200);
+  }
+}
+
+test("I23-C8 Hermes entrega sem variável por sessão: com a configuração única e o on, o plugin entrega ao ingest e cada sessão vai à sua captura; falha da entrega não bloqueia o agente", { skip: SKIP }, async () => {
+  const roots = {};
+  // Preparação do usuário, uma vez: setup e on no home dele, nenhuma variável
+  // no ambiente da sessão Hermes.
+  const configure = (name, { lock = false } = {}) => async (sandbox, env) => {
+    assert.equal(env.SKILL_ME_HERMES_DELIVERY, undefined, "sem variável de entrega na sessão");
+    assert.ok(!Object.keys(env).some((key) => key.startsWith("SKILL_ME_CAPTURE")), "sem variável de captura");
+    const root = path.join(sandbox, "capturas ação");
+    mkdirSync(root);
+    roots[name] = root;
+    const userEnv = baseEnv({ HOME: env.HOME, USERPROFILE: env.USERPROFILE });
+    for (const args of [["setup", "--root", root], ["on"]]) assert.equal(runIntegrations(["observe", ...args], { env: userEnv }).status, 0, args[0]);
+    if (lock) writeFileSync(path.join(root, "skill-me-privacy", ".lock"), "lock alheio\n");
+  };
+  // Destino configurado que não inicia: o arquivo é o do setup com outro argv.
+  const brokenDestination = async (sandbox, env) => {
+    await configure("destino")(sandbox, env);
+    const file = path.join(env.USERPROFILE, ".skill-me", "observe.json");
+    const config = JSON.parse(readFileSync(file, "utf8"));
+    writeFileSync(file, JSON.stringify({ ...config, hermesDelivery: [path.join(sandbox, "não existe", "destino.exe")] }));
+  };
+  const scenario = { toolCalls: 3, invokes: OTHER_HOOKS };
+  await prepareAndRun("i23-observado", { scenario, beforeRun: configure("observado") });
+  await prepareAndRun("i23-lock", { scenario, beforeRun: configure("lock", { lock: true }) });
+  await prepareAndRun("i23-destino", { scenario, beforeRun: brokenDestination });
+
+  // Em todos, o agente segue igual: callbacks None e ferramenta inalterada.
+  for (const name of ["i23-observado", "i23-lock", "i23-destino"]) {
+    const { result } = runs[name];
+    assert.deepEqual(result.loaded["skill-me-observer"].hooks, SEVEN, name);
+    for (const invoke of result.invokeResults) assert.deepEqual(invoke.results, [], `${name}/${invoke.hook}`);
+    assert.deepEqual(echoed(result), result.toolResults.map(() => ({ echo: ARGS })), name);
+    assert.deepEqual(result.toolCalls, result.toolResults.map(() => ARGS), name);
+    assert.equal(result.blockMessage, null, name);
+  }
+
+  // Entrega pela configuração: 3 ferramentas × (pre + post), 5 hooks e o
+  // pre_tool_call da checagem de bloqueio do harness.
+  const observed = runs["i23-observado"].result.stats;
+  const total = 3 * 2 + OTHER_HOOKS.length + 1;
+  assert.deepEqual([observed.active, observed.enqueued, observed.delivered, observed.deliveryFailed], [true, total, total, 0]);
+  const root = roots.observado;
+  const captures = await waitForPersisted(root, total);
+  assert.equal(captures?.length, 2, "uma captura por sessão Hermes");
+  const records = Object.fromEntries(
+    captures.map((capture) => {
+      const exported = JSON.parse(runIntegrations(["privacy", "export", "--root", root, "--capture", capture.id]).stdout);
+      return [capture.id, exported.records];
+    }),
+  );
+  const ownerOf = (native) => {
+    const found = captures.filter((c) => records[c.id].every((r) => (r.envelope.ids.sessionId ?? r.envelope.ids.parentSessionId) === expectedPseudonym(root, c.id, native)));
+    assert.equal(found.length, 1, native);
+    return found[0];
+  };
+  const tools = ownerOf(IDS.session_id);
+  assert.equal(records[tools.id].length, 7, "ferramentas reais e a checagem de bloqueio");
+  assert.deepEqual(
+    records[tools.id].filter((r) => r.envelope.eventKind === "tool_pre" && r.envelope.ids.toolCallId !== expectedPseudonym(root, tools.id, "block-check")).map((r) => r.envelope.ids.toolCallId),
+    ["call-0", "call-1", "call-2"].map((call) => expectedPseudonym(root, tools.id, call)),
+  );
+  const fixtureSession = ownerOf("hermes-sess-01");
+  assert.deepEqual(records[fixtureSession.id].map((r) => r.envelope.nativeEvent).sort(), OTHER_HOOKS.map((h) => h.hook).sort(), "subagentes na sessão do pai");
+  for (const record of Object.values(records).flat()) {
+    assert.deepEqual([record.envelope.source.agent, record.envelope.signal], ["hermes", "native_plugin"]);
+  }
+  const disk = readdirSync(path.join(root, "skill-me-privacy", "captures"))
+    .flatMap((id) => readdirSync(path.join(root, "skill-me-privacy", "captures", id)).filter((n) => n !== "key").map((n) => readFileSync(path.join(root, "skill-me-privacy", "captures", id, n), "utf8")))
+    .join("\n");
+  for (const native of [IDS.session_id, IDS.task_id, IDS.turn_id, "hermes-sess-01", "call-0", "SKILLME-CANARY"]) assert.ok(!disk.includes(native), native);
+
+  // Store ocupado: o ingest desiste no prazo da entrega, nada é gravado e o lock alheio fica.
+  assert.equal(runs["i23-lock"].result.stats.deliveryFailed, 0, "o plugin entregou ao ingest");
+  await sleep(3000);
+  assert.equal(readFileSync(path.join(roots.lock, "skill-me-privacy", ".lock"), "utf8"), "lock alheio\n");
+  assert.ok(!existsSync(path.join(roots.lock, "skill-me-privacy", "captures")), "nada gravado com o store ocupado");
+  // Destino configurado que não inicia: contado como falha, entrega desligada, sem retry.
+  const broken = runs["i23-destino"].result.stats;
+  assert.ok(broken.deliveryFailed >= 1, JSON.stringify(broken));
+  assert.equal(broken.active, false);
+  assert.equal(automaticCaptures(roots.destino)?.length ?? 0, 0);
 });
 
 test("I4-C44b Hermes sem entrega configurada fica inativo", { skip: SKIP }, () => {
