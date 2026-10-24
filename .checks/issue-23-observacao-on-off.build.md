@@ -386,3 +386,234 @@ DACL do Windows e 1 de ACL do macOS. `git diff --check`: exit 0.
 - Nenhuma sessão real de agente; nenhum hook pessoal instalado nem `on` real:
   `~/.skill-me` continua inexistente no Windows e no WSL. Core vendorizado e pilotos
   não foram tocados.
+
+## Correção do F2 (verificação independente, rodada 2)
+
+Base: `7a8553c`, com o veredito FAIL da rodada 2 em
+`.checks/issue-23-observacao-on-off.verified.md` (não editado aqui). Escopo
+autorizado pelo orquestrador: corrigir o F2 — a pasta da configuração como
+fronteira de confiança na leitura, na decisão e no efeito —, avaliar `setup`,
+`off`, `status`, `report --latest` e o plugin Hermes onde a mesma falha os atinge,
+e investigar o G1 de forma proporcional, sem mudar o T8-C15. Builder: Claude,
+perfil `light`. As seções anteriores deste arquivo não foram alteradas.
+
+### Commits
+
+- `05f9c23` docs(checks): registrar a pasta da configuração como fronteira — linha
+  "Pasta da configuração" do Landing, commitada antes de qualquer mudança de
+  produto (regra nova de conferência e o código `foreign_entry` para outra pasta
+  real no mesmo nome).
+- `f343e99` fix(observe): conferir a pasta da configuração em cada leitura
+- `bb3dbc3` fix(hermes): recusar a pasta da configuração trocada por junção
+- `a2b95ad` test(observe): provar a troca da pasta da configuração por junção
+- `40d77fc` docs(observe): documentar a pasta da configuração como diretório real
+- o commit deste registro (docs(checks))
+
+### Onde a mesma falha chegava
+
+Medido no produto de `7a8553c` pelas provas novas (vermelho abaixo):
+
+| Consumidor | No produto anterior, com `.skill-me` trocada por junção para a pasta de outra configuração | Agora |
+| --- | --- | --- |
+| `on` | a reprodução do F2: lock e leitura pela junção, 0 e a raiz alheia `on` | 4 `link_refused`, raiz alheia intacta |
+| `off` | troca durante a leitura: desligava a raiz alheia (e encerraria as automáticas dela) e deixava a original `on`; respondia 4 `foreign_entry` só porque a liberação do lock não o achava pela junção | 4 `link_refused`, as duas raízes intactas |
+| `setup` | temporário e `rename` pelo nome gravavam a configuração nova na pasta alheia (4 `foreign_entry`, de novo pela liberação) | 4 `link_refused`, pasta alheia com os mesmos bytes |
+| `status`, `report --latest` | seguiam a junção: `status` 0 com o estado da raiz alheia, `report` 3 `no_automatic_capture` | 4 `link_refused` |
+| hooks e ingest | seguiam a junção; com a raiz alheia `on`, o hook gravou a sessão nela (`committed: 1`) | `link_refused` no relatório da entrega, nada gravado |
+| plugin Hermes | `is_symlink()` não reconhece junção no Python 3.11 do Hermes: lia o `hermesDelivery` alheio, que passaria a executar | sem destino (inativo, como I4-C44b) |
+| captura manual, store | não leem a configuração | inalterados |
+
+### Correção
+
+`observe/config.mjs`: toda leitura de `observe.json` confere a pasta com
+`lstat(..., { bigint: true })` antes e depois do arquivo — diretório real (link ou
+junção: `link_refused`) e a mesma identidade `dev`/`ino` (outra pasta, ausente ou
+não diretório: `foreign_entry`). `bigint` porque no Windows o índice do arquivo de
+uma pasta comum medido aqui já passa de 7,5·10^15, perto do limite exato do
+Number. `configDir` devolve `{ dir, identity }`; `withConfigLock`
+(`observe/command.mjs`) usa essa identidade, obtida antes de criar
+`observe.lock`, como referência da leitura sob o lock, de modo que a primeira
+conferência ali já recusa uma troca anterior ao lock. `writeObserveConfig` grava
+na pasta conferida e a confere de novo entre o temporário e o `rename` (o temporário
+gravado pela junção sai de lá; o `rename` pelo nome só acha o temporário na pasta
+onde ele foi gravado). Sem referência (`status`, `report --latest`, hooks,
+ingest), vale a identidade da primeira conferência, e um nome que não é diretório
+continua sendo "nada configurado", como antes. `configPath`, sem uso depois disso,
+saiu.
+
+Plugin (`hermes/plugin/__init__.py`): a pasta precisa ser diretório real — sem
+`S_ISLNK` nem `st_reparse_tag == IO_REPARSE_TAG_MOUNT_POINT`, que é como o Python
+3.11 do Hermes mostra a junção (conferido nesta máquina: `S_ISDIR` verdadeiro,
+`is_symlink()` falso) — e ter o mesmo `(st_dev, st_ino)` antes e depois da
+leitura; senão, sem destino.
+
+O lock de `holdLockFile` não mudou: a liberação só apaga o arquivo com os bytes
+desta execução. Trocada a pasta antes do lock, ele é criado e liberado pela
+junção, e nada fica; trocada depois, ele vai junto com a pasta movida e fica lá,
+como em I4-C27b. Formato da configuração, permissões, barreira do F1 e comandos
+manuais: inalterados.
+
+### Regressão: vermelho e verde
+
+Um teste novo em `observe/control.cli.test.mjs`, com o padrão do C2, sobre home e
+raízes temporários reais. A troca é feita pelo io do comando logo antes da
+operação escolhida (sem tempo nem pausa) e, na segunda linha, desfeita logo depois
+da leitura. Cada linha afirma o código exato, que nenhuma raiz alheia mudou
+(estado e geração iguais aos de antes), o conteúdo das duas pastas de
+configuração, `status`/`report --latest`/hook com a junção ainda no lugar e, com a
+pasta original de volta (e o lock próprio dela removido como o README manda), `on`
+e `off` controlando a raiz original:
+
+| Linha | Esperado |
+| --- | --- |
+| `on`, junção antes de criar o lock (a reprodução do F2) | 4 `link_refused`; lock criado e liberado pela junção |
+| `on`, junção antes do lock, desfeita depois da leitura | 4 `link_refused` pela conferência sob o lock |
+| `off`, junção sob o lock, ao ler a configuração (raízes `on`) | 4 `link_refused`; lock próprio na pasta movida |
+| `on`, outra pasta real antes de criar o lock | 4 `foreign_entry` |
+| `setup`, junção sob o lock, antes do temporário | 4 `link_refused`; pasta alheia intacta |
+
+No `hermes-plugin.native.test.mjs`, com o padrão do C8, `_load_delivery()` da
+fonte do plugin pelo Python do Hermes: pasta real (controle: o argv do `setup`),
+junção antes da leitura e junção posta pelo `open` do módulo ao abrir o arquivo
+(as duas: `null`, e a troca confirmada).
+
+- Vermelho, Windows 11, Node 24.22.1, com os dois arquivos de produto (e depois o
+  plugin) de `7a8553c` postos na árvore por `git stash` e devolvidos em seguida:
+  C2 novo 0/1 — as cinco linhas divergem (`on` 0 e a raiz alheia `on` com sessão
+  gravada pelo hook; na linha desfeita, raiz alheia `on` e o lock próprio órfão na
+  pasta alheia; `off` desliga a raiz alheia; pasta real: raiz alheia `on`; `setup`
+  altera a configuração alheia; `status` 0, `report` 3 e hook `observe_off` com a
+  junção). C8 novo 0/1 — as duas trocas devolvem o argv alheio; o controle passa.
+- Verde: C2 novo 1/1 e C8 novo 1/1, 0 skip.
+
+### Mutações
+
+Cada mutação aplicada por script fora do repositório, com o teste correspondente,
+e os bytes originais restaurados (hashes conferidos depois):
+
+| Mutação | Resultado | Linha que a detecta |
+| --- | --- | --- |
+| M21 sem a conferência sob o lock antes da leitura | 0/1 | `on`, desfeita depois da leitura (raiz alheia `on`, lock próprio órfão na pasta alheia) |
+| M22 sem a conferência depois da leitura | 0/1 | `off` durante a leitura |
+| M23 só recusa link, sem comparar a identidade | 0/1 | outra pasta real |
+| M24 `setup` sem conferir a pasta antes do `rename` | 0/1 | `setup` |
+| M25 leitura sob o lock sem a referência anterior ao lock | 0/1 | outra pasta real |
+| M26 plugin sem a conferência depois da leitura | 0/1 | plugin, junção durante a leitura |
+| M27 plugin sem reconhecer junção (só `S_ISLNK`) | 0/1 | plugin, junção antes da leitura |
+
+As duas linhas "desfeita depois da leitura" e "outra pasta real" foram
+acrescentadas por isso: com a junção sempre no lugar, a conferência depois da
+leitura sozinha já recusava as três primeiras, e M21, M23 e M25 passariam.
+
+### Provas do checklist
+
+Windows 11, Node 24.22.1, árvore equivalente a `40d77fc`, comando literal de cada check:
+
+| Check | Testes | Resultado |
+| --- | --- | --- |
+| C1 | 1 | 1 pass, 0 fail, 0 skip |
+| C2 | 5 (o original, os três do F1 e o do F2) | 5 pass, 0 fail, 0 skip |
+| C3 | 1 | 1 pass, 0 fail, 0 skip |
+| C4 | 2 | 2 pass, 0 fail, 0 skip |
+| C8 | 2 (o original e o do plugin) | 2 pass, 0 fail, 0 skip (Hermes 0.21.4 local) |
+| C12 | 2 | 2 pass, 0 fail, 0 skip |
+| C13 | 1 | 1 pass, 0 fail, 0 skip |
+| C18 | 2 | 2 pass, 0 fail, 0 skip |
+
+Essas provas rodaram entre 13:16:29 e 13:17:04 (`/tmp/i23f2/proof-C*.txt`), pouco antes
+dos commits (13:17:16). A última modificação dos oito arquivos de `7a8553c..40d77fc`
+ocorreu entre 13:05:31 e 13:16:14, e nenhum deles difere de `40d77fc`. Os mesmos
+checks rodaram de novo no HEAD dentro do `npm test` abaixo: os 29 testes `I23-`
+(C1 a C18) passaram, sem falhas nem skips.
+
+### Suítes
+
+| Ambiente | Alvo | Resultado |
+| --- | --- | --- |
+| Windows — HEAD `40d77fc`, árvore de produto limpa | `npm test` (`/tmp/i23f2/npm-test-1.txt`) | exit 1 — governança 6/6; motor 16/16; doctor 417 (410 pass, 0 fail, 7 skip); integrações 443 (435 pass, 1 fail, 7 skip) |
+| Windows — HEAD `40d77fc` | `node --test --test-reporter=spec --test-name-pattern="T8-C15" tests/integrations/traces/concurrency.cli.test.mjs`, três vezes | 3 de 3 com 1 pass, 0 fail, 0 skip (`/tmp/i23f2/t8c15-iso-{1,2,3}.txt`) |
+
+As integrações passam de 441 para 443 testes com os dois novos do F2. A única
+falha foi o `T8-C15` (o G1), na rodada 1: `bound: true` e `entries: 1`, mas
+`code: 'lock_present'`, `committed: 0`, `persisted: 0` e `lost: 1`, quando se
+esperavam `code: null` e 1/1/0. A mesma falha já ocorreu no Verifier em `1ccfe70`,
+antes da correção do F1, e no builder em `deacc50`, antes do F2
+(`delivery_timeout`, seção anterior). Isolado no HEAD, o teste passou 3 de 3
+vezes. O intervalo `7a8553c..40d77fc` não altera `src/integrations/traces/`, e a
+captura manual e o store não leem a configuração. Não há evidência de regressão
+determinística no caminho manual. O teste não foi alterado.
+
+### Experimento A/B do G1 (interrompido, sem resultado)
+
+Para investigar o G1, o T8-C15 de duas cópias criadas por `git archive` (`A` =
+`a2400c3`, `main` antes da #23; `B` = `40d77fc`), com o `node_modules` do checkout
+em `/tmp/i23f2-ab/`, foi executado em alternância:
+
+- Com carga sintética de CPU (`/tmp/i23f2/ab-load.mjs`, com 32, 64 e 96 processos
+  de laço e uma rodada cada; `ab-cal{32,64,96}.txt`), A e B passaram nas três e a
+  falha não apareceu.
+- Com a suíte de integrações de uma terceira cópia (`L`) como carga
+  (`/tmp/i23f2/ab-suite.mjs`, saída em `/tmp/i23f2/ab-suite.txt`), as primeiras
+  linhas têm resultado mensurável e mostram falhas válidas nos dois lados: `A` com
+  `io_failure` (por exemplo, nas linhas 98 e 196) e `B` com `lock_present` (linha
+  1). A partir da linha 223 e até o fim (17.301 linhas, sem a linha de resumo),
+  todas são `FAIL NaNms`, sem execução mensurável do teste por exaustão de
+  processos.
+
+Esse arquivo não serve para calcular taxas, e o A/B não foi concluído. O script
+tinha um defeito: o laço `while (running)` só chama `spawnSync` e não devolve o
+controle ao event loop, de modo que o `exit` da carga nunca chegava a marcar
+`running = false`. Por isso, a interrupção do processo anterior do builder não
+encerrou o experimento. No início desta sessão, o processo (PID 20420, iniciado às
+13:23:40, logo depois do lançamento em segundo plano às 13:23:39) ainda
+acrescentava linhas `NaNms`. Às 13:39:34, ele foi encerrado ao marcar o arquivo de
+saída como somente leitura, para que só o processo que escrevia nele falhasse no
+`appendFileSync`. Depois de confirmados a saída do PID e o arquivo parado (398.343
+bytes), o atributo foi removido. O A/B e a carga sintética não foram executados de
+novo.
+
+### Skips e checks gerais
+
+- Windows, integrações: os 7 skips de antes, todos por plataforma — `I4-C15` e
+  `T8-C4` (sinais POSIX), `I4-C25b` (modos POSIX), `I4-C25j`, `I4-C25k` e `I4-C25l`
+  (ACL POSIX do Linux) e `I4-C25m` (ACL do macOS). Doctor: os 7 skips POSIX/FIFO de
+  antes.
+- Os dois testes novos do F2 usam junção no Windows e link de diretório no POSIX.
+  Nesta rodada não houve execução no WSL, e o lado POSIX deles não foi exercitado.
+- `git diff --check 7a8553c 40d77fc`: exit 0. `git diff --check` com este registro:
+  exit 0.
+
+### Limitações e mudanças de comportamento
+
+- Este item substitui o da seção anterior segundo o qual hooks e ingest continuavam
+  lendo pelo caminho. Agora `status`, `report --latest`, hooks e ingest também
+  recusam com `link_refused` uma `.skill-me` trocada por link ou junção (os hooks
+  registram a recusa no relatório da entrega e não gravam nada). Outra pasta real
+  posta no lugar entre as conferências gera `foreign_entry`. Nesses casos, o plugin
+  Hermes fica sem destino.
+- Uma troca da pasta depois de criado o lock leva o lock próprio para a pasta
+  movida, como em I4-C27b. Com a pasta original de volta, vale a remoção manual
+  documentada.
+- O G1 continua aberto como no relatório do Verifier: falha sob a carga da suíte
+  paralela no Windows, sem causa provada. O A/B não chegou a resultado.
+- A linha de comando dos `node.exe` não pôde ser lida nesta sessão, porque a
+  consulta de processos pelo PowerShell foi negada sem aprovação. A conferência de
+  processos abaixo usa o horário de início e a árvore MSYS.
+- Nenhuma sessão real de agente; nenhum hook pessoal instalado nem `on` real.
+
+### Estado ao final
+
+- Processos: o PID 20420 do A/B saiu. Não há `node.exe` vivo iniciado entre 13:22
+  (calibração) e 13:36. Os iniciados depois coincidem com o início de sessões de
+  agentes nesta máquina (um par de `node.exe` a cada sessão desde 11:37), e os
+  processos MSYS ativos são de outros projetos (`fofura_em_camadas`).
+- Home real: `~/.skill-me` não existe no Windows. `~/.claude/settings.json`,
+  `~/.claude/settings.local.json`, `~/.codex/hooks.json` e `~/.codex/config.toml`
+  não mencionam o skill-me, e os plugins do Hermes local se resumem a
+  `orca-status`.
+- Árvore: antes do commit, `git status` mostra só este registro. `.verified.md`, o
+  core vendorizado e os pilotos não mudaram: os oito arquivos de
+  `7a8553c..40d77fc` não incluem nenhum deles. O worktree `skillme-base-2da52eb`
+  em `%TEMP%`, criado às 11:30 no build original, continua registrado e não foi
+  tocado. As cópias `/tmp/i23f2-ab/` e os logs em `/tmp/i23f2/` ficam fora do
+  repositório.
