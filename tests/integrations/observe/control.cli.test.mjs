@@ -278,6 +278,30 @@ test("I23-C2 setup recusa raiz inválida: troca concorrente com on — on já le
   await assertOffReachesAll(home, [previous, next]);
 });
 
+test("I23-C2 setup recusa raiz inválida: troca concorrente com outro setup e on — o setup atrasado relê sob o lock a configuração gravada pelo outro e recusa observe_on", async () => {
+  const { home, previous, next } = twoRoots("i23 c2 dois setups");
+  const third = path.join(path.dirname(previous), "raiz terceira ação");
+  mkdirSync(third);
+  assert.equal((await runObserveCommand({ argv: ["setup", "--root", previous], home })).exitCode, 0);
+  const configDir = path.dirname(configFile(home));
+
+  // O setup da terceira para antes de tomar o lock, com a raiz dela já validada.
+  const paused = pausedAt("mkdir", (dir) => dir === configDir);
+  const late = runObserveCommand({ argv: ["setup", "--root", third], home, io: paused.io });
+  await paused.reached;
+  assert.equal((await runObserveCommand({ argv: ["setup", "--root", next], home })).exitCode, 0);
+  assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
+  paused.release();
+  const lateResult = await late;
+
+  assertOnlyConfiguredOn(home, [previous, next, third]);
+  assert.deepEqual(lateResult, { exitCode: 4, body: { schemaVersion: 1, command: "setup", status: "error", error: { code: "observe_on" } } });
+  assert.equal(configuredRoot(home), next);
+  assert.deepEqual([stateOf(previous), stateOf(next), stateOf(third)], ["off", "on", "off"]);
+  assert.deepEqual(readdirSync(configDir), ["observe.json"], "nenhum lock ou temporário de sobra");
+  await assertOffReachesAll(home, [previous, next, third]);
+});
+
 test("I23-C4 off encerra e é idempotente: com um setup trocando a raiz, off espera a barreira e responde pela raiz que ficou configurada", async () => {
   const { home, previous, next } = twoRoots("i23 c4 setup e off");
   assert.equal((await runObserveCommand({ argv: ["setup", "--root", previous], home })).exitCode, 0);
