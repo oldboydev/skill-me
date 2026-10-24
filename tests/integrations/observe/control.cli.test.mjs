@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
+import { runObserveCommand } from "../../../src/integrations/observe/command.mjs";
+import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
 import { INTEGRATIONS_CLI, makeScratch, runIntegrations } from "../helpers/cli.mjs";
 import { SECRET_TEXT, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks } from "../helpers/privacy-canaries.mjs";
 import {
@@ -150,6 +152,151 @@ test("I23-C2 setup recusa raiz inválida: relativa, inexistente ou arquivo não 
   const report = runIntegrations(["report", "--latest", "--format", "json"], { env: envOn });
   assert.deepEqual([report.status, JSON.parse(report.stdout).error.code], [4, "root_changed"], "report --latest");
   assert.deepEqual(readdirSync(elsewhere), [], "nem os comandos gravam no outro destino");
+});
+
+// Troca concorrente da raiz (F1 da verificação, rodada 1): os comandos rodam em
+// processo, sobre home e raízes temporários reais, e a ordem entre eles é fixada
+// pelo io de cada um, não por tempo. Linha "Barreira da configuração" do Landing.
+
+function twoRoots(label) {
+  const home = scratch(`${label} home`);
+  const base = scratch(`${label} raízes`);
+  const previous = path.join(base, "raiz anterior ação");
+  const next = path.join(base, "raiz nova ação");
+  mkdirSync(previous);
+  mkdirSync(next);
+  return { home, previous, next };
+}
+
+// io que segura a primeira chamada `op` cujo caminho satisfaz `matches` até a
+// prova soltar.
+function pausedAt(op, matches) {
+  const base = createStoreIo();
+  let armed = true;
+  let reach;
+  let release;
+  const reached = new Promise((resolve) => (reach = resolve));
+  const released = new Promise((resolve) => (release = resolve));
+  const io = {
+    ...base,
+    async [op](file, ...rest) {
+      if (armed && matches(file)) {
+        armed = false;
+        reach();
+        await released;
+      }
+      return base[op](file, ...rest);
+    },
+  };
+  return { io, reached, release };
+}
+
+// io que avisa quando o comando encontra ocupado um arquivo exclusivo (o lock de
+// outro comando), sem mudar o resultado.
+function watchingContention(label) {
+  const base = createStoreIo();
+  let signal;
+  const contended = new Promise((resolve) => (signal = resolve));
+  const io = {
+    ...base,
+    async writeExclusive(file, data, options) {
+      try {
+        return await base.writeExclusive(file, data, options);
+      } catch (error) {
+        if (error.code === "EEXIST") signal(`${label} esperou`);
+        throw error;
+      }
+    },
+  };
+  return { io, contended };
+}
+
+const stateOf = (root) => (existsSync(observeFile(root)) ? readObserveState(root).state : "off");
+const configuredRoot = (home) => JSON.parse(readFileSync(configFile(home), "utf8")).root;
+
+// Só a raiz configurada pode estar on: é a única que status e off alcançam.
+function assertOnlyConfiguredOn(home, roots) {
+  const configured = configuredRoot(home);
+  for (const root of roots) if (root !== configured) assert.equal(stateOf(root), "off", `${path.basename(root)} ficou on fora da configuração`);
+}
+
+async function assertOffReachesAll(home, roots) {
+  const off = await runObserveCommand({ argv: ["off"], home });
+  assert.equal(off.exitCode, 0, JSON.stringify(off.body));
+  for (const root of roots) assert.equal(stateOf(root), "off", `off alcança ${path.basename(root)}`);
+}
+
+test("I23-C2 setup recusa raiz inválida: troca concorrente com on — setup já leu a raiz anterior off, on chega, setup grava a nova — não deixa raiz on fora da configuração", async () => {
+  const { home, previous, next } = twoRoots("i23 c2 setup primeiro");
+  assert.equal((await runObserveCommand({ argv: ["setup", "--root", previous], home })).exitCode, 0);
+  const configDir = path.dirname(configFile(home));
+
+  // setup da nova para logo antes de gravar a configuração: já conferiu que a anterior está off.
+  const paused = pausedAt("writeExclusive", (file) => path.dirname(file) === configDir && file.endsWith(".skill-me-tmp"));
+  const setup = runObserveCommand({ argv: ["setup", "--root", next], home, io: paused.io });
+  await paused.reached;
+  const watch = watchingContention("on");
+  const on = runObserveCommand({ argv: ["on"], home, io: watch.io });
+  const first = await Promise.race([on.then(() => "on concluído"), watch.contended]);
+  paused.release();
+  const [setupResult, onResult] = await Promise.all([setup, on]);
+
+  assertOnlyConfiguredOn(home, [previous, next]);
+  assert.equal(first, "on esperou", "on não conclui enquanto o setup troca a configuração");
+  assert.deepEqual(setupResult, { exitCode: 0, body: { schemaVersion: 1, command: "setup", status: "ok", observation: OFF } });
+  assert.equal(onResult.exitCode, 0, JSON.stringify(onResult.body));
+  assert.deepEqual([onResult.body.observation.state, onResult.body.changed], ["on", true]);
+  assert.equal(configuredRoot(home), next);
+  assert.deepEqual([stateOf(previous), stateOf(next)], ["off", "on"], "o on serializado depois do setup liga a nova");
+  assert.deepEqual(readdirSync(configDir), ["observe.json"], "nenhum lock ou temporário de sobra");
+  await assertOffReachesAll(home, [previous, next]);
+});
+
+test("I23-C2 setup recusa raiz inválida: troca concorrente com on — on já leu a raiz anterior, setup tenta trocar, on liga — setup recusa observe_on", async () => {
+  const { home, previous, next } = twoRoots("i23 c2 on primeiro");
+  assert.equal((await runObserveCommand({ argv: ["setup", "--root", previous], home })).exitCode, 0);
+  const configBytes = readFileSync(configFile(home));
+
+  // on para ao abrir a raiz anterior, depois de ler a configuração que a aponta.
+  const paused = pausedAt("stat", (file) => path.resolve(file) === previous);
+  const on = runObserveCommand({ argv: ["on"], home, io: paused.io });
+  await paused.reached;
+  const watch = watchingContention("setup");
+  const setup = runObserveCommand({ argv: ["setup", "--root", next], home, io: watch.io });
+  const first = await Promise.race([setup.then(() => "setup concluído"), watch.contended]);
+  paused.release();
+  const [onResult, setupResult] = await Promise.all([on, setup]);
+
+  assertOnlyConfiguredOn(home, [previous, next]);
+  assert.equal(first, "setup esperou", "setup não troca a configuração enquanto o on está em curso");
+  assert.equal(onResult.exitCode, 0, JSON.stringify(onResult.body));
+  assert.deepEqual([onResult.body.observation.state, onResult.body.changed], ["on", true]);
+  assert.deepEqual(setupResult, { exitCode: 4, body: { schemaVersion: 1, command: "setup", status: "error", error: { code: "observe_on" } } });
+  assert.deepEqual(readFileSync(configFile(home)), configBytes, "a configuração continua a anterior");
+  assert.deepEqual([stateOf(previous), stateOf(next)], ["on", "off"]);
+  assert.deepEqual(readdirSync(path.dirname(configFile(home))), ["observe.json"], "nenhum lock ou temporário de sobra");
+  await assertOffReachesAll(home, [previous, next]);
+});
+
+test("I23-C4 off encerra e é idempotente: com um setup trocando a raiz, off espera a barreira e responde pela raiz que ficou configurada", async () => {
+  const { home, previous, next } = twoRoots("i23 c4 setup e off");
+  assert.equal((await runObserveCommand({ argv: ["setup", "--root", previous], home })).exitCode, 0);
+  const configDir = path.dirname(configFile(home));
+  const paused = pausedAt("writeExclusive", (file) => path.dirname(file) === configDir && file.endsWith(".skill-me-tmp"));
+  const setup = runObserveCommand({ argv: ["setup", "--root", next], home, io: paused.io });
+  await paused.reached;
+  const watch = watchingContention("off");
+  const off = runObserveCommand({ argv: ["off"], home, io: watch.io });
+  const first = await Promise.race([off.then(() => "off concluído"), watch.contended]);
+  paused.release();
+  const [setupResult, offResult] = await Promise.all([setup, off]);
+
+  assert.equal(first, "off esperou", "off não conclui enquanto o setup troca a configuração");
+  assert.equal(setupResult.exitCode, 0, JSON.stringify(setupResult.body));
+  assert.deepEqual(offResult, { exitCode: 0, body: { schemaVersion: 1, command: "off", status: "ok", observation: OFF, changed: false, stopped: [] } });
+  assert.equal(configuredRoot(home), next);
+  assert.deepEqual([stateOf(previous), stateOf(next)], ["off", "off"]);
+  assert.deepEqual(readdirSync(configDir), ["observe.json"], "nenhum lock ou temporário de sobra");
 });
 
 test("I23-C3 on persiste e é idempotente: outro processo vê on com conteúdo sanitizado; repetir on mantém geração e não cria captura", async () => {
