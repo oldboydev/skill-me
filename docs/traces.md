@@ -106,6 +106,17 @@ ligada fora do alcance do `off`. Se um deles sair no meio, o lock pode ficar, e
 os três respondem 4 (`lock_present`) até você conferir que nenhum está ativo e
 removê-lo. `status`, `report --latest`, hooks e ingest não usam esse lock.
 
+A pasta `.skill-me` precisa ser um diretório real. Toda leitura da configuração
+— `setup`, `on`, `off`, `status`, `report --latest`, hooks, ingest e o plugin
+Hermes — confere a pasta antes e depois de ler o arquivo: link ou junção no lugar
+dela é `link_refused`; outra pasta posta no mesmo nome durante a leitura é
+`foreign_entry` (os dois 4 nos comandos; nos hooks e no ingest, nada é gravado; o
+plugin fica sem destino). `setup`, `on` e `off` comparam com a pasta conferida
+antes de criar o lock, então uma troca entre essa conferência e o lock também é
+recusada, e nenhuma raiz de outra configuração é ligada, desligada ou
+configurada. Se a pasta for trocada depois de o lock ser criado, ele vai junto
+com a pasta movida e fica nela até a remoção manual.
+
 **Estado e consentimento.** `on` grava `<raiz>/skill-me-privacy/observe.json`
 sob o lock do store, com o estado, uma geração aleatória e uma chave das
 sessões. `on` é o consentimento para capturas locais sucessivas, com conteúdo
@@ -164,8 +175,8 @@ relatório de fixture dos testes, a entrega automática usa estes códigos:
 | `store_invalid` | a pasta do store ou o `observe.json` dela não são nossos |
 | `capture_invalid` | a captura da sessão é ilegível |
 | `lock_present` | o lock estava ocupado e nenhuma tentativa o obteve até o prazo |
-| `link_refused` | link ou junção no caminho do store ou no lugar da configuração |
-| `foreign_entry` | entrada alheia no caminho do store |
+| `link_refused` | link ou junção no caminho do store ou no lugar da configuração (arquivo ou pasta `.skill-me`) |
+| `foreign_entry` | entrada alheia no caminho do store, ou outra pasta `.skill-me` posta durante a leitura |
 | `root_changed` | o caminho real da raiz não é mais o do `setup` |
 | `io_failure` | falha de E/S, inclusive com a confirmação perdida |
 | `delivery_timeout` | a operação não terminou no prazo; com o lock já obtido, a confirmação é incerta |

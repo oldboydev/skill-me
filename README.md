@@ -55,7 +55,9 @@ dados ficam em `<raiz>/skill-me-privacy/`. Raiz relativa, inexistente ou que
 não seja pasta é recusada. Para trocar de raiz, rode `npm run off` antes e
 repita o `setup`. Se a pasta for trocada depois por um link ou junção, nada é
 gravado no outro destino: os comandos respondem `root_changed` até um novo
-`setup`.
+`setup`. A própria `.skill-me` também precisa continuar uma pasta comum: com um
+link ou junção no lugar dela, `setup`, `on`, `off`, `status` e `report --latest`
+respondem 4 (`link_refused`), e hooks e plugin não gravam nem entregam nada.
 
 ### 2. Uso normal
 
