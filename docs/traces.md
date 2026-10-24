@@ -6,7 +6,10 @@ A explicação da execução e a comparação com instruções da skill estão e
 Este guia mostra como ligar uma execução de agente a uma captura local, ver os
 registros enquanto chegam, recuperar a captura e reutilizar os registros numa
 análise. Tudo roda na sua máquina, a partir do checkout: não há servidor,
-daemon, upload nem descoberta automática de captura. A política de privacidade,
+daemon nem upload. Uma captura só recebe registros pelo par explícito da
+próxima seção ou, depois de você ligar a observação automática (`npm run on`,
+seção "Observação automática"), pela captura que ela cria para cada sessão;
+nenhuma captura existente é descoberta pelo diretório. A política de privacidade,
 os limites e a exclusão são os da #5 ([docs/privacidade.md](privacidade.md)); os
 contratos nativos e a instalação das integrações são os da #4
 ([docs/agent-observation.md](agent-observation.md)).
@@ -55,11 +58,118 @@ contratos nativos e a instalação das integrações são os da #4
 
 Só o par completo escolhe uma captura. Sem nenhuma das duas variáveis, as
 integrações ficam como na #4: observação em memória, descartada ao fim do
-processo. Com uma só, raiz relativa ou ID fora do formato, nenhuma captura é
+processo — a menos que a observação automática esteja ligada (próxima seção).
+Com uma só, raiz relativa ou ID fora do formato, nenhuma captura é
 escolhida (`binding_invalid`) — nem a única ativa da raiz, nem uma achada pelo
-diretório atual. As variáveis não criam captura nem ligam conteúdo: o
+diretório atual, nem uma captura automática. As variáveis não criam captura nem ligam conteúdo: o
 consentimento continua sendo o `privacy start` daquela captura, e uma captura
-encerrada (`stop`/`disable`) recusa novos registros.
+encerrada (`stop`/`disable`) recusa novos registros. O par tem precedência
+sobre a observação automática: com ele, o produtor grava só na captura do par, e
+`npm run off` não a encerra.
+
+## Observação automática (issue #23)
+
+Para o uso normal, sem criar captura nem definir variáveis a cada sessão:
+
+```
+node src/integrations/cli.mjs observe setup --root <diretório-absoluto>
+npm run on
+npm run off
+npm run status
+node src/integrations/cli.mjs report --latest [--skill <SKILL.md>] [--format text|markdown|json]
+```
+
+`npm run on`, `off` e `status` executam `node src/integrations/cli.mjs observe
+on|off|status`, sem argumentos. Cada resposta é um JSON `schemaVersion: 1`
+com 0 concluído; 2 uso inválido; 3 sem `setup`, estado ou formato inválido ou
+ausente; 4 conflito, lock ocupado ou raiz trocada; 5 falha de E/S. Um lock
+ocupado por um produtor é esperado por até 2 s.
+
+**Configuração única.** `observe setup` aceita só uma pasta absoluta e
+existente e grava no home do usuário (`os.homedir()`: `USERPROFILE` no
+Windows, `HOME` no POSIX; o plugin Hermes usa o `Path.home()` equivalente) o
+arquivo `.skill-me/observe.json`:
+
+```
+{"skillMeObserveConfig":1,"root":"<informada>","rootReal":"<caminho real no setup>","hermesDelivery":["<node>","<src/integrations/cli.mjs>","ingest","--agent","hermes"]}
+```
+
+A gravação usa temporário exclusivo e `rename`; no POSIX, pasta e arquivo são
+só do dono. Toda operação automática confere que o caminho real da raiz ainda é
+`rootReal`: trocada por link ou junção, responde `root_changed` e nada é
+gravado. Com a raiz configurada `on`, um novo `setup` é recusado (4,
+`observe_on`): desligue antes.
+
+**Estado e consentimento.** `on` grava `<raiz>/skill-me-privacy/observe.json`
+sob o lock do store, com o estado, uma geração aleatória e uma chave das
+sessões. `on` é o consentimento para capturas locais sucessivas, com conteúdo
+sanitizado, até o `off`. Repetido, não grava nada; depois de um `off`, cria
+geração, chave e mapa novos. `off` grava `off` sob o mesmo lock e encerra
+(`stopped`) toda captura automática ativa; repetido, não muda nada. `status`
+mostra o estado, a geração e as 10 capturas automáticas mais recentes; a chave e
+o mapa de sessões nunca aparecem numa resposta.
+
+**Quem grava onde.**
+
+| Ambiente do produtor | Hooks Claude/Codex e ingest Hermes | Wrapper `integrations run` |
+| --- | --- | --- |
+| par completo e válido | só a captura do par | só a captura do par |
+| par incompleto, raiz relativa ou ID fora do formato | nenhuma (`binding_invalid`) | nenhuma (`binding_invalid`) |
+| sem nenhuma das variáveis, observação `on` | a captura automática da sessão | só memória |
+| sem nenhuma das variáveis, sem `setup` ou `off` | só memória | só memória |
+
+**Uma captura por sessão.** A sessão é o `sessionId` que a fronteira v1
+aceitaria no envelope (no Hermes, o `parentSessionId` de um evento de
+subagente sem `sessionId`). O mapa sessão → captura guarda só
+`HMAC-SHA-256(chave das sessões, agente\0sessionId)`, nunca o ID nativo; o
+mesmo valor em dois agentes são duas sessões. Um evento sem sessão não vai a
+nenhuma captura — nem à única aberta — e só é contado. Cada captura automática
+nasce com conteúdo ligado (como `--content`), retenção de 7 dias, chave e
+limites próprios, e traz `"origin":"automatic"` no `state.json` e no
+`status`/`list`/`export`; a forma das capturas manuais não muda. O mapa guarda
+até 1000 sessões por geração; a mais antiga sai e, se voltar, abre outra
+captura, sem perder o que já foi gravado.
+
+**Capturas sucessivas.** O registro que não cabe numa captura já usada (500
+eventos ou 8 MiB) não é descartado: ela é encerrada e a sucessora é criada sob o
+mesmo lock, com a política reaplicada com a chave nova. Encerrada, desabilitada
+ou excluída à mão, a captura da sessão também é sucedida enquanto a observação
+estiver `on`; para parar, use `off`.
+
+**Barreira do `off`.** O produtor lê a geração ao abrir. Cada gravação
+automática — escolha ou criação da captura, política, admissão e commit —
+acontece numa única tomada do lock, que confere `on` e a mesma geração. Um
+`off` espera o commit em curso; depois dele, nenhum produtor já aberto grava, e
+um produtor aberto antes de um novo `on` também não (`observe_off`, sem nova
+tentativa).
+
+**Falhas.** Como na entrega com o par: hooks e ingest saem com 0 e stdout
+vazio, o lock ocupado é tentado até 750 ms por entrada e nenhuma outra falha é
+repetida. A rota automática não escreve diagnóstico (`SKILL_ME_CAPTURE_REPORT`
+vale só com o par): o que chegou aparece nos contadores do `status`. No
+relatório de fixture dos testes, a entrega automática usa estes códigos:
+
+| Código automático | Significado |
+| --- | --- |
+| `config_invalid` | `.skill-me/observe.json` do home ilegível ou fora do formato |
+| `observe_off` | observação desligada, ou outra geração depois de `off`/`on` |
+| `root_not_found` | a raiz configurada não existe |
+| `root_not_directory` | a raiz configurada não é diretório |
+| `store_invalid` | a pasta do store ou o `observe.json` dela não são nossos |
+| `capture_invalid` | a captura da sessão é ilegível |
+| `lock_present` | o lock estava ocupado e nenhuma tentativa o obteve até o prazo |
+| `link_refused` | link ou junção no caminho do store ou no lugar da configuração |
+| `foreign_entry` | entrada alheia no caminho do store |
+| `root_changed` | o caminho real da raiz não é mais o do `setup` |
+| `io_failure` | falha de E/S, inclusive com a confirmação perdida |
+| `delivery_timeout` | a operação não terminou no prazo; com o lock já obtido, a confirmação é incerta |
+
+**Consulta.** `report --latest` escolhe, sem criar lock, a captura
+`origin: automatic` de maior (`createdAt`, `id`) da raiz configurada e a nomeia
+na linha `Captura:` do texto e do Markdown (`timeline.capture.id` no JSON).
+Nunca escolhe uma captura manual: sem automática, sai com 3
+(`no_automatic_capture`); sem `setup`, com 3 (`not_configured`). `--latest`
+junto com `--root` ou `--capture` é uso inválido (2).
 
 ## O que cada integração grava
 
@@ -335,11 +445,19 @@ Com fixtures sintéticas, pelas provas de `tests/integrations/traces/`:
 - a demonstração de ponta a ponta `tests/integrations/traces/demo.e2e.test.mjs`,
   que rotula cada passo como fixture ou comando do usuário;
 - a timeline (`privacy timeline` e `correlateTrace`) sobre fixtures de Claude, Codex e
-  Hermes, em `tests/integrations/correlation/`, com a mesma estrutura pela API e pelo CLI.
+  Hermes, em `tests/integrations/correlation/`, com a mesma estrutura pela API e pelo CLI;
+- a observação automática (issue #23), em `tests/integrations/observe/`: `setup` e
+  `npm run on/off/status` pelo npm, em processos separados e com home e raiz
+  temporários; hooks Claude e Codex pela linha instalada e ingest Hermes sem
+  variável de captura; sessões intercaladas e simultâneas; capturas sucessivas
+  nos limites de eventos e de bytes; `off` concorrente com um commit em curso;
+  `report --latest`; e o plugin Hermes dentro do Hermes 0.21.4 local, sem
+  `SKILL_ME_HERMES_DELIVERY`, entregando pela configuração única.
 
 Não demonstrado: sessões reais do Claude, do Codex ou do Hermes com modelo (E2E
 pendente, não autorizado nesta entrega) e o plugin Hermes rodando dentro do
-Hermes com a captura vinculada. Nenhuma prova executa um modelo.
+Hermes com a captura vinculada pelo par manual (com a observação automática, sim,
+sem modelo). Nenhuma prova executa um modelo.
 
 ## Plataformas comprovadas
 

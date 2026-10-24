@@ -14,6 +14,11 @@ termina: nada é gravado nem enviado pelo debugger. Com `SKILL_ME_CAPTURE_ROOT` 
 também grava o resultado sanitizado nessa captura local; nada é enviado. Uma
 entrega que falha deixa só código fechado e contagens no arquivo de
 `SKILL_ME_CAPTURE_REPORT`, quando definido ([docs/traces.md](traces.md)).
+Sem nenhuma das duas variáveis, hooks Claude/Codex e o ingest Hermes também
+gravam localmente quando você liga a observação automática (`observe setup` uma
+vez, depois `npm run on` até `npm run off`; issue #23): cada sessão vai a uma
+captura própria na raiz configurada, e o wrapper continua só com o par
+([docs/traces.md](traces.md), seção "Observação automática").
 
 ## O que roda onde
 
@@ -22,7 +27,7 @@ entrega que falha deixa só código fechado e contagens no arquivo de
 | Hook Claude (`settings.json`) | processo iniciado pelo Claude a cada evento | stdin → adaptador → fronteira → receptor em memória; stdout vazio, exit 0; descartado ao sair |
 | Hook Codex (`hooks.json`) | processo iniciado pelo Codex a cada evento | igual ao Claude |
 | Wrapper `integrations run --agent codex` | processo único durante o `codex exec` | stdout = JSONL nativo do Codex, byte a byte (inclusive itens de raciocínio que o próprio Codex emitir — saída do agente, não telemetria do debugger); stderr = do Codex; o receptor vive até o fim do `exec` e é descartado |
-| Plugin Hermes `skill-me-observer` | dentro do processo Hermes | sem `SKILL_ME_HERMES_DELIVERY`: inativo (callback devolve `None`, sem fila, thread ou processo); com ele: projeção dos nomes de `kwargs.json`, fila de 256, entrega a um processo `integrations ingest` |
+| Plugin Hermes `skill-me-observer` | dentro do processo Hermes | sem `SKILL_ME_HERMES_DELIVERY` nem o `hermesDelivery` gravado por `observe setup` em `~/.skill-me/observe.json`: inativo (callback devolve `None`, sem fila, thread ou processo); com um deles (a variável tem precedência; o arquivo é lido ao carregar o plugin): projeção dos nomes de `kwargs.json`, fila de 256, entrega a um processo `integrations ingest`, que decide on/off, raiz e sessão |
 | Exportador de fixture | só com `SKILL_ME_OBSERVER_REPORT_FD` definido pelos testes | uma linha JSON (relatório v2) com envelopes já tratados pela política de privacidade da #5 e contadores, num pipe; a instalação nunca define essa variável |
 
 ## Envelope v1
