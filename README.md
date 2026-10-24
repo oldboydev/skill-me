@@ -106,6 +106,15 @@ mesmo prazo. Se um deles for interrompido no meio, esse arquivo pode ficar, e os
 três respondem 4 (`lock_present`) até você conferir que nenhum está em execução
 e removê-lo.
 
+`npm run on` também registra a raiz ligada em `.skill-me-authorization.json`,
+direto no home e fora da `.skill-me`, e `npm run off` desliga a raiz por esse
+registro e o apaga, mesmo que a pasta `.skill-me` tenha sido trocada ou apagada
+depois do `on`; isso vale até quando o `off` responde um erro da configuração.
+Enquanto o registro apontar outra raiz, `on` responde 4 (`observe_on`): rode
+`npm run off`. Se ele estiver ilegível (3, `config_invalid`), como depois de uma
+queda no meio do `on`, esse `on` não chegou a ligar a raiz: confira o arquivo e
+remova-o.
+
 ### 3. Limites reais
 
 - Hooks só rodam depois da confiança nativa: workspace confiável e `/hooks` no

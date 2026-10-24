@@ -117,6 +117,29 @@ recusada, e nenhuma raiz de outra configuração é ligada, desligada ou
 configurada. Se a pasta for trocada depois de o lock ser criado, ele vai junto
 com a pasta movida e fica nela até a remoção manual.
 
+**Registro da autorização.** Uma troca da pasta depois da última conferência
+não é vista por ninguém. Por isso a raiz que o `on` liga fica registrada fora
+da pasta, direto no home, em `.skill-me-authorization.json`:
+
+```
+{"skillMeObserveAuthorization":1,"rootReal":"<caminho real da raiz>"}
+```
+
+O `on` cria o registro (exclusivo, só do dono no POSIX, gravado no disco) sob o
+lock do store da raiz e antes de gravar `on`; se ele já nomeia outra raiz, o
+`on` responde 4 (`observe_on`) e nada é ligado. O `off` desliga a raiz
+configurada e depois a do registro, quando for outra ou quando a configuração
+não puder ser lida, pelo `rootReal` dela; sob o lock dessa raiz, depois de
+gravar `off` e encerrar as automáticas, apaga o registro. A resposta continua a
+da configuração, com `changed`, `stopped` e `failed` das duas raízes, e um erro
+sai só com o código, mesmo que a raiz registrada tenha sido desligada. Assim, no
+máximo uma raiz fica `on`, e o `off` a alcança qualquer que seja a pasta
+`.skill-me` antes ou depois do `on`. Link ou junção no lugar do registro é 4
+(`link_refused`); registro ilegível ou fora da forma é 3 (`config_invalid`) e
+fica no lugar — depois de uma queda no meio da criação, aquele `on` não chegou a
+ligar a raiz, e a remoção é manual. `setup`, `status`, `report --latest`, hooks,
+ingest e o plugin Hermes não leem o registro.
+
 **Estado e consentimento.** `on` grava `<raiz>/skill-me-privacy/observe.json`
 sob o lock do store, com o estado, uma geração aleatória e uma chave das
 sessões. `on` é o consentimento para capturas locais sucessivas, com conteúdo
