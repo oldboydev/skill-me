@@ -131,10 +131,16 @@ estiver ilegível (3, `config_invalid`), como depois de uma queda no meio do
   `SKILL.md` aparece só como operação de ferramenta, nunca como prova de que a
   skill foi carregada. O wrapper `integrations run --agent codex` continua só
   com a captura manual.
-- Hermes: o plugin lê o destino da entrega ao carregar; inicie o Hermes depois
-  do `setup` (o `on`/`off` vale sem reiniciar). Os eventos Hermes não incluem
-  conteúdo de comandos pela política de privacidade e não comprovam comandos
-  literais no relatório.
+- Hermes: o plugin lê o destino da entrega ao carregar, e cada instância do
+  Hermes tem uma só entrega, que segue a observação vigente no primeiro evento
+  dela (o primeiro turno). Inicie (ou reinicie) o Hermes depois do `setup` e do
+  `npm run on`. Uma instância cujo primeiro evento ocorreu com a observação
+  `off`, como uma aberta e usada antes do `on`, ou que atravessou um
+  `npm run off` não volta a capturar depois de um novo `npm run on`, mesmo com
+  o `npm run status` em `on`: feche-a e abra outra. O `off` continua cortando na
+  hora a gravação dessa instância. Os eventos Hermes não incluem conteúdo de
+  comandos pela política de privacidade e não comprovam comandos literais no
+  relatório.
 - Claude Code e Hermes fornecem sinais nativos de skill. O raciocínio interno do
   agente nunca é capturado, e o relatório não prova o cumprimento integral da
   skill.
