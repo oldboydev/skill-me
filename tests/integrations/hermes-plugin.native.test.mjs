@@ -7,14 +7,16 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { INTEGRATIONS_CLI, REPO_ROOT, assertPseudonymIds, baseEnv, makeScratch, parseReport, runIntegrations, runIntegrationsJson } from "./helpers/cli.mjs";
 import { expectedPseudonym } from "./helpers/traces.mjs";
 import { fixtureCase } from "./helpers/fixtures.mjs";
-import { DELIVERY_FIXTURE, FIXTURE_PLUGINS, bytecodeState, harnessEnv, locateHermesRuntime, runHarness } from "./helpers/hermes-runtime.mjs";
+import { DELIVERY_FIXTURE, FIXTURE_PLUGINS, bytecodeState, harnessEnv, locateHermesRuntime, locateSystemPython, runHarness } from "./helpers/hermes-runtime.mjs";
 import { snapshotTree } from "./helpers/tree.mjs";
 
 // Prova nativa: PluginManager, invoke_hook e handle_function_call reais do
 // Hermes 0.21.4 local, em HERMES_HOME temporário, `python -I -B`, plugins
 // empacotados desviados para diretório vazio e sem modelos. Sem esse runtime
 // (ou com outra revisão), todos os testes ficam `skipped` com o motivo — prova
-// nativa pendente, nunca aprovada por simulação.
+// nativa pendente, nunca aprovada por simulação. A exceção é a prova portátil
+// da configuração única (I23-C8), que só precisa de um Python 3 do sistema e
+// roda no Windows e no POSIX.
 const runtime = locateHermesRuntime();
 const SKIP = runtime.skipReason ? `hermes-runtime-ausente: ${runtime.skipReason}` : false;
 const NODE = process.execPath;
@@ -481,6 +483,55 @@ test("I23-C8 Hermes entrega sem variável por sessão: pasta da configuração t
     const run = spawnSync(runtime.python, ["-I", "-B", "-c", LOAD_DELIVERY, PLUGIN_SOURCE, folder, moved, foreign, when ?? "-"], { env, encoding: "utf8", timeout: 60_000 });
     observed[label] = { status: run.status, stderr: run.stderr, delivery: run.status === 0 ? JSON.parse(run.stdout) : run.stdout, swapped: lstatSync(folder).isSymbolicLink() };
     expected[label] = { status: 0, stderr: "", delivery: when === null ? [NODE, INTEGRATIONS_CLI, "ingest", "--agent", "hermes"] : null, swapped: when !== null };
+  }
+  assert.deepEqual(observed, expected);
+});
+
+// Prova portátil da fronteira entre a configuração única e o plugin (achado P1
+// da revisão formal da #23): a fonte do plugin, carregada pelo Python do
+// sistema com `register(ctx)` (o contrato do Hermes), lê o `hermesDelivery`
+// gravado pelo `observe setup` num home temporário. No POSIX, uma pasta comum
+// fazia a conferência da junção consultar uma constante que só o Windows
+// exporta: o plugin ficava inativo sem nenhum erro visível.
+const SYSTEM_PYTHON = locateSystemPython();
+const REGISTER_PLUGIN = `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("skill_me_observer_portatil", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+hooks = []
+class Context:
+    def register_hook(self, name, callback):
+        hooks.append(name)
+module.register(Context())
+print(json.dumps({"hooks": sorted(hooks), "active": module.observer_stats()["active"], "delivery": module._load_delivery()}))
+`;
+
+test("I23-C8 Hermes entrega sem variável por sessão: pelo Python do sistema, sem o runtime do Hermes, o plugin lê o destino da configuração única numa pasta comum e recusa link ou junção no lugar dela", { skip: SYSTEM_PYTHON.skipReason ? `python-ausente: ${SYSTEM_PYTHON.skipReason}` : false }, () => {
+  const rows = { "sem configuração": "nenhuma", "pasta comum": "pasta", [`${DIR_LINK === "junction" ? "junção" : "link"} no lugar da pasta`]: "link" };
+  const observed = {};
+  const expected = {};
+  for (const [label, kind] of Object.entries(rows)) {
+    const sandbox = makeScratch(`hermes-i23-portatil-${kind}`);
+    scratches.push(sandbox);
+    const home = path.join(sandbox, "home do usuário");
+    mkdirSync(home);
+    const env = baseEnv({ HOME: home, USERPROFILE: home });
+    if (kind !== "nenhuma") {
+      const root = path.join(sandbox, "capturas ação");
+      mkdirSync(root);
+      assert.equal(runIntegrations(["observe", "setup", "--root", root], { env }).status, 0, label);
+    }
+    // O link aponta para a mesma configuração, movida: só a forma da pasta muda.
+    if (kind === "link") {
+      const moved = path.join(sandbox, "pasta da configuração movida");
+      renameSync(path.join(home, ".skill-me"), moved);
+      symlinkSync(moved, path.join(home, ".skill-me"), DIR_LINK);
+    }
+    const run = spawnSync(SYSTEM_PYTHON.command, [...SYSTEM_PYTHON.prefix, "-I", "-B", "-c", REGISTER_PLUGIN, PLUGIN_SOURCE], { env, encoding: "utf8", timeout: 60_000, windowsHide: true });
+    observed[label] = { status: run.status, stderr: run.stderr, plugin: run.status === 0 ? JSON.parse(run.stdout) : run.stdout };
+    const delivery = kind === "pasta" ? [NODE, INTEGRATIONS_CLI, "ingest", "--agent", "hermes"] : null;
+    expected[label] = { status: 0, stderr: "", plugin: { hooks: SEVEN, active: delivery !== null, delivery } };
   }
   assert.deepEqual(observed, expected);
 });
