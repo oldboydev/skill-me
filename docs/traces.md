@@ -146,17 +146,21 @@ lugar do registro é 4 (`link_refused`); registro ilegível ou fora da forma é 
 (`config_invalid`) e fica no lugar — depois de uma queda no meio da criação,
 aquele `on` não chegou a ligar a raiz, e a remoção é manual.
 
-**Conflito com o registro.** `setup`, `status` e `report --latest` também leem
-o registro, com os mesmos códigos. Se ele aponta outra raiz que não a
+**Conflito com o registro.** `setup`, `on`, `status` e `report --latest` também
+leem o registro, com os mesmos códigos. Se ele aponta outra raiz que não a
 configurada, ou existe sem configuração (a pasta `.skill-me` trocada ou apagada
 depois do `on`), a configuração não diz se a observação está ligada: `status`
 responde 4 (`observe_on`) sem o campo `observation`, nunca `off`, e
 `report --latest` responde 4 (`observe_on`) sem escolher captura (sem
 configuração, continua 3 `not_configured`). O `setup` recusa com 4
-(`observe_on`) qualquer registro presente, sem mudar a configuração. Nenhuma
-dessas respostas traz caminho; o `off` desfaz o conflito. Hooks, ingest e o
-plugin Hermes não leem o registro: com outra raiz registrada, a configurada não
-pode estar `on`, e eles respondem `observe_off`.
+(`observe_on`) qualquer registro presente, sem mudar a configuração. O `on`
+confere o registro antes de abrir a raiz configurada: outra raiz, registro
+ilegível ou link recusam com o código dele, e nada é criado em raiz nenhuma (um
+registro gravado por outro processo depois dessa conferência ainda é recusado
+sob o lock do store, mas aí a pasta `skill-me-privacy` da raiz já foi criada,
+sem estado `on`). Nenhuma dessas respostas traz caminho; o `off` desfaz o
+conflito. Hooks, ingest e o plugin Hermes não leem o registro: com outra raiz
+registrada, a configurada não pode estar `on`, e eles respondem `observe_off`.
 
 **Estado e consentimento.** `on` grava `<raiz>/skill-me-privacy/observe.json`
 sob o lock do store, com o estado, uma geração aleatória e uma chave das
