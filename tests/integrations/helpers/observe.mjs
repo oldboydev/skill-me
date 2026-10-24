@@ -15,6 +15,8 @@ import { exportOf, startCapture, storeDir } from "./traces.mjs";
 export const configFile = (home) => path.join(home, ".skill-me", "observe.json");
 // Registro da raiz autorizada, direto no home (linha "Registro da autorização").
 export const authorizationFile = (home) => path.join(home, ".skill-me-authorization.json");
+// Lock de setup, on e off, também direto no home (linha "Barreira da configuração").
+export const controlLockFile = (home) => path.join(home, ".skill-me-observe.lock");
 export const observeFile = (root) => path.join(storeDir(root), "observe.json");
 export const HEX32 = /^[0-9a-f]{32}$/;
 export const HEX64 = /^[0-9a-f]{64}$/;

@@ -16,6 +16,7 @@ import {
   authorizationFile,
   automaticOf,
   configFile,
+  controlLockFile,
   homeEnv,
   listCaptures,
   observeFile,
@@ -45,6 +46,8 @@ const scratch = (label) => {
 };
 
 const OFF = { configured: true, state: "off", generation: null, changedAt: null };
+// Códigos fechados do contrato: 3 sem setup ou formato inválido; 4 conflito ou link.
+const EXIT_OF = { not_configured: 3, config_invalid: 3, observe_on: 4, link_refused: 4 };
 const lostAll = (code, entries = 1) => ({ automatic: true, code, entries, committed: 0, persisted: 0, lost: entries, unrouted: 0 });
 const MANUAL_STATE_KEYS = ["captureVersion", "content", "counters", "createdAt", "dataBytes", "dataFile", "endedAt", "id", "limits", "retentionDays", "state"];
 
@@ -173,23 +176,27 @@ function twoRoots(label) {
 }
 
 // io que segura a primeira chamada `op` cujo caminho satisfaz `matches` até a
-// prova soltar.
-function pausedAt(op, matches) {
+// prova soltar; com `after`, logo depois de a chamada concluir.
+function pausedAt(op, matches, { after = false } = {}) {
   const base = createStoreIo();
   let armed = true;
   let reach;
   let release;
   const reached = new Promise((resolve) => (reach = resolve));
   const released = new Promise((resolve) => (release = resolve));
+  const hold = () => {
+    reach();
+    return released;
+  };
   const io = {
     ...base,
     async [op](file, ...rest) {
-      if (armed && matches(file)) {
-        armed = false;
-        reach();
-        await released;
-      }
-      return base[op](file, ...rest);
+      if (!armed || !matches(file)) return base[op](file, ...rest);
+      armed = false;
+      if (!after) await hold();
+      const value = await base[op](file, ...rest);
+      if (after) await hold();
+      return value;
     },
   };
   return { io, reached, release };
@@ -361,23 +368,10 @@ function swappingIo({ before: [op, matches], swap, after = null, undo }) {
   return io;
 }
 
-function isOwnLock(bytes) {
-  try {
-    const lock = JSON.parse(bytes.toString("utf8"));
-    return Object.keys(lock).sort().join() === "lockVersion,nonce,pid" && lock.lockVersion === 1 && lock.pid === process.pid && /^[0-9a-f]{16}$/.test(lock.nonce);
-  } catch {
-    return false;
-  }
-}
-
 function describeConfigFolder(dir, configBytes, label) {
   return readdirSync(dir)
     .sort()
-    .map((name) => {
-      const bytes = readFileSync(path.join(dir, name));
-      if (name === "observe.json") return `${name}: ${bytes.equals(configBytes) ? label : "alterada"}`;
-      return `${name}: ${name === "observe.lock" && isOwnLock(bytes) ? "lock próprio" : "outro"}`;
-    });
+    .map((name) => (name === "observe.json" ? `${name}: ${readFileSync(path.join(dir, name)).equals(configBytes) ? label : "alterada"}` : `${name}: outro`));
 }
 
 // A pasta `.skill-me` de `home` vai para `moved`, e no lugar fica uma junção
@@ -401,15 +395,9 @@ function configSwap({ home, foreignDir, foreignBytes, moved, realFolder }) {
   };
 }
 
-// O lock que a troca levou junto não é apagado por processo nenhum: sai pela
-// remoção manual documentada, depois de a pasta original voltar.
-function removeOwnLock(home) {
-  const ownLock = path.join(path.dirname(configFile(home)), "observe.lock");
-  if (existsSync(ownLock) && isOwnLock(readFileSync(ownLock))) unlinkSync(ownLock);
-}
-
 test("I23-C2 setup recusa raiz inválida: pasta da configuração trocada por junção depois da primeira conferência — on, off e setup recusam, nenhuma raiz alheia muda e a raiz original continua controlável", async () => {
-  const lockAt = (dir) => ["writeExclusive", (file) => file === path.join(dir, "observe.lock")];
+  // O lock de setup/on/off fica no home, ao lado da pasta da configuração.
+  const lockAt = (dir) => ["writeExclusive", (file) => file === controlLockFile(path.dirname(dir))];
   const configAt = (op) => (dir) => [op, (file) => file === path.join(dir, "observe.json")];
   const rows = [
     // A reprodução do F2: `on` já conferiu a pasta e ainda não criou o lock.
@@ -461,10 +449,10 @@ test("I23-C2 setup recusa raiz inválida: pasta da configuração trocada por ju
       };
     }
     const folders = { foreign: describeConfigFolder(foreignDir, foreignBytes, "configuração alheia"), moved: existsSync(moved) ? describeConfigFolder(moved, originalBytes, "configuração original") : "restaurada" };
+    const controlLock = existsSync(controlLockFile(home));
 
-    // A pasta original volta ao lugar, sem o lock próprio que a troca levou.
+    // A pasta original volta ao lugar.
     restore();
-    removeOwnLock(home);
     const control = [];
     for (const step of ["on", "off"]) {
       const done = await runObserveCommand({ argv: [step], home });
@@ -472,7 +460,7 @@ test("I23-C2 setup recusa raiz inválida: pasta da configuração trocada por ju
     }
 
     const label = `${command}, ${row.when}`;
-    observed.push({ label, result, afterSwap, readers, folders, control, foreignAtEnd: rootState(foreign) });
+    observed.push({ label, result, afterSwap, readers, folders, controlLock, control, foreignAtEnd: rootState(foreign) });
     expected.push({
       label,
       result: { exitCode: 4, body: { schemaVersion: 1, command, status: "error", error: { code: row.realFolder ? "foreign_entry" : "link_refused" } } },
@@ -481,9 +469,9 @@ test("I23-C2 setup recusa raiz inválida: pasta da configuração trocada por ju
       // A raiz alheia não muda em nenhuma linha.
       afterSwap: command === "off" ? { original: { state: "off", generation: null }, foreign: before.foreign } : before,
       readers: row.realFolder ? null : { status: [4, "link_refused"], report: [4, "link_refused"], hook: lostAll("link_refused"), foreignCaptures: false },
-      // Trocada antes do lock, ele foi criado através da junção e saiu por ela;
-      // trocada depois, ele foi junto com a pasta movida.
-      folders: { foreign: ["observe.json: configuração alheia"], moved: ["observe.json: configuração original", ...(row.before === lockAt ? [] : ["observe.lock: lock próprio"])] },
+      // O lock fica no home: nenhuma das pastas o recebe, e ele não sobra.
+      folders: { foreign: ["observe.json: configuração alheia"], moved: ["observe.json: configuração original"] },
+      controlLock: false,
       control: [
         ["on", 0, "on"],
         ["off", 0, "off"],
@@ -553,6 +541,7 @@ test("I23-C4 off encerra e é idempotente: pasta da configuração trocada depoi
       : ["stat", (file) => path.resolve(file) === original];
     const on = await runObserveCommand({ argv: ["on"], home, io: swappingAfter(trigger, swap) });
     const afterOn = { original: stateOf(original), foreign: stateOf(foreign), authorization: authorizationOf(home) };
+    const ligada = readObserveState(original);
 
     // Um produtor que leu a configuração antes da troca abre na geração ligada e grava.
     const producer = createAutomaticDelivery({ config: { root: original, rootReal: original }, agent: "claude" });
@@ -573,9 +562,9 @@ test("I23-C4 off encerra e é idempotente: pasta da configuração trocada depoi
     const again = await runObserveCommand({ argv: ["off"], home });
     const afterAgain = { original: rootState(original), authorization: authorizationOf(home) };
     const folders = { current: describeConfigFolder(dir, foreignBytes, "configuração alheia"), moved: describeConfigFolder(moved, originalBytes, "configuração original") };
+    const controlLock = existsSync(controlLockFile(home));
 
     restore();
-    removeOwnLock(home);
     const control = [];
     for (const step of ["on", "off"]) {
       const done = await runObserveCommand({ argv: [step], home });
@@ -584,11 +573,12 @@ test("I23-C4 off encerra e é idempotente: pasta da configuração trocada depoi
 
     const offOk = (changed, stopped) => ({ exitCode: 0, body: { schemaVersion: 1, command: "off", status: "ok", observation: OFF, changed, stopped } });
     const offRefused = { exitCode: 4, body: { schemaVersion: 1, command: "off", status: "error", error: { code: "link_refused" } } };
-    observed.push({ label: row.when, on, afterOn, opened, captureCount: captures.length, off, afterOff, afterLate, again, afterAgain, folders, control });
+    observed.push({ label: row.when, on, afterOn, opened, captureCount: captures.length, off, afterOff, afterLate, again, afterAgain, folders, controlLock, control });
     expected.push({
       label: row.when,
-      // O on só percebe a troca ao soltar o lock que ela levou; a raiz já está no registro.
-      on: { exitCode: 4, body: { schemaVersion: 1, command: "on", status: "error", error: { code: "foreign_entry" } } },
+      // A troca veio depois da última conferência, e o lock do home não se move
+      // com a pasta: o on liga a raiz que leu, e ela já está no registro.
+      on: { exitCode: 0, body: { schemaVersion: 1, command: "on", status: "ok", observation: { configured: true, state: "on", generation: ligada.generation, changedAt: ligada.changedAt, content: true }, changed: true } },
       afterOn: { original: "on", foreign: "off", authorization: authorized(original) },
       opened: DELIVERED_AUTO(1),
       captureCount: 1,
@@ -600,7 +590,8 @@ test("I23-C4 off encerra e é idempotente: pasta da configuração trocada depoi
       afterLate: { report: { automatic: true, code: "observe_off", entries: 2, committed: 1, persisted: 1, lost: 1, unrouted: 0 }, storeUnchanged: true },
       again: row.realFolder ? offOk(false, []) : offRefused,
       afterAgain: { original: { state: "off", generation: null }, authorization: null },
-      folders: { current: ["observe.json: configuração alheia"], moved: ["observe.json: configuração original", "observe.lock: lock próprio"] },
+      folders: { current: ["observe.json: configuração alheia"], moved: ["observe.json: configuração original"] },
+      controlLock: false,
       control: [
         ["on", 0, "on", authorized(original)],
         ["off", 0, "off", null],
@@ -689,18 +680,22 @@ test("I23-C4 off encerra e é idempotente: registro da autorização — falha a
       ],
     },
     {
-      // A pasta `.skill-me` apagada com a outra raiz on e um novo setup.
+      // Com a outra raiz on, a pasta `.skill-me` trocada por outra real com a
+      // configuração da original (feita num home auxiliar): o setup a recusaria.
       when: "registro de outra raiz",
-      before: async ({ home, other, original }) => {
+      before: async ({ home, other, original, aux }) => {
         assert.equal((await runObserveCommand({ argv: ["setup", "--root", other], home })).exitCode, 0);
         assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
+        assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home: aux })).exitCode, 0);
         rmSync(path.dirname(configFile(home)), { recursive: true });
-        assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home })).exitCode, 0);
+        mkdirSync(path.dirname(configFile(home)));
+        writeFileSync(configFile(home), readFileSync(configFile(aux)));
       },
       steps: () => [["on"], ["status"], ["off"], ["on"], ["off"]],
       expect: ({ original, other }) => [
         [4, "observe_on", null, "off", "on", JSON.stringify(authorized(other))],
-        [0, "ok", null, "off", "on", JSON.stringify(authorized(other))],
+        // O status não responde pela configuração enquanto outra raiz está registrada.
+        [4, "observe_on", null, "off", "on", JSON.stringify(authorized(other))],
         [0, "ok", true, "off", "off", null],
         [0, "ok", true, "on", "off", JSON.stringify(authorized(original))],
         [0, "ok", true, "off", "off", null],
@@ -724,9 +719,9 @@ test("I23-C4 off encerra e é idempotente: registro da autorização — falha a
   ];
   for (const [index, row] of rows.entries()) {
     const base = scratch(`i23 c4 registro ${index}`);
-    const [home, original, other, target] = ["home", "raiz ação", "outra raiz ação", "destino do link"].map((name) => path.join(base, name));
-    for (const dir of [home, original, other, target]) mkdirSync(dir);
-    const names = { home, original, other, target };
+    const [home, original, other, target, aux] = ["home", "raiz ação", "outra raiz ação", "destino do link", "home auxiliar"].map((name) => path.join(base, name));
+    for (const dir of [home, original, other, target, aux]) mkdirSync(dir);
+    const names = { home, original, other, target, aux };
     if (row.before) await row.before(names);
     else assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home })).exitCode, 0);
     const records = [];
@@ -753,41 +748,206 @@ test("I23-C4 off encerra e é idempotente: registro da autorização — falha a
   }
 });
 
-test("I23-C4 off encerra e é idempotente: on repetido e off pelo registro se revezam pelo lock da raiz — o off que chega antes do on não deixa a raiz ligada sem registro", async () => {
-  const { home, foreignHome, original, foreign, moved } = homesWithRoots("i23 c4 on e off pelo registro");
-  for (const [owner, root] of [[home, original], [foreignHome, foreign]]) {
-    assert.equal((await runObserveCommand({ argv: ["setup", "--root", root], home: owner })).exitCode, 0);
+// on em voo e off pelo registro, com a pasta `.skill-me` trocada no meio por
+// outra real: o off entra enquanto o on segura o lock do home, espera e só
+// então desliga a raiz que o on ligou (linha "Barreira da configuração"). Com o
+// lock dentro da pasta, cada um tomava o lock da sua pasta, o off respondia
+// antes e o on religava a raiz depois dele.
+test("I23-C4 off encerra e é idempotente: off que entra com o on em voo e a pasta da configuração trocada espera o lock do home — a raiz termina off e o produtor aberto não grava mais", async () => {
+  const storeLock = (root) => path.join(storeDir(root), ".lock");
+  const rows = [
+    // A reprodução: o on repetido já leu a configuração e para antes do lock da raiz.
+    { when: "on repetido parado antes do lock da raiz", startOn: true, pause: (root) => pausedAt("writeExclusive", (file) => file === storeLock(root)) },
+    // O on liga a raiz, solta o lock dela e para antes de soltar o do home.
+    { when: "on parado depois de ligar a raiz", startOn: false, pause: (root) => pausedAt("unlink", (file) => file === storeLock(root), { after: true }) },
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [index, row] of rows.entries()) {
+    const { home, foreignHome, original, foreign, moved } = homesWithRoots(`i23 c4 on em voo ${index}`);
+    for (const [owner, root] of [[home, original], [foreignHome, foreign]]) {
+      assert.equal((await runObserveCommand({ argv: ["setup", "--root", root], home: owner })).exitCode, 0);
+    }
+    if (row.startOn) assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
+    const { swap } = configSwap({ home, foreignDir: path.dirname(configFile(foreignHome)), foreignBytes: readFileSync(configFile(foreignHome)), moved, realFolder: true });
+
+    const paused = row.pause(original);
+    const inFlight = runObserveCommand({ argv: ["on"], home, io: paused.io });
+    await paused.reached;
+    // Um produtor que leu a configuração antes da troca abre na geração ligada e grava.
+    const ligada = readObserveState(original);
+    const producer = createAutomaticDelivery({ config: { root: original, rootReal: original }, agent: "claude" });
+    await producer.open();
+    const first = claudePayload("pre_tool_bash", { tool_use_id: "chamada-com-o-on-em-voo" });
+    producer.submit(claudeHookDraft(first), first);
+    await producer.settle();
+    const opened = producer.report();
+    const captures = automaticOf(original).map((capture) => capture.id);
+
+    swap();
+    const watch = watchingContention("off");
+    const off = runObserveCommand({ argv: ["off"], home, io: watch.io });
+    const order = await Promise.race([off.then(() => "off concluído"), watch.contended]);
+    paused.release();
+    const [onResult, offResult] = await Promise.all([inFlight, off]);
+    const after = { original: rootState(original), foreign: stateOf(foreign), authorization: authorizationOf(home), captures: automaticOf(original).map((c) => [c.id, c.state]) };
+
+    const storeBefore = snapshotTree(storeDir(original));
+    const late = claudePayload("post_tool_bash", { tool_use_id: "chamada-depois-do-off" });
+    producer.submit(claudeHookDraft(late), late);
+    await producer.settle();
+    const afterLate = { report: producer.report(), storeUnchanged: isDeepStrictEqual(snapshotTree(storeDir(original)), storeBefore) };
+    const status = await runObserveCommand({ argv: ["status"], home });
+
+    observed.push({ label: row.when, order, onResult, offResult, after, opened, afterLate, status, controlLock: existsSync(controlLockFile(home)) });
+    expected.push({
+      label: row.when,
+      order: "off esperou",
+      // O on conclui antes do off, sobre a configuração que leu e a raiz que já está no registro.
+      onResult: { exitCode: 0, body: { schemaVersion: 1, command: "on", status: "ok", observation: { configured: true, state: "on", generation: ligada.generation, changedAt: ligada.changedAt, content: true }, changed: !row.startOn } },
+      // A pasta nova aponta a outra raiz, off e sem store; o registro leva o off à original.
+      offResult: { exitCode: 0, body: { schemaVersion: 1, command: "off", status: "ok", observation: OFF, changed: true, stopped: captures } },
+      after: { original: { state: "off", generation: null }, foreign: "off", authorization: null, captures: captures.map((id) => [id, "stopped"]) },
+      opened: DELIVERED_AUTO(1),
+      afterLate: { report: { automatic: true, code: "observe_off", entries: 2, committed: 1, persisted: 1, lost: 1, unrouted: 0 }, storeUnchanged: true },
+      // Nenhuma raiz on e nenhum registro: o status da configuração nova diz a verdade.
+      status: { exitCode: 0, body: { schemaVersion: 1, command: "status", status: "ok", observation: OFF, automaticCaptures: 0, captures: [] } },
+      controlLock: false,
+    });
   }
-  assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
-  const firstGeneration = readObserveState(original).generation;
-  const { swap } = configSwap({ home, foreignDir: path.dirname(configFile(foreignHome)), foreignBytes: readFileSync(configFile(foreignHome)), moved, realFolder: true });
+  assert.deepEqual(observed, expected);
+});
 
-  // O on repetido já leu a configuração e para antes de tomar o lock da raiz; a
-  // pasta é trocada e o off, pela configuração nova, chega primeiro à raiz.
-  const paused = pausedAt("writeExclusive", (file) => file === path.join(storeDir(original), ".lock"));
-  const repeated = runObserveCommand({ argv: ["on"], home, io: paused.io });
-  await paused.reached;
-  swap();
-  const off = await runObserveCommand({ argv: ["off"], home });
-  const afterOff = [stateOf(original), authorizationOf(home)];
-  paused.release();
-  const onResult = await repeated;
-  const state = readObserveState(original);
-  const afterOn = { state: state.state, newGeneration: state.generation !== firstGeneration, authorization: authorizationOf(home) };
-  const last = await runObserveCommand({ argv: ["off"], home });
-
-  assert.deepEqual(
-    { off, afterOff, onResult, afterOn, last: [last.exitCode, last.body.changed], end: [stateOf(original), stateOf(foreign), authorizationOf(home)] },
+// Raiz registrada on enquanto a configuração aponta outra raiz ou sumiu, e
+// registro ilegível (linha "Conflito com o registro"): status não responde pela
+// configuração, setup não a troca, e o off desfaz o conflito. As respostas de
+// erro são comparadas inteiras: nenhuma traz caminho.
+test("I23-C4 off encerra e é idempotente: com a raiz registrada on e a pasta da configuração trocada por outra real ou apagada, status não afirma off, setup não troca a configuração e o off desfaz o conflito", async () => {
+  const error = (command, code) => ({ exitCode: EXIT_OF[code], body: { schemaVersion: 1, command, status: "error", error: { code } } });
+  const okStatus = (configured) => ({ exitCode: 0, body: { schemaVersion: 1, command: "status", status: "ok", observation: { ...OFF, configured }, automaticCaptures: 0, captures: [] } });
+  const rows = [
     {
-      off: { exitCode: 0, body: { schemaVersion: 1, command: "off", status: "ok", observation: OFF, changed: true, stopped: [] } },
-      afterOff: ["off", null],
-      // O on serializado depois do off liga de novo, com outra geração e o registro dele.
-      onResult: { exitCode: 4, body: { schemaVersion: 1, command: "on", status: "error", error: { code: "foreign_entry" } } },
-      afterOn: { state: "on", newGeneration: true, authorization: authorized(original) },
-      last: [0, true],
-      end: ["off", "off", null],
+      when: "pasta real com a configuração de outra raiz",
+      startOn: true,
+      replace: ({ home, foreignHome, moved }) => {
+        renameSync(path.dirname(configFile(home)), moved);
+        mkdirSync(path.dirname(configFile(home)));
+        writeFileSync(configFile(home), readFileSync(configFile(foreignHome)));
+      },
+      steps: ["status", "setup", "on", "hook", "off", "status", "setup"],
+      expect: ({ captures }) => [
+        [error("status", "observe_on"), "alheia", "on", true],
+        [error("setup", "observe_on"), "alheia", "on", true],
+        [error("on", "observe_on"), "alheia", "on", true],
+        [lostAll("observe_off"), "alheia", "on", true],
+        [{ exitCode: 0, body: { schemaVersion: 1, command: "off", status: "ok", observation: OFF, changed: true, stopped: captures } }, "alheia", "off", false],
+        [okStatus(true), "alheia", "off", false],
+        [{ exitCode: 0, body: { schemaVersion: 1, command: "setup", status: "ok", observation: OFF } }, "nova", "off", false],
+      ],
     },
-  );
+    {
+      when: "pasta da configuração apagada",
+      startOn: true,
+      replace: ({ home }) => rmSync(path.dirname(configFile(home)), { recursive: true }),
+      steps: ["status", "setup", "on", "off", "status", "setup"],
+      expect: ({ captures }) => [
+        [error("status", "observe_on"), "ausente", "on", true],
+        // O setup cria a pasta antes do lock e recusa sem gravar a configuração.
+        [error("setup", "observe_on"), "ausente", "on", true],
+        [error("on", "not_configured"), "ausente", "on", true],
+        [{ exitCode: 0, body: { schemaVersion: 1, command: "off", status: "ok", observation: { ...OFF, configured: false }, changed: true, stopped: captures } }, "ausente", "off", false],
+        [okStatus(false), "ausente", "off", false],
+        [{ exitCode: 0, body: { schemaVersion: 1, command: "setup", status: "ok", observation: OFF } }, "nova", "off", false],
+      ],
+    },
+    {
+      // Queda depois de criar o registro e antes de gravar on: a raiz é a configurada.
+      when: "registro da raiz configurada, sem on",
+      startOn: false,
+      replace: async ({ home, original }) => {
+        const io = failingWrite((file) => path.dirname(file) === storeDir(original) && path.basename(file).startsWith("observe.json."));
+        assert.equal((await runObserveCommand({ argv: ["on"], home, io })).exitCode, 5);
+        assert.deepEqual(authorizationOf(home), authorized(original));
+      },
+      steps: ["status", "setup", "off", "setup"],
+      expect: () => [
+        [okStatus(true), "original", "off", true],
+        [error("setup", "observe_on"), "original", "off", true],
+        [{ exitCode: 0, body: { schemaVersion: 1, command: "off", status: "ok", observation: OFF, changed: false, stopped: [] } }, "original", "off", false],
+        [{ exitCode: 0, body: { schemaVersion: 1, command: "setup", status: "ok", observation: OFF } }, "nova", "off", false],
+      ],
+    },
+    {
+      when: "registro ilegível",
+      startOn: false,
+      replace: ({ home }) => writeFileSync(authorizationFile(home), ""),
+      steps: ["status", "setup"],
+      expect: () => [
+        [error("status", "config_invalid"), "original", "off", true],
+        [error("setup", "config_invalid"), "original", "off", true],
+      ],
+    },
+    {
+      when: "registro é link ou junção",
+      startOn: false,
+      replace: ({ home, base }) => {
+        const target = path.join(base, "destino do link");
+        mkdirSync(target);
+        symlinkSync(target, authorizationFile(home), DIR_LINK);
+      },
+      steps: ["status", "setup"],
+      expect: () => [
+        [error("status", "link_refused"), "original", "off", true],
+        [error("setup", "link_refused"), "original", "off", true],
+      ],
+    },
+  ];
+  const observed = [];
+  const expected = [];
+  for (const [index, row] of rows.entries()) {
+    const names = homesWithRoots(`i23 c4 conflito ${index}`);
+    const { base, home, foreignHome, original, foreign } = names;
+    const next = path.join(base, "raiz nova ação");
+    mkdirSync(next);
+    const project = scratch(`i23 c4 conflito ${index} projeto`);
+    const env = homeEnv(home);
+    for (const [owner, root] of [[home, original], [foreignHome, foreign]]) {
+      assert.equal((await runObserveCommand({ argv: ["setup", "--root", root], home: owner })).exitCode, 0);
+    }
+    const bytes = { original: readFileSync(configFile(home)), alheia: readFileSync(configFile(foreignHome)) };
+    if (row.startOn) {
+      assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
+      assert.deepEqual((await runHook("claude", claudePayload("pre_tool_bash"), { env, cwd: project })).report.delivery, DELIVERED_AUTO(1));
+    }
+    const captures = existsSync(storeDir(original)) ? automaticOf(original).map((capture) => capture.id) : [];
+    await row.replace(names);
+    const configNow = () => {
+      if (!existsSync(configFile(home))) return "ausente";
+      const now = readFileSync(configFile(home));
+      return Object.keys(bytes).find((label) => bytes[label].equals(now)) ?? (JSON.parse(now).root === next ? "nova" : "outra");
+    };
+
+    const records = [];
+    for (const step of row.steps) {
+      let outcome;
+      if (step === "hook") {
+        outcome = (await runHook("claude", claudePayload("post_tool_bash"), { env, cwd: project })).report.delivery;
+      } else if (step === "status") {
+        // Como o usuário chama: outro processo, a resposta inteira no stdout.
+        const run = runObserve(["status"], { env });
+        assert.equal(run.stderr, "");
+        outcome = { exitCode: run.status, body: run.body };
+      } else {
+        outcome = await runObserveCommand({ argv: step === "setup" ? ["setup", "--root", next] : [step], home });
+      }
+      records.push([outcome, configNow(), stateOf(original), existsSync(authorizationFile(home)) || isLink(authorizationFile(home))]);
+    }
+    // O on recusado pelo registro já criou a pasta do store da raiz alheia (como
+    // desde o F3), sem ligá-la nem abrir captura.
+    observed.push({ label: row.when, records, foreign: [stateOf(foreign), existsSync(path.join(storeDir(foreign), "captures"))], controlLock: existsSync(controlLockFile(home)) });
+    expected.push({ label: row.when, records: row.expect({ captures }), foreign: ["off", false], controlLock: false });
+  }
+  assert.deepEqual(observed, expected);
 });
 
 test("I23-C3 on persiste e é idempotente: outro processo vê on com conteúdo sanitizado; repetir on mantém geração e não cria captura", async () => {

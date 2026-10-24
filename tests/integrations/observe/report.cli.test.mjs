@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { REPORT_HELP } from "../../../src/integrations/report/command.mjs";
 import { makeScratch, runIntegrations } from "../helpers/cli.mjs";
 import { claudePayload, codexHookPayload } from "../helpers/privacy-canaries.mjs";
-import { DELIVERED_AUTO, automaticOf, homeEnv, listCaptures, observeOk, prepareObservation } from "../helpers/observe.mjs";
+import { DELIVERED_AUTO, authorizationFile, automaticOf, configFile, homeEnv, listCaptures, observeOk, prepareObservation } from "../helpers/observe.mjs";
 import { boundEnv, runHook, startCapture, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
@@ -127,4 +127,55 @@ test("I23-C16 report latest não escolhe captura manual: sem automática, erro f
   const busy = report(["--latest", "--skill", skill], env, project);
   assert.deepEqual([busy.status, errorOf(busy).error.code], [4, "lock_present"]);
   unlinkSync(path.join(storeDir(root), ".lock"));
+});
+
+// Linha "Conflito com o registro": a pasta `.skill-me` do home trocada por outra
+// real, que aponta outra raiz com capturas automáticas, enquanto a raiz que o
+// on deste home ligou continua on e registrada.
+test("I23-C16 report latest não escolhe captura manual: nem a automática de outra configuração enquanto a raiz registrada está on — 4 observe_on até o off, e registro ilegível dá o código dele", async () => {
+  const skill = skillFile("i23 c16 conflito skill");
+  const project = scratch("i23 c16 conflito projeto");
+  const base = scratch("i23 c16 conflito");
+  const [home, foreignHome, original, foreign] = ["home", "home alheio", "raiz original ação", "raiz alheia ação"].map((name) => path.join(base, name));
+  for (const dir of [home, foreignHome, original, foreign]) mkdirSync(dir);
+  const env = homeEnv(home);
+  const foreignEnv = homeEnv(foreignHome);
+  observeOk(["setup", "--root", original], env);
+  observeOk(["on"], env);
+  assert.deepEqual((await runHook("claude", claudePayload("pre_tool_bash"), { env, cwd: project })).report.delivery, DELIVERED_AUTO(1));
+  const [mine] = automaticOf(original);
+  observeOk(["setup", "--root", foreign], foreignEnv);
+  observeOk(["on"], foreignEnv);
+  assert.deepEqual((await runHook("codex", codexHookPayload("pre_tool_bash"), { env: foreignEnv, cwd: project })).report.delivery, DELIVERED_AUTO(1));
+  const [theirs] = observeOk(["off"], foreignEnv).stopped;
+
+  const dir = path.dirname(configFile(home));
+  renameSync(dir, path.join(base, "pasta da configuração movida"));
+  mkdirSync(dir);
+  writeFileSync(configFile(home), readFileSync(configFile(foreignHome)));
+  const before = [snapshotTree(original), snapshotTree(foreign)];
+  const refused = (code) => ({ schemaVersion: 1, command: "report", status: "error", error: { code } });
+  for (const format of ["text", "markdown", "json"]) {
+    const run = report(["--latest", "--skill", skill, "--format", format], env, project);
+    assert.equal(run.status, 4, `${format}: ${run.stdout}`);
+    assert.deepEqual(errorOf(run), refused("observe_on"), format);
+  }
+  assert.deepEqual([snapshotTree(original), snapshotTree(foreign)], before, "consulta sem escrita");
+
+  // O off desfaz o conflito: a raiz registrada desliga, e a configuração em vigor é a outra.
+  assert.deepEqual(observeOk(["off"], env).stopped, [mine.id]);
+  const chosen = report(["--latest", "--skill", skill, "--format", "json"], env, project);
+  assert.equal(chosen.status, 0, chosen.stdout);
+  assert.equal(JSON.parse(chosen.stdout).timeline.capture.id, theirs);
+
+  // Registro ilegível ou link: o código dele, sem escolher captura.
+  writeFileSync(authorizationFile(home), "");
+  const unreadable = report(["--latest", "--skill", skill], env, project);
+  assert.deepEqual([unreadable.status, errorOf(unreadable)], [3, refused("config_invalid")]);
+  unlinkSync(authorizationFile(home));
+  const target = path.join(base, "destino do link");
+  mkdirSync(target);
+  symlinkSync(target, authorizationFile(home), process.platform === "win32" ? "junction" : "dir");
+  const linked = report(["--latest", "--skill", skill], env, project);
+  assert.deepEqual([linked.status, errorOf(linked)], [4, refused("link_refused")]);
 });
