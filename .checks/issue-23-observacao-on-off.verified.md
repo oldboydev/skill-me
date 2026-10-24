@@ -2,12 +2,12 @@
 
 **Veredito: FAIL**  
 **Perfil:** `light`  
-**Diff da feature:** `2fd303f..788d0bcc78045b8516433ae53b52a8cf7af15187`  
-**Diff da correção:** `1ccfe70..788d0bcc78045b8516433ae53b52a8cf7af15187`  
-**Rodada:** 2 — escopo do diff e vereditos não PASS da rodada 1  
+**Diff da feature:** `2fd303f..998235bb2e6844b3ef7ab791adacc0da00a6bff7`  
+**Diff da correção:** `7a8553c..998235bb2e6844b3ef7ab791adacc0da00a6bff7`  
+**Rodada:** 3 — escopo do diff e vereditos não PASS da rodada 2  
 **Verifier:** subagente independente, separado do builder
 
-**Estado atual:** F1 corrigido nas ordens testadas; F2 novo defeito bloqueante no caminho da configuração; gate amplo Windows continua vermelho (G1). As seções “Rodada 1” abaixo preservam a evidência obtida em `8f29c40`; a seção “Rodada 2” registra as provas executadas no HEAD atual.
+**Estado atual:** F1 e a janela F2 foram corrigidos nos cenários testados. F3 é novo defeito bloqueante de isolamento depois da leitura da configuração; o gate amplo Windows permanece vermelho (G1). Rodadas 1 e 2 preservam evidência dos SHAs `8f29c40` e `788d0bc`; a rodada 3 registra a verificação do HEAD atual.
 
 ## Rodada 1 — fontes e alcance (carried from `8f29c40`)
 
@@ -103,3 +103,56 @@ F1 da rodada 1 está **resolvido** nas duas ordens e na espera de `off` testadas
 - O mesmo build registra WSL Ubuntu com integrações **441 testes, 428 pass, 0 fail, 13 skip**; nove skips são por ausência do runtime Hermes, incluindo C8. No Windows, o runtime estava presente e C8 passou nesta verificação independente.
 - **G1 permanece um gate vermelho no Windows.** O teste isolado verde e o WSL verde mostram sensibilidade à carga/plataforma, mas não tornam `npm test` verde no ambiente Windows. O `AGENTS.md` determina que falha de verificação impede entrega. A divisão de `withLock` tocou código compartilhado pela captura manual, portanto não há base para dispensar o fail como comprovadamente alheio ao diff. Não atribuo uma causa de produto que os dados não provam.
 - **Veredito final desta rodada: FAIL**, por F2 e, separadamente, pelo gate Windows não verde. Nenhum commit, push ou correção foi feito pelo Verifier.
+
+## Rodada 3 — fontes e escopo no HEAD `998235bb2e6844b3ef7ab791adacc0da00a6bff7`
+
+| Fonte | Situação |
+| --- | --- |
+| [Issue #23](https://github.com/oldboydev/skill-me/issues/23), task da #23, contratos da #5/#8 e [OpenAI Docs: Hooks](https://learn.chatgpt.com/docs/hooks) | Carregados das leituras independentes em `8f29c40`; não alterados em `7a8553c..HEAD`. O consentimento vai de `on` até `off`; a configuração seleciona qual raiz está sob esse controle. |
+| `.checks/issue-23-observacao-on-off.md:26-27,41-96` | Aberto no HEAD. A linha “Pasta da configuração” agora exige pasta real, identidade `dev/ino` antes do lock e após cada leitura; `link_refused` ou `foreign_entry` (ambos saída 4), nenhum destino alheio ativado, e lock movido preservado. C1–C18 e seus `Swept` confrontados. |
+| `.checks/issue-23-observacao-on-off.build.md:390-616` | Aberto no HEAD: F2, red/green, provas, gates e A/B interrompido do builder. Resultados do builder não foram atribuídos ao Verifier. |
+| `7a8553c..HEAD` | Lidos os diffs de `observe/config.mjs`, `observe/command.mjs`, plugin Hermes, testes C2/C8, checklist, README e `docs/traces.md`. `git diff --check 7a8553c..HEAD` passou. |
+
+Perfil `light`: comparação visual de fonte vinculante `ui` e fault injection `standard/ui` **não se aplicam**. O checklist não tem seções `Coverage` ou `Test policy`. Os contratos de fronteira foram julgados pelos critérios e pelas regras de testes do `AGENTS.md`. C6–C17 fora dos arquivos tocados carregam as citações verificadas em `8f29c40`, reexecutadas neste HEAD; F1 e F2, antes não PASS, foram reavaliados.
+
+## Rodada 3 — provas C1–C18
+
+Uma **única invocação independente** de `node --test --test-reporter=spec --test-name-pattern='<alternância C1–C18>'` nos oito arquivos nomeados pelo checklist, fora do sandbox que impede as fixtures temporárias, executou **29 testes, 29 passes, 0 falhas, 0 skips**. Cada nome C1–C18 apareceu no resultado; C2 selecionou cinco testes e C8 dois, inclusive os cenários novos de F2. Os valores citados abaixo são as asserções executadas; o teste novo de C2 compara `observed` a uma tabela `expected` literal imediatamente acima.
+
+| Check | Asserção decisiva no HEAD e limite | Resultado |
+| --- | --- | --- |
+| C1 | `tests/integrations/observe/control.cli.test.mjs:61,80,90`: setup e status exatos `off`, zero capturas, raiz intacta. | PASS |
+| C2 | `control.cli.test.mjs:119-124,143-154`: códigos de raiz inválida e `root_changed` sem destino alheio; `:245-251,271-277,298-301`: ordens concorrentes e `observe_on`; `:457-472`: cinco trocas de pasta, códigos 4 `link_refused`/`foreign_entry`, raízes e gerações inalteradas, leitores recusam a junção, lock movido preservado, controle após restaurar. | PASS nos cenários afirmados; F3 abaixo é lacuna após a leitura |
+| C3 | `control.cli.test.mjs:483-500,506-509,513-521`: `on`, geração, chave, repetição sem mudança e uma captura sanitizada com retenção `7`. | PASS |
+| C4 | `control.cli.test.mjs:318-323,537-544,553-567`: espera pelo setup, `off` zera autorização, produtor posterior recusado, repetição e consulta preservadas. | PASS nas ordens afirmadas; F3 abaixo |
+| C5 | `control.cli.test.mjs:580-582,597-603,613-622`: vínculo manual completo precede automático; incompleto dá `binding_invalid`; `off` não encerra a manual. | PASS |
+| C6 | `tests/integrations/observe/agents.e2e.test.mjs:90,111-135`: Claude sem variáveis de captura, sessão própria, sanitização e retenção `7` (citação carregada de `8f29c40`). | PASS |
+| C7 | `agents.e2e.test.mjs:146-159,170-179`: entrega Codex e leitura de `SKILL.md` como operação, sem ativação nativa (carregada de `8f29c40`). | PASS |
+| C8 | `tests/integrations/hermes-plugin.native.test.mjs:351-352,375-389,424-426`: Hermes real sem variável e callback neutro; `:460-485`: pasta real fornece argv, junção antes/durante a leitura fornece `null`, teste não skip no Windows. | PASS |
+| C9 | `tests/integrations/observe/routing.unit.test.mjs:64-70,106-133`: sessão inválida não recebe captura nem identidade alheia (carregada de `8f29c40`). | PASS |
+| C10 | `agents.e2e.test.mjs:206-227,243-248`: cinco capturas/chaves próprias, eventos e relatório segregados (carregada de `8f29c40`). | PASS |
+| C11 | `tests/integrations/observe/rollover.e2e.test.mjs:57-68,101-113`: evento 501 na sucessora, sem perda, e fronteira de bytes exata/mais um byte. Literais 500 e 8.388.608 também afirmados em `tests/integrations/privacy/store.unit.test.mjs:93-95,112-119` na rodada 1; o teste adicional não foi reexecutado nesta rodada. | PASS para os dois proofs C11 |
+| C12 | `routing.unit.test.mjs:171-172,196-214`: produtor antigo recusa e `off` espera commit em curso (carregada de `8f29c40`). | PASS para raiz estável; F3 abaixo |
+| C13 | `routing.unit.test.mjs:276-300`: geração/chave novas e produtor antigo sem escrita nem herança (carregada de `8f29c40`). | PASS |
+| C14 | `agents.e2e.test.mjs:266-311`: agente neutro sob falha de store/lock, prazo e status sem promessa de captura (carregada de `8f29c40`). | PASS |
+| C15 | `tests/integrations/observe/report.cli.test.mjs:59-73,93`: latest = automática mais recente, ID e formato, sem escrita, após off (carregada de `8f29c40`). | PASS |
+| C16 | `report.cli.test.mjs:103-128`: `not_configured`, `no_automatic_capture` mesmo com manual, conflito com lock (carregada de `8f29c40`). | PASS |
+| C17 | `tests/integrations/observe/privacy.e2e.test.mjs:74-83,96-121`: sem opt-in/sensível/não suportado omitidos; sonda sem rede (carregada de `8f29c40`). | PASS |
+| C18 | `tests/integrations/observe/docs.test.mjs:63-98,115-121,150-181`: scripts, preparo, fluxo, limites e comandos manuais; `README.md:104` e `docs/traces.md:102` incluem o lock; a documentação nova de pasta real foi inspecionada no diff, sem proof dedicado. | PASS para o critério C18 |
+
+O código novo recusa junção pelo `lstat` e compara `dev/ino` em `src/integrations/observe/config.mjs:69-89,114-130,159-169`. O plugin usa `os.lstat` e a marca de reparse de junção no Python 3.11, com segunda conferência em `src/integrations/hermes/plugin/__init__.py:96-125`. Reproduzi F2 literalmente com diretórios temporários: `on` pausado antes de `writeExclusive(observe.lock)`, `.skill-me` movida e substituída por junção para uma configuração B válida. Resultado no HEAD: `4 link_refused`, A/B `off`. Troca por junção ao `lstat(observe.json)`: `4 link_refused`, A/B `off`. Outra pasta **real** antes do lock: `4 foreign_entry`, A/B `off`. Os testes C2 verificam ainda `off`, `setup`, leitores, lock e restauração; C8 verifica sem destino no plugin. **F2 está resolvido nos intervalos cobertos.** F1 permanece resolvido nas duas ordens e na espera do `off` (`control.cli.test.mjs:245-323`).
+
+## Rodada 3 — achado F3
+
+**F3 — Bloqueante: troca da pasta após a conferência pós-leitura deixa uma autorização `on` fora do alcance do `off`.** O `readObserveConfig` confere `.skill-me` pela segunda vez em `src/integrations/observe/config.mjs:128-130`; em seguida, `withConfigLock` passa a configuração lida ao callback (`src/integrations/observe/command.mjs:130-134`) e `change` aplica `changeObservation` na raiz antiga em `:166-176`. Não há conferência da identidade da pasta entre o fim da leitura e o efeito na raiz. A liberação de `holdLockFile` percebe que o lock saiu da pasta (`src/integrations/privacy/store.mjs:164-189`), mas a autorização já foi gravada.
+
+Reprodução determinística independente: configurei A e B em homes/raízes temporárias distintas; injetei a troca imediatamente **após o retorno do terceiro `lstat(.skill-me)`** de `on` (o `lstat` posterior à leitura), antes de `changeObservation`. Ao pôr uma **junção** para a configuração B, resultado `on: 4 foreign_entry`, estado A `on`, B `off`; o próximo `off: 4 link_refused`, A permanece `on`. Ao pôr outra **pasta real** com o `observe.json` de B, resultado `on: 4 foreign_entry`, A `on`, B `off`; o próximo `off: 0`, porém A **continua `on`**. Como controle, as trocas antes do lock ou durante a leitura deram 4 e A/B `off`. Resultado completo: `beforeLockJunction=[4 link_refused,off,off]`; `atReadJunction=[4 link_refused,off,off]`; `beforeLockReal=[4 foreign_entry,off,off]`; `postReadJunction=[4 foreign_entry,on,off]`; `postReadReal=[4 foreign_entry,on,off]`. A reprodução não alterou arquivos do repositório.
+
+**Esperado:** o comando que recusa a pasta trocada não ativa A, ou conserva uma forma confiável de o `off` encerrá-la; nenhuma autorização permanece fora da configuração atual. **Atual/impacto:** `on` informa erro, mas A está ativa e o `off` alcança apenas B (ou recusa a junção). Produtores já associados à geração de A podem continuar gravando. Isso viola o consentimento até `off` da issue e as linhas “Barreira da configuração” e “Pasta da configuração” do Landing (`.checks/issue-23-observacao-on-off.md:26-27`). O teste novo de C2 encerra a troca no máximo durante a leitura ou antes do temporário (`control.cli.test.mjs:383-390`), portanto não distingue essa falha.
+
+## Rodada 3 — gate, skips e limites
+
+- **G1 continua bloqueante independentemente de F3.** O builder executou `npm test` no Windows em `40d77fc`, mesma árvore de produto que este HEAD documental: governança **6/6**, motor **16/16**, doctor **410 pass, 0 fail, 7 skip** de 417; integrações **443 testes, 435 pass, 1 fail, 7 skip** (`.checks/issue-23-observacao-on-off.build.md:533-544`). A falha foi `T8-C15`, `lock_present`, 0/1 confirmado em vez de `code:null`, 1/1/0 esperado em `tests/integrations/traces/concurrency.cli.test.mjs:122`. Isolado, passou **3/3** no Windows. O Verifier já observara falha de T8-C15 antes de F1; sob carga A/B houve falhas mensuráveis tanto em main quanto no HEAD, mas o experimento foi interrompido e **não tem taxas finais** (`build.md:546-572`). Não há prova de regressão determinística da #23 nem de que a falha seja alheia; `npm test` segue vermelho e o `AGENTS.md` determina que falha de verificação impede entrega. Não o declaro verde.
+- Os **7 skips de integrações Windows** são sinais POSIX (2), modos POSIX (1), ACL POSIX/Linux (3) e ACL macOS (1); os **7 do doctor** são POSIX/FIFO. O runtime Hermes está presente no Windows e os dois C8 passaram sem skip. Nesta rodada **WSL não rodou os novos testes F2**; o verde WSL da rodada 2 não lhes é atribuído.
+- Provas C1–C18 no HEAD: **18/18 nomes, 29/29 execuções PASS, 0 skips**. A comparação de fonte vinculante UI e fault injection `standard/ui` não se aplicam ao perfil `light`. Nenhuma mutação de código/testes, commit, push, PR ou merge foi feita pelo Verifier.
+- **Veredito final no HEAD `998235b`: FAIL**, por F3 e pelo gate Windows G1. F1/F2 passam nas janelas reproduzidas, mas isso não encerra a entrega.
