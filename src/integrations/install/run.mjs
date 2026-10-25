@@ -33,7 +33,7 @@ const NOT_REGULAR_FILE = "not_a_regular_file";
 const MANUAL_STEPS = {
   claude: [
     "Claude Code só executa hooks de settings depois da confiança do workspace; revise as entradas em /hooks.",
-    "Sem consumidor da #8, cada hook observa em memória e descarta ao sair: nada é gravado nem enviado.",
+    "Sem captura vinculada nem 'npm run on' (depois de 'integrations observe setup'), cada hook observa em memória e descarta ao sair: nada é gravado nem enviado.",
   ],
   codex: [
     "Abra /hooks no Codex e revise/confie nas entradas novas; hooks de projeto só rodam em projeto confiável.",
@@ -41,7 +41,7 @@ const MANUAL_STEPS = {
   ],
   hermes: [
     "Habilite manualmente: hermes plugins enable skill-me-observer",
-    "Sem SKILL_ME_HERMES_DELIVERY o plugin fica inativo: callbacks devolvem None sem fila, thread ou processo.",
+    "Sem SKILL_ME_HERMES_DELIVERY nem 'integrations observe setup' o plugin fica inativo: callbacks devolvem None sem fila, thread ou processo.",
   ],
 };
 

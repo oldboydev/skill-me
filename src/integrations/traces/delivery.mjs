@@ -15,7 +15,7 @@ export const DELIVERY_DEADLINE_MS = 750;
 // inteira em paralelo no Windows; .checks/issue-8-traces.build.md), e o prazo
 // vale para o fim da tentativa, não para o disparo.
 const DELIVERY_RESERVE_MS = 100;
-const ATTEMPT_MS = DELIVERY_DEADLINE_MS - DELIVERY_RESERVE_MS;
+export const ATTEMPT_MS = DELIVERY_DEADLINE_MS - DELIVERY_RESERVE_MS;
 const LOCK_RETRY_MS = 10;
 
 export const DELIVERY_CODES = Object.freeze([
@@ -60,7 +60,9 @@ const lineBytes = (records) => records.reduce((sum, record) => sum + Buffer.byte
 // depois). Se não tinha, o motivo é o da tentativa anterior — `lock_present` se o
 // prazo se foi disputando o lock — e ela não grava mais nada: o lock obtido
 // depois do prazo é devolvido sem mutação (`onLock` lança dentro do store).
-async function untilDeadline(operation, deadlineAt, clock) {
+// A observação automática (#23) reutiliza o mesmo prazo com o vocabulário dela
+// (`codeOfError`).
+export async function untilDeadline(operation, deadlineAt, clock, codeOfError = codeOf) {
   let code = "delivery_timeout";
   for (;;) {
     const remaining = deadlineAt - clock();
@@ -75,7 +77,7 @@ async function untilDeadline(operation, deadlineAt, clock) {
     const outcome = await Promise.race([
       operation(onLock).then(
         (value) => ({ ok: true, value }),
-        (error) => ({ ok: false, code: codeOf(error) }),
+        (error) => ({ ok: false, code: codeOfError(error) }),
       ),
       new Promise((resolve) => {
         timer = setTimeout(() => {

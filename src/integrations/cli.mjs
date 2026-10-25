@@ -97,6 +97,19 @@ async function privacy() {
   process.exitCode = result.exitCode;
 }
 
+// Observação automática (#23): um JSON por execução, stderr vazio.
+async function observe() {
+  const { runObserveCommand } = await import("./observe/command.mjs");
+  let result;
+  try {
+    result = await runObserveCommand({ argv: argv.slice(1) });
+  } catch {
+    result = { exitCode: 5, body: { schemaVersion: 1, command: null, status: "error", error: { code: "io_failure" } } };
+  }
+  process.stdout.write(result.help ?? JSON.stringify(result.body) + "\n");
+  process.exitCode = result.exitCode;
+}
+
 async function report() {
   const { runReportCommand } = await import("./report/command.mjs");
   const result = await runReportCommand({ argv: argv.slice(1) });
@@ -110,6 +123,9 @@ switch (command) {
     break;
   case "privacy":
     await privacy();
+    break;
+  case "observe":
+    await observe();
     break;
   case "hook":
     await internal(() => import("./hook-command.mjs"), "runHookCommand", ["claude", "codex"]);

@@ -12,13 +12,17 @@ destino é uma thread daemon. Destino travado ou fila cheia viram contagem, nunc
 Este arquivo não tem regra de privacidade, limite de tamanho de campo, enum, envelope,
 atribuição ou persistência: projeta só os nomes listados em ``kwargs.json`` (o mesmo
 arquivo lido pelo adaptador Node) e entrega ao comando ``integrations ingest``, onde a
-fronteira compartilhada decide tudo. Sem ``SKILL_ME_HERMES_DELIVERY`` (argv JSON), a
-observação fica inativa: nenhuma fila, thread ou processo.
+fronteira compartilhada decide tudo. O destino é o argv JSON de
+``SKILL_ME_HERMES_DELIVERY``; sem ela, o ``hermesDelivery`` gravado uma vez por
+``integrations observe setup`` em ``~/.skill-me/observe.json`` (issue #23). On/off,
+raiz e sessão continuam decididos no ingest. Sem nenhum dos dois, a observação fica
+inativa: nenhuma fila, thread ou processo.
 """
 
 import json
 import os
 import queue
+import stat
 import subprocess
 import threading
 from pathlib import Path
@@ -78,17 +82,63 @@ def _load_config():
         return None
 
 
+_CONFIG_DIR = ".skill-me"
+_CONFIG_FILE = "observe.json"
+_MAX_CONFIG_BYTES = 64 * 1024
+# Junção só existe no Windows, o único que exporta a constante: no POSIX, `stat`
+# não a define e acessá-la direto deixava o plugin sem destino numa pasta comum
+# (achado P1 da revisão formal da issue #23).
+_JUNCTION_TAG = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
+
+
+def _argv(value):
+    if isinstance(value, list) and value and all(isinstance(item, str) and item for item in value):
+        return value
+    return None
+
+
+def _folder_identity(folder):
+    # Diretório real, nunca link nem junção: o Python do Hermes (3.11) reporta a
+    # junção como diretório, só com a marca de reparse, e `is_symlink()` a aceita.
+    info = os.lstat(folder)
+    junction = _JUNCTION_TAG is not None and getattr(info, "st_reparse_tag", 0) == _JUNCTION_TAG
+    if stat.S_ISLNK(info.st_mode) or junction:
+        return None
+    if not stat.S_ISDIR(info.st_mode):
+        return None
+    return (info.st_dev, info.st_ino)
+
+
+def _configured_delivery():
+    # Mesmo home do Node (USERPROFILE no Windows, HOME no POSIX); só o argv é
+    # lido. Como no Node, link no lugar do arquivo ou da pasta é recusado, e a
+    # pasta é conferida de novo depois da leitura: trocada no meio, o argv lido
+    # seria o de outra configuração (linha "Pasta da configuração" do Landing da
+    # issue #23).
+    try:
+        folder = Path.home().joinpath(_CONFIG_DIR)
+        identity = _folder_identity(folder)
+        path = folder.joinpath(_CONFIG_FILE)
+        if identity is None or path.is_symlink():
+            return None
+        with open(path, "rb") as handle:
+            data = handle.read(_MAX_CONFIG_BYTES + 1)
+        if _folder_identity(folder) != identity or len(data) > _MAX_CONFIG_BYTES:
+            return None
+        config = json.loads(data.decode("utf-8"))
+        return _argv(config.get("hermesDelivery")) if isinstance(config, dict) else None
+    except Exception:
+        return None
+
+
 def _load_delivery():
     raw = os.environ.get("SKILL_ME_HERMES_DELIVERY")
     if not raw:
-        return None
+        return _configured_delivery()
     try:
-        argv = json.loads(raw)
+        return _argv(json.loads(raw))
     except Exception:
         return None
-    if isinstance(argv, list) and argv and all(isinstance(item, str) and item for item in argv):
-        return argv
-    return None
 
 
 def _is_scalar(value):

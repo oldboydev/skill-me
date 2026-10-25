@@ -20,6 +20,13 @@ agente. O par `SKILL_ME_CAPTURE_ROOT`/`SKILL_ME_CAPTURE_ID` da #8
   memória: o conteúdo está sempre desligado e cada processo usa uma chave
   própria, nunca gravada. Vinculados pelo par de variáveis da #8, gravam na
   captura com a chave e o opt-in dela, pela mesma política.
+- Observação automática (issue #23, [docs/traces.md](traces.md)): `npm run on`
+  é o consentimento explícito, deste usuário e para a raiz escolhida em
+  `observe setup`, a capturas locais sucessivas com conteúdo, até `npm run off`.
+  Sem o `on`, nada é gravado. Cada sessão ganha uma captura nova, que nasce com
+  o conteúdo ligado (como `--content`), retenção padrão, chave e limites
+  próprios; cada evento passa pela mesma política. `off` encerra as capturas
+  automáticas, e a retenção delas começa ali.
 - IDs viram pseudônimos `h1:` (HMAC-SHA-256 com chave aleatória da captura):
   iguais dentro da captura, diferentes entre capturas. A chave fica só em
   `captures/<id>/key`, nunca aparece em `status` ou `export` e sai com a captura.

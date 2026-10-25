@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -44,6 +44,19 @@ export function locateHermesRuntime() {
     return { skipReason: "fonte do Hermes ilegível" };
   }
   return { python, agentDir };
+}
+
+// Python 3 do sistema, para provas da fonte do plugin que não precisam do
+// Hermes: o plugin só importa a biblioteca padrão. Cada candidato é executado
+// antes de ser aceito, porque no Windows `python3` pode ser o atalho da loja,
+// que não roda nada. Sem nenhum, `skipReason` diz por quê.
+export function locateSystemPython() {
+  const candidates = process.platform === "win32" ? [["python"], ["py", "-3"]] : [["python3"], ["python"]];
+  for (const [command, ...prefix] of candidates) {
+    const probe = spawnSync(command, [...prefix, "-I", "-c", "import sys; print(sys.version_info[0])"], { encoding: "utf8", timeout: 30_000, windowsHide: true });
+    if (probe.status === 0 && probe.stdout.trim() === "3") return { command, prefix };
+  }
+  return { skipReason: `nenhum Python 3 do sistema entre ${candidates.map((c) => c.join(" ")).join(", ")}` };
 }
 
 // Estado dos caches de bytecode do pacote instalado: precisa ficar igual,

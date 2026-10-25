@@ -6,15 +6,20 @@ export const HELP_TEXT = `Uso:
   integrations uninstall --agent <claude|codex|hermes> --target <diretório> [--apply] [--json]
   integrations run --agent codex [--codex-entry <arquivo>] -- <argumentos de codex exec>
   integrations privacy <start|ingest|stop|disable|status|export|list|follow|delete|prune> --root <diretório> …
+  integrations observe <setup --root <diretório-absoluto>|on|off|status>
   integrations report --root <diretório> --capture <id> [--skill <SKILL.md>] [--format text|markdown|json]
+  integrations report --latest [--skill <SKILL.md>] [--format text|markdown|json]
 
 Observação local de execuções (issue #4), separada do doctor. Sem --apply nada é
 escrito e nenhum agente é iniciado; --target é obrigatório e não tem default.
 Confiança nativa (workspace do Claude, /hooks do Codex, plugins.enabled do Hermes)
-continua manual. Não há coletor: sem vínculo a uma captura, a observação fica em
-memória e é descartada ao fim do processo. Com SKILL_ME_CAPTURE_ROOT (absoluto) e
-SKILL_ME_CAPTURE_ID de uma captura ativa (privacy start) no ambiente do agente,
-hooks, ingest e run gravam nela o resultado sanitizado (docs/traces.md).
+continua manual. Não há coletor: sem vínculo a uma captura e sem a observação
+automática ligada, a observação fica em memória e é descartada ao fim do
+processo. Depois de observe setup (uma vez) e observe on (npm run on), hooks e
+ingest Hermes gravam cada sessão numa captura automática até observe off
+(docs/traces.md). Com SKILL_ME_CAPTURE_ROOT (absoluto) e SKILL_ME_CAPTURE_ID de
+uma captura ativa (privacy start) no ambiente do agente, hooks, ingest e run
+gravam só nela o resultado sanitizado.
 
 Códigos: 0 concluído ou nada a fazer; 2 uso inválido; 3 configuração inválida
 (não substituída); 4 conflito (preservado); 5 incompleto (estado reportado).

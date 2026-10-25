@@ -100,8 +100,12 @@ export function renderReport(report, format = "text") {
     ? `nomes observados ambíguos: ${report.skill.observedNames.map((item) => `${md(item.name)} (${observedSources(item.sources)})`).join("; ")}; coincidência indeterminada`
     : `nome observado ${md(report.skill.observedName ?? "não observado")}; fonte do nome observado: ${observedSources(report.skill.observedSources)}; coincidência ${report.skill.nameMatchesObservation ?? "indeterminada"}`;
   const identificationSource = report.skill.identification === "explicit_path" ? "argumento --skill" : "eventos da captura";
+  // A captura relatada sempre identificada: com `report --latest` ela não foi
+  // escolhida pelo usuário (#23, crit. 5). O JSON já a traz em timeline.capture.
   const rows = [
     markdown ? "# Relatório de execução" : "Relatório de execução",
+    "",
+    `${heading("Captura")} ${md(report.timeline.capture.id)}; fonte: timeline.capture.id.`,
     "",
     `${heading("Skill")} ${md(report.skill.name)}; identificação ${report.skill.identification} (fonte: ${identificationSource}); sha256:${report.skill.sha256}; ${observed}.`,
     "",

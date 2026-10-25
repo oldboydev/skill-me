@@ -1,19 +1,22 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { INTEGRATIONS_CLI, assertPseudonymIds, baseEnv, makeScratch, parseReport, runIntegrationsJson } from "./helpers/cli.mjs";
+import { INTEGRATIONS_CLI, REPO_ROOT, assertPseudonymIds, baseEnv, makeScratch, parseReport, runIntegrations, runIntegrationsJson } from "./helpers/cli.mjs";
+import { expectedPseudonym } from "./helpers/traces.mjs";
 import { fixtureCase } from "./helpers/fixtures.mjs";
-import { DELIVERY_FIXTURE, FIXTURE_PLUGINS, bytecodeState, harnessEnv, locateHermesRuntime, runHarness } from "./helpers/hermes-runtime.mjs";
+import { DELIVERY_FIXTURE, FIXTURE_PLUGINS, bytecodeState, harnessEnv, locateHermesRuntime, locateSystemPython, runHarness } from "./helpers/hermes-runtime.mjs";
 import { snapshotTree } from "./helpers/tree.mjs";
 
 // Prova nativa: PluginManager, invoke_hook e handle_function_call reais do
 // Hermes 0.21.4 local, em HERMES_HOME temporário, `python -I -B`, plugins
 // empacotados desviados para diretório vazio e sem modelos. Sem esse runtime
 // (ou com outra revisão), todos os testes ficam `skipped` com o motivo — prova
-// nativa pendente, nunca aprovada por simulação.
+// nativa pendente, nunca aprovada por simulação. A exceção é a prova portátil
+// da configuração única (I23-C8), que só precisa de um Python 3 do sistema e
+// roda no Windows e no POSIX.
 const runtime = locateHermesRuntime();
 const SKIP = runtime.skipReason ? `hermes-runtime-ausente: ${runtime.skipReason}` : false;
 const NODE = process.execPath;
@@ -40,10 +43,13 @@ function homeChanges(before, after) {
   return changes;
 }
 
-async function prepareAndRun(name, { delivery, enable = ["skill-me-observer", "skillme-fixture-tool"], installObserver = enable.includes("skill-me-observer"), timeout = 30, scenario }) {
+// `beforeRun(sandbox, env)`: preparação do usuário no sandbox (ex.: a
+// configuração única da #23 no home dele) antes de o Hermes iniciar.
+async function prepareAndRun(name, { delivery, enable = ["skill-me-observer", "skillme-fixture-tool"], installObserver = enable.includes("skill-me-observer"), timeout = 30, scenario, beforeRun }) {
   const sandbox = makeScratch(`hermes-${name}`);
   scratches.push(sandbox);
   const env = harnessEnv(sandbox, delivery ? { SKILL_ME_HERMES_DELIVERY: JSON.stringify(delivery(sandbox)) } : {});
+  await beforeRun?.(sandbox, env);
   const home = env.HERMES_HOME;
   mkdirSync(home, { recursive: true });
   if (installObserver) {
@@ -319,6 +325,215 @@ test("I4-C37 Hermes: seis casos de falha mantêm callbacks neutros e ferramenta 
   }
   assert.ok(runs.stall.result.stats.droppedQueueFull > 0);
   assert.equal(runs.capture.result.stats.oversize, 1);
+});
+
+// Capturas automáticas legíveis da raiz, pelo CLI (sem assert: usado na espera).
+function automaticCaptures(root) {
+  const run = runIntegrations(["privacy", "list", "--root", root]);
+  if (run.status !== 0) return null;
+  return JSON.parse(run.stdout).captures.filter((capture) => capture.origin === "automatic");
+}
+
+// O ingest grava depois de o Hermes sair (EOF do pipe): espera os registros.
+async function waitForPersisted(root, total, ms = 15_000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const captures = automaticCaptures(root);
+    if (captures !== null && captures.reduce((sum, c) => sum + c.counters.persisted, 0) >= total) return captures;
+    if (Date.now() > deadline) return captures;
+    await sleep(200);
+  }
+}
+
+test("I23-C8 Hermes entrega sem variável por sessão: com a configuração única e o on, o plugin entrega ao ingest e cada sessão vai à sua captura; falha da entrega não bloqueia o agente", { skip: SKIP }, async () => {
+  const roots = {};
+  // Preparação do usuário, uma vez: setup e on no home dele, nenhuma variável
+  // no ambiente da sessão Hermes.
+  const configure = (name, { lock = false } = {}) => async (sandbox, env) => {
+    assert.equal(env.SKILL_ME_HERMES_DELIVERY, undefined, "sem variável de entrega na sessão");
+    assert.ok(!Object.keys(env).some((key) => key.startsWith("SKILL_ME_CAPTURE")), "sem variável de captura");
+    const root = path.join(sandbox, "capturas ação");
+    mkdirSync(root);
+    roots[name] = root;
+    const userEnv = baseEnv({ HOME: env.HOME, USERPROFILE: env.USERPROFILE });
+    for (const args of [["setup", "--root", root], ["on"]]) assert.equal(runIntegrations(["observe", ...args], { env: userEnv }).status, 0, args[0]);
+    if (lock) writeFileSync(path.join(root, "skill-me-privacy", ".lock"), "lock alheio\n");
+  };
+  // Destino configurado que não inicia: o arquivo é o do setup com outro argv.
+  const brokenDestination = async (sandbox, env) => {
+    await configure("destino")(sandbox, env);
+    const file = path.join(env.USERPROFILE, ".skill-me", "observe.json");
+    const config = JSON.parse(readFileSync(file, "utf8"));
+    writeFileSync(file, JSON.stringify({ ...config, hermesDelivery: [path.join(sandbox, "não existe", "destino.exe")] }));
+  };
+  const scenario = { toolCalls: 3, invokes: OTHER_HOOKS };
+  await prepareAndRun("i23-observado", { scenario, beforeRun: configure("observado") });
+  await prepareAndRun("i23-lock", { scenario, beforeRun: configure("lock", { lock: true }) });
+  await prepareAndRun("i23-destino", { scenario, beforeRun: brokenDestination });
+
+  // Em todos, o agente segue igual: callbacks None e ferramenta inalterada.
+  for (const name of ["i23-observado", "i23-lock", "i23-destino"]) {
+    const { result } = runs[name];
+    assert.deepEqual(result.loaded["skill-me-observer"].hooks, SEVEN, name);
+    for (const invoke of result.invokeResults) assert.deepEqual(invoke.results, [], `${name}/${invoke.hook}`);
+    assert.deepEqual(echoed(result), result.toolResults.map(() => ({ echo: ARGS })), name);
+    assert.deepEqual(result.toolCalls, result.toolResults.map(() => ARGS), name);
+    assert.equal(result.blockMessage, null, name);
+  }
+
+  // Entrega pela configuração: 3 ferramentas × (pre + post), 5 hooks e o
+  // pre_tool_call da checagem de bloqueio do harness.
+  const observed = runs["i23-observado"].result.stats;
+  const total = 3 * 2 + OTHER_HOOKS.length + 1;
+  assert.deepEqual([observed.active, observed.enqueued, observed.delivered, observed.deliveryFailed], [true, total, total, 0]);
+  const root = roots.observado;
+  const captures = await waitForPersisted(root, total);
+  assert.equal(captures?.length, 2, "uma captura por sessão Hermes");
+  const records = Object.fromEntries(
+    captures.map((capture) => {
+      const exported = JSON.parse(runIntegrations(["privacy", "export", "--root", root, "--capture", capture.id]).stdout);
+      return [capture.id, exported.records];
+    }),
+  );
+  const ownerOf = (native) => {
+    const found = captures.filter((c) => records[c.id].every((r) => (r.envelope.ids.sessionId ?? r.envelope.ids.parentSessionId) === expectedPseudonym(root, c.id, native)));
+    assert.equal(found.length, 1, native);
+    return found[0];
+  };
+  const tools = ownerOf(IDS.session_id);
+  assert.equal(records[tools.id].length, 7, "ferramentas reais e a checagem de bloqueio");
+  assert.deepEqual(
+    records[tools.id].filter((r) => r.envelope.eventKind === "tool_pre" && r.envelope.ids.toolCallId !== expectedPseudonym(root, tools.id, "block-check")).map((r) => r.envelope.ids.toolCallId),
+    ["call-0", "call-1", "call-2"].map((call) => expectedPseudonym(root, tools.id, call)),
+  );
+  const fixtureSession = ownerOf("hermes-sess-01");
+  assert.deepEqual(records[fixtureSession.id].map((r) => r.envelope.nativeEvent).sort(), OTHER_HOOKS.map((h) => h.hook).sort(), "subagentes na sessão do pai");
+  for (const record of Object.values(records).flat()) {
+    assert.deepEqual([record.envelope.source.agent, record.envelope.signal], ["hermes", "native_plugin"]);
+  }
+  const disk = readdirSync(path.join(root, "skill-me-privacy", "captures"))
+    .flatMap((id) => readdirSync(path.join(root, "skill-me-privacy", "captures", id)).filter((n) => n !== "key").map((n) => readFileSync(path.join(root, "skill-me-privacy", "captures", id, n), "utf8")))
+    .join("\n");
+  for (const native of [IDS.session_id, IDS.task_id, IDS.turn_id, "hermes-sess-01", "call-0", "SKILLME-CANARY"]) assert.ok(!disk.includes(native), native);
+
+  // Store ocupado: o ingest desiste no prazo da entrega, nada é gravado e o lock alheio fica.
+  assert.equal(runs["i23-lock"].result.stats.deliveryFailed, 0, "o plugin entregou ao ingest");
+  await sleep(3000);
+  assert.equal(readFileSync(path.join(roots.lock, "skill-me-privacy", ".lock"), "utf8"), "lock alheio\n");
+  assert.ok(!existsSync(path.join(roots.lock, "skill-me-privacy", "captures")), "nada gravado com o store ocupado");
+  // Destino configurado que não inicia: contado como falha, entrega desligada, sem retry.
+  const broken = runs["i23-destino"].result.stats;
+  assert.ok(broken.deliveryFailed >= 1, JSON.stringify(broken));
+  assert.equal(broken.active, false);
+  assert.equal(automaticCaptures(roots.destino)?.length ?? 0, 0);
+});
+
+// Pasta da configuração trocada (F2 da verificação, rodada 2; linha "Pasta da
+// configuração" do Landing da #23): a decisão do plugin sobre o destino, na
+// própria camada, com o Python do Hermes. No lugar de `.skill-me` fica uma
+// junção (Windows) / link (POSIX) para a pasta de outra configuração, de outro
+// argv — antes da leitura, ou posta pelo `open` do módulo ao abrir o arquivo.
+// Sem destino, o plugin fica inativo (I4-C44b).
+const PLUGIN_SOURCE = path.join(REPO_ROOT, "src", "integrations", "hermes", "plugin", "__init__.py");
+const DIR_LINK = process.platform === "win32" ? "junction" : "dir";
+const LOAD_DELIVERY = `
+import builtins, importlib.util, json, os, sys
+plugin, folder, moved, foreign, when = sys.argv[1:6]
+spec = importlib.util.spec_from_file_location("skill_me_observer_pasta", plugin)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+def swap():
+    os.rename(folder, moved)
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(foreign, folder)
+    else:
+        os.symlink(foreign, folder, target_is_directory=True)
+if when == "durante":
+    real_open = builtins.open
+    def swapping_open(file, *args, **kwargs):
+        if os.path.basename(os.fspath(file)) == "observe.json":
+            swap()
+        return real_open(file, *args, **kwargs)
+    module.open = swapping_open
+print(json.dumps(module._load_delivery()))
+`;
+
+test("I23-C8 Hermes entrega sem variável por sessão: pasta da configuração trocada por junção, antes ou durante a leitura, deixa o plugin sem destino", { skip: SKIP }, () => {
+  const rows = { "pasta real (controle)": null, "junção antes da leitura": "antes", "junção durante a leitura": "durante" };
+  const observed = {};
+  const expected = {};
+  for (const [label, when] of Object.entries(rows)) {
+    const sandbox = makeScratch(`hermes-i23-pasta-${when ?? "controle"}`);
+    scratches.push(sandbox);
+    const env = harnessEnv(sandbox);
+    const root = path.join(sandbox, "capturas ação");
+    mkdirSync(root);
+    assert.equal(runIntegrations(["observe", "setup", "--root", root], { env: baseEnv({ HOME: env.HOME, USERPROFILE: env.USERPROFILE }) }).status, 0);
+    const folder = path.join(env.USERPROFILE, ".skill-me");
+    const own = JSON.parse(readFileSync(path.join(folder, "observe.json"), "utf8"));
+    const foreign = path.join(sandbox, "home alheio", ".skill-me");
+    mkdirSync(foreign, { recursive: true });
+    writeFileSync(path.join(foreign, "observe.json"), JSON.stringify({ ...own, hermesDelivery: [NODE, DELIVERY_FIXTURE, "capture", path.join(sandbox, "alheio.ndjson")] }));
+    const moved = path.join(sandbox, "pasta da configuração movida");
+    if (when === "antes") {
+      renameSync(folder, moved);
+      symlinkSync(foreign, folder, DIR_LINK);
+    }
+    const run = spawnSync(runtime.python, ["-I", "-B", "-c", LOAD_DELIVERY, PLUGIN_SOURCE, folder, moved, foreign, when ?? "-"], { env, encoding: "utf8", timeout: 60_000 });
+    observed[label] = { status: run.status, stderr: run.stderr, delivery: run.status === 0 ? JSON.parse(run.stdout) : run.stdout, swapped: lstatSync(folder).isSymbolicLink() };
+    expected[label] = { status: 0, stderr: "", delivery: when === null ? [NODE, INTEGRATIONS_CLI, "ingest", "--agent", "hermes"] : null, swapped: when !== null };
+  }
+  assert.deepEqual(observed, expected);
+});
+
+// Prova portátil da fronteira entre a configuração única e o plugin (achado P1
+// da revisão formal da #23): a fonte do plugin, carregada pelo Python do
+// sistema com `register(ctx)` (o contrato do Hermes), lê o `hermesDelivery`
+// gravado pelo `observe setup` num home temporário. No POSIX, uma pasta comum
+// fazia a conferência da junção consultar uma constante que só o Windows
+// exporta: o plugin ficava inativo sem nenhum erro visível.
+const SYSTEM_PYTHON = locateSystemPython();
+const REGISTER_PLUGIN = `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("skill_me_observer_portatil", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+hooks = []
+class Context:
+    def register_hook(self, name, callback):
+        hooks.append(name)
+module.register(Context())
+print(json.dumps({"hooks": sorted(hooks), "active": module.observer_stats()["active"], "delivery": module._load_delivery()}))
+`;
+
+test("I23-C8 Hermes entrega sem variável por sessão: pelo Python do sistema, sem o runtime do Hermes, o plugin lê o destino da configuração única numa pasta comum e recusa link ou junção no lugar dela", { skip: SYSTEM_PYTHON.skipReason ? `python-ausente: ${SYSTEM_PYTHON.skipReason}` : false }, () => {
+  const rows = { "sem configuração": "nenhuma", "pasta comum": "pasta", [`${DIR_LINK === "junction" ? "junção" : "link"} no lugar da pasta`]: "link" };
+  const observed = {};
+  const expected = {};
+  for (const [label, kind] of Object.entries(rows)) {
+    const sandbox = makeScratch(`hermes-i23-portatil-${kind}`);
+    scratches.push(sandbox);
+    const home = path.join(sandbox, "home do usuário");
+    mkdirSync(home);
+    const env = baseEnv({ HOME: home, USERPROFILE: home });
+    if (kind !== "nenhuma") {
+      const root = path.join(sandbox, "capturas ação");
+      mkdirSync(root);
+      assert.equal(runIntegrations(["observe", "setup", "--root", root], { env }).status, 0, label);
+    }
+    // O link aponta para a mesma configuração, movida: só a forma da pasta muda.
+    if (kind === "link") {
+      const moved = path.join(sandbox, "pasta da configuração movida");
+      renameSync(path.join(home, ".skill-me"), moved);
+      symlinkSync(moved, path.join(home, ".skill-me"), DIR_LINK);
+    }
+    const run = spawnSync(SYSTEM_PYTHON.command, [...SYSTEM_PYTHON.prefix, "-I", "-B", "-c", REGISTER_PLUGIN, PLUGIN_SOURCE], { env, encoding: "utf8", timeout: 60_000, windowsHide: true });
+    observed[label] = { status: run.status, stderr: run.stderr, plugin: run.status === 0 ? JSON.parse(run.stdout) : run.stdout };
+    const delivery = kind === "pasta" ? [NODE, INTEGRATIONS_CLI, "ingest", "--agent", "hermes"] : null;
+    expected[label] = { status: 0, stderr: "", plugin: { hooks: SEVEN, active: delivery !== null, delivery } };
+  }
+  assert.deepEqual(observed, expected);
 });
 
 test("I4-C44b Hermes sem entrega configurada fica inativo", { skip: SKIP }, () => {

@@ -2,8 +2,18 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { validateEnvelope } from "../boundary.mjs";
+import { assignSession, isCurrentGeneration, isValidObservation, sessionTag, switchObservation } from "../observe/authorization.mjs";
 import { createStoreIo } from "./fs.mjs";
-import { admitLines, CAPTURE_ID_PATTERN, isExpired, MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, PRIVACY_LIMITS, transition } from "./lifecycle.mjs";
+import {
+  admitLines,
+  CAPTURE_ID_PATTERN,
+  DEFAULT_RETENTION_DAYS,
+  isExpired,
+  MAX_RETENTION_DAYS,
+  MIN_RETENTION_DAYS,
+  PRIVACY_LIMITS,
+  transition,
+} from "./lifecycle.mjs";
 
 // Armazenamento local mínimo das capturas (issue #5, crit. 13–19), reutilizado
 // pela #8. Grava somente registros já produzidos pela política; nunca lê nem
@@ -30,6 +40,11 @@ const DATA_FILE_PATTERN = /^events-(\d{6})\.ndjson$/;
 const TEMP_PATTERN = /^(state\.json|events-\d{6}\.ndjson)\.[0-9a-f]{8}\.skill-me-tmp$/;
 // state.json tem forma fechada e pequena; um arquivo maior não é nosso.
 const MAX_STATE_BYTES = 64 * 1024;
+// Estado da observação automática (#23), ao lado do marcador do store. O teto
+// cobre o mapa cheio (MAX_SESSIONS entradas de ~100 bytes).
+const OBSERVE_FILE = "observe.json";
+const MAX_OBSERVE_BYTES = 256 * 1024;
+export const AUTOMATIC_ORIGIN = "automatic";
 
 export const CONTENT_OMISSION_CODES = Object.freeze([
   "content_disabled",
@@ -88,12 +103,15 @@ async function readSmallFile(io, file, maxBytes, invalidCode) {
   return bytes;
 }
 
-// Abre a pasta do store da raiz. Só `start` (create) cria a pasta; os demais
-// recebem null quando ela não existe. O marcador é imutável depois de criado,
-// então é conferido antes do lock: uma pasta alheia com o mesmo nome nunca
-// recebe o nosso lock.
-async function openStore(rootArg, io, { create = false } = {}) {
+// Abre a pasta do store da raiz. Só `start` e o `on` da observação (create)
+// criam a pasta; os demais recebem null quando ela não existe. O marcador é
+// imutável depois de criado, então é conferido antes do lock: uma pasta alheia
+// com o mesmo nome nunca recebe o nosso lock. `expectedReal` (observação
+// automática, #23): o caminho real gravado no setup; outro destino é
+// `root_changed`, e `withLock` mantém a conferência até o fim da operação.
+async function openStore(rootArg, io, { create = false, expectedReal = null } = {}) {
   const rootReal = await resolveRoot(rootArg, io);
+  if (expectedReal !== null && rootReal !== expectedReal) throw new StoreError("root_changed");
   const storeDir = path.join(rootReal, STORE_DIR);
   let kind = await entryKind(io, storeDir);
   if (kind === "missing") {
@@ -132,11 +150,10 @@ async function assertUnchanged(ctx) {
   if (real !== ctx.rootReal || (await entryKind(ctx.io, ctx.storeDir)) !== "dir") throw new StoreError("root_changed");
 }
 
-// Lock exclusivo da raiz, sem espera: ocupado → conflito sem mutação, e nunca
-// removido por outro processo. Só sai se ainda tiver os bytes que gravamos.
-// `ctx.onLock`, quando houver, é chamado quando o lock passa a ser desta
-// operação, antes de qualquer leitura ou mutação; se lançar, a operação
-// desiste sem mudar nada.
+// Lock exclusivo por arquivo, sem espera: ocupado → conflito sem mutação, e
+// nunca removido por outro processo. Só sai se ainda tiver os bytes que
+// gravamos; senão `lostCode`. Consumidores: o lock da raiz (withLock) e o da
+// configuração da observação (#23, linha "Barreira da configuração").
 //
 // O lock é criado sem flush: só serializa processos vivos — a criação `wx` é
 // atômica e os bytes conferidos na liberação são lidos pelo mesmo sistema — e,
@@ -144,11 +161,10 @@ async function assertUnchanged(ctx) {
 // não protege nada. Cada flush espera o disco dentro do prazo de entrega da #8,
 // e os dois do lock eram metade dos de um hook (.checks/issue-8-traces.build.md,
 // rodada 6).
-async function withLock(ctx, fn) {
-  const lockPath = path.join(ctx.storeDir, LOCK_FILE);
+export async function holdLockFile({ io, lockPath, lostCode }, fn) {
   const bytes = Buffer.from(JSON.stringify({ lockVersion: 1, pid: process.pid, nonce: randomBytes(8).toString("hex") }));
   try {
-    await ctx.io.writeExclusive(lockPath, bytes, { durable: false });
+    await io.writeExclusive(lockPath, bytes, { durable: false });
   } catch (error) {
     if (error.code === "EEXIST") throw new StoreError("lock_present");
     throw error;
@@ -156,21 +172,30 @@ async function withLock(ctx, fn) {
   let failure = null;
   let result;
   try {
-    ctx.onLock?.();
-    await assertUnchanged(ctx);
     result = await fn();
   } catch (error) {
     failure = error;
   }
   try {
-    const current = await readSmallFile(ctx.io, lockPath, bytes.length, "root_changed");
-    if (current === null || !current.equals(bytes)) throw new StoreError("root_changed");
-    await ctx.io.unlink(lockPath);
+    const current = await readSmallFile(io, lockPath, bytes.length, lostCode);
+    if (current === null || !current.equals(bytes)) throw new StoreError(lostCode);
+    await io.unlink(lockPath);
   } catch (error) {
     failure ??= error;
   }
   if (failure) throw failure;
   return result;
+}
+
+// Lock da raiz. `ctx.onLock`, quando houver, é chamado quando o lock passa a
+// ser desta operação, antes de qualquer leitura ou mutação; se lançar, a
+// operação desiste sem mudar nada.
+function withLock(ctx, fn) {
+  return holdLockFile({ io: ctx.io, lockPath: path.join(ctx.storeDir, LOCK_FILE), lostCode: "root_changed" }, async () => {
+    ctx.onLock?.();
+    await assertUnchanged(ctx);
+    return fn();
+  });
 }
 
 async function ensureCapturesDir(ctx) {
@@ -205,11 +230,16 @@ const isOmissionCode = (key) => CONTENT_OMISSION_CODES.includes(key);
 const isIso = (value) => typeof value === "string" && ISO_PATTERN.test(value) && !Number.isNaN(Date.parse(value));
 
 const STATE_KEYS = ["captureVersion", "content", "counters", "createdAt", "dataBytes", "dataFile", "endedAt", "id", "limits", "retentionDays", "state"];
+// Só a captura criada pela observação automática traz `origin`; a manual
+// continua com a forma da #5 (linha "Captura automática" do Landing da #23).
+const AUTOMATIC_STATE_KEYS = [...STATE_KEYS, "origin"].sort();
 const COUNTER_KEYS = ["accepted", "contentOmitted", "dropped", "malformed", "persisted"];
 
 function isValidState(state, id) {
   if (state === null || typeof state !== "object" || Array.isArray(state)) return false;
-  if (!isDeepStrictEqual(Object.keys(state).sort(), STATE_KEYS)) return false;
+  const keys = Object.keys(state).sort();
+  const manual = isDeepStrictEqual(keys, STATE_KEYS);
+  if (!manual && !(isDeepStrictEqual(keys, AUTOMATIC_STATE_KEYS) && state.origin === AUTOMATIC_ORIGIN)) return false;
   const counters = state.counters;
   return (
     state.captureVersion === 1 &&
@@ -272,37 +302,51 @@ async function writeStateAtomic(io, dir, state) {
 
 function publicCapture(state) {
   const { id, state: lifecycle, content, retentionDays, createdAt, endedAt, dataBytes, counters, limits } = state;
-  return { id, state: lifecycle, content, retentionDays, createdAt, endedAt, dataBytes, counters, limits };
+  const shown = { id, state: lifecycle, content, retentionDays, createdAt, endedAt, dataBytes, counters, limits };
+  return state.origin === undefined ? shown : { ...shown, origin: state.origin };
+}
+
+// Marcador gravado sob o lock pela operação que adotou a pasta vazia.
+async function initStore(ctx) {
+  if (!ctx.needsInit) return;
+  await ctx.io.writeExclusive(path.join(ctx.storeDir, STORE_FILE), STORE_MARKER);
+  await assertUnchanged(ctx);
+}
+
+// Captura nova, já sob o lock: pasta, chave própria e o state.json, que é o
+// commit. `origin` só existe nas criadas pela observação automática.
+async function createCapture(ctx, { content, retentionDays, nowMs, origin }) {
+  const { io } = ctx;
+  await ensureCapturesDir(ctx);
+  const id = randomBytes(16).toString("hex");
+  const dir = path.join(ctx.capturesDir, id);
+  await io.mkdir(dir);
+  await io.writeExclusive(path.join(dir, KEY_FILE), randomBytes(KEY_BYTES));
+  const state = {
+    captureVersion: 1,
+    id,
+    state: "active",
+    content,
+    retentionDays,
+    createdAt: new Date(nowMs).toISOString(),
+    endedAt: null,
+    dataFile: null,
+    dataBytes: 0,
+    counters: { accepted: 0, persisted: 0, malformed: 0, dropped: {}, contentOmitted: {} },
+    limits: { ...PRIVACY_LIMITS },
+    ...(origin === undefined ? {} : { origin }),
+  };
+  await writeStateAtomic(io, dir, state);
+  return { dir, state };
 }
 
 export function startCapture({ root, content = false, retentionDays, nowMs = Date.now(), io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openStore(root, io, { create: true });
     return withLock(ctx, async () => {
-      if (ctx.needsInit) {
-        await io.writeExclusive(path.join(ctx.storeDir, STORE_FILE), STORE_MARKER);
-        await assertUnchanged(ctx);
-      }
-      await ensureCapturesDir(ctx);
-      const id = randomBytes(16).toString("hex");
-      const dir = path.join(ctx.capturesDir, id);
-      await io.mkdir(dir);
-      await io.writeExclusive(path.join(dir, KEY_FILE), randomBytes(KEY_BYTES));
-      const state = {
-        captureVersion: 1,
-        id,
-        state: "active",
-        content,
-        retentionDays,
-        createdAt: new Date(nowMs).toISOString(),
-        endedAt: null,
-        dataFile: null,
-        dataBytes: 0,
-        counters: { accepted: 0, persisted: 0, malformed: 0, dropped: {}, contentOmitted: {} },
-        limits: { ...PRIVACY_LIMITS },
-      };
-      await writeStateAtomic(io, dir, state);
-      return { id, state: "active", content, retentionDays, createdAt: state.createdAt };
+      await initStore(ctx);
+      const { state } = await createCapture(ctx, { content, retentionDays, nowMs });
+      return { id: state.id, state: "active", content, retentionDays, createdAt: state.createdAt };
     });
   });
 }
@@ -337,6 +381,12 @@ export function readCaptureStatus({ root, id, io = createStoreIo() }) {
   });
 }
 
+async function readCaptureKey(io, dir) {
+  const key = await readSmallFile(io, path.join(dir, KEY_FILE), KEY_BYTES, "capture_invalid");
+  if (key === null || key.length !== KEY_BYTES) throw new StoreError("capture_invalid");
+  return key;
+}
+
 // Fase 1 do ingest: estado e chave lidos sob o lock e liberados antes do
 // stdin (Landing "Ingest — fases"). A chave só sai deste módulo para a
 // política, em memória; nunca para uma resposta. `onLock`: ver withLock (a
@@ -347,8 +397,7 @@ export function openCaptureForIngest({ root, id, io = createStoreIo(), onLock })
     return withLock(ctx, async () => {
       const { dir, state } = await readCapture(ctx, id);
       if (state.state !== "active") throw new StoreError("capture_not_active");
-      const key = await readSmallFile(io, path.join(dir, KEY_FILE), KEY_BYTES, "capture_invalid");
-      if (key === null || key.length !== KEY_BYTES) throw new StoreError("capture_invalid");
+      const key = await readCaptureKey(io, dir);
       return { content: state.content, usage: { events: state.counters.persisted, bytes: state.dataBytes }, key };
     });
   });
@@ -519,53 +568,61 @@ export async function appendRecords({ root, id, batch, io = createStoreIo(), onL
     return withLock(ctx, async () => {
       const { dir, state } = await readCapture(ctx, id);
       if (state.state !== "active") throw new StoreError("capture_not_active");
-      const admission = admitLines(
-        { events: state.counters.persisted, bytes: state.dataBytes },
-        lines.map((line) => Buffer.byteLength(line)),
-      );
-      const next = {
-        ...state,
-        counters: {
-          accepted: state.counters.accepted + lines.length,
-          persisted: state.counters.persisted + admission.admitted,
-          malformed: state.counters.malformed + batch.malformed,
-          dropped: addCounts(addCounts(state.counters.dropped, batch.dropped), admission.dropped),
-          contentOmitted: addCounts(state.counters.contentOmitted, batch.contentOmitted),
-        },
-      };
-      let written = null;
-      if (admission.admitted > 0) {
-        // O segmento anterior tem exatamente `dataBytes`: maior, menor ou não
-        // regular, ele não é o que o commit registrou.
-        const previous =
-          state.dataFile === null ? Buffer.alloc(0) : await readSmallFile(io, path.join(dir, state.dataFile), state.dataBytes, "capture_invalid");
-        if (previous === null || previous.length !== state.dataBytes) throw new StoreError("capture_invalid");
-        const sequence = state.dataFile === null ? 1 : Number(DATA_FILE_PATTERN.exec(state.dataFile)[1]) + 1;
-        const added = Buffer.from(lines.slice(0, admission.admitted).join(""));
-        written = dataFileName(sequence);
-        const tmp = path.join(dir, tempName(written));
-        try {
-          await io.writeExclusive(tmp, Buffer.concat([previous, added]));
-          await io.rename(tmp, path.join(dir, written));
-        } catch (error) {
-          await io.unlink(tmp).catch(() => {});
-          throw error;
-        }
-        next.dataFile = written;
-        next.dataBytes = previous.length + added.length;
-      }
-      try {
-        await writeStateAtomic(io, dir, next);
-      } catch (error) {
-        if (written !== null) await io.unlink(path.join(dir, written)).catch(() => {});
-        throw error;
-      }
-      // Sobra do segmento anterior não desfaz o commit: só tem registros
-      // sanitizados, pertence ao conjunto literal e sai no delete.
-      if (written !== null && state.dataFile !== null) await io.unlink(path.join(dir, state.dataFile)).catch(() => {});
-      return { admitted: admission.admitted, dropped: admission.dropped };
+      const { admitted, dropped } = await commitBatch(ctx, dir, state, batch, lines);
+      return { admitted, dropped };
     });
   });
+}
+
+// Commit de um lote numa captura ativa já lida sob o lock (appendRecords e a
+// observação automática); `lines` são os registros já serializados.
+async function commitBatch(ctx, dir, state, batch, lines) {
+  const { io } = ctx;
+  const admission = admitLines(
+    { events: state.counters.persisted, bytes: state.dataBytes },
+    lines.map((line) => Buffer.byteLength(line)),
+  );
+  const next = {
+    ...state,
+    counters: {
+      accepted: state.counters.accepted + lines.length,
+      persisted: state.counters.persisted + admission.admitted,
+      malformed: state.counters.malformed + batch.malformed,
+      dropped: addCounts(addCounts(state.counters.dropped, batch.dropped), admission.dropped),
+      contentOmitted: addCounts(state.counters.contentOmitted, batch.contentOmitted),
+    },
+  };
+  let written = null;
+  if (admission.admitted > 0) {
+    // O segmento anterior tem exatamente `dataBytes`: maior, menor ou não
+    // regular, ele não é o que o commit registrou.
+    const previous =
+      state.dataFile === null ? Buffer.alloc(0) : await readSmallFile(io, path.join(dir, state.dataFile), state.dataBytes, "capture_invalid");
+    if (previous === null || previous.length !== state.dataBytes) throw new StoreError("capture_invalid");
+    const sequence = state.dataFile === null ? 1 : Number(DATA_FILE_PATTERN.exec(state.dataFile)[1]) + 1;
+    const added = Buffer.from(lines.slice(0, admission.admitted).join(""));
+    written = dataFileName(sequence);
+    const tmp = path.join(dir, tempName(written));
+    try {
+      await io.writeExclusive(tmp, Buffer.concat([previous, added]));
+      await io.rename(tmp, path.join(dir, written));
+    } catch (error) {
+      await io.unlink(tmp).catch(() => {});
+      throw error;
+    }
+    next.dataFile = written;
+    next.dataBytes = previous.length + added.length;
+  }
+  try {
+    await writeStateAtomic(io, dir, next);
+  } catch (error) {
+    if (written !== null) await io.unlink(path.join(dir, written)).catch(() => {});
+    throw error;
+  }
+  // Sobra do segmento anterior não desfaz o commit: só tem registros
+  // sanitizados, pertence ao conjunto literal e sai no delete.
+  if (written !== null && state.dataFile !== null) await io.unlink(path.join(dir, state.dataFile)).catch(() => {});
+  return { admitted: admission.admitted, dropped: admission.dropped, state: next };
 }
 
 const ENTRY_ORDER = [(name) => TEMP_PATTERN.test(name), (name) => DATA_FILE_PATTERN.test(name), (name) => name === KEY_FILE, (name) => name === STATE_FILE];
@@ -680,5 +737,199 @@ export function pruneCaptures({ root, apply = false, nowMs = Date.now(), io = cr
       }
       return { selected: [...selected].sort(), deleted, failed };
     });
+  });
+}
+
+// Observação automática (issue #23). O observe.json fica na pasta do store e
+// só muda sob o lock, junto com as capturas que ele autoriza: linhas "Estado da
+// observação", "Captura automática" e "Barreira do off" do Landing em
+// .checks/issue-23-observacao-on-off.md. `expectedReal` é o caminho real
+// gravado no setup (openStore).
+
+async function readObservationFile(ctx) {
+  const bytes = await readSmallFile(ctx.io, path.join(ctx.storeDir, OBSERVE_FILE), MAX_OBSERVE_BYTES, "store_invalid");
+  if (bytes === null) return null;
+  let value;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new StoreError("store_invalid");
+  }
+  if (!isValidObservation(value)) throw new StoreError("store_invalid");
+  return value;
+}
+
+async function writeObservationFile(ctx, observation) {
+  const tmp = path.join(ctx.storeDir, tempName(OBSERVE_FILE));
+  try {
+    await ctx.io.writeExclusive(tmp, JSON.stringify(observation));
+    await ctx.io.rename(tmp, path.join(ctx.storeDir, OBSERVE_FILE));
+  } catch (error) {
+    await ctx.io.unlink(tmp).catch(() => {});
+    throw error;
+  }
+}
+
+// Capturas `origin: automatic` legíveis, por criação; as ilegíveis vão para
+// `failed`, como no list.
+async function automaticCaptures(ctx) {
+  if ((await capturesDirKind(ctx)) === "missing") return { found: [], failed: [] };
+  const found = [];
+  const failed = [];
+  for (const name of (await ctx.io.readdir(ctx.capturesDir)).sort()) {
+    if (!CAPTURE_ID_PATTERN.test(name)) continue;
+    try {
+      const capture = await readCapture(ctx, name);
+      if (capture.state.origin === AUTOMATIC_ORIGIN) found.push(capture);
+    } catch (error) {
+      if (!(error instanceof StoreError)) throw error;
+      failed.push({ capture: name, code: error.code });
+    }
+  }
+  found.sort((a, b) => byCreation(a.state, b.state));
+  return { found, failed };
+}
+
+const stopCapture = (ctx, { dir, state }, nowIso) => writeStateAtomic(ctx.io, dir, transition(state, "stop", nowIso).capture);
+
+// on/off. Só o `on` cria a pasta do store; `off` sem store não tem o que
+// desligar. Depois de gravar off, encerra toda captura automática ativa —
+// também as de um off anterior interrompido —, e a retenção delas começa.
+// `authorization` (linha "Registro da autorização" do Landing da #23): o
+// registro da raiz on, fora deste módulo, que só muda sob este lock — `claim`
+// antes de gravar on (mesmo repetido), `release` depois do off concluído.
+export function changeObservation({ root, expectedReal, action, nowMs = Date.now(), io = createStoreIo(), authorization = null }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { create: action === "on", expectedReal });
+    if (ctx === null) return { observation: null, changed: false, stopped: [], failed: [] };
+    return withLock(ctx, async () => {
+      await initStore(ctx);
+      const nowIso = new Date(nowMs).toISOString();
+      const fresh = { nowIso, generation: randomBytes(16).toString("hex"), sessionKey: randomBytes(32).toString("hex") };
+      const { next, changed } = switchObservation(await readObservationFile(ctx), action, fresh);
+      if (action === "on") await authorization?.claim();
+      if (changed) await writeObservationFile(ctx, next);
+      if (action === "on") return { observation: next, changed, stopped: [], failed: [] };
+      const { found, failed } = await automaticCaptures(ctx);
+      const stopped = [];
+      for (const capture of found) {
+        if (capture.state.state !== "active") continue;
+        await stopCapture(ctx, capture, nowIso);
+        stopped.push(capture.state.id);
+      }
+      await authorization?.release();
+      return { observation: next, changed, stopped, failed };
+    });
+  });
+}
+
+// `status`: estado e capturas automáticas, sob o lock como as demais leituras.
+export function readObservation({ root, expectedReal, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { expectedReal });
+    if (ctx === null) return { observation: null, captures: [], failed: [] };
+    return withLock(ctx, async () => {
+      const observation = await readObservationFile(ctx);
+      const { found, failed } = await automaticCaptures(ctx);
+      return { observation, captures: found.map(({ state }) => publicCapture(state)), failed };
+    });
+  });
+}
+
+// Abertura do produtor automático: a geração vigente, que ele não troca
+// depois. `onLock`: ver withLock.
+export function openObservation({ root, expectedReal, io = createStoreIo(), onLock }) {
+  return storeOp(async () => {
+    const opened = await openStore(root, io, { expectedReal });
+    if (opened === null) return { state: "off", generation: null };
+    const ctx = { ...opened, onLock };
+    return withLock(ctx, async () => {
+      const observation = await readObservationFile(ctx);
+      return observation?.state === "on" ? { state: "on", generation: observation.generation } : { state: "off", generation: null };
+    });
+  });
+}
+
+async function activeCapture(ctx, id) {
+  try {
+    const capture = await readCapture(ctx, id);
+    return capture.state.state === "active" ? capture : null;
+  } catch (error) {
+    if (error instanceof StoreError && error.code === "capture_not_found") return null;
+    throw error;
+  }
+}
+
+// Gravação automática de entradas de uma sessão numa só tomada do lock: confere
+// a geração do produtor, escolhe ou cria a captura da sessão e chama `produce`
+// — a política, fora deste módulo — com a chave e o uso dela. `produce(capture,
+// pendentes)` devolve o lote e quantas entradas iniciais ele consumiu; as que
+// não couberam vão para a sucessora, criada depois de encerrar a cheia, com a
+// política reaplicada com a chave nova. Captura encerrada ou excluída à mão
+// também é sucedida: o `on` continua valendo até o `off`. `entries` é opaco.
+export function appendAutomatic({ root, expectedReal, generation, session, entries, produce, nowMs = Date.now(), io = createStoreIo(), onLock }) {
+  return storeOp(async () => {
+    const opened = await openStore(root, io, { expectedReal });
+    if (opened === null) throw new StoreError("observe_off");
+    const ctx = { ...opened, onLock };
+    return withLock(ctx, async () => {
+      let observation = await readObservationFile(ctx);
+      if (!isCurrentGeneration(observation, generation)) throw new StoreError("observe_off");
+      const tag = sessionTag(observation.sessionKey, session);
+      const nowIso = new Date(nowMs).toISOString();
+      let target = observation.sessions[tag] === undefined ? null : await activeCapture(ctx, observation.sessions[tag]);
+      let pending = entries;
+      let committed = 0;
+      let persisted = 0;
+      while (pending.length > 0) {
+        let created = false;
+        if (target === null) {
+          target = await createCapture(ctx, { content: true, retentionDays: DEFAULT_RETENTION_DAYS, nowMs, origin: AUTOMATIC_ORIGIN });
+          created = true;
+          observation = assignSession(observation, tag, target.state.id);
+          await writeObservationFile(ctx, observation);
+        }
+        const usage = { events: target.state.counters.persisted, bytes: target.state.dataBytes };
+        const { batch, consumed } = produce({ key: await readCaptureKey(ctx.io, target.dir), content: target.state.content, usage }, pending);
+        assertBatch(batch);
+        // Uma captura recém-criada sempre consome (o limite nela é descarte);
+        // sem isso o laço criaria capturas vazias sob o lock indefinidamente.
+        if (consumed === 0 && created) throw new StoreError("io_failure");
+        if (consumed > 0) {
+          const lines = batch.records.map((record) => JSON.stringify(record) + "\n");
+          const appended = await commitBatch(ctx, target.dir, target.state, batch, lines);
+          target = { dir: target.dir, state: appended.state };
+          persisted += appended.admitted;
+          committed += consumed;
+          pending = pending.slice(consumed);
+        }
+        if (pending.length > 0) {
+          await stopCapture(ctx, target, nowIso);
+          target = null;
+        }
+      }
+      return { committed, persisted };
+    });
+  });
+}
+
+// `report --latest`: a captura automática mais recente, sem criar lock. Como em
+// readCaptureSnapshot, o lock ausente e a raiz são conferidos antes e depois da
+// leitura; uma captura ilegível impede a escolha, como no list.
+export function latestAutomaticCapture({ root, expectedReal, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { expectedReal });
+    if (ctx === null) throw new StoreError("no_automatic_capture");
+    const lockPath = path.join(ctx.storeDir, LOCK_FILE);
+    const assertQuiet = async () => {
+      if ((await entryKind(io, lockPath)) !== "missing") throw new StoreError("lock_present");
+      await assertUnchanged(ctx);
+    };
+    await assertQuiet();
+    const { found, failed } = await automaticCaptures(ctx);
+    await assertQuiet();
+    if (failed.length > 0) throw new StoreError(failed[0].code);
+    if (found.length === 0) throw new StoreError("no_automatic_capture");
+    return found.at(-1).state.id;
   });
 }
