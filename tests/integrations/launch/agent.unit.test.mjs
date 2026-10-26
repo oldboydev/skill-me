@@ -6,6 +6,7 @@ import { after, test } from "node:test";
 import { createProductionFsAdapter } from "../../../src/doctor/fs-adapter.mjs";
 import { resolveCodexShimEntry } from "../../../src/doctor/launcher-link/codex.mjs";
 import { agentEnvironment, guardSignals, resolveAgentLaunch, runAgent } from "../../../src/integrations/launch/agent.mjs";
+import { buildFsTree, createFakeFsAdapter } from "../../doctor/helpers/fake-fs-adapter.mjs";
 import { CODEX_GLOBAL_SH_TARGET, CODEX_GLOBAL_WINDOWS_TARGET, CODEX_LOCAL_WINDOWS_TARGET, npmCmdShim, npmShShim } from "../../doctor/helpers/npm-shims.mjs";
 import { makeScratch } from "../helpers/cli.mjs";
 
@@ -114,6 +115,42 @@ test("I25-C4 entrada do shim: no Windows, .cmd/.bat só é iniciado quando é o 
 
   observed.ausente = await resolveAgentLaunch({ agent: "hermes", env: { ...env, PATH: scratch("i25 c4 path vazio") }, platform: "win32", cwd: null });
   expected.ausente = { failure: "executable_not_found" };
+  assert.deepEqual(observed, expected);
+});
+
+// C45 (terceira revisão formal em 9cd06d5, P2 de agent.mjs:30; linha
+// "Componentes vazios do PATH" do Landing): a decisão do resolver, com o
+// filesystem em memória do doctor — os mesmos caminhos POSIX e Windows em
+// qualquer SO. Há um `codex` no diretório atual e outro num diretório
+// posterior; `/vazio` não tem agente.
+test("I25-C45 resolução: no POSIX cada componente vazio do PATH é o diretório atual, na posição dele; PATH ausente e o Windows não mudam", async () => {
+  const tree = buildFsTree();
+  for (const file of ["/projeto/codex", "/depois/bin/codex", "C:\\projeto\\codex.exe", "C:\\depois\\bin\\codex.exe"]) tree.files.set(file, Buffer.from("#!/bin/sh\n"));
+  const fs = createFakeFsAdapter(tree);
+  const posix = (PATH) => resolveAgentLaunch({ agent: "codex", env: PATH === undefined ? {} : { PATH }, platform: "linux", cwd: "/projeto", fs });
+  const windows = (PATH) => resolveAgentLaunch({ agent: "codex", env: { PATH, PATHEXT: ".COM;.EXE;.BAT;.CMD" }, platform: "win32", cwd: "C:\\projeto", fs });
+  const here = { command: "/projeto/codex", prefix: [] };
+  const later = { command: "/depois/bin/codex", prefix: [] };
+  const cases = {
+    "controle: só o posterior": [() => posix("/depois/bin"), later],
+    "controle: diretório sem o agente antes": [() => posix("/vazio:/depois/bin"), later],
+    "vazio no começo": [() => posix(":/depois/bin"), here],
+    "vazio no meio": [() => posix("/vazio::/depois/bin"), here],
+    "vazio no fim, depois do agente": [() => posix("/depois/bin:"), later],
+    "vazio no fim": [() => posix("/vazio:"), here],
+    "vazios repetidos no começo": [() => posix("::/depois/bin"), here],
+    "vazios repetidos no fim": [() => posix("/vazio:::"), here],
+    "PATH explicitamente vazio": [() => posix(""), here],
+    "PATH ausente": [() => posix(undefined), { failure: "executable_not_found" }],
+    "Windows: vazios continuam ignorados": [() => windows(";C:\\depois\\bin;"), { command: "C:\\depois\\bin\\codex.exe", prefix: [] }],
+    "Windows: PATH vazio": [() => windows(""), { failure: "executable_not_found" }],
+  };
+  const observed = {};
+  const expected = {};
+  for (const [label, [resolve, want]] of Object.entries(cases)) {
+    observed[label] = await resolve();
+    expected[label] = want;
+  }
   assert.deepEqual(observed, expected);
 });
 

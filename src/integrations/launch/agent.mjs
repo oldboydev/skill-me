@@ -22,12 +22,24 @@ export function envValue(env, name, platform) {
   return key === undefined ? undefined : env[key];
 }
 
+// Diretórios do PATH na ordem (task 37; linha "Componentes vazios do PATH" do
+// Landing). No POSIX, um componente vazio — no começo, no meio, no fim,
+// repetido, ou o PATH inteiro vazio — é o diretório atual, na posição dele,
+// como no shell, no `execvp` e no `spawn` do Node. PATH ausente não tem
+// diretórios. No Windows, vazios continuam ignorados.
+function launchPathDirs(env, platform, cwd) {
+  const value = envValue(env, "PATH", platform);
+  if (value === undefined) return [];
+  if (platform === "win32") return value.split(";").filter(Boolean);
+  return value.split(":").map((dir) => (dir === "" ? cwd : dir));
+}
+
 // { command, prefix } do agente, ou { failure } com o código de 127. A
 // resolução é a do doctor (somente leitura). No Windows, um .cmd/.bat só é
 // iniciado quando é o shim do npm do `@openai/codex` que o doctor reconhece, e
 // então pela entrada que o shim executa com o node; outro exigiria shell.
 export async function resolveAgentLaunch({ agent, env, platform, cwd, fs = createProductionFsAdapter() }) {
-  const pathDirs = (envValue(env, "PATH", platform) ?? "").split(platform === "win32" ? ";" : ":").filter(Boolean);
+  const pathDirs = launchPathDirs(env, platform, cwd);
   const pathext = envValue(env, "PATHEXT", platform);
   const agents = await resolveAgents({ pathDirs, platform, env: pathext === undefined ? env : { ...env, PATHEXT: pathext }, cwd, fs });
   const found = agents.find((candidate) => candidate.id === agent);

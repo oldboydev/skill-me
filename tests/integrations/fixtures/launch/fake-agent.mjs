@@ -49,7 +49,7 @@ const SKILL_ME_VARS = (source) => Object.fromEntries(Object.entries(source).filt
 
 if (env.FAKE_AGENT_PROBE) {
   const stdin = env.FAKE_AGENT_READ_STDIN === "1" ? readFileSync(0, "utf8") : env.FAKE_AGENT_READ_LINE === "1" ? readOneLine() : null;
-  const probe = { argv: process.argv.slice(2), execPath: process.execPath, script: process.argv[1], stdin, env: SKILL_ME_VARS(env), cwd: process.cwd(), atStart: launchView() };
+  const probe = { argv: process.argv.slice(2), execPath: process.execPath, script: process.argv[1], stdin, env: SKILL_ME_VARS(env), path: env.PATH ?? null, cwd: process.cwd(), atStart: launchView() };
   appendFileSync(env.FAKE_AGENT_PROBE, JSON.stringify(probe) + "\n");
 }
 if (env.FAKE_AGENT_STDOUT) writeSync(1, env.FAKE_AGENT_STDOUT);

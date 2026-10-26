@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
@@ -131,6 +131,74 @@ test("I25-C4 shim do npm no Windows: codex.cmd reconhecido inicia node com bin/c
     { status: refused.status, stdout: refused.stdout.toString(), code: refused.stderr.includes("[launcher_requires_shell]"), home: snapshotTree(home), root: snapshotTree(root), sentinel: existsSync(sentinel) },
     { status: 127, stdout: "", code: true, home: before.home, root: before.root, sentinel: false },
   );
+});
+
+// C45 (terceira revisão formal em 9cd06d5, P2 de agent.mjs:30; linha
+// "Componentes vazios do PATH" do Landing): o launcher real com o agente no
+// diretório atual e outro num diretório posterior do PATH. O agente falso
+// registra o próprio caminho (`argv[1]` no POSIX; no Windows, o `execPath` da
+// cópia do node.exe) e o PATH que recebeu.
+const C45_ARGS = ["--", "a b", "", "ç"];
+const C45_STDOUT = "saída do agente ✓\n";
+const POSIX_PATH_ONLY = WINDOWS ? "componente vazio do PATH como diretório atual é semântica do POSIX; o Windows tem o controle abaixo" : false;
+const WINDOWS_PATH_ONLY = WINDOWS ? false : "controle do PATH do Windows; o POSIX tem os casos acima";
+
+async function launchWithPath(prepared, { agent, cwd, pathValue, label }) {
+  const probe = path.join(scratch(`${label} probe`), "probe.ndjson");
+  const env = { ...prepared.env, FAKE_AGENT_PROBE: probe, FAKE_AGENT_STDOUT: C45_STDOUT, FAKE_AGENT_EXIT: "7" };
+  for (const name of Object.keys(env)) if (name.toUpperCase() === "PATH") delete env[name];
+  if (pathValue !== undefined) env.PATH = pathValue;
+  const result = await runSkillMe([agent, ...agentArgs(agent, C45_ARGS)], { env, cwd });
+  const [seen] = readJsonLines(probe);
+  if (seen === undefined) return { status: result.status, started: false, stderrFirst: result.stderr.split("\n")[0] };
+  return { status: result.status, stdout: result.stdout.toString("utf8"), agent: WINDOWS ? seen.execPath : seen.script, argv: seen.argv, cwd: seen.cwd, path: seen.path };
+}
+
+test("I25-C45 PATH com componentes vazios (POSIX, processo real): o vazio no começo, no meio, no fim ou repetido e o PATH vazio iniciam o agente do diretório atual; o posterior só vence antes do vazio; PATH ausente sai com 127", { skip: POSIX_PATH_ONLY }, async () => {
+  const prepared = preparedLaunch(scratch, "i25 c45", { agents: ["codex"] });
+  const project = scratch("i25 c45 projeto");
+  agentBin(project, ["codex"]);
+  const later = prepared.bin;
+  const none = scratch("i25 c45 sem agente");
+  const cwd = realpathSync.native(project);
+  const here = path.join(cwd, "codex");
+  const there = path.join(later, "codex");
+  const cases = {
+    "controle: só o posterior": [later, there],
+    "controle: diretório sem o agente antes": [`${none}:${later}`, there],
+    "vazio no começo": [`:${later}`, here],
+    "vazio no meio": [`${none}::${later}`, here],
+    "vazio no fim, depois do agente": [`${later}:`, there],
+    "vazio no fim": [`${none}:`, here],
+    "vazios repetidos no começo": [`::${later}`, here],
+    "vazios repetidos no fim": [`${none}:::`, here],
+    "PATH explicitamente vazio": ["", here],
+  };
+  const observed = {};
+  const expected = {};
+  let index = 0;
+  for (const [label, [pathValue, agentPath]] of Object.entries(cases)) {
+    observed[label] = await launchWithPath(prepared, { agent: "codex", cwd: project, pathValue, label: `i25 c45 caso ${(index += 1)}` });
+    expected[label] = { status: 7, stdout: C45_STDOUT, agent: agentPath, argv: C45_ARGS, cwd, path: pathValue };
+  }
+  observed["PATH ausente"] = await launchWithPath(prepared, { agent: "codex", cwd: project, pathValue: undefined, label: "i25 c45 ausente" });
+  expected["PATH ausente"] = { status: 127, started: false, stderrFirst: "skill-me: codex não encontrado no PATH [executable_not_found]" };
+  assert.deepEqual(observed, expected);
+});
+
+test("I25-C45 controle no Windows (processo real): componentes vazios do PATH continuam ignorados, o agente do diretório atual não é escolhido e o PATH vazio sai com 127", { skip: WINDOWS_PATH_ONLY }, async () => {
+  const prepared = preparedLaunch(scratch, "i25 c45 windows", { agents: ["claude"] });
+  const project = scratch("i25 c45 windows projeto");
+  agentBin(project, ["claude"]);
+  const pathValue = `;${prepared.bin};`;
+  const observed = {
+    vazios: await launchWithPath(prepared, { agent: "claude", cwd: project, pathValue, label: "i25 c45 windows vazios" }),
+    "PATH vazio": await launchWithPath(prepared, { agent: "claude", cwd: project, pathValue: "", label: "i25 c45 windows vazio" }),
+  };
+  assert.deepEqual(observed, {
+    vazios: { status: 7, stdout: C45_STDOUT, agent: path.join(prepared.bin, "claude.exe"), argv: C45_ARGS, cwd: realpathSync.native(project), path: pathValue },
+    "PATH vazio": { status: 127, started: false, stderrFirst: "skill-me: claude não encontrado no PATH [executable_not_found]" },
+  });
 });
 
 test("I25-C5 sinais do terminal no POSIX: SIGINT, SIGQUIT e SIGHUP ao grupo chegam ao agente uma vez cada e o launcher sai depois dele, com o código dele", { skip: POSIX_ONLY }, async () => {
