@@ -611,3 +611,23 @@ caminho conferido no `%TEMP%`, 0 recusas; as cópias do WSL e os temporários ta
   modelado, como antes.
 - Continuam: uso real sem sessão de agente (`Unresolved` 2, `blocks go-live`); console real e pty
   dependem do Python do sistema; C23 sem asserção de tempo para o “sem espera”.
+
+## Nova exceção autorizada: tetos 6/5
+
+O proprietário autorizou “Autorizar até 2 de cada (tetos 6/5)”
+([comentário 6425235841](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6425235841);
+contexto em `.checks/code-review/issue-25/context-bounded65-approved.json`), respondendo à pergunta
+que limitou a até mais 2 verificações independentes e 2 revisões Codex, só para a #25, com o
+histórico preservado e parada no primeiro `ready`.
+
+- Tetos desta entrega: Verifier, até 6 rodadas no total; revisão formal, até 5 tentativas no total
+  (`roundOverrides["25"].maxRounds` de 3 para 5, perfil light, com a resposta, a URL e a exceção
+  substituída em `approval`). Substitui só o teto da exceção anterior (comentário 6423912091), cujo
+  registro continua acima. Perfis globais com `maxRounds` 2, outras issues e core vendorizado sem
+  mudança.
+- As 4 verificações e as 3 revisões `changes_requested` anteriores continuam no histórico. Usar só
+  as rodadas necessárias; o primeiro `ready` encerra a etapa. Push e PR só com verificação aprovada
+  e revisão `ready` do conteúdo atual; merge e publicação não autorizados.
+- Produto sem mudança (`7ab5dbf`): continuam valendo o alvo I25 de 98 testes nos três ambientes e o
+  `npm test` (990 testes: 971 pass, 0 fail, 19 skip de plataforma) da seção anterior. Nesta mudança,
+  só os gates da configuração: `npm run test:governance` e `npm run test:code-review`.

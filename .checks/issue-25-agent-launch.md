@@ -436,3 +436,17 @@ Fechamento da regressão da terceira revisão formal, C1–C45 (registros acima 
   e não autorizam entrega nem `ready`; outra rodada depende de nova exceção específica.
 - O que foi abandonado: mudar `resolveAgents` ou `runDiagnostics`; usar `.` no lugar do componente
   vazio; deixar o runtime procurar pelo nome; caminho padrão para PATH ausente.
+
+Nova exceção autorizada depois de C1–C45 (registros acima preservados):
+
+- O que o proprietário decidiu: “Autorizar até 2 de cada (tetos 6/5)”
+  ([comentário 6425235841](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6425235841)),
+  respondendo à pergunta que limitou a até mais 2 verificações independentes e 2 revisões Codex, só
+  para a #25. Substitui só o teto da exceção anterior (comentário 6423912091, registro acima mantido):
+  Verifier, até 6 rodadas no total; revisão formal (perfil light), até 5 tentativas no total, em
+  `roundOverrides["25"]` de `code-review.config.json`. As 4 verificações e as 3 revisões
+  `changes_requested` anteriores continuam no histórico. Usar só as rodadas necessárias; o primeiro
+  `ready` encerra a etapa. Push e PR só com verificação aprovada e revisão `ready` do conteúdo atual;
+  merge e publicação não autorizados.
+- Onde a fronteira caiu: só configuração e documentação; produto em `7ab5dbf`, C1–C45 e os
+  critérios da issue sem mudança.
