@@ -253,7 +253,12 @@ AC6 já exigem nesses caminhos.
     contiver o `pid` do launcher e esse processo tiver terminado, removê-lo e só então rodar o
     comando mostrado encerra a captura. Lock trocado por outro ou ausente não é removido nem
     reivindicado. Outra execução da mesma raiz não muda. A saída é a do código (5 para
-    `io_failure`, 4 para `root_changed`).
+    `io_failure`, 4 para `root_changed`). O mesmo vale no encerramento: se as capturas da
+    execução já pararam e o ponteiro saiu, e só a liberação do lock falhar, o resumo de sempre
+    sai (as capturas estão `stopped`), seguido de `skill-me: a execução <invocation> foi
+    encerrada, mas a liberação do lock da raiz falhou [<código>].` e, quando o lock da invocação
+    pode ter ficado, da mesma linha do lock; a saída continua a do agente, e o stderr nunca diz
+    que uma captura parada continua `active`.
 36. A espera da harness nativa do Hermes só termina como falha terminal quando todo registro
     posto na fila tem destino contado (entregue, grande demais, não serializável ou contado em
     `deliveryFailed`). Uma leitura com a entrega desligada e registros ainda sem destino contado
