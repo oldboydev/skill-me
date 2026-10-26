@@ -20,6 +20,27 @@ vez, depois `npm run on` até `npm run off`; issue #23): cada sessão vai a uma
 captura própria na raiz configurada, e o wrapper continua só com o par
 ([docs/traces.md](traces.md), seção "Observação automática").
 
+`skill-me <agente>` (issue #25) inicia o agente com uma execução própria: no
+primeiro uso, depois da prévia e da confirmação, ele aplica este mesmo
+instalador (`install --apply`) no diretório de configuração de usuário do
+agente e grava a raiz com `observe setup`. Depois, põe no ambiente do agente o
+par `SKILL_ME_LAUNCH_ROOT`/`SKILL_ME_LAUNCH_ID`, que tem precedência sobre o par
+`SKILL_ME_CAPTURE_*` e sobre o `on`: hooks e ingest gravam na captura corrente
+dessa execução até o agente sair ([docs/traces.md](traces.md), seção "Execução
+do `skill-me <agente>`"). A confiança nativa continua manual (abaixo). Limites:
+
+- a confiança nativa é manual, por agente; sem ela nada é gravado;
+- o Codex não tem evento nativo de ativação de skill: ler um `SKILL.md` aparece
+  só como operação de ferramenta; os hooks do Codex cobrem só ferramentas
+  locais, e as hospedadas ficam fora;
+- cada captura tem até 500 eventos ou 8 MiB, e a execução continua em capturas
+  sucessivas, com chave própria cada uma, até o agente sair;
+- entregas que chegam mais de 750 ms depois da saída do agente não entram na
+  execução;
+- um encerramento forçado do launcher (SIGKILL, TerminateProcess) deixa a
+  captura corrente `active` e a execução aberta;
+- o próximo passo depois da sessão é `skill-me report`.
+
 ## O que roda onde
 
 | Integração | Onde roda | O que acontece com os dados |
@@ -168,6 +189,9 @@ simulação de caminho.
   Ctrl+C de console chega aos dois processos.
 - Windows: o shim npm `codex.cmd` exige shell; sem `--codex-entry` o wrapper recusa
   com 127. Use `--codex-entry <prefixo npm>\node_modules\@openai\codex\bin\codex.js`.
+  O `skill-me codex` inicia esse mesmo `codex.js` com o Node quando o doctor
+  reconhece o shim (`versionSource: package_metadata`); outro `.cmd`/`.bat` é
+  recusado com 127 (`launcher_requires_shell`).
 - Codex no Windows roda hooks por `cmd.exe /C`: caminhos do node ou do CLI com `"`,
   `%`, `!` ou quebra de linha são recusados na instalação (código 2).
 - Escrita da configuração: lock exclusivo, releitura e comparação de SHA-256 antes do

@@ -7,9 +7,10 @@ Este guia mostra como ligar uma execução de agente a uma captura local, ver os
 registros enquanto chegam, recuperar a captura e reutilizar os registros numa
 análise. Tudo roda na sua máquina, a partir do checkout: não há servidor,
 daemon nem upload. Uma captura só recebe registros pelo par explícito da
-próxima seção ou, depois de você ligar a observação automática (`npm run on`,
-seção "Observação automática"), pela captura que ela cria para cada sessão;
-nenhuma captura existente é descoberta pelo diretório. A política de privacidade,
+próxima seção, pela execução que `skill-me <agente>` abre (seção "Execução do
+`skill-me <agente>`") ou, depois de você ligar a observação automática
+(`npm run on`, seção "Observação automática"), pela captura que ela cria para
+cada sessão; nenhuma captura existente é descoberta pelo diretório. A política de privacidade,
 os limites e a exclusão são os da #5 ([docs/privacidade.md](privacidade.md)); os
 contratos nativos e a instalação das integrações são os da #4
 ([docs/agent-observation.md](agent-observation.md)).
@@ -17,9 +18,10 @@ contratos nativos e a instalação das integrações são os da #4
 ## Requisitos
 
 - Node.js >= 24 (campo `engines` do `package.json`).
-- O pacote é privado (`"private": true`): não é publicado nem instalado
-  globalmente. Os comandos rodam do checkout, com `node src/integrations/cli.mjs …`
-  ou `npm run --silent privacy -- …`.
+- O pacote é privado (`"private": true`) e não é publicado. Os comandos rodam
+  do checkout, com `node src/integrations/cli.mjs …` ou
+  `npm run --silent privacy -- …`; só o `skill-me` é ligado ao PATH, por
+  `npm link` no checkout.
 - Hooks do Claude e do Codex e o plugin Hermes instalados com
   `integrations install` (guia da #4), ou o wrapper `integrations run --agent codex`,
   que não precisa de instalação.
@@ -65,7 +67,77 @@ diretório atual, nem uma captura automática. As variáveis não criam captura 
 consentimento continua sendo o `privacy start` daquela captura, e uma captura
 encerrada (`stop`/`disable`) recusa novos registros. O par tem precedência
 sobre a observação automática: com ele, o produtor grava só na captura do par, e
-`npm run off` não a encerra.
+`npm run off` não a encerra. O par da execução do `skill-me` (próxima seção) tem
+precedência sobre este.
+
+## Execução do `skill-me <agente>` (issue #25)
+
+`skill-me codex|claude|hermes [args…]` (preparo e uso no README) abre, antes de
+iniciar o agente, uma execução na raiz de `observe setup` e põe só no ambiente
+do processo do agente o par `SKILL_ME_LAUNCH_ROOT` (o caminho real da raiz) e
+`SKILL_ME_LAUNCH_ID` (o ID da execução, 32 hex). Valores herdados desse par e de
+`SKILL_ME_CAPTURE_ROOT`/`SKILL_ME_CAPTURE_ID` não chegam ao agente. Hooks
+Claude/Codex e o ingest Hermes que recebem o par gravam na captura corrente da
+execução — também eventos sem sessão — com a política de sempre e o conteúdo
+ligado; o par tem precedência sobre o par manual e sobre o `on`, e um par
+incompleto, com raiz relativa ou ID fora do formato não grava em lugar nenhum
+(`binding_invalid`). O wrapper `integrations run` ignora o par. Não defina essas
+variáveis à mão: só o `skill-me` cria a execução que elas nomeiam.
+
+Cada captura da execução tem `"origin":"launch"`, `invocation` (o ID da
+execução), `segment` (1, 2, …) e `launchedAt` (o início da execução), além da
+forma comum: retenção de 7 dias, chave e limites próprios. Quando a captura
+corrente não comporta o próximo registro (500 eventos ou 8 MiB), ela passa a
+`stopped` sem descarte e a sucessora, com chave nova, recebe esse registro e os
+seguintes, pela mesma regra da observação automática. A corrente é apontada por
+`<raiz>/skill-me-privacy/launches/<invocation>.json`, que só existe enquanto a
+execução está aberta. Uma captura corrente encerrada à mão (`privacy stop`) é
+sucedida no próximo evento: só o fim da execução para a gravação.
+
+Quando o agente sai, o `skill-me` espera 750 ms pelas entregas em voo e encerra
+a execução: apaga o ponteiro e encerra a corrente, e daí em diante um produtor
+com o par recebe `launch_ended` e nada grava. O resumo vai ao stderr. `npm run
+on`/`off` não tocam a execução, e duas invocações simultâneas têm execuções,
+capturas e chaves próprias. Se o encerramento falhar (lock ocupado por mais de
+2 s ou E/S), o stderr mostra o código, a captura que ficou `active`, o comando
+`privacy stop` que a encerra e se a execução ainda está aberta; `privacy stop`
+encerra só a captura.
+
+| Código de entrega | Significado |
+| --- | --- |
+| `launch_ended` | a execução já foi encerrada; nada gravado |
+| `root_not_found` | a raiz do par não existe |
+| `root_not_directory` | a raiz do par não é pasta |
+| `store_invalid` | a pasta do store ou o ponteiro estão fora da forma |
+| `capture_invalid` | a captura corrente está ilegível |
+| `lock_present` | lock ocupado durante todo o prazo da entrada |
+| `link_refused` | link ou junção no lugar de uma entrada do store |
+| `foreign_entry` | entrada alheia no lugar esperado |
+| `root_changed` | a raiz foi trocada no meio da operação |
+| `io_failure` | falha de E/S |
+| `delivery_timeout` | a entrada não foi confirmada no prazo de 750 ms |
+
+`skill-me report` relata a execução iniciada por último (a maior `launchedAt`):
+o cabeçalho com o ID dela, as capturas encontradas, os segmentos ausentes e se
+ela está aberta, e uma seção por captura com o relatório de `report --root
+--capture` daquela captura. `report --latest` e `npm run status` continuam só
+com capturas automáticas.
+
+Limites do `skill-me`:
+
+- a confiança nativa é manual, por agente; sem ela nada é gravado, e o resumo
+  final avisa;
+- o Codex não tem evento nativo de ativação de skill: ler um `SKILL.md` aparece
+  só como operação de ferramenta; os hooks do Codex cobrem só ferramentas
+  locais, e as hospedadas ficam fora;
+- cada captura tem até 500 eventos ou 8 MiB, e a execução continua em capturas
+  sucessivas, com chave própria cada uma, até o agente sair;
+- entregas que chegam mais de 750 ms depois da saída do agente não entram na
+  execução; o processo de entrega do Hermes recebe os últimos eventos depois da
+  saída dele e só cabe nessa janela quando já está em execução;
+- um encerramento forçado do launcher (SIGKILL, TerminateProcess) deixa a
+  captura corrente `active` e a execução aberta;
+- o próximo passo depois da sessão é `skill-me report`.
 
 ## Observação automática (issue #23)
 

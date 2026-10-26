@@ -2,13 +2,103 @@
 
 CLI local para observar eventos de Claude Code, Codex CLI e Hermes, guardar uma
 captura sanitizada e comparar os comandos observados com instruções de uma skill.
-O pacote é privado: execute os comandos a partir deste checkout, sem instalação
-global, aplicativo ou publicação configurada.
+O pacote é privado e não é publicado: o comando `skill-me` é ligado a este
+checkout por `npm link`, e os demais comandos rodam a partir dele.
 
-## Primeiro uso: observar sessões com `on` e `off`
+## Uso diário: `skill-me <agente>`
 
-O uso normal tem uma linha por ação: ligar a observação, usar o agente como
-sempre, desligar e consultar. A preparação do passo 1 é feita uma vez.
+Uma linha abre o agente e grava só aquela sessão; outra consulta o resultado.
+A preparação do passo 1 é feita uma vez.
+
+### 1. Preparar uma vez
+
+Use Node.js 24 ou mais recente. Na raiz deste checkout:
+
+```sh
+npm ci
+npm link
+```
+
+O `npm link` disponibiliza o comando `skill-me` no PATH, ligado a este
+checkout (mover o checkout exige repetir o `npm link`). Depois, rode o agente
+pela primeira vez num terminal, por exemplo `skill-me codex`. Antes de alterar
+qualquer coisa, o comando mostra a pasta proposta para as capturas
+(`%LOCALAPPDATA%\skill-me\capturas` no Windows,
+`$HOME/.local/share/skill-me/capturas` no POSIX; Enter aceita, ou digite outro
+caminho absoluto), as mudanças da integração no diretório de configuração do
+agente (`CLAUDE_CONFIG_DIR`, `CODEX_HOME` ou `HERMES_HOME`, ou o padrão deles) e
+o que será gravado, e pergunta `Confirmar? [s/N]`. Só `s` ou `sim` aplicam; com
+qualquer outra resposta nada é criado e o comando sai com 3 (`setup_declined`).
+Ao confirmar, a pasta é criada, a raiz vai para `.skill-me/observe.json` (o
+mesmo `observe setup` do `on`/`off`) e a integração é instalada. Fora de um
+terminal, a preparação pendente sai com 3 (`setup_required`).
+
+Em seguida, faça a confiança nativa que o comando mostra, uma vez por agente:
+workspace confiável e `/hooks` no Claude Code, `/hooks` e projeto confiável no
+Codex CLI, `hermes plugins enable skill-me-observer` no Hermes. Sem ela o
+agente funciona normalmente, mas nada é gravado.
+
+### 2. Todo dia
+
+```sh
+skill-me codex
+skill-me claude
+skill-me hermes
+```
+
+O agente abre no terminal como abriria sem o `skill-me`: todos os argumentos
+vão literalmente para ele (`skill-me codex exec "…"` é `codex exec "…"`), o
+código de saída é o dele e Ctrl+C chega a ele. Cada invocação abre uma execução
+própria e grava só a sessão iniciada por ela, localmente e **depois da
+sanitização** (argumentos e resultados suportados), sem `npm run on`/`off`,
+variável de ambiente ou ID. Ao sair, o comando encerra a execução e mostra no
+stderr as capturas dela, quantos eventos foram gravados e os descartes; com 0
+gravados, ele lembra o passo de confiança do agente.
+
+### 3. Consultar
+
+```sh
+skill-me report --skill "<caminho/para/SKILL.md>"
+```
+
+`skill-me report` relata a execução iniciada por último, sem `--root` nem
+`--capture`: o ID dela, as capturas encontradas, as que faltam (excluídas ou
+vencidas) e se ela ainda está aberta, e uma seção por captura com o relatório
+descrito abaixo em "Como interpretar". Cada seção avalia só a própria captura.
+`--format markdown` e `--format json` também valem aqui.
+
+### 4. Limites do `skill-me`
+
+- A confiança nativa é manual, por agente (passo 1); o `skill-me` não a concede
+  nem a lê.
+- Codex CLI: não há evento nativo de ativação de skill — ler um `SKILL.md`
+  aparece só como operação de ferramenta — e os hooks cobrem só ferramentas
+  locais; as hospedadas (como a busca na web) ficam fora.
+- Cada captura tem até 500 eventos ou 8 MiB; ao chegar ao limite, a execução
+  continua numa captura sucessiva, com chave própria, até o agente sair.
+  Capturas encerradas ficam retidas por 7 dias (`privacy prune` limpa).
+- Entregas que chegam mais de 750 ms depois da saída do agente não entram na
+  execução. O processo de entrega do Hermes recebe os últimos eventos depois da
+  saída dele e cabe nessa janela quando já está em execução; eventos que o
+  plugin ainda não entregou ao sair se perdem.
+- Encerrar o `skill-me` à força (SIGKILL, TerminateProcess) deixa a captura
+  corrente `active` e a execução aberta (`skill-me report` mostra
+  `Execução aberta: sim`). `privacy stop` encerra a captura, não a execução.
+- No Windows, o `codex.cmd` do npm é iniciado pelo `bin/codex.js` dele, com o
+  Node; outro `.cmd`/`.bat` exigiria shell e é recusado com 127
+  (`launcher_requires_shell`).
+- O par `SKILL_ME_LAUNCH_ROOT`/`SKILL_ME_LAUNCH_ID` é posto pelo `skill-me` só
+  no ambiente do agente e tem precedência sobre o par manual e o `on`; não o
+  defina à mão.
+- Depois da sessão, o próximo passo é `skill-me report`.
+
+## Alternativa: observar todas as sessões com `on` e `off`
+
+Quando você quer observar toda sessão de qualquer agente até desligar, em vez de
+só a sessão aberta pelo `skill-me`, use a observação global.
+
+Ela tem uma linha por ação: ligar a observação, usar o agente como sempre,
+desligar e consultar. A preparação do passo 1 é feita uma vez.
 
 ### 1. Preparar uma vez
 
