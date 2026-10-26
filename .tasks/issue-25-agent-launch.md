@@ -267,6 +267,23 @@ AC6 já exigem nesses caminhos.
     padrão), quando termina como `timeout`. Sem destino configurado (nada posto na fila), a
     espera continua terminando na hora como `inactive`. Plugin, callbacks e prazos não mudam.
 
+### Regressão da terceira revisão formal (dentro de AC1; sem escopo novo)
+
+A terceira revisão formal, em `9cd06d5` (`.checks/code-review/issue-25/formal-review3.stdout.txt`),
+apontou um defeito bloqueante P2 em `src/integrations/launch/agent.mjs:30`: componentes vazios do
+PATH eram descartados no POSIX. O critério abaixo fixa o que AC1 já exige (iniciar o agente que o
+PATH resolve) nesse caso.
+
+37. No POSIX, cada componente vazio do PATH — no começo (`:/usr/bin`), no meio (`/a::/b`), no fim
+    (`/a:`), repetido, ou o PATH inteiro definido como vazio — é o diretório em que `skill-me` foi
+    executado, na posição dele, como no bash, no dash, no `execvp` e no `spawn` do Node. Então
+    `skill-me <agente>` inicia o mesmo executável que a invocação direta iniciaria: o do diretório
+    atual quando o componente vazio vem antes de outra instalação, o da outra instalação quando ela
+    vem antes. Os argumentos continuam literais, stdin/stdout/stderr herdados, o código de saída é
+    o do agente, e o PATH que o agente recebe é o mesmo. Com o PATH ausente, nada muda: sem
+    diretórios, 127 com `executable_not_found`. No Windows, nada muda (componentes vazios
+    continuam ignorados; PATHEXT e o shim do npm como antes), e a política do doctor também não.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
