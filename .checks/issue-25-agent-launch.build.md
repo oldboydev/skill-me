@@ -144,3 +144,94 @@ regressão comprovada do produto, mas é um risco que o Verifier deve conhecer.
   nativo do Hermes; não foi corrigido (fora do escopo) e fica como estava.
 - A intermitência do `hermes-plugin.native.test.mjs` sob carga (seção anterior)
   é da heurística de espera da harness; também fora do escopo.
+
+## Correções da verificação 1 (FAIL em `da2467d`)
+
+Fonte: `.checks/issue-25-agent-launch.verified.md` (rodada 1, lido inteiro; não
+alterado). Autorização: plano completo e implementação da #25 (comentário
+6415701125); o orquestrador limitou esta rodada a F1, F3 e F4, com F5–F7 como
+notas. F2 (harness nativa antiga do Hermes) ficou fora: nenhuma linha de
+`tests/integrations/fixtures/hermes/harness.py`, do plugin, do runtime ou de
+prazos foi tocada.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `3b16e3b` | Landing "Console do Windows" e check C38, antes do código |
+| `86e9ba1` | correção do console do Windows (produto) e das provas F1, F3, F4, F6, F7 |
+
+- **F1** (C14, C18, C30, C31 no Node 24.13.0): os quatro arranjos trocaram
+  `rmSync` por `unlinkSync` (arquivos: `codex.js`, `.lock`, temporário alheio) ou
+  `rmdirSync` (a raiz preparada, ainda vazia), cada um seguido de
+  `assert.equal(existsSync(...), false)`. Scratch, mínimo de Node, CI,
+  tolerâncias e critérios não mudaram; os `rmSync` de limpeza no `after` ficaram
+  (sem refatoração global). O “antes” é o do Verifier (ambiente B: 45 pass,
+  4 fail); o “depois” está abaixo.
+- **F3** (C18): o intervalo do `lock_present` é medido com `performance.now()`,
+  ainda `>= 2000` exatos.
+- **F4** (C12): novo teste com a tabela que separa `&&` de `||` — só o stdin fora
+  do terminal (stdin `/dev/null` ou nulo, stderr no terminal) e só o stderr fora
+  (stdin no terminal, stderr em arquivo), com o outro lado num terminal real
+  (pty no POSIX pela `pty-session.py` estendida; console próprio no Windows pela
+  nova `console-stdio.py`) e um `n` já digitado no terminal; o caso dos dois em
+  pipe continua no teste anterior. As asserções exigem a orientação
+  `setup_required` (literal, no arquivo do stderr), nenhuma pergunta nem
+  `setup_declined`, árvores iguais, agente não iniciado e pasta padrão ausente.
+  Mutação `isatty(0) || isatty(2)` em `cli.mjs`: o teste falha no Windows e no
+  WSL; o teste dos dois em pipe continua passando com ela, como o Verifier
+  apontou.
+- **Defeito revelado pela prova de F4** (produto, dentro do escopo da #25): num
+  console real do Windows, a escrita síncrona dos bytes UTF-8 aparecia como
+  `prepara├º├úo`, e a leitura síncrona do fd 0 chegava na página de código OEM:
+  um caminho digitado com acento virou outra pasta, criada com `�` no nome
+  (medido; os resíduos dessas medições foram removidos do `%TEMP%`, conferidos
+  um a um). Correção registrada no Landing antes do código: no console do
+  Windows, saída pelo stream tty e respostas pelo stdin tty, pausado e solto do
+  laço de eventos a cada linha; fora de console e no POSIX nada muda. Prova
+  C38 (console real): prévia legível, raiz digitada com acento exata e a linha
+  digitada depois das respostas chega intacta ao agente. Mutações conferidas
+  no Windows: escrita síncrona no console derruba C38 e o C12 de um lado;
+  leitura síncrona no console derruba C38.
+- **F6**: o ponteiro do C17 recusa também `segment` em texto, ausente e
+  `launchedAt` fora de ISO. **F7**: o C37 compara com `500 eventos ou 8 MiB`,
+  `750 ms` e a lista de códigos do Landing, literais.
+- **F5 (proveniência)**: a linha “WSL … sobre `git archive` de `dedd5b4`, tar
+  sha256 `2a1a52da…24783e`” desta mesma página foi gerada com o
+  `core.autocrlf=true` do gitconfig do sistema e não corresponde aos bytes
+  commitados; os números WSL daquela seção ficam como histórico e foram
+  substituídos pela execução exata do Verifier (ambiente C). Também não se
+  reproduziu, na verificação, o “`hermes-plugin.native.test.mjs` isolado
+  11/11” daquela seção: o Verifier obteve 7 pass e 4 fail isolado em HEAD e na
+  base. As execuções WSL abaixo usam `git -c core.autocrlf=false archive`.
+
+### Execuções desta rodada (alvo I25 inteiro, uma vez por ambiente, em sequência)
+
+Logs spec e TAP em `.checks/code-review/issue-25/builder-fix-round1/` (pasta
+ignorada). HEAD `86e9ba1`.
+
+| Ambiente | Comando | Resultado |
+| --- | --- | --- |
+| Windows, Node 24.22.1 (`C:\nvm4w\nodejs\node.exe`), 11:56 | `node --test --test-concurrency=4 … "tests/integrations/launch/*.test.mjs"` | 54 testes: 51 pass, 0 fail, 3 skip (C5 POSIX, C6, C15 pty) |
+| Windows, Node 24.13.0 oficial (`.checks/code-review/issue-25/ci-node-24.13.0/…/node.exe`, npm 11.6.2 do mesmo zip, no início do PATH, `process.execPath` dele, sem `npm_execpath`), 11:58–11:59 | o mesmo | 54 testes: 51 pass, 0 fail, 3 skip; C14, C18, C30 e os dois C31 passam |
+| WSL `Ubuntu`, Node 24.13.0 (`/usr/bin/nsolid`), npm 11.6.2, Python 3.12.3, uid 1000, 12:00 | o mesmo, sobre `git -c core.autocrlf=false archive 86e9ba1` (sha256 `ab121ca3…be23c16e`; `get-tar-commit-id` = `86e9ba13…`; árvore extraída `dec71e45…` = `HEAD^{tree}`; `cli.mjs` 755) com `node_modules` copiado | 54 testes: 50 pass, 0 fail, 4 skip (C4 shim, C5 console, C8 LOCALAPPDATA, C38 console); C12 de um lado e C15 rodam pelo pty; C18 com o relógio monotônico |
+
+Os 54 nomes I25 aparecem um a um em cada TAP (52 anteriores + o C12 de um lado
++ C38). `~/.skill-me` e `~/.skill-me-authorization.json` do uid 1000 ausentes
+antes e depois. Com o 24.13.0, o `after` (`rmSync`) não apagou os scratches:
+229 pastas `skill-me i4 i25 *` criadas na janela dessa execução foram removidas
+por um script do Node 24.22.1 que confere o caminho dentro do `%TEMP%` (arquivos
+por `unlink`, pastas por `rmdir`), 0 recusas. A cópia do WSL e os temporários
+desta rodada foram removidos; a pasta `skill-me i4 dbg c15 ação-*` do `%TEMP%`
+não é desta rodada e ficou.
+
+`npm test` não foi repetido nesta rodada, por instrução: só provas foram
+corrigidas, e o gate nativo antigo (F2) depende da decisão do proprietário.
+
+### O que resta
+
+- F2 continua aberto e bloqueia o gate local `npm test` no Windows. Uma edição
+  não commitada do orquestrador em `.checks/issue-25-agent-launch.planning-handoff.md`
+  (e em `.tasks/` e no checklist) registra a resposta “Autorizar ajuste pontual
+  da harness”; esta rodada recebeu a instrução de não editar a harness e não o
+  fez. Os arquivos dessa edição não foram tocados nem commitados aqui.
+- Limitações anteriores continuam: uso real sem sessão de agente (`Unresolved`
+  2); C23 sem asserção de tempo para o “sem espera”.
