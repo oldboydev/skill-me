@@ -45,6 +45,14 @@ const MAX_STATE_BYTES = 64 * 1024;
 const OBSERVE_FILE = "observe.json";
 const MAX_OBSERVE_BYTES = 256 * 1024;
 export const AUTOMATIC_ORIGIN = "automatic";
+// Execução de `skill-me <agente>` (issue #25): capturas sucessivas com
+// `invocation` e `segment`, e o ponteiro da execução aberta em `launches/`
+// (linhas "Ponteiro da execução aberta" e "Captura da execução" do Landing em
+// .checks/issue-25-agent-launch.md).
+export const LAUNCH_ORIGIN = "launch";
+const LAUNCHES_DIR = "launches";
+const LAUNCH_VERSION = 1;
+const MAX_LAUNCH_BYTES = 1024;
 
 export const CONTENT_OMISSION_CODES = Object.freeze([
   "content_disabled",
@@ -233,13 +241,29 @@ const STATE_KEYS = ["captureVersion", "content", "counters", "createdAt", "dataB
 // Só a captura criada pela observação automática traz `origin`; a manual
 // continua com a forma da #5 (linha "Captura automática" do Landing da #23).
 const AUTOMATIC_STATE_KEYS = [...STATE_KEYS, "origin"].sort();
+// A do launcher traz também a execução, o número da captura nela e o início
+// da execução (#25; `launchedAt` na linha "Início da execução" do Landing).
+const LAUNCH_STATE_KEYS = [...STATE_KEYS, "invocation", "launchedAt", "origin", "segment"].sort();
 const COUNTER_KEYS = ["accepted", "contentOmitted", "dropped", "malformed", "persisted"];
+
+const isSegment = (value) => Number.isSafeInteger(value) && value >= 1;
+const isLaunchId = (value) => typeof value === "string" && CAPTURE_ID_PATTERN.test(value);
+
+function hasKnownOrigin(state, keys) {
+  if (isDeepStrictEqual(keys, STATE_KEYS)) return true;
+  if (isDeepStrictEqual(keys, AUTOMATIC_STATE_KEYS)) return state.origin === AUTOMATIC_ORIGIN;
+  return (
+    isDeepStrictEqual(keys, LAUNCH_STATE_KEYS) &&
+    state.origin === LAUNCH_ORIGIN &&
+    isLaunchId(state.invocation) &&
+    isSegment(state.segment) &&
+    isIso(state.launchedAt)
+  );
+}
 
 function isValidState(state, id) {
   if (state === null || typeof state !== "object" || Array.isArray(state)) return false;
-  const keys = Object.keys(state).sort();
-  const manual = isDeepStrictEqual(keys, STATE_KEYS);
-  if (!manual && !(isDeepStrictEqual(keys, AUTOMATIC_STATE_KEYS) && state.origin === AUTOMATIC_ORIGIN)) return false;
+  if (!hasKnownOrigin(state, Object.keys(state).sort())) return false;
   const counters = state.counters;
   return (
     state.captureVersion === 1 &&
@@ -303,7 +327,11 @@ async function writeStateAtomic(io, dir, state) {
 function publicCapture(state) {
   const { id, state: lifecycle, content, retentionDays, createdAt, endedAt, dataBytes, counters, limits } = state;
   const shown = { id, state: lifecycle, content, retentionDays, createdAt, endedAt, dataBytes, counters, limits };
-  return state.origin === undefined ? shown : { ...shown, origin: state.origin };
+  if (state.origin === undefined) return shown;
+  if (state.origin === LAUNCH_ORIGIN) {
+    return { ...shown, origin: state.origin, invocation: state.invocation, segment: state.segment, launchedAt: state.launchedAt };
+  }
+  return { ...shown, origin: state.origin };
 }
 
 // Marcador gravado sob o lock pela operação que adotou a pasta vazia.
@@ -314,8 +342,9 @@ async function initStore(ctx) {
 }
 
 // Captura nova, já sob o lock: pasta, chave própria e o state.json, que é o
-// commit. `origin` só existe nas criadas pela observação automática.
-async function createCapture(ctx, { content, retentionDays, nowMs, origin }) {
+// commit. `origin` só existe nas criadas pela observação automática ou pelo
+// launcher; `launch` ({invocation, segment, launchedAt}) só nas do launcher.
+async function createCapture(ctx, { content, retentionDays, nowMs, origin, launch }) {
   const { io } = ctx;
   await ensureCapturesDir(ctx);
   const id = randomBytes(16).toString("hex");
@@ -335,6 +364,7 @@ async function createCapture(ctx, { content, retentionDays, nowMs, origin }) {
     counters: { accepted: 0, persisted: 0, malformed: 0, dropped: {}, contentOmitted: {} },
     limits: { ...PRIVACY_LIMITS },
     ...(origin === undefined ? {} : { origin }),
+    ...(launch === undefined ? {} : { invocation: launch.invocation, segment: launch.segment, launchedAt: launch.launchedAt }),
   };
   await writeStateAtomic(io, dir, state);
   return { dir, state };
@@ -770,9 +800,9 @@ async function writeObservationFile(ctx, observation) {
   }
 }
 
-// Capturas `origin: automatic` legíveis, por criação; as ilegíveis vão para
-// `failed`, como no list.
-async function automaticCaptures(ctx) {
+// Capturas legíveis de uma origem (`automatic` da #23, `launch` da #25), por
+// criação; as ilegíveis vão para `failed`, como no list.
+async function capturesOfOrigin(ctx, origin) {
   if ((await capturesDirKind(ctx)) === "missing") return { found: [], failed: [] };
   const found = [];
   const failed = [];
@@ -780,7 +810,7 @@ async function automaticCaptures(ctx) {
     if (!CAPTURE_ID_PATTERN.test(name)) continue;
     try {
       const capture = await readCapture(ctx, name);
-      if (capture.state.origin === AUTOMATIC_ORIGIN) found.push(capture);
+      if (capture.state.origin === origin) found.push(capture);
     } catch (error) {
       if (!(error instanceof StoreError)) throw error;
       failed.push({ capture: name, code: error.code });
@@ -810,7 +840,7 @@ export function changeObservation({ root, expectedReal, action, nowMs = Date.now
       if (action === "on") await authorization?.claim();
       if (changed) await writeObservationFile(ctx, next);
       if (action === "on") return { observation: next, changed, stopped: [], failed: [] };
-      const { found, failed } = await automaticCaptures(ctx);
+      const { found, failed } = await capturesOfOrigin(ctx, AUTOMATIC_ORIGIN);
       const stopped = [];
       for (const capture of found) {
         if (capture.state.state !== "active") continue;
@@ -830,7 +860,7 @@ export function readObservation({ root, expectedReal, io = createStoreIo() }) {
     if (ctx === null) return { observation: null, captures: [], failed: [] };
     return withLock(ctx, async () => {
       const observation = await readObservationFile(ctx);
-      const { found, failed } = await automaticCaptures(ctx);
+      const { found, failed } = await capturesOfOrigin(ctx, AUTOMATIC_ORIGIN);
       return { observation, captures: found.map(({ state }) => publicCapture(state)), failed };
     });
   });
@@ -860,13 +890,52 @@ async function activeCapture(ctx, id) {
   }
 }
 
+// Sucessão por limite, numa tomada do lock já obtida: a regra da observação
+// automática (#23), reusada pela execução do launcher (#25, linha "Sucessão"
+// do Landing). `produce(capture, pendentes)` — a política, fora deste módulo —
+// devolve o lote e quantas entradas iniciais consumiu com a chave e o uso da
+// captura; as que não couberam vão para a sucessora, que `succeed()` cria (e
+// registra no índice de quem chama) depois de encerrar a cheia, com a política
+// reaplicada com a chave nova. `target` null: não há corrente ativa — também
+// quando foi encerrada ou excluída à mão — e a primeira entrada já abre a
+// sucessora. `entries` é opaco.
+async function appendWithSuccession(ctx, { target, entries, produce, nowIso, succeed }) {
+  let current = target;
+  let pending = entries;
+  let committed = 0;
+  let persisted = 0;
+  while (pending.length > 0) {
+    let created = false;
+    if (current === null) {
+      current = await succeed();
+      created = true;
+    }
+    const usage = { events: current.state.counters.persisted, bytes: current.state.dataBytes };
+    const { batch, consumed } = produce({ key: await readCaptureKey(ctx.io, current.dir), content: current.state.content, usage }, pending);
+    assertBatch(batch);
+    // Uma captura recém-criada sempre consome (o limite nela é descarte);
+    // sem isso o laço criaria capturas vazias sob o lock indefinidamente.
+    if (consumed === 0 && created) throw new StoreError("io_failure");
+    if (consumed > 0) {
+      const lines = batch.records.map((record) => JSON.stringify(record) + "\n");
+      const appended = await commitBatch(ctx, current.dir, current.state, batch, lines);
+      current = { dir: current.dir, state: appended.state };
+      persisted += appended.admitted;
+      committed += consumed;
+      pending = pending.slice(consumed);
+    }
+    if (pending.length > 0) {
+      await stopCapture(ctx, current, nowIso);
+      current = null;
+    }
+  }
+  return { committed, persisted };
+}
+
 // Gravação automática de entradas de uma sessão numa só tomada do lock: confere
-// a geração do produtor, escolhe ou cria a captura da sessão e chama `produce`
-// — a política, fora deste módulo — com a chave e o uso dela. `produce(capture,
-// pendentes)` devolve o lote e quantas entradas iniciais ele consumiu; as que
-// não couberam vão para a sucessora, criada depois de encerrar a cheia, com a
-// política reaplicada com a chave nova. Captura encerrada ou excluída à mão
-// também é sucedida: o `on` continua valendo até o `off`. `entries` é opaco.
+// a geração do produtor e grava na captura da sessão pela sucessão comum. A
+// captura encerrada ou excluída à mão também é sucedida: o `on` continua
+// valendo até o `off`.
 export function appendAutomatic({ root, expectedReal, generation, session, entries, produce, nowMs = Date.now(), io = createStoreIo(), onLock }) {
   return storeOp(async () => {
     const opened = await openStore(root, io, { expectedReal });
@@ -876,40 +945,222 @@ export function appendAutomatic({ root, expectedReal, generation, session, entri
       let observation = await readObservationFile(ctx);
       if (!isCurrentGeneration(observation, generation)) throw new StoreError("observe_off");
       const tag = sessionTag(observation.sessionKey, session);
-      const nowIso = new Date(nowMs).toISOString();
-      let target = observation.sessions[tag] === undefined ? null : await activeCapture(ctx, observation.sessions[tag]);
-      let pending = entries;
-      let committed = 0;
-      let persisted = 0;
-      while (pending.length > 0) {
-        let created = false;
-        if (target === null) {
-          target = await createCapture(ctx, { content: true, retentionDays: DEFAULT_RETENTION_DAYS, nowMs, origin: AUTOMATIC_ORIGIN });
-          created = true;
-          observation = assignSession(observation, tag, target.state.id);
+      const target = observation.sessions[tag] === undefined ? null : await activeCapture(ctx, observation.sessions[tag]);
+      return appendWithSuccession(ctx, {
+        target,
+        entries,
+        produce,
+        nowIso: new Date(nowMs).toISOString(),
+        succeed: async () => {
+          const created = await createCapture(ctx, { content: true, retentionDays: DEFAULT_RETENTION_DAYS, nowMs, origin: AUTOMATIC_ORIGIN });
+          observation = assignSession(observation, tag, created.state.id);
           await writeObservationFile(ctx, observation);
-        }
-        const usage = { events: target.state.counters.persisted, bytes: target.state.dataBytes };
-        const { batch, consumed } = produce({ key: await readCaptureKey(ctx.io, target.dir), content: target.state.content, usage }, pending);
-        assertBatch(batch);
-        // Uma captura recém-criada sempre consome (o limite nela é descarte);
-        // sem isso o laço criaria capturas vazias sob o lock indefinidamente.
-        if (consumed === 0 && created) throw new StoreError("io_failure");
-        if (consumed > 0) {
-          const lines = batch.records.map((record) => JSON.stringify(record) + "\n");
-          const appended = await commitBatch(ctx, target.dir, target.state, batch, lines);
-          target = { dir: target.dir, state: appended.state };
-          persisted += appended.admitted;
-          committed += consumed;
-          pending = pending.slice(consumed);
-        }
-        if (pending.length > 0) {
-          await stopCapture(ctx, target, nowIso);
-          target = null;
+          return created;
+        },
+      });
+    });
+  });
+}
+
+// Execução de `skill-me <agente>` (issue #25). O ponteiro em
+// `launches/<invocation>.json` aponta a captura corrente e só existe enquanto
+// a execução recebe registros; muda só sob o lock da raiz (linhas "Ponteiro da
+// execução aberta", "Início da execução" e "Ordem e falha do encerramento" do
+// Landing em .checks/issue-25-agent-launch.md).
+
+const LAUNCH_KEYS = ["capture", "invocation", "launchVersion", "launchedAt", "segment"];
+const launchesDir = (ctx) => path.join(ctx.storeDir, LAUNCHES_DIR);
+const launchFile = (ctx, invocation) => path.join(launchesDir(ctx), `${invocation}.json`);
+
+function isValidLaunch(value, invocation) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    isDeepStrictEqual(Object.keys(value).sort(), LAUNCH_KEYS) &&
+    value.launchVersion === LAUNCH_VERSION &&
+    value.invocation === invocation &&
+    isLaunchId(value.capture) &&
+    isSegment(value.segment) &&
+    isIso(value.launchedAt)
+  );
+}
+
+async function launchesDirKind(ctx) {
+  const kind = await entryKind(ctx.io, launchesDir(ctx));
+  if (kind === "link") throw new StoreError("link_refused");
+  if (kind !== "dir" && kind !== "missing") throw new StoreError("store_invalid");
+  return kind;
+}
+
+// null: a execução foi encerrada, ou nunca existiu nesta raiz.
+async function readLaunchFile(ctx, invocation) {
+  if ((await launchesDirKind(ctx)) === "missing") return null;
+  const bytes = await readSmallFile(ctx.io, launchFile(ctx, invocation), MAX_LAUNCH_BYTES, "store_invalid");
+  if (bytes === null) return null;
+  let value;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new StoreError("store_invalid");
+  }
+  if (!isValidLaunch(value, invocation)) throw new StoreError("store_invalid");
+  return value;
+}
+
+async function writeLaunchFile(ctx, launch) {
+  if ((await launchesDirKind(ctx)) === "missing") await ctx.io.mkdir(launchesDir(ctx));
+  const tmp = path.join(launchesDir(ctx), tempName(`${launch.invocation}.json`));
+  try {
+    await ctx.io.writeExclusive(tmp, JSON.stringify(launch));
+    await ctx.io.rename(tmp, launchFile(ctx, launch.invocation));
+  } catch (error) {
+    await ctx.io.unlink(tmp).catch(() => {});
+    throw error;
+  }
+}
+
+const launchSegment = (ctx, { invocation, segment, launchedAt, nowMs }) =>
+  createCapture(ctx, { content: true, retentionDays: DEFAULT_RETENTION_DAYS, nowMs, origin: LAUNCH_ORIGIN, launch: { invocation, segment, launchedAt } });
+
+// Abre a execução antes do agente (crit. 15): o segmento 1 e o ponteiro na
+// mesma tomada do lock. Sem o ponteiro a execução não existe, então a captura
+// criada não fica `active`.
+export function startLaunch({ root, expectedReal, nowMs = Date.now(), io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { create: true, expectedReal });
+    return withLock(ctx, async () => {
+      await initStore(ctx);
+      const invocation = randomBytes(16).toString("hex");
+      const launchedAt = new Date(nowMs).toISOString();
+      const first = await launchSegment(ctx, { invocation, segment: 1, launchedAt, nowMs });
+      try {
+        await writeLaunchFile(ctx, { launchVersion: LAUNCH_VERSION, invocation, capture: first.state.id, segment: 1, launchedAt });
+      } catch (error) {
+        await stopCapture(ctx, first, launchedAt).catch(() => {});
+        throw error;
+      }
+      return { invocation, capture: first.state.id, launchedAt };
+    });
+  });
+}
+
+// Gravação de um produtor da execução (crit. 17 e 19): sem ponteiro, a
+// execução acabou (`launch_ended`) e nada é gravado. A corrente que não
+// comporta o próximo registro — ou que não está mais ativa — é sucedida pela
+// regra comum, e o ponteiro passa à sucessora na mesma tomada do lock.
+export function appendLaunch({ root, expectedReal, invocation, entries, produce, nowMs = Date.now(), io = createStoreIo(), onLock }) {
+  return storeOp(async () => {
+    const opened = await openStore(root, io, { expectedReal });
+    if (opened === null) throw new StoreError("launch_ended");
+    const ctx = { ...opened, onLock };
+    return withLock(ctx, async () => {
+      let launch = await readLaunchFile(ctx, invocation);
+      if (launch === null) throw new StoreError("launch_ended");
+      const target = await activeCapture(ctx, launch.capture);
+      if (target !== null && target.state.invocation !== invocation) throw new StoreError("store_invalid");
+      return appendWithSuccession(ctx, {
+        target,
+        entries,
+        produce,
+        nowIso: new Date(nowMs).toISOString(),
+        succeed: async () => {
+          const segment = launch.segment + 1;
+          const created = await launchSegment(ctx, { invocation, segment, launchedAt: launch.launchedAt, nowMs });
+          launch = { ...launch, capture: created.state.id, segment };
+          await writeLaunchFile(ctx, launch);
+          return created;
+        },
+      });
+    });
+  });
+}
+
+// Capturas legíveis de uma execução, por segmento. Uma ilegível de qualquer
+// origem não impede o resumo do encerramento.
+async function launchCaptures(ctx, invocation) {
+  const { found } = await capturesOfOrigin(ctx, LAUNCH_ORIGIN);
+  return found
+    .map(({ state }) => state)
+    .filter((state) => state.invocation === invocation)
+    .sort((a, b) => a.segment - b.segment);
+}
+
+// Encerramento (crit. 20): o ponteiro sai antes de a corrente parar — sem ele
+// nenhum produtor grava, mesmo que parar a captura falhe depois. Devolve as
+// capturas da execução para o resumo do launcher.
+export function endLaunch({ root, expectedReal, invocation, nowMs = Date.now(), io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { expectedReal });
+    if (ctx === null) return { ended: false, captures: [] };
+    return withLock(ctx, async () => {
+      const launch = await readLaunchFile(ctx, invocation);
+      if (launch !== null) {
+        await io.unlink(launchFile(ctx, invocation));
+        try {
+          const current = await activeCapture(ctx, launch.capture);
+          if (current !== null) await stopCapture(ctx, current, new Date(nowMs).toISOString());
+        } catch (error) {
+          // O ponteiro já saiu: a execução não recebe mais nada; só a captura
+          // ficou ativa, e quem chama precisa saber qual.
+          throw Object.assign(error instanceof StoreError ? error : new StoreError("io_failure"), { revoked: true, capture: launch.capture });
         }
       }
-      return { committed, persisted };
+      let captures;
+      try {
+        captures = (await launchCaptures(ctx, invocation)).map(publicCapture);
+      } catch (error) {
+        return { ended: launch !== null, captures: null, summaryCode: error instanceof StoreError ? error.code : "io_failure" };
+      }
+      return { ended: launch !== null, captures };
     });
+  });
+}
+
+// Ponteiro lido sem lock, só para orientar o usuário depois de um
+// encerramento que falhou: null quando a execução já não recebe registros.
+export function peekLaunch({ root, expectedReal, invocation, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { expectedReal });
+    return ctx === null ? null : readLaunchFile(ctx, invocation);
+  });
+}
+
+// `skill-me report` (crit. 27): a execução iniciada por último, sem criar lock
+// — como em latestAutomaticCapture, lock ausente e raiz conferidos antes e
+// depois; uma captura ilegível impede a escolha. A ordem é (`launchedAt`,
+// `invocation`), que não depende de qual segmento ainda existe.
+export function latestLaunch({ root, expectedReal, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { expectedReal });
+    if (ctx === null) throw new StoreError("no_launch_capture");
+    const lockPath = path.join(ctx.storeDir, LOCK_FILE);
+    const assertQuiet = async () => {
+      if ((await entryKind(io, lockPath)) !== "missing") throw new StoreError("lock_present");
+      await assertUnchanged(ctx);
+    };
+    await assertQuiet();
+    const { found, failed } = await capturesOfOrigin(ctx, LAUNCH_ORIGIN);
+    if (failed.length > 0) throw new StoreError(failed[0].code);
+    if (found.length === 0) throw new StoreError("no_launch_capture");
+    const latest = found
+      .map(({ state }) => state)
+      .reduce((a, b) => (b.launchedAt > a.launchedAt || (b.launchedAt === a.launchedAt && b.invocation > a.invocation) ? b : a));
+    const segments = found
+      .map(({ state }) => state)
+      .filter((state) => state.invocation === latest.invocation)
+      .sort((a, b) => a.segment - b.segment)
+      .map((state) => ({ segment: state.segment, capture: state.id }));
+    const present = new Set(segments.map((item) => item.segment));
+    const missingSegments = Array.from({ length: segments.at(-1).segment }, (_, i) => i + 1).filter((segment) => !present.has(segment));
+    let open = false;
+    if ((await launchesDirKind(ctx)) === "dir") {
+      const kind = await entryKind(io, launchFile(ctx, latest.invocation));
+      if (kind === "link") throw new StoreError("link_refused");
+      open = kind === "file";
+    }
+    await assertQuiet();
+    return { invocation: latest.invocation, open, segments, missingSegments };
   });
 }
 
@@ -926,7 +1177,7 @@ export function latestAutomaticCapture({ root, expectedReal, io = createStoreIo(
       await assertUnchanged(ctx);
     };
     await assertQuiet();
-    const { found, failed } = await automaticCaptures(ctx);
+    const { found, failed } = await capturesOfOrigin(ctx, AUTOMATIC_ORIGIN);
     await assertQuiet();
     if (failed.length > 0) throw new StoreError(failed[0].code);
     if (found.length === 0) throw new StoreError("no_automatic_capture");
