@@ -182,15 +182,15 @@ Proof: `node --test --test-name-pattern="I25-C37 " tests/integrations/launch/doc
 
 ### S6 — Conclusão da harness Hermes autorizada · 3 arquivos existentes · 46 KB · ~12k
 
-**C38** — A harness não considera concluída uma entrega pendente só porque os contadores
+**C39** — A harness não considera concluída uma entrega pendente só porque os contadores
 ficaram estáveis por 300 ms; inicialização atrasada além desse intervalo só conclui quando
 a entrega efetivamente termina, com os eventos esperados preservados (task 31, AC6).
-Proof: `node --test --test-name-pattern="I25-C38 " tests/integrations/hermes-harness.unit.test.mjs`
+Proof: `node --test --test-name-pattern="I25-C39 " tests/integrations/hermes-harness.unit.test.mjs`
 
-**C39** — Falha terminal e destino travado são diferenciados de conclusão bem-sucedida;
+**C40** — Falha terminal e destino travado são diferenciados de conclusão bem-sucedida;
 o prazo `settleMaxMs` existente, inclusive o padrão 5000 ms, permanece e as provas nativas
 mantêm callbacks e ferramentas inalterados (task 32, AC6).
-Proof: `node --test --test-name-pattern="I25-C39 " tests/integrations/hermes-harness.unit.test.mjs`
+Proof: `node --test --test-name-pattern="I25-C40 " tests/integrations/hermes-harness.unit.test.mjs`
 Proof: `node --test --test-name-pattern="I4-C20 |I4-C21 |I4-C37 " tests/integrations/hermes-plugin.native.test.mjs`
 
 O gate `npm test` completo continua obrigatório e deve executar os casos nativos aplicáveis.
@@ -218,7 +218,7 @@ com o orquestrador depois do último commit; este agente não os convoca.
 
 Ampliação autorizada em 26/10/2026: S6 lê 46.018 bytes existentes (harness,
 prova nativa e plugin para interpretar os contadores), ~12k. Total mínimo
-~110k, ainda no mesmo lote abaixo de 150k; C38/C39 são acrescidos sem alterar
+~110k, ainda no mesmo lote abaixo de 150k; C39/C40 são acrescidos sem alterar
 C1–C37 e serão verificados no diff completo.
 
 - Onde a fronteira caiu: lote único, C1–C37 fechados; produto em `7bb3f45` (store e entrega),
