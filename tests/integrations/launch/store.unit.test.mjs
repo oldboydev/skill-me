@@ -486,3 +486,39 @@ test("I25-C41 captura de formato inválido na raiz: continua fora do resumo e n�
   assert.deepEqual(outcome.resolved?.captures.map((c) => [c.id, c.segment, c.state]), [[opened.capture, 1, "stopped"]]);
   assert.equal(readFileSync(path.join(foreign, "state.json"), "utf8"), "{", "a captura inválida não foi tocada");
 });
+
+// Refinamento de C41 (vínculo do ponteiro; linha "Vínculo do ponteiro no
+// encerramento" do Landing): o ponteiro de A, com os demais campos válidos,
+// nomeia a captura active de B, de outra execução da mesma raiz.
+const relink = (root, invocation, capture) => writeFileSync(pointerFile(root, invocation), JSON.stringify({ ...readPointer(root, invocation), capture }));
+const bytesOf = (root, opened) => ({
+  state: readFileSync(path.join(captureDir(root, opened.capture), "state.json"), "utf8"),
+  pointer: readFileSync(pointerFile(root, opened.invocation), "utf8"),
+});
+
+test("I25-C41 ponteiro de A com a captura de B: a entrega de A é recusada e o encerramento de A para só a dela, sem tocar B nem a autorização dela", async () => {
+  const root = launchRoot("i25 c41 vinculo");
+  const a = await startLaunch({ root, expectedReal: root });
+  const b = await startLaunch({ root, expectedReal: root });
+  relink(root, a.invocation, b.capture);
+  const before = bytesOf(root, b);
+  assert.equal((await deliver(root, a.invocation, [claudePayload("pre_tool_bash")])).report().code, "store_invalid", "appendLaunch já recusa o vínculo");
+  const outcome = await endOutcome(root, a.invocation);
+  assert.deepEqual(outcome.resolved?.captures.map((c) => [c.id, c.invocation, c.state]), [[a.capture, a.invocation, "stopped"]]);
+  assert.deepEqual(bytesOf(root, b), before, "state.json e ponteiro de B intactos");
+  assert.throws(() => readFileSync(pointerFile(root, a.invocation)), { code: "ENOENT" });
+  assert.deepEqual((await deliver(root, b.invocation, [claudePayload("pre_tool_bash")])).report(), LAUNCHED(1), "B continua gravando");
+  assert.deepEqual(segmentsOf(root, b.invocation), [[1, "active", 1]]);
+});
+
+test("I25-C41 ponteiro de A com a captura de B ilegível por um instante: o encerramento de A não a dá como captura de A que ficou active nem a altera", async () => {
+  const root = launchRoot("i25 c41 vinculo leitura");
+  const a = await startLaunch({ root, expectedReal: root });
+  const b = await startLaunch({ root, expectedReal: root });
+  relink(root, a.invocation, b.capture);
+  const before = bytesOf(root, b);
+  const outcome = await endOutcome(root, a.invocation, readFailure([b.capture]));
+  assert.deepEqual(outcome, { rejected: { code: "io_failure", revoked: true, unverified: true, unreadable: [b.capture], captures: [] } });
+  assert.deepEqual(segmentsOf(root, a.invocation), [[1, "stopped", 0]]);
+  assert.deepEqual(bytesOf(root, b), before, "state.json e ponteiro de B intactos");
+});

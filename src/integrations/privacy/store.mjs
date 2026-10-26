@@ -1108,6 +1108,10 @@ export function appendLaunch({ root, expectedReal, invocation, entries, produce,
   });
 }
 
+// Vínculo de uma captura com a execução: o ponteiro tem só a forma conferida,
+// e quem diz a execução da captura é o estado dela.
+const ofLaunch = (state, invocation) => state.origin === LAUNCH_ORIGIN && state.invocation === invocation;
+
 // Capturas legíveis de uma execução, por segmento (a seguinte, em
 // nextLaunchSegment). Uma ilegível de qualquer origem fica de fora.
 async function launchCaptures(ctx, invocation) {
@@ -1137,7 +1141,7 @@ async function discoverLaunch(ctx, invocation) {
     if (!CAPTURE_ID_PATTERN.test(name)) continue;
     try {
       const capture = await readCapture(ctx, name);
-      if (capture.state.origin === LAUNCH_ORIGIN && capture.state.invocation === invocation) found.push(capture);
+      if (ofLaunch(capture.state, invocation)) found.push(capture);
     } catch (failure) {
       if (failure instanceof StoreError) continue;
       unreadable.push(name);
@@ -1165,21 +1169,28 @@ export function endLaunch({ root, expectedReal, invocation, nowMs = Date.now(), 
       const launch = await readLaunchFile(ctx, invocation);
       if (launch !== null) await io.unlink(launchFile(ctx, invocation));
       const failures = [];
-      const stop = async (id, read) => {
+      // Para a captura lida só se ela for desta execução e estiver `active`;
+      // devolve o estado que fica (o gravado, quando parou).
+      const stop = async (capture) => {
+        if (capture.state.state !== "active" || !ofLaunch(capture.state, invocation)) return capture.state;
         try {
-          const capture = await read();
-          if (capture !== null && capture.state.state === "active") return await stopCapture(ctx, capture, nowIso);
+          return await stopCapture(ctx, capture, nowIso);
         } catch (error) {
-          failures.push({ id, error });
+          failures.push({ id: capture.state.id, error });
+          return capture.state;
         }
-        return null;
       };
-      if (launch !== null) await stop(launch.capture, () => activeCapture(ctx, launch.capture));
+      // A captura do ponteiro vale pelo vínculo do estado dela (linha "Vínculo
+      // do ponteiro no encerramento"); a que não pôde ser lida fica para a
+      // descoberta, que a relê ou a dá como não lida.
+      if (launch !== null) {
+        const current = await readCapture(ctx, launch.capture).catch(() => null);
+        if (current !== null) await stop(current);
+      }
       const discovered = await discoverLaunch(ctx, invocation);
       const states = [];
       for (const capture of discovered.found) {
-        const failed = failures.some((failure) => failure.id === capture.state.id);
-        states.push((failed ? null : await stop(capture.state.id, async () => capture)) ?? capture.state);
+        states.push(failures.some((failure) => failure.id === capture.state.id) ? capture.state : await stop(capture));
       }
       if (failures.length > 0 || !discovered.complete) {
         const ids = failures.map((failure) => failure.id);
@@ -1193,10 +1204,17 @@ export function endLaunch({ root, expectedReal, invocation, nowMs = Date.now(), 
 
 // Ponteiro lido sem lock, só para orientar o usuário depois de um
 // encerramento que falhou: null quando a execução já não recebe registros.
+// A captura dele só é devolvida se o estado dela for desta execução; de outra,
+// o ponteiro é inválido, e a ilegível lança o erro da leitura.
 export function peekLaunch({ root, expectedReal, invocation, io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openStore(root, io, { expectedReal });
-    return ctx === null ? null : readLaunchFile(ctx, invocation);
+    if (ctx === null) return null;
+    const launch = await readLaunchFile(ctx, invocation);
+    if (launch === null) return null;
+    const { state } = await readCapture(ctx, launch.capture);
+    if (!ofLaunch(state, invocation)) throw new StoreError("store_invalid");
+    return launch;
   });
 }
 

@@ -9,7 +9,7 @@ import { runSkillMe as runInProcess } from "../../../src/integrations/launch/com
 import { claudeHookDraft } from "../../../src/integrations/adapters/claude.mjs";
 import { createLaunchDelivery } from "../../../src/integrations/observe/delivery.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
-import { appendRecords } from "../../../src/integrations/privacy/store.mjs";
+import { appendRecords, startLaunch } from "../../../src/integrations/privacy/store.mjs";
 import { INTEGRATIONS_CLI, REPO_ROOT, makeScratch, runIntegrationsJson } from "../helpers/cli.mjs";
 import { FIXTURES_DIR } from "../helpers/fixtures.mjs";
 import { locateSystemPython } from "../helpers/hermes-runtime.mjs";
@@ -17,7 +17,7 @@ import { agentArgs, launchCapturesOnDisk, ofInvocation, pointerFile, preparedLau
 import { automaticOf, runNpmScript } from "../helpers/observe.mjs";
 import { claudePayload, hermesRecord } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
-import { ISO_MS, expectedPseudonym, exportOf, runHook, statusOf, storeDir } from "../helpers/traces.mjs";
+import { ISO_MS, captureDir, expectedPseudonym, exportOf, runHook, statusOf, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
 // Provas S4 da issue #25 sobre o encerramento (C25–C28, C31–C33): o fim da
@@ -473,4 +473,64 @@ test("I25-C41 abertura pelo launcher: falha do ponteiro e falha ao parar o segme
   const stop = spawnSync(process.execPath, [INTEGRATIONS_CLI, "privacy", "stop", "--root", prepared.root, "--capture", capture.id], { encoding: "utf8", env: prepared.env });
   assert.equal(stop.status, 0, stop.stdout);
   assert.equal(statusOf(prepared.root, capture.id).state, "stopped");
+});
+
+// Refinamento de C41 (vínculo do ponteiro; linha "Vínculo do ponteiro no
+// encerramento" do Landing), pelo launcher real: durante a execução A, o
+// ponteiro dela passa a nomear a captura active de B, outra execução da mesma
+// raiz aberta pelo store; os demais campos do ponteiro continuam válidos.
+async function relinkedRun(label, steps = () => []) {
+  const prepared = preparedLaunch(scratch, label, { agents: ["claude"] });
+  const work = scratch(`${label} provas`);
+  const f = (name) => path.join(work, name);
+  const scenario = writeScenario(work, "espera", [{ touch: f("pronto") }, { waitFile: f("segue") }, ...steps(prepared)]);
+  const running = runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_SCENARIO: scenario, FAKE_AGENT_PROBE: f("probe.ndjson") } });
+  await waitFor(() => existsSync(f("pronto")), "agente pronto");
+  const invocation = readJsonLines(f("probe.ndjson"))[0].env.SKILL_ME_LAUNCH_ID;
+  const [own] = ofInvocation(prepared.root, invocation);
+  const other = await startLaunch({ root: prepared.rootReal, expectedReal: prepared.rootReal });
+  const pointer = JSON.parse(readFileSync(pointerFile(prepared.root, invocation), "utf8"));
+  writeFileSync(pointerFile(prepared.root, invocation), JSON.stringify({ ...pointer, capture: other.capture }));
+  const otherBytes = () => ({
+    state: readFileSync(path.join(captureDir(prepared.root, other.capture), "state.json"), "utf8"),
+    pointer: readFileSync(pointerFile(prepared.root, other.invocation), "utf8"),
+  });
+  const before = otherBytes();
+  writeFileSync(f("segue"), "");
+  return { prepared, invocation, own, other, otherBytes, before, result: await running };
+}
+
+test("I25-C41 vínculo do ponteiro pelo launcher: com o ponteiro nomeando a captura active de outra execução, o encerramento para só a da execução e a outra continua gravando", async () => {
+  const { prepared, invocation, own, other, otherBytes, before, result } = await relinkedRun("i25 c41 vinculo");
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stderr.startsWith(`skill-me: execução ${invocation} encerrada; capturas: 1; eventos gravados: 0.\nskill-me: segmento 1: captura ${own.id} stopped;`), result.stderr);
+  assert.ok(!result.stderr.includes(other.capture), "o stderr não fala da captura alheia");
+  assert.deepEqual(otherBytes(), before, "state.json e ponteiro da outra intactos");
+  assert.equal(existsSync(pointerFile(prepared.root, invocation)), false);
+  const late = await runHook("claude", claudePayload("pre_tool_bash"), { env: { ...prepared.env, SKILL_ME_LAUNCH_ROOT: prepared.rootReal, SKILL_ME_LAUNCH_ID: other.invocation }, cwd: scratch("i25 c41 vinculo projeto") });
+  assert.deepEqual(late.report.delivery, LAUNCHED(1), "a outra execução continua gravando");
+  assert.deepEqual(ofInvocation(prepared.root, other.invocation).map((c) => [c.segment, c.state, c.counters.persisted]), [[1, "active", 1]]);
+});
+
+test("I25-C41 vínculo do ponteiro no diagnóstico: com lock alheio no encerramento e o ponteiro nomeando a captura de outra execução, o stderr indica só a captura da execução e não toca a outra", async () => {
+  const lockOf = (prepared) => path.join(storeDir(prepared.root), ".lock");
+  const { prepared, invocation, own, other, otherBytes, before, result } = await relinkedRun("i25 c41 vinculo lock", (p) => [{ writeFile: { path: lockOf(p), text: "lock alheio\n" } }]);
+  const cli = `"${process.execPath}" "${INTEGRATIONS_CLI}"`;
+  assert.equal(result.status, 0);
+  assert.equal(
+    result.stderr,
+    [
+      `skill-me: não foi possível encerrar a execução ${invocation} [lock_present]; a captura ${own.id} continua active.`,
+      `skill-me: encerre com: ${cli} privacy stop --root "${prepared.root}" --capture ${own.id}`,
+      `skill-me: a execução ${invocation} continua aberta: o comando acima encerra só a captura ${own.id}, e um processo do agente que ainda grave abre a captura seguinte; rode-o depois que o agente e os processos dele terminarem.`,
+      "",
+    ].join("\n"),
+  );
+  assert.deepEqual(otherBytes(), before, "state.json e ponteiro da outra intactos");
+  // `unlinkSync`, não `rmSync`: ver I25-C31 com lock alheio (nodejs/node#56049).
+  unlinkSync(lockOf(prepared));
+  const stop = spawnSync(process.execPath, [INTEGRATIONS_CLI, "privacy", "stop", "--root", prepared.root, "--capture", own.id], { encoding: "utf8", env: prepared.env });
+  assert.equal(stop.status, 0, stop.stdout);
+  assert.deepEqual([statusOf(prepared.root, own.id).state, statusOf(prepared.root, other.capture).state], ["stopped", "active"]);
+  assert.deepEqual(otherBytes(), before, "o comando mostrado não toca a outra");
 });

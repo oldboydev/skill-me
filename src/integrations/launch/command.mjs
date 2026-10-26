@@ -111,7 +111,9 @@ async function failedEndLines({ error, invocation, config, io, fallbackCapture }
       open = pointer !== null;
       if (pointer !== null) captures = [pointer.capture];
     } catch {
-      // Ponteiro ilegível: a orientação conservadora é a da execução aberta.
+      // Ponteiro ilegível, ou com captura que não se confere desta execução:
+      // a orientação conservadora é a da execução aberta, com a captura que a
+      // invocação abriu (linha "Vínculo do ponteiro no encerramento").
     }
   }
   const unchecked = error.unverified === true ? uncheckedLines({ code, invocation, config, unreadable: error.unreadable }) : [];
