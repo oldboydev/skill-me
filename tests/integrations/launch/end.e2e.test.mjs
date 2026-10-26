@@ -6,14 +6,17 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
 import { runSkillMe as runInProcess } from "../../../src/integrations/launch/command.mjs";
+import { claudeHookDraft } from "../../../src/integrations/adapters/claude.mjs";
+import { createLaunchDelivery } from "../../../src/integrations/observe/delivery.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
+import { appendRecords } from "../../../src/integrations/privacy/store.mjs";
 import { INTEGRATIONS_CLI, REPO_ROOT, makeScratch, runIntegrationsJson } from "../helpers/cli.mjs";
 import { FIXTURES_DIR } from "../helpers/fixtures.mjs";
 import { locateSystemPython } from "../helpers/hermes-runtime.mjs";
 import { agentArgs, launchCapturesOnDisk, ofInvocation, pointerFile, preparedLaunch, readJsonLines, runSkillMe, writeScenario } from "../helpers/launch.mjs";
 import { automaticOf, runNpmScript } from "../helpers/observe.mjs";
 import { claudePayload, hermesRecord } from "../helpers/privacy-canaries.mjs";
-import { runPrivacy } from "../helpers/privacy-store.mjs";
+import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
 import { ISO_MS, expectedPseudonym, exportOf, runHook, statusOf, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
@@ -279,4 +282,90 @@ test("I25-C33 on e off durante a invocação: a corrente continua active e os ev
   );
   assert.deepEqual(automaticOf(prepared.root), [], "nenhuma captura automática nasceu da sessão");
   assert.equal(ofInvocation(prepared.root, capture.invocation).length, 1);
+});
+
+// C41 (revisão formal em 2fd858a, P2 de store.mjs:1071; linha "Sucessora não
+// publicada" do Landing), pelo launcher real: um produtor da execução cria a
+// sucessora e a publicação do ponteiro dela falha (io instrumentado só nesse
+// produtor, em processo); depois o agente sai.
+test("I25-C41 encerramento pelo launcher com sucessora não publicada: o resumo lista as duas capturas stopped e nenhuma fica active", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c41 launcher", { agents: ["claude"] });
+  const work = scratch("i25 c41 launcher provas");
+  const f = (name) => path.join(work, name);
+  const scenario = writeScenario(work, "espera", [{ touch: f("pronto") }, { waitFile: f("segue") }]);
+  const running = runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_SCENARIO: scenario, FAKE_AGENT_PROBE: f("probe.ndjson") } });
+  await waitFor(() => existsSync(f("pronto")), "agente pronto");
+  const invocation = readJsonLines(f("probe.ndjson"))[0].env.SKILL_ME_LAUNCH_ID;
+  const [first] = ofInvocation(prepared.root, invocation);
+  const records = Array.from({ length: 500 }, (_, i) => sanitizedRecord(i));
+  assert.equal((await appendRecords({ root: prepared.rootReal, id: first.id, batch: { records, malformed: 0, dropped: {}, contentOmitted: {} } })).admitted, 500);
+  const base = createStoreIo();
+  let armed = true;
+  const io = {
+    ...base,
+    async rename(from, to) {
+      if (armed && path.basename(to) === `${invocation}.json`) {
+        armed = false;
+        throw Object.assign(new Error("falha de E/S injetada"), { code: "EIO" });
+      }
+      return base.rename(from, to);
+    },
+  };
+  const producer = createLaunchDelivery({ root: prepared.rootReal, invocation, agent: "claude", io });
+  const payload = claudePayload("pre_tool_bash");
+  producer.submit(claudeHookDraft(payload), payload);
+  await producer.settle();
+  assert.equal(producer.report().code, "io_failure");
+  writeFileSync(f("segue"), "");
+  const result = await running;
+  const captures = ofInvocation(prepared.root, invocation);
+  assert.deepEqual(captures.map((c) => [c.segment, c.state, c.counters.persisted]), [[1, "stopped", 500], [2, "stopped", 0]]);
+  assert.equal(result.status, 0);
+  assert.equal(
+    result.stderr,
+    [
+      `skill-me: execução ${invocation} encerrada; capturas: 2; eventos gravados: 500.`,
+      `skill-me: segmento 1: captura ${captures[0].id} stopped; gravados 500; descartados: nenhum.`,
+      `skill-me: segmento 2: captura ${captures[1].id} stopped; gravados 0; descartados: nenhum.`,
+      "skill-me: consulte com: skill-me report",
+      "",
+    ].join("\n"),
+  );
+  assert.equal(existsSync(pointerFile(prepared.root, invocation)), false);
+});
+
+test("I25-C41 abertura pelo launcher: falha do ponteiro e falha ao parar o segmento 1 nomeiam a captura active e o comando privacy stop a encerra", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c41 abertura", { agents: ["claude"] });
+  const base = createStoreIo();
+  let pointerFailed = false;
+  const io = {
+    ...base,
+    async rename(from, to) {
+      if (path.basename(path.dirname(to)) === "launches") {
+        pointerFailed = true;
+        throw Object.assign(new Error("falha de E/S injetada"), { code: "EIO" });
+      }
+      if (pointerFailed && path.basename(to) === "state.json") throw Object.assign(new Error("falha de E/S injetada"), { code: "EIO" });
+      return base.rename(from, to);
+    },
+  };
+  const probe = path.join(scratch("i25 c41 abertura provas"), "probe.ndjson");
+  let stderr = "";
+  const result = await runInProcess({
+    argv: ["claude", ...agentArgs("claude")],
+    deps: { env: { ...prepared.env, FAKE_AGENT_PROBE: probe }, home: prepared.home, io, proc: new EventEmitter(), terminal: false, writeOut: () => {}, writeErr: (t) => (stderr += t), readLine: () => null },
+  });
+  const [capture] = launchCapturesOnDisk(prepared.root);
+  assert.deepEqual([result.exitCode, existsSync(probe), capture.state], [5, false, "active"]);
+  assert.equal(
+    stderr,
+    [
+      "skill-me: não foi possível abrir a execução [io_failure]",
+      `skill-me: a captura ${capture.id} ficou active; encerre com: "${process.execPath}" "${INTEGRATIONS_CLI}" privacy stop --root "${prepared.root}" --capture ${capture.id}`,
+      "",
+    ].join("\n"),
+  );
+  const stop = spawnSync(process.execPath, [INTEGRATIONS_CLI, "privacy", "stop", "--root", prepared.root, "--capture", capture.id], { encoding: "utf8", env: prepared.env });
+  assert.equal(stop.status, 0, stop.stdout);
+  assert.equal(statusOf(prepared.root, capture.id).state, "stopped");
 });

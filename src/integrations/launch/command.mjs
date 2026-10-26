@@ -1,3 +1,4 @@
+import os from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { CLI_PATH } from "../install/run.mjs";
 import { patiently } from "../observe/command.mjs";
@@ -58,45 +59,60 @@ function droppedText(dropped) {
   return entries.length === 0 ? "nenhum" : entries.map(([reason, count]) => `${reason} ${count}`).join(", ");
 }
 
-function summaryLines({ invocation, captures, manualSteps }) {
+// `agentRan` falso (abertura cancelada): sem a dica de confiança — nada foi
+// gravado porque o agente não rodou.
+function summaryLines({ invocation, captures, manualSteps, agentRan }) {
   const total = captures.reduce((sum, capture) => sum + capture.counters.persisted, 0);
   const lines = [`skill-me: execução ${invocation} encerrada; capturas: ${captures.length}; eventos gravados: ${total}.`];
   for (const capture of captures) {
     lines.push(`skill-me: segmento ${capture.segment}: captura ${capture.id} ${capture.state}; gravados ${capture.counters.persisted}; descartados: ${droppedText(capture.counters.dropped)}.`);
   }
-  if (total === 0) lines.push(`skill-me: nada foi gravado nesta execução. Confira a confiança do agente: ${manualSteps[0]}`);
+  if (total === 0 && agentRan) lines.push(`skill-me: nada foi gravado nesta execução. Confira a confiança do agente: ${manualSteps[0]}`);
   lines.push("skill-me: consulte com: skill-me report");
   return lines;
 }
 
-// Falha do encerramento (crit. 24; linha "Ordem e falha do encerramento"):
-// a orientação depende de o ponteiro ainda existir — `privacy stop` encerra
-// só a captura, nunca a execução.
+const stopCommand = (config, capture) => `"${process.execPath}" "${CLI_PATH}" privacy stop --root "${config.root}" --capture ${capture}`;
+
+// Falha do encerramento (crit. 24; linhas "Ordem e falha do encerramento" e
+// "Sucessora não publicada"): a orientação depende de o ponteiro ainda existir
+// — `privacy stop` encerra só a captura, nunca a execução —, e cada captura
+// que ficou `active` tem o comando que a encerra.
 async function failedEndLines({ error, invocation, config, io, fallbackCapture }) {
   const code = codeOf(error);
   let open = true;
-  let capture = error.capture ?? fallbackCapture;
+  let captures = error.captures ?? [error.capture ?? fallbackCapture];
   if (error.revoked === true) open = false;
   else {
     try {
       const pointer = await peekLaunch({ root: config.root, expectedReal: config.rootReal, invocation, io });
       open = pointer !== null;
-      if (pointer !== null) capture = pointer.capture;
+      if (pointer !== null) captures = [pointer.capture];
     } catch {
       // Ponteiro ilegível: a orientação conservadora é a da execução aberta.
     }
   }
+  const [capture] = captures;
   const lines = [
-    `skill-me: não foi possível encerrar a execução ${invocation} [${code}]; a captura ${capture} continua active.`,
-    `skill-me: encerre com: "${process.execPath}" "${CLI_PATH}" privacy stop --root "${config.root}" --capture ${capture}`,
+    captures.length === 1
+      ? `skill-me: não foi possível encerrar a execução ${invocation} [${code}]; a captura ${capture} continua active.`
+      : `skill-me: não foi possível encerrar a execução ${invocation} [${code}]; as capturas ${captures.join(", ")} continuam active.`,
+    ...captures.map((id) => `skill-me: encerre com: ${stopCommand(config, id)}`),
   ];
   lines.push(
     open
       ? `skill-me: a execução ${invocation} continua aberta: o comando acima encerra só a captura ${capture}, e um processo do agente que ainda grave abre a captura seguinte; rode-o depois que o agente e os processos dele terminarem.`
-      : `skill-me: a execução ${invocation} já não recebe registros; o comando acima só encerra a captura.`,
+      : captures.length === 1
+        ? `skill-me: a execução ${invocation} já não recebe registros; o comando acima só encerra a captura.`
+        : `skill-me: a execução ${invocation} já não recebe registros; os comandos acima só encerram as capturas.`,
   );
   return lines;
 }
+
+// Sinal recebido antes de o agente iniciar (task 34; linha "Cancelamento antes
+// do agente"): no POSIX o launcher reemite o sinal; no Windows sai com 128 + n.
+const cancelledResult = (signal) => ({ exitCode: 128 + (os.constants.signals[signal] ?? 0), signal });
+const OPENING_CANCELLED = Symbol("abertura cancelada");
 
 async function launchAgent(agent, args, deps) {
   const { env, platform, home, cwd, io, now, proc, settleMs, writeErr, terminal, readLine } = deps;
@@ -109,18 +125,53 @@ async function launchAgent(agent, args, deps) {
   const prepared = await prepareLaunch({ agent, env, platform, home, io, terminal, readLine, writeErr });
   if (prepared.exitCode !== undefined) return prepared;
   const { config, manualSteps } = prepared;
+  const sayCancelled = (signal) => say(`skill-me: abertura cancelada por ${signal}; o agente não foi iniciado.`);
+
+  // Encerra a execução e escreve o resumo ou a falha (crit. 20 e 24).
+  const finish = async (opened, agentRan) => {
+    const { invocation } = opened;
+    try {
+      const ended = await patiently(() => endLaunch({ root: config.root, expectedReal: config.rootReal, invocation, nowMs: now(), io }));
+      if (ended.captures === null) {
+        say(`skill-me: execução ${invocation} encerrada; o resumo das capturas não pôde ser lido [${knownCode(ended.summaryCode)}].`);
+        say("skill-me: consulte com: skill-me report");
+      } else {
+        for (const line of summaryLines({ invocation, captures: ended.captures, manualSteps, agentRan })) say(line);
+      }
+    } catch (error) {
+      for (const line of await failedEndLines({ error, invocation, config, io, fallbackCapture: opened.capture })) say(line);
+    }
+  };
 
   const guard = guardSignals({ proc, platform });
   try {
     let opened;
     try {
-      opened = await patiently(() => startLaunch({ root: config.root, expectedReal: config.rootReal, nowMs: now(), io }));
+      // Cada tentativa confere o cancelamento: um sinal na espera do lock para
+      // de tentar, sem criar captura.
+      opened = await patiently(() => {
+        if (guard.cancelled !== null) throw OPENING_CANCELLED;
+        return startLaunch({ root: config.root, expectedReal: config.rootReal, nowMs: now(), io });
+      });
     } catch (error) {
+      if (guard.cancelled !== null && error?.orphan !== true) {
+        sayCancelled(guard.cancelled);
+        return cancelledResult(guard.cancelled);
+      }
       say(`skill-me: não foi possível abrir a execução [${codeOf(error)}]`);
+      if (error?.orphan === true) say(`skill-me: a captura ${error.capture} ficou active; encerre com: ${stopCommand(config, error.capture)}`);
       return { exitCode: exitFor(codeOf(error)) };
     }
-    const { invocation } = opened;
-    const outcome = await runAgent({ launch, args, env: agentEnvironment(env, platform, { root: config.rootReal, invocation }), guard });
+    const outcome =
+      guard.cancelled !== null
+        ? { cancelled: guard.cancelled }
+        : await runAgent({ launch, args, env: agentEnvironment(env, platform, { root: config.rootReal, invocation: opened.invocation }), guard });
+    if (outcome.cancelled !== undefined) {
+      // A captura já criada é encerrada sem a espera de entregas: nenhum agente rodou.
+      sayCancelled(outcome.cancelled);
+      await finish(opened, false);
+      return cancelledResult(outcome.cancelled);
+    }
     let result;
     if (outcome.spawnError !== undefined) {
       say(`skill-me: não foi possível iniciar ${agent} [${outcome.spawnError.code}]`);
@@ -131,17 +182,7 @@ async function launchAgent(agent, args, deps) {
       await sleep(settleMs);
       result = { exitCode: outcome.code ?? 1, signal: outcome.signal ?? null };
     }
-    try {
-      const ended = await patiently(() => endLaunch({ root: config.root, expectedReal: config.rootReal, invocation, nowMs: now(), io }));
-      if (ended.captures === null) {
-        say(`skill-me: execução ${invocation} encerrada; o resumo das capturas não pôde ser lido [${knownCode(ended.summaryCode)}].`);
-        say("skill-me: consulte com: skill-me report");
-      } else {
-        for (const line of summaryLines({ invocation, captures: ended.captures, manualSteps })) say(line);
-      }
-    } catch (error) {
-      for (const line of await failedEndLines({ error, invocation, config, io, fallbackCapture: opened.capture })) say(line);
-    }
+    await finish(opened, true);
     return result;
   } finally {
     guard.release();

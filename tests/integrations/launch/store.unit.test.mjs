@@ -6,11 +6,11 @@ import { after, test } from "node:test";
 import { claudeHookDraft } from "../../../src/integrations/adapters/claude.mjs";
 import { createLaunchDelivery } from "../../../src/integrations/observe/delivery.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
-import { endLaunch, startLaunch } from "../../../src/integrations/privacy/store.mjs";
+import { appendRecords, endLaunch, startLaunch } from "../../../src/integrations/privacy/store.mjs";
 import { makeScratch } from "../helpers/cli.mjs";
 import { HEX32, ofInvocation, pointerFile } from "../helpers/launch.mjs";
 import { claudePayload } from "../helpers/privacy-canaries.mjs";
-import { runPrivacy } from "../helpers/privacy-store.mjs";
+import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
 import { captureDir, expectedPseudonym, exportOf, statusOf } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
@@ -259,4 +259,147 @@ test("I25-C27 ordem do encerramento: o ponteiro sai antes de a corrente parar, e
   assert.equal(producer.report().code, "launch_ended", "a execução não recebe mais nada");
   assert.equal(statusOf(root, opened.capture).counters.persisted, 0);
   assert.match(statusOf(root, opened.capture).createdAt, ISO_MS);
+});
+
+// C41 (revisão formal em 2fd858a, P2 de store.mjs:1071; linha "Sucessora não
+// publicada" do Landing): a sucessora é criada e confirmada, e a publicação do
+// ponteiro dela falha — na escrita do temporário ou no `rename`. O io falha
+// uma vez, só nesse arquivo; o resto do disco é o real.
+const pointerFailure = (invocation, at) => {
+  const base = createStoreIo();
+  let armed = true;
+  const fail = () => {
+    armed = false;
+    return Promise.reject(Object.assign(new Error("falha de E/S injetada"), { code: "EIO" }));
+  };
+  return {
+    ...base,
+    async writeExclusive(file, data, options) {
+      if (armed && at === "temporário" && path.basename(file).startsWith(`${invocation}.json.`)) return fail();
+      return base.writeExclusive(file, data, options);
+    },
+    async rename(from, to) {
+      if (armed && at === "rename" && path.basename(to) === `${invocation}.json`) return fail();
+      return base.rename(from, to);
+    },
+  };
+};
+
+// Segmento 1 cheio (500 registros já sanitizados, forma do store): o próximo
+// evento abre a sucessora.
+async function fullFirstSegment(root, label) {
+  const opened = await startLaunch({ root, expectedReal: root });
+  const records = Array.from({ length: 500 }, (_, i) => sanitizedRecord(i));
+  assert.equal((await appendRecords({ root, id: opened.capture, batch: { records, malformed: 0, dropped: {}, contentOmitted: {} } })).admitted, 500, label);
+  return opened;
+}
+
+const LOST_IO = { launch: true, code: "io_failure", entries: 1, committed: 0, persisted: 0, lost: 1 };
+const segmentsOf = (root, invocation) => ofInvocation(root, invocation).map((s) => [s.segment, s.state, s.counters.persisted]);
+const readPointer = (root, invocation) => JSON.parse(readFileSync(pointerFile(root, invocation), "utf8"));
+
+test("I25-C41 ponteiro da sucessora não publicado: a entrega falha, a seguinte grava na mesma sucessora e nenhum segmento se repete", async () => {
+  const observed = {};
+  const expected = {};
+  for (const at of ["temporário", "rename"]) {
+    const root = launchRoot(`i25 c41 ${at}`);
+    const opened = await fullFirstSegment(root, at);
+    const failed = await deliver(root, opened.invocation, [claudePayload("pre_tool_bash", { tool_use_id: "perdido" })], pointerFailure(opened.invocation, at));
+    const successor = ofInvocation(root, opened.invocation).find((s) => s.segment === 2);
+    const next = await deliver(root, opened.invocation, [claudePayload("pre_tool_bash", { tool_use_id: "seguinte" })]);
+    observed[at] = {
+      failed: failed.report(),
+      next: next.report(),
+      segments: segmentsOf(root, opened.invocation),
+      sameSuccessor: ofInvocation(root, opened.invocation).find((s) => s.segment === 2)?.id === successor?.id,
+      pointer: readPointer(root, opened.invocation),
+      records: exportOf(root, successor.id).records.map((r) => r.envelope.ids.toolUseId),
+    };
+    expected[at] = {
+      failed: LOST_IO,
+      next: LAUNCHED(1),
+      segments: [[1, "stopped", 500], [2, "active", 1]],
+      sameSuccessor: true,
+      pointer: { launchVersion: 1, invocation: opened.invocation, capture: successor.id, segment: 2, launchedAt: successor.launchedAt },
+      records: [expectedPseudonym(root, successor.id, "seguinte")],
+    };
+  }
+  assert.deepEqual(observed, expected);
+});
+
+test("I25-C41 sucessora nunca publicada: o encerramento a deixa stopped com endedAt e não devolve captura active", async () => {
+  const root = launchRoot("i25 c41 fim");
+  const opened = await fullFirstSegment(root, "fim");
+  await deliver(root, opened.invocation, [claudePayload("pre_tool_bash")], pointerFailure(opened.invocation, "rename"));
+  const ended = await endLaunch({ root, expectedReal: root, invocation: opened.invocation });
+  assert.deepEqual(ended.captures.map((c) => [c.segment, c.state]), [[1, "stopped"], [2, "stopped"]]);
+  for (const capture of ofInvocation(root, opened.invocation)) {
+    assert.equal(capture.state, "stopped", capture.id);
+    assert.match(capture.endedAt, ISO_MS);
+  }
+  assert.throws(() => readFileSync(pointerFile(root, opened.invocation)), { code: "ENOENT" });
+});
+
+test("I25-C41 parar a sucessora falha no encerramento: o erro nomeia a captura que ficou active, privacy stop a encerra e nada reabre a execução", async () => {
+  const root = launchRoot("i25 c41 falha ao parar");
+  const opened = await fullFirstSegment(root, "falha ao parar");
+  await deliver(root, opened.invocation, [claudePayload("pre_tool_bash")], pointerFailure(opened.invocation, "rename"));
+  const orphan = ofInvocation(root, opened.invocation).find((s) => s.segment === 2);
+  const base = createStoreIo();
+  const stuck = {
+    ...base,
+    async rename(from, to) {
+      if (path.basename(to) === "state.json" && path.basename(path.dirname(to)) === orphan.id) throw Object.assign(new Error("falha de E/S"), { code: "EIO" });
+      return base.rename(from, to);
+    },
+  };
+  await assert.rejects(endLaunch({ root, expectedReal: root, invocation: opened.invocation, io: stuck }), (error) => {
+    assert.deepEqual([error.code, error.revoked, error.capture, error.captures], ["io_failure", true, orphan.id, [orphan.id]]);
+    return true;
+  });
+  assert.deepEqual(segmentsOf(root, opened.invocation), [[1, "stopped", 500], [2, "active", 0]]);
+  assert.throws(() => readFileSync(pointerFile(root, opened.invocation)), { code: "ENOENT" }, "a execução já não recebe registros");
+  const late = await deliver(root, opened.invocation, [claudePayload("pre_tool_bash")]);
+  assert.equal(late.report().code, "launch_ended");
+  assert.equal(runPrivacy(["stop", "--root", root, "--capture", orphan.id]).status, 0);
+  assert.deepEqual(segmentsOf(root, opened.invocation), [[1, "stopped", 500], [2, "stopped", 0]]);
+});
+
+test("I25-C41 outra execução da mesma raiz: a sucessora não publicada de uma não é incorporada nem encerrada pela outra", async () => {
+  const root = launchRoot("i25 c41 duas execuções");
+  const a = await fullFirstSegment(root, "a");
+  await deliver(root, a.invocation, [claudePayload("pre_tool_bash")], pointerFailure(a.invocation, "rename"));
+  const orphanA = ofInvocation(root, a.invocation).find((s) => s.segment === 2);
+  const b = await fullFirstSegment(root, "b");
+  assert.deepEqual((await deliver(root, b.invocation, [claudePayload("pre_tool_bash")])).report(), LAUNCHED(1));
+  const successorB = ofInvocation(root, b.invocation).find((s) => s.segment === 2);
+  assert.notEqual(successorB.id, orphanA.id, "a sucessora de B é dela");
+  await endLaunch({ root, expectedReal: root, invocation: b.invocation });
+  assert.deepEqual(segmentsOf(root, a.invocation), [[1, "stopped", 500], [2, "active", 0]], "a execução A não mudou");
+  assert.equal(readPointer(root, a.invocation).capture, a.capture, "o ponteiro de A não mudou");
+  assert.deepEqual(segmentsOf(root, b.invocation), [[1, "stopped", 500], [2, "stopped", 1]]);
+});
+
+test("I25-C41 abertura: falha do ponteiro seguida de falha ao parar o segmento 1 não é engolida e nomeia a captura active", async () => {
+  const root = launchRoot("i25 c41 abertura");
+  const base = createStoreIo();
+  let pointerFailed = false;
+  const io = {
+    ...base,
+    async rename(from, to) {
+      if (path.basename(path.dirname(to)) === "launches") {
+        pointerFailed = true;
+        throw Object.assign(new Error("falha de E/S"), { code: "EIO" });
+      }
+      if (pointerFailed && path.basename(to) === "state.json") throw Object.assign(new Error("falha de E/S"), { code: "EIO" });
+      return base.rename(from, to);
+    },
+  };
+  let rejected;
+  await assert.rejects(startLaunch({ root, expectedReal: root, io }), (error) => {
+    rejected = error;
+    return true;
+  });
+  const [only] = runPrivacy(["list", "--root", root]).body.captures;
+  assert.deepEqual([rejected.code, rejected.orphan, rejected.capture, only.state], ["io_failure", true, only.id, "active"]);
 });

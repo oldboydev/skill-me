@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { createProductionFsAdapter } from "../../../src/doctor/fs-adapter.mjs";
 import { resolveCodexShimEntry } from "../../../src/doctor/launcher-link/codex.mjs";
-import { agentEnvironment, resolveAgentLaunch } from "../../../src/integrations/launch/agent.mjs";
+import { agentEnvironment, guardSignals, resolveAgentLaunch, runAgent } from "../../../src/integrations/launch/agent.mjs";
 import { CODEX_GLOBAL_SH_TARGET, CODEX_GLOBAL_WINDOWS_TARGET, CODEX_LOCAL_WINDOWS_TARGET, npmCmdShim, npmShShim } from "../../doctor/helpers/npm-shims.mjs";
 import { makeScratch } from "../helpers/cli.mjs";
 
@@ -125,4 +126,75 @@ test("I25-C16 ambiente do agente: nenhum valor herdado dos dois pares, completo 
   assert.deepEqual(agentEnvironment(windows, "win32", binding), { Path: "C:\\bin", SKILL_ME_LAUNCH_ROOT: "/raiz real", SKILL_ME_LAUNCH_ID: "a".repeat(32) });
   // No POSIX, nomes de outra grafia são outras variáveis e ficam.
   assert.deepEqual(agentEnvironment({ skill_me_capture_id: "x" }, "linux", binding), { skill_me_capture_id: "x", SKILL_ME_LAUNCH_ROOT: "/raiz real", SKILL_ME_LAUNCH_ID: "a".repeat(32) });
+});
+
+// C42 (revisão formal em 2fd858a, P2 de agent.mjs:61; linha "Cancelamento antes
+// do agente" do Landing): a decisão do guard sobre cada sinal, antes e depois de
+// o agente iniciar. O processo é um EventEmitter só aqui, na tabela; a fronteira
+// real (processo do launcher, console do Windows) está em command.cli.
+function fakeChild() {
+  const killed = [];
+  return { exitCode: null, signalCode: null, killed, kill: (signal) => killed.push(signal) };
+}
+
+test("I25-C42 guard: antes de o agente iniciar, o primeiro sinal do terminal ou SIGTERM cancela; depois, o terminal é ignorado e SIGTERM chega ao agente uma vez por sinal", () => {
+  const observed = {};
+  const expected = {};
+  for (const [platform, signals] of [["linux", ["SIGINT", "SIGQUIT", "SIGHUP", "SIGTERM"]], ["win32", ["SIGINT", "SIGHUP", "SIGTERM"]]]) {
+    for (const signal of signals) {
+      const proc = new EventEmitter();
+      const guard = guardSignals({ proc, platform });
+      proc.emit(signal);
+      proc.emit("SIGTERM");
+      observed[`${platform} ${signal} antes`] = guard.cancelled;
+      expected[`${platform} ${signal} antes`] = signal;
+      guard.release();
+    }
+  }
+  // No Windows o SIGQUIT não existe: nada escuta nem cancela.
+  const windows = new EventEmitter();
+  const windowsGuard = guardSignals({ proc: windows, platform: "win32" });
+  windows.emit("SIGQUIT");
+  observed["win32 SIGQUIT"] = [windowsGuard.cancelled, windows.listenerCount("SIGQUIT")];
+  expected["win32 SIGQUIT"] = [null, 0];
+  windowsGuard.release();
+
+  // Agente vivo: terminal ignorado (já chegou ao grupo), SIGTERM repassado um para um, sem cancelar.
+  const proc = new EventEmitter();
+  const guard = guardSignals({ proc, platform: "linux" });
+  const child = fakeChild();
+  guard.attach(child);
+  for (const signal of ["SIGINT", "SIGQUIT", "SIGHUP", "SIGTERM", "SIGTERM"]) proc.emit(signal);
+  observed.vivo = [guard.cancelled, [...child.killed]];
+  expected.vivo = [null, ["SIGTERM", "SIGTERM"]];
+  // Agente já saiu (espera e encerramento da execução): nada é repassado nem cancela.
+  child.exitCode = 0;
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) proc.emit(signal);
+  observed.saiu = [guard.cancelled, [...child.killed]];
+  expected.saiu = [null, ["SIGTERM", "SIGTERM"]];
+  guard.release();
+  observed.liberado = ["SIGINT", "SIGQUIT", "SIGHUP", "SIGTERM"].map((signal) => proc.listenerCount(signal));
+  expected.liberado = [0, 0, 0, 0];
+  assert.deepEqual(observed, expected);
+});
+
+test("I25-C42 runAgent: um sinal durante a conferência da entrada do shim cancela antes do spawn, e o agente não roda", async () => {
+  const dir = scratch("i25 c42 shim");
+  const marker = path.join(dir, "agente rodou");
+  const script = path.join(dir, "agente.mjs");
+  writeFileSync(script, `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "x");\n`);
+  const proc = new EventEmitter();
+  const guard = guardSignals({ proc, platform: process.platform });
+  // A entrada existe: sem o sinal, o agente iniciaria.
+  const running = runAgent({ launch: { command: process.execPath, prefix: [script], entry: script }, args: [], env: process.env, guard });
+  // runAgent já está no await da conferência da entrada quando o sinal chega.
+  proc.emit("SIGINT");
+  const outcome = await running;
+  guard.release();
+  assert.deepEqual([outcome, existsSync(marker)], [{ cancelled: "SIGINT" }, false]);
+  // Controle: sem sinal, o mesmo agente roda.
+  const control = guardSignals({ proc: new EventEmitter(), platform: process.platform });
+  const ran = await runAgent({ launch: { command: process.execPath, prefix: [script], entry: script }, args: [], env: process.env, guard: control });
+  control.release();
+  assert.deepEqual([ran, existsSync(marker)], [{ code: 0, signal: null }, true]);
 });

@@ -1023,9 +1023,14 @@ async function writeLaunchFile(ctx, launch) {
 const launchSegment = (ctx, { invocation, segment, launchedAt, nowMs }) =>
   createCapture(ctx, { content: true, retentionDays: DEFAULT_RETENTION_DAYS, nowMs, origin: LAUNCH_ORIGIN, launch: { invocation, segment, launchedAt } });
 
+// Falha de E/S com a captura que ficou `active` por causa dela: quem chama
+// precisa dizer qual é e como encerrá-la (storeOp preserva o StoreError).
+const leftActive = (error, fields) => Object.assign(error instanceof StoreError ? error : new StoreError("io_failure"), fields);
+
 // Abre a execução antes do agente (crit. 15): o segmento 1 e o ponteiro na
 // mesma tomada do lock. Sem o ponteiro a execução não existe, então a captura
-// criada não fica `active`.
+// criada não fica `active`; se nem pará-la der certo, o erro diz qual ficou
+// (task 33; linha "Sucessora não publicada" do Landing).
 export function startLaunch({ root, expectedReal, nowMs = Date.now(), io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openStore(root, io, { create: true, expectedReal });
@@ -1037,12 +1042,32 @@ export function startLaunch({ root, expectedReal, nowMs = Date.now(), io = creat
       try {
         await writeLaunchFile(ctx, { launchVersion: LAUNCH_VERSION, invocation, capture: first.state.id, segment: 1, launchedAt });
       } catch (error) {
-        await stopCapture(ctx, first, launchedAt).catch(() => {});
+        try {
+          await stopCapture(ctx, first, launchedAt);
+        } catch {
+          throw leftActive(error, { capture: first.state.id, orphan: true });
+        }
         throw error;
       }
       return { invocation, capture: first.state.id, launchedAt };
     });
   });
+}
+
+// Captura seguinte da execução, ainda sem publicar (task 33; linha "Sucessora
+// não publicada" do Landing). Uma sucessora criada numa tomada anterior cujo
+// ponteiro não chegou a ser gravado está `active` com `segment` maior que o do
+// ponteiro: ela é a seguinte, e nenhuma outra recebe o número dela. Senão,
+// nasce uma nova com o maior número já visto na execução + 1. Só roda quando a
+// corrente não está ativa — no limite ou depois de um encerramento à mão.
+async function nextLaunchSegment(ctx, launch, nowMs) {
+  const known = await launchCaptures(ctx, launch.invocation);
+  const unpublished = known.filter((state) => state.state === "active" && state.segment > launch.segment).at(-1);
+  if (unpublished !== undefined) {
+    return { capture: { dir: path.join(ctx.capturesDir, unpublished.id), state: unpublished }, segment: unpublished.segment };
+  }
+  const segment = Math.max(launch.segment, ...known.map((state) => state.segment)) + 1;
+  return { capture: await launchSegment(ctx, { invocation: launch.invocation, segment, launchedAt: launch.launchedAt, nowMs }), segment };
 }
 
 // Gravação de um produtor da execução (crit. 17 e 19): sem ponteiro, a
@@ -1064,12 +1089,14 @@ export function appendLaunch({ root, expectedReal, invocation, entries, produce,
         entries,
         produce,
         nowIso: new Date(nowMs).toISOString(),
+        // O ponteiro só passa à seguinte se a gravação dele der certo; senão a
+        // entrega falha e a seguinte fica para a próxima tomada (nextLaunchSegment).
         succeed: async () => {
-          const segment = launch.segment + 1;
-          const created = await launchSegment(ctx, { invocation, segment, launchedAt: launch.launchedAt, nowMs });
-          launch = { ...launch, capture: created.state.id, segment };
-          await writeLaunchFile(ctx, launch);
-          return created;
+          const next = await nextLaunchSegment(ctx, launch, nowMs);
+          const published = { ...launch, capture: next.capture.state.id, segment: next.segment };
+          await writeLaunchFile(ctx, published);
+          launch = published;
+          return next.capture;
         },
       });
     });
@@ -1086,25 +1113,44 @@ async function launchCaptures(ctx, invocation) {
     .sort((a, b) => a.segment - b.segment);
 }
 
-// Encerramento (crit. 20): o ponteiro sai antes de a corrente parar — sem ele
-// nenhum produtor grava, mesmo que parar a captura falhe depois. Devolve as
-// capturas da execução para o resumo do launcher.
+// Encerramento (crit. 20): o ponteiro sai antes de qualquer captura parar —
+// sem ele nenhum produtor grava, mesmo que parar falhe depois. Então para a
+// corrente e qualquer outra `active` da execução, como uma sucessora cujo
+// ponteiro não foi gravado (task 33). As que não pararam vão no erro, para
+// quem chama dizer quais são; o resumo de sucesso nunca traz uma `active`.
 export function endLaunch({ root, expectedReal, invocation, nowMs = Date.now(), io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openStore(root, io, { expectedReal });
     if (ctx === null) return { ended: false, captures: [] };
     return withLock(ctx, async () => {
+      const nowIso = new Date(nowMs).toISOString();
       const launch = await readLaunchFile(ctx, invocation);
-      if (launch !== null) {
-        await io.unlink(launchFile(ctx, invocation));
+      if (launch !== null) await io.unlink(launchFile(ctx, invocation));
+      const failures = [];
+      const stop = async (id, read) => {
         try {
-          const current = await activeCapture(ctx, launch.capture);
-          if (current !== null) await stopCapture(ctx, current, new Date(nowMs).toISOString());
+          const capture = await read();
+          if (capture !== null && capture.state.state === "active") await stopCapture(ctx, capture, nowIso);
         } catch (error) {
-          // O ponteiro já saiu: a execução não recebe mais nada; só a captura
-          // ficou ativa, e quem chama precisa saber qual.
-          throw Object.assign(error instanceof StoreError ? error : new StoreError("io_failure"), { revoked: true, capture: launch.capture });
+          failures.push({ id, error });
         }
+      };
+      if (launch !== null) await stop(launch.capture, () => activeCapture(ctx, launch.capture));
+      let known;
+      try {
+        known = await launchCaptures(ctx, invocation);
+      } catch (error) {
+        if (failures.length === 0) return { ended: launch !== null, captures: null, summaryCode: error instanceof StoreError ? error.code : "io_failure" };
+        known = [];
+      }
+      for (const state of known) {
+        if (state.state === "active" && !failures.some((failure) => failure.id === state.id)) {
+          await stop(state.id, async () => ({ dir: path.join(ctx.capturesDir, state.id), state }));
+        }
+      }
+      if (failures.length > 0) {
+        const ids = failures.map((failure) => failure.id);
+        throw leftActive(failures[0].error, { revoked: true, capture: ids[0], captures: ids });
       }
       let captures;
       try {

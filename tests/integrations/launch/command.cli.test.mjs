@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
@@ -11,6 +11,7 @@ import { FIXTURES_DIR } from "../helpers/fixtures.mjs";
 import { locateSystemPython } from "../helpers/hermes-runtime.mjs";
 import { AGENT_NAMES, LAUNCHER, agentArgs, agentBin, freshHome, launchCapturesOnDisk, launchEnv, preparedLaunch, readJsonLines, readLines, runSkillMe, writeScenario } from "../helpers/launch.mjs";
 import { npmCli } from "../helpers/observe.mjs";
+import { TRACES_PROBE, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
 // Provas S1 e parte de S4 da issue #25 (C1–C6, C29, C30, C36): `skill-me` como
@@ -298,4 +299,93 @@ test("I25-C36 ajuda: --help e help em stdout com 0; sem argumento ou com subcoma
   ]) {
     assert.ok(SKILL_ME_HELP.replace(/\s+/g, " ").includes(text), text);
   }
+});
+
+// C42 (revisão formal em 2fd858a, P2 de agent.mjs:61; linha "Cancelamento antes
+// do agente" do Landing): o sinal chega com a abertura da execução esperando o
+// lock da raiz, que outro processo segura. A pré-carga de teste
+// (helpers/traces-probe.mjs, SKILL_ME_TEST_TRACES_GATE) para o launcher antes da
+// n-ésima tentativa de criar o `.lock` do store e espera `go`: o sinal chega
+// num ponto conhecido, sem depender de tempo.
+function holdForeignLock(root) {
+  mkdirSync(storeDir(root));
+  writeFileSync(path.join(storeDir(root), "store.json"), '{"skillMePrivacyStore":1}');
+  const lock = path.join(storeDir(root), ".lock");
+  writeFileSync(lock, "lock alheio\n");
+  return lock;
+}
+
+const gatedEnv = (prepared, gate, at, probe) => ({ ...prepared.env, FAKE_AGENT_PROBE: probe, NODE_OPTIONS: `--import=${TRACES_PROBE}`, SKILL_ME_TEST_TRACES_GATE: `${gate}|${at}` });
+const cancelLine = (signal) => `skill-me: abertura cancelada por ${signal}; o agente não foi iniciado.`;
+const pointerFiles = (root) => (existsSync(path.join(storeDir(root), "launches")) ? readdirSync(path.join(storeDir(root), "launches")) : []);
+
+test("I25-C42 sinal antes do agente (POSIX, processo real): com o lock da abertura ocupado, SIGINT ao grupo e SIGTERM ao launcher cancelam, o agente não inicia e a captura criada fica stopped", { skip: POSIX_ONLY }, async () => {
+  const observed = {};
+  const expected = {};
+  const cases = {
+    // O lock sai antes de 2 s e a 2ª tentativa cria a captura: ela precisa ser encerrada.
+    "SIGINT ao grupo, lock liberado": { signal: "SIGINT", group: true, at: 2, release: true },
+    // O lock continua: a abertura para de tentar, sem criar captura.
+    "SIGTERM ao launcher, lock mantido": { signal: "SIGTERM", group: false, at: 1, release: false },
+  };
+  for (const [label, { signal, group, at, release }] of Object.entries(cases)) {
+    const prepared = preparedLaunch(scratch, `i25 c42 ${signal}`, { agents: ["claude"] });
+    const lock = holdForeignLock(prepared.root);
+    const gate = scratch(`i25 c42 ${signal} portão`);
+    const probe = path.join(gate, "probe.ndjson");
+    const child = spawn(process.execPath, [LAUNCHER, "claude", ...agentArgs("claude")], { env: gatedEnv(prepared, gate, at, probe), stdio: ["ignore", "pipe", "pipe"], detached: group });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    const closed = new Promise((resolve) => child.on("close", (status, sig) => resolve({ status, signal: sig })));
+    await waitFor(() => existsSync(path.join(gate, "waiting")), `${label}: abertura no lock`);
+    if (release) {
+      unlinkSync(lock);
+      assert.equal(existsSync(lock), false);
+    }
+    process.kill(group ? -child.pid : child.pid, signal);
+    await sleep(200);
+    writeFileSync(path.join(gate, "go"), "");
+    const result = await closed;
+    observed[label] = {
+      ...result,
+      started: existsSync(probe),
+      captures: launchCapturesOnDisk(prepared.root).map((c) => [c.segment, c.state, c.counters.persisted]),
+      pointers: pointerFiles(prepared.root),
+      firstLine: stderr.split("\n")[0],
+    };
+    expected[label] = { status: null, signal, started: false, captures: release ? [[1, "stopped", 0]] : [], pointers: [], firstLine: cancelLine(signal) };
+  }
+  assert.deepEqual(observed, expected);
+});
+
+test("I25-C42 Ctrl+C antes do agente no console do Windows: com o lock da abertura ocupado, um CTRL_C_EVENT real cancela, o agente não inicia, a captura criada fica stopped e o launcher sai com 130", { skip: WINDOWS_ONLY || (locateSystemPython().skipReason ? `python-ausente: ${locateSystemPython().skipReason}` : false) }, async () => {
+  const python = locateSystemPython();
+  const prepared = preparedLaunch(scratch, "i25 c42 console", { agents: ["claude"] });
+  const lock = holdForeignLock(prepared.root);
+  const gate = scratch("i25 c42 console portão");
+  const f = fileIn(gate);
+  const probe = f("probe.ndjson");
+  writeFileSync(f("config.json"), JSON.stringify({ argv: [process.execPath, LAUNCHER, "claude", ...agentArgs("claude")], env: gatedEnv(prepared, gate, 2, probe), ready: f("waiting"), seen: f("lock removido"), release: f("go") }));
+  const driver = spawn(python.command, [...python.prefix, "-I", path.join(FIXTURES_DIR, "launch", "console-ctrl-c.py"), f("config.json"), f("resultado.json")], { detached: true, stdio: "ignore" });
+  const exited = new Promise((resolve) => driver.on("exit", resolve));
+  // O driver gera o Ctrl+C quando o launcher para no portão; o lock sai antes do `go`.
+  await waitFor(() => existsSync(f("waiting")), "abertura no lock");
+  unlinkSync(lock);
+  assert.equal(existsSync(lock), false);
+  writeFileSync(f("lock removido"), "");
+  await exited;
+  const result = JSON.parse(readFileSync(f("resultado.json"), "utf8"));
+  assert.deepEqual(
+    {
+      stage: result.stage,
+      generated: result.generated,
+      status: result.status,
+      started: existsSync(probe),
+      captures: launchCapturesOnDisk(prepared.root).map((c) => [c.segment, c.state, c.counters.persisted]),
+      pointers: pointerFiles(prepared.root),
+      firstLine: (result.stderr ?? "").replaceAll("\r", "").split("\n")[0],
+    },
+    { stage: "done", generated: true, status: 130, started: false, captures: [[1, "stopped", 0]], pointers: [], firstLine: cancelLine("SIGINT") },
+    JSON.stringify(result),
+  );
 });

@@ -54,34 +54,47 @@ export function agentEnvironment(env, platform, { root, invocation }) {
 // Sinais do terminal chegam ao grupo inteiro: o agente já os recebe, e o
 // launcher só precisa não morrer antes dele — nem durante o encerramento da
 // execução, que vem depois. SIGTERM vem só para o launcher e é repassado ao
-// agente vivo, um para um. `release` devolve o comportamento padrão.
+// agente vivo, um para um. Antes de o agente iniciar não há a quem entregar:
+// o primeiro sinal fica em `cancelled` e cancela a abertura (task 34; linha
+// "Cancelamento antes do agente" do Landing). `release` devolve o padrão.
 export function guardSignals({ proc = process, platform }) {
   let child = null;
-  const ignored = platform === "win32" ? ["SIGINT", "SIGHUP"] : ["SIGINT", "SIGQUIT", "SIGHUP"];
-  const ignore = () => {};
-  const forward = () => {
-    if (child !== null && child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-  };
-  for (const signal of ignored) proc.on(signal, ignore);
-  proc.on("SIGTERM", forward);
+  let cancelled = null;
+  const terminal = platform === "win32" ? ["SIGINT", "SIGHUP"] : ["SIGINT", "SIGQUIT", "SIGHUP"];
+  const handlers = new Map();
+  for (const signal of terminal) {
+    handlers.set(signal, () => {
+      if (child === null) cancelled ??= signal;
+    });
+  }
+  handlers.set("SIGTERM", () => {
+    if (child === null) cancelled ??= "SIGTERM";
+    else if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+  });
+  for (const [signal, handler] of handlers) proc.on(signal, handler);
   return {
+    get cancelled() {
+      return cancelled;
+    },
     attach(started) {
       child = started;
     },
     release() {
-      for (const signal of ignored) proc.removeListener(signal, ignore);
-      proc.removeListener("SIGTERM", forward);
+      for (const [signal, handler] of handlers) proc.removeListener(signal, handler);
     },
   };
 }
 
-// Inicia o agente e espera o fim: { code, signal } ou { spawnError } (o
-// `code` do erro decide 127/126). A entrada de um shim que sumiu é ENOENT
-// antes do spawn: para o node seria um script ausente, saída 1.
+// Inicia o agente e espera o fim: { code, signal }, { spawnError } (o `code`
+// do erro decide 127/126) ou { cancelled } quando um sinal chegou antes do
+// spawn. A entrada de um shim que sumiu é ENOENT antes do spawn: para o node
+// seria um script ausente, saída 1. Do último `await` ao `attach` tudo é
+// síncrono: nenhum sinal cai entre a conferência e o agente vivo.
 export async function runAgent({ launch, args, env, guard }) {
   if (launch.entry !== undefined && !(await stat(launch.entry).then((s) => s.isFile(), () => false))) {
     return { spawnError: { code: "ENOENT" } };
   }
+  if (guard.cancelled !== null) return { cancelled: guard.cancelled };
   return new Promise((resolve) => {
     let child;
     try {
