@@ -3,7 +3,8 @@
 > Implementar com **tlc-implement**. Cada critério abaixo vira um check com prova, referenciado
 > pelo número. Nada em `Unresolved` é decidido durante a implementação. A questão bloqueante
 > (capturas sucessivas) foi respondida pelo proprietário em 26/10/2026 com a alternativa B (ver
-> `Sources`). O plano completo e o checklist aguardam aprovação explícita antes do código.
+> `Sources`). Em 26/10/2026, o proprietário aprovou o plano completo e o checklist com:
+> “Aprovar plano completo e implementar”.
 
 ## Intent
 
@@ -25,7 +26,7 @@ captura, com chave e limites próprios, até o agente sair. A execução termina
 e `skill-me report` consulta a execução inteira, captura por captura, sem que o usuário copie um
 ID. A observação global `on`/`off` não muda.
 
-30 critérios em 5 fatias · 6 decisões sem volta, que valem com o plano · 5 questões em aberto: a aprovação do plano bloqueia a implementação e 1 bloqueia o uso real.
+30 critérios em 5 fatias · 6 decisões sem volta aprovadas com o plano · 4 questões em aberto: nenhuma bloqueia a implementação e 1 bloqueia o uso real.
 
 ## Criteria
 
@@ -374,7 +375,6 @@ proprietário com B (ver `Sources`) e saiu desta tabela; as demais mantêm o nú
 
 | # | Kind | Question | Until answered |
 | --- | --- | --- | --- |
-| 6 | blocks | Aprovação explícita do plano completo e de `.checks/issue-25-agent-launch.md`. A decisão B está aprovada, mas a revisão automática de aprovação recusou mover para Ready por considerar que ela não substitui a aprovação do plano completo. | Código suspenso. Aguardar a aprovação do proprietário para continuar a implementação, mantendo a decisão B. |
 | 2 | blocks go-live | Para o uso real, o proprietário precisa confirmar a confiança de cada agente (`/hooks` no Claude e no Codex, `hermes plugins enable skill-me-observer`) e rodar uma sessão real com `skill-me <agente>`. Só essa sessão confirma que os hooks do agente herdam o par da execução. | As provas usam agentes de fixture e não iniciam nenhum agente real. Até essa sessão, o uso real não está comprovado; sem confiança, o resumo final mostra 0 eventos gravados (20). |
 | 3 | open | Conteúdo nas capturas da invocação: o padrão é `content: true`, como no `on` aprovado na #23. O critério de aceite 3 fala em eventos “sanitizados”, e o relatório depende dos comandos literais. A prévia do primeiro uso anuncia esse comportamento. A alternativa é deixar o conteúdo desligado; aí o relatório não comprova comandos. | Os critérios 8, 15 e 19 foram escritos com `content: true`. |
 | 4 | open | Falha de preparação (recusa, instalador, raiz ou execução indisponível): o padrão é não iniciar o agente e sair com o código. A alternativa é iniciar o agente sem captura, com um aviso. | Os critérios 10, 14 e 16 foram escritos com o padrão. |

@@ -55,3 +55,12 @@ de produto, Verifier ou revisão formal desta entrega.
 O plano completo e os 37 checks estão concretos para aprovação. Continuar o código
 e mudar para Ready/In Progress depende agora da aprovação explícita do proprietário;
 nenhum teto de revisão nem histórico foi alterado.
+
+## Aprovação completa recebida
+
+Em 26/10/2026, o proprietário respondeu à pergunta de aprovação do plano e do
+checklist completos: “Aprovar plano completo e implementar”. A resposta autoriza
+continuar a implementação da #25 com a alternativa B e desbloqueia o workflow
+Ready/In Progress. O bloqueio anterior permanece registrado acima como histórico.
+As provas, o Verifier independente, a revisão local e o comando de entrega continuam
+obrigatórios; merge e publicação do pacote não foram autorizados.
