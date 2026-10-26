@@ -153,15 +153,34 @@ async function launchAgent(agent, args, deps) {
   const { config, manualSteps } = prepared;
   const sayCancelled = (signal) => say(`skill-me: abertura cancelada por ${signal}; o agente não foi iniciado.`);
 
-  // Encerra a execução e escreve o resumo ou a falha (crit. 20 e 24).
+  // Encerra a execução e escreve o resumo ou a falha (crit. 20 e 24); devolve
+  // se encerrou.
   const finish = async (opened, agentRan) => {
     const { invocation } = opened;
     try {
       const ended = await patiently(() => endLaunch({ root: config.root, expectedReal: config.rootReal, invocation, nowMs: now(), io }));
       for (const line of summaryLines({ invocation, captures: ended.captures, manualSteps, agentRan })) say(line);
+      return true;
     } catch (error) {
       for (const line of await failedEndLines({ error, invocation, config, io, fallbackCapture: opened.capture })) say(line);
+      return false;
     }
+  };
+
+  // Abertura gravada cuja liberação do lock falhou (task 35; linha "Lock após a
+  // abertura"): o agente não inicia e a execução passa pelo encerramento de
+  // sempre. Se ele não concluir e o lock desta invocação puder ter ficado, o
+  // stderr diz qual é e quando removê-lo à mão — nunca o remove.
+  const unconfirmedOpening = async (error) => {
+    const code = codeOf(error);
+    say(`skill-me: a execução ${error.invocation} foi aberta com a captura ${error.capture}, mas a liberação do lock da raiz falhou [${code}]; o agente não foi iniciado.`);
+    const ended = await finish(error, false);
+    if (!ended && error.lockLeft === true) {
+      say(
+        `skill-me: o lock "${error.lockPath}" desta invocação pode ter ficado na raiz; enquanto existir, gravações e comandos nela saem com lock_present. Quando a E/S voltar, se ele ainda contiver "pid":${process.pid} e esse processo tiver terminado, remova-o e só então rode o comando acima.`,
+      );
+    }
+    return { exitCode: exitFor(code) };
   };
 
   const guard = guardSignals({ proc, platform });
@@ -175,6 +194,7 @@ async function launchAgent(agent, args, deps) {
         return startLaunch({ root: config.root, expectedReal: config.rootReal, nowMs: now(), io });
       });
     } catch (error) {
+      if (error?.opened === true) return await unconfirmedOpening(error);
       if (guard.cancelled !== null && error?.orphan !== true) {
         sayCancelled(guard.cancelled);
         return cancelledResult(guard.cancelled);

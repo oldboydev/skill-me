@@ -1035,27 +1035,38 @@ const leftActive = (error, fields) => Object.assign(error instanceof StoreError 
 // Abre a execução antes do agente (crit. 15): o segmento 1 e o ponteiro na
 // mesma tomada do lock. Sem o ponteiro a execução não existe, então a captura
 // criada não fica `active`; se nem pará-la der certo, o erro diz qual ficou
-// (task 33; linha "Sucessora não publicada" do Landing).
+// (task 33; linha "Sucessora não publicada" do Landing). Com captura e ponteiro
+// gravados, só a liberação do lock pode falhar: a execução já existe, e o erro
+// leva a identidade dela e o lock (task 35; linha "Lock após a abertura").
+// `lockLeft`: a falha foi de E/S, e o lock gravado aqui pode ter ficado; um
+// lock ausente ou com outros bytes (`StoreError`) não é desta abertura.
 export function startLaunch({ root, expectedReal, nowMs = Date.now(), io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openStore(root, io, { create: true, expectedReal });
-    return withLock(ctx, async () => {
-      await initStore(ctx);
-      const invocation = randomBytes(16).toString("hex");
-      const launchedAt = new Date(nowMs).toISOString();
-      const first = await launchSegment(ctx, { invocation, segment: 1, launchedAt, nowMs });
-      try {
-        await writeLaunchFile(ctx, { launchVersion: LAUNCH_VERSION, invocation, capture: first.state.id, segment: 1, launchedAt });
-      } catch (error) {
+    let opened = null;
+    try {
+      return await withLock(ctx, async () => {
+        await initStore(ctx);
+        const invocation = randomBytes(16).toString("hex");
+        const launchedAt = new Date(nowMs).toISOString();
+        const first = await launchSegment(ctx, { invocation, segment: 1, launchedAt, nowMs });
         try {
-          await stopCapture(ctx, first, launchedAt);
-        } catch {
-          throw leftActive(error, { capture: first.state.id, orphan: true });
+          await writeLaunchFile(ctx, { launchVersion: LAUNCH_VERSION, invocation, capture: first.state.id, segment: 1, launchedAt });
+        } catch (error) {
+          try {
+            await stopCapture(ctx, first, launchedAt);
+          } catch {
+            throw leftActive(error, { capture: first.state.id, orphan: true });
+          }
+          throw error;
         }
-        throw error;
-      }
-      return { invocation, capture: first.state.id, launchedAt };
-    });
+        opened = { invocation, capture: first.state.id, launchedAt };
+        return opened;
+      });
+    } catch (error) {
+      if (opened === null) throw error;
+      throw leftActive(error, { ...opened, opened: true, lockPath: path.join(ctx.storeDir, LOCK_FILE), lockLeft: !(error instanceof StoreError) });
+    }
   });
 }
 

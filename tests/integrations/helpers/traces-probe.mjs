@@ -11,6 +11,9 @@
 // acontece de verdade e depois lança EIO — o commit e a liberação do lock
 // ocorreram, mas quem chamou só vê a falha (confirmação perdida).
 //
+// SKILL_ME_TEST_TRACES_LOCK_KEPT=<n>: o n-ésimo `unlink` do `.lock` lança EIO
+// sem tocar no disco — a liberação falha e o lock fica (issue #25, C43).
+//
 // SKILL_ME_TEST_TRACES_BUSY_LOCK=<n>: a n-ésima criação exclusiva do `.lock`
 // falha com EEXIST sem tocar no disco, como se outro processo o tivesse
 // naquele instante; a seguinte é real.
@@ -72,6 +75,16 @@ if (lostAt > 0) {
     const result = await realUnlink(file);
     if (isLock(file) && ++unlinks === lostAt) throw Object.assign(new Error("EIO injetado pelo teste"), { code: "EIO" });
     return result;
+  };
+}
+
+const keptAt = Number(env.SKILL_ME_TEST_TRACES_LOCK_KEPT ?? 0);
+if (keptAt > 0) {
+  const realUnlink = fsp.unlink;
+  let unlinks = 0;
+  fsp.unlink = async function keptUnlink(file) {
+    if (isLock(file) && ++unlinks === keptAt) throw Object.assign(new Error("EIO injetado pelo teste"), { code: "EIO" });
+    return realUnlink(file);
   };
 }
 

@@ -224,3 +224,82 @@ test("I25-C40 destino travado: a espera vai até o limite configurado e termina 
   assert.ok(elapsedMs >= 1000);
   assert.deepEqual([result.stats.delivered, result.stats.droppedQueueFull], [3, 94]);
 });
+
+// C44 (segunda revisão formal em 6d57e6e, P2 de settle.py:26; linha "Leitura
+// transitória na espera da harness" do Landing): o plugin marca a entrega
+// desligada antes de contar a perda, e `observer_stats` lê `active` fora do
+// lock dos contadores. Uma leitura pode trazer `active` falso com registros da
+// fila ainda sem destino contado.
+const STATES = `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("settle_prova", sys.argv[1])
+settle = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(settle)
+print(json.dumps([settle.delivery_state(entry) for entry in json.loads(sys.stdin.read())]))
+`;
+const statesOf = (snapshots) => python(["-c", STATES, SETTLE], JSON.stringify(snapshots));
+
+// Sequência do destino que falha com 5 registros na fila e 2 entregues.
+const FAILING = {
+  running: stats({ enqueued: 5, delivered: 2 }),
+  disabledUncounted: stats({ enqueued: 5, delivered: 2, active: false }),
+  partlyCounted: stats({ enqueued: 5, delivered: 2, deliveryFailed: 1, active: false }),
+  counted: stats({ enqueued: 5, delivered: 2, deliveryFailed: 3, active: false }),
+};
+
+test("I25-C44 leituras: com a entrega desligada, a falha só é terminal com todo registro da fila contado; sem destino continua inactive", { skip: SKIP }, () => {
+  const snapshots = {
+    "desligada, perda ainda não contada": FAILING.disabledUncounted,
+    "perda contada em parte": FAILING.partlyCounted,
+    "perda contada inteira": FAILING.counted,
+    "fechada com grande demais e não serializável": stats({ enqueued: 5, delivered: 1, oversize: 1, serializationFailed: 1, deliveryFailed: 2, active: false }),
+    "sem destino": stats({ enqueued: 0, active: false }),
+    "ativa e pendente": FAILING.running,
+    "ativa e concluída": stats({ enqueued: 5, delivered: 5 }),
+  };
+  const labels = Object.keys(snapshots);
+  const states = statesOf(labels.map((label) => snapshots[label]));
+  const observed = Object.fromEntries(labels.map((label, i) => [label, states[i]]));
+  assert.deepEqual(observed, {
+    "desligada, perda ainda não contada": "pending",
+    "perda contada em parte": "pending",
+    "perda contada inteira": "failed",
+    "fechada com grande demais e não serializável": "failed",
+    "sem destino": "inactive",
+    "ativa e pendente": "pending",
+    "ativa e concluída": "concluded",
+  });
+});
+
+test("I25-C44 espera: desligada sem perda contada, depois perda parcial, termina failed só na contagem final; a leitura que não fecha termina timeout no prazo do cenário ou no padrão", { skip: SKIP }, () => {
+  const sequence = controlled([
+    [0, FAILING.running],
+    [120, FAILING.disabledUncounted],
+    [260, FAILING.partlyCounted],
+    [400, FAILING.counted],
+  ]);
+  assert.equal(sequence.state, "failed");
+  assert.ok(endsAt(sequence, 400), `terminou em ${sequence.returnedAtMs} ms`);
+  assert.deepEqual(sequence.stats, FAILING.counted, "os contadores finais");
+  const stuck = [[0, FAILING.disabledUncounted]];
+  const configured = controlled(stuck, { settleMaxMs: 1000 });
+  assert.deepEqual([configured.maxMs, configured.state], [1000, "timeout"]);
+  assert.ok(endsAt(configured, 1000), `terminou em ${configured.returnedAtMs} ms`);
+  const byDefault = controlled(stuck, {});
+  assert.deepEqual([byDefault.maxMs, byDefault.state], [5000, "timeout"]);
+  assert.ok(endsAt(byDefault, 5000), `terminou em ${byDefault.returnedAtMs} ms`);
+});
+
+test("I25-C44 harness real: a leitura transitória da falha não encerra a espera; o resultado traz failed com os contadores finais, e sem destino continua inactive", { skip: SKIP }, () => {
+  const { result } = realHarness("i25 c44 harness", [
+    [0, FAILING.running],
+    [300, FAILING.disabledUncounted],
+    [450, FAILING.partlyCounted],
+    [600, FAILING.counted],
+  ]);
+  assert.equal(result.settle?.state, "failed");
+  assert.deepEqual(result.stats, FAILING.counted, JSON.stringify(result.stats));
+  assert.ok(result.settle.waitedMs >= 600, `esperou ${result.settle.waitedMs} ms`);
+  const none = realHarness("i25 c44 sem destino", [[0, stats({ enqueued: 0, active: false })]]);
+  assert.deepEqual([none.result.settle?.state, none.result.stats.enqueued, none.result.stats.deliveryFailed], ["inactive", 0, 0]);
+});

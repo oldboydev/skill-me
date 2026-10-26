@@ -17,7 +17,7 @@ import { agentArgs, launchCapturesOnDisk, ofInvocation, pointerFile, preparedLau
 import { automaticOf, runNpmScript } from "../helpers/observe.mjs";
 import { claudePayload, hermesRecord } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
-import { ISO_MS, captureDir, expectedPseudonym, exportOf, runHook, statusOf, storeDir } from "../helpers/traces.mjs";
+import { ISO_MS, TRACES_PROBE, captureDir, expectedPseudonym, exportOf, runHook, statusOf, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
 // Provas S4 da issue #25 sobre o encerramento (C25–C28, C31–C33): o fim da
@@ -533,4 +533,154 @@ test("I25-C41 vínculo do ponteiro no diagnóstico: com lock alheio no encerrame
   assert.equal(stop.status, 0, stop.stdout);
   assert.deepEqual([statusOf(prepared.root, own.id).state, statusOf(prepared.root, other.capture).state], ["stopped", "active"]);
   assert.deepEqual(otherBytes(), before, "o comando mostrado não toca a outra");
+});
+
+// C43 (segunda revisão formal em 6d57e6e, P2 de store.mjs:1042; linha "Lock
+// após a abertura" do Landing): a abertura grava o segmento 1 e o ponteiro e
+// só a liberação do lock da raiz falha. Em processo, com o io de
+// createStoreIo instrumentado; em processo real, com a pré-carga de teste.
+const C43_CLI = `"${process.execPath}" "${INTEGRATIONS_CLI}"`;
+const eio = () => Object.assign(new Error("falha de E/S injetada"), { code: "EIO" });
+const rootLockOf = (prepared) => path.join(storeDir(prepared.rootReal), ".lock");
+const openedLine = (inv, cap, code) => `skill-me: a execução ${inv} foi aberta com a captura ${cap}, mas a liberação do lock da raiz falhou [${code}]; o agente não foi iniciado.`;
+const endFailedLines = (prepared, inv, cap, code) => [
+  `skill-me: não foi possível encerrar a execução ${inv} [${code}]; a captura ${cap} continua active.`,
+  `skill-me: encerre com: ${C43_CLI} privacy stop --root "${prepared.root}" --capture ${cap}`,
+  `skill-me: a execução ${inv} continua aberta: o comando acima encerra só a captura ${cap}, e um processo do agente que ainda grave abre a captura seguinte; rode-o depois que o agente e os processos dele terminarem.`,
+];
+const lockLine = (lock, pid) =>
+  `skill-me: o lock "${lock}" desta invocação pode ter ficado na raiz; enquanto existir, gravações e comandos nela saem com lock_present. Quando a E/S voltar, se ele ainda contiver "pid":${pid} e esse processo tiver terminado, remova-o e só então rode o comando acima.`;
+
+async function launchInProcess(prepared, io, label) {
+  const probe = path.join(scratch(`${label} provas`), "probe.ndjson");
+  let stderr = "";
+  const result = await runInProcess({
+    argv: ["claude", ...agentArgs("claude")],
+    deps: { env: { ...prepared.env, FAKE_AGENT_PROBE: probe }, home: prepared.home, io, proc: new EventEmitter(), terminal: false, writeOut: () => {}, writeErr: (t) => (stderr += t), readLine: () => null },
+  });
+  return { exitCode: result.exitCode, stderr, started: existsSync(probe) };
+}
+
+// Unlink do `.lock` falhando: `times` vezes, ou sempre (Infinity).
+function lockKeptIo(times) {
+  const base = createStoreIo();
+  let failures = 0;
+  return {
+    ...base,
+    async unlink(file) {
+      if (path.basename(file) === ".lock" && failures < times) {
+        failures += 1;
+        throw eio();
+      }
+      return base.unlink(file);
+    },
+  };
+}
+
+const otherLaunchBytes = (prepared, other) => () => ({
+  state: readFileSync(path.join(captureDir(prepared.root, other.capture), "state.json"), "utf8"),
+  pointer: readFileSync(pointerFile(prepared.root, other.invocation), "utf8"),
+});
+const hookFor = (prepared, invocation, label) =>
+  runHook("claude", claudePayload("pre_tool_bash"), { env: { ...prepared.env, SKILL_ME_LAUNCH_ROOT: prepared.rootReal, SKILL_ME_LAUNCH_ID: invocation }, cwd: scratch(label) });
+
+// Recuperação declarada na linha do lock: com o processo terminado e o lock
+// ainda com o pid dele, removê-lo e rodar o comando mostrado.
+function recoverDeclared(prepared, capture, pid) {
+  const lock = rootLockOf(prepared);
+  assert.ok(readFileSync(lock, "utf8").includes(`"pid":${pid}`), "o lock ainda é o da invocação");
+  // `unlinkSync`, não `rmSync`: ver I25-C31 com lock alheio (nodejs/node#56049).
+  unlinkSync(lock);
+  const stop = spawnSync(process.execPath, [INTEGRATIONS_CLI, "privacy", "stop", "--root", prepared.root, "--capture", capture], { encoding: "utf8", env: prepared.env });
+  assert.equal(stop.status, 0, stop.stdout);
+  assert.equal(statusOf(prepared.root, capture).state, "stopped");
+}
+
+test("I25-C43 abertura pelo launcher com a liberação do lock falhando por E/S uma vez: o agente não inicia, o stderr dá a execução, a captura active e o lock, e a recuperação declarada a encerra sem mudar a outra execução", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c43 transitorio", { agents: ["claude"] });
+  const other = await startLaunch({ root: prepared.rootReal, expectedReal: prepared.rootReal });
+  const otherBytes = otherLaunchBytes(prepared, other);
+  const before = otherBytes();
+  const run = await launchInProcess(prepared, lockKeptIo(1), "i25 c43 transitorio");
+  const [created] = launchCapturesOnDisk(prepared.root).filter((c) => c.invocation !== other.invocation);
+  assert.deepEqual([run.exitCode, run.started], [5, false]);
+  assert.equal(run.stderr, [openedLine(created.invocation, created.id, "io_failure"), ...endFailedLines(prepared, created.invocation, created.id, "lock_present"), lockLine(rootLockOf(prepared), process.pid), ""].join("\n"));
+  assert.deepEqual([created.segment, created.state, created.endedAt, existsSync(pointerFile(prepared.root, created.invocation))], [1, "active", null, true]);
+  // O impedimento declarado: com o lock, a outra execução não grava, e nada dela muda.
+  assert.equal((await hookFor(prepared, other.invocation, "i25 c43 transitorio projeto")).report.delivery.code, "lock_present");
+  assert.deepEqual(otherBytes(), before);
+  recoverDeclared(prepared, created.id, process.pid);
+  assert.deepEqual(otherBytes(), before, "a recuperação não toca a outra execução");
+  assert.deepEqual((await hookFor(prepared, other.invocation, "i25 c43 transitorio depois")).report.delivery, LAUNCHED(1));
+});
+
+test("I25-C43 abertura pelo launcher com a liberação do lock falhando por E/S sempre: o mesmo diagnóstico, e outra abertura na raiz sai com lock_present sem criar captura nem iniciar o agente até a recuperação", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c43 persistente", { agents: ["claude"] });
+  const io = lockKeptIo(Infinity);
+  const run = await launchInProcess(prepared, io, "i25 c43 persistente");
+  const [created] = launchCapturesOnDisk(prepared.root);
+  assert.deepEqual([run.exitCode, run.started], [5, false]);
+  assert.equal(run.stderr, [openedLine(created.invocation, created.id, "io_failure"), ...endFailedLines(prepared, created.invocation, created.id, "lock_present"), lockLine(rootLockOf(prepared), process.pid), ""].join("\n"));
+  const again = await launchInProcess(prepared, io, "i25 c43 persistente outra");
+  assert.deepEqual([again.exitCode, again.started, again.stderr], [4, false, "skill-me: não foi possível abrir a execução [lock_present]\n"]);
+  assert.deepEqual(launchCapturesOnDisk(prepared.root).map((c) => [c.id, c.state]), [[created.id, "active"]], "nenhuma captura nova");
+  recoverDeclared(prepared, created.id, process.pid);
+});
+
+test("I25-C43 abertura pelo launcher com o lock trocado por outro processo depois de gravar: root_changed, o encerramento sai com lock_present e o lock alheio não é citado nem removido", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c43 trocado", { agents: ["claude"] });
+  const FOREIGN = '{"lockVersion":1,"pid":1,"nonce":"0000000000000000"}';
+  const base = createStoreIo();
+  let swapped = false;
+  const io = {
+    ...base,
+    async rename(from, to) {
+      await base.rename(from, to);
+      if (!swapped && path.basename(path.dirname(to)) === "launches") {
+        swapped = true;
+        writeFileSync(rootLockOf(prepared), FOREIGN);
+      }
+    },
+  };
+  const run = await launchInProcess(prepared, io, "i25 c43 trocado");
+  const [created] = launchCapturesOnDisk(prepared.root);
+  assert.deepEqual([run.exitCode, run.started], [4, false]);
+  assert.equal(run.stderr, [openedLine(created.invocation, created.id, "root_changed"), ...endFailedLines(prepared, created.invocation, created.id, "lock_present"), ""].join("\n"));
+  assert.equal(readFileSync(rootLockOf(prepared), "utf8"), FOREIGN, "o lock alheio fica byte a byte");
+  assert.equal(created.state, "active");
+});
+
+test("I25-C43 abertura pelo launcher (processo real) com o lock mantido pela falha de E/S: o diagnóstico traz o pid do launcher, que já terminou, e a recuperação declarada libera a raiz para uma nova abertura", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c43 real", { agents: ["claude"] });
+  const work = scratch("i25 c43 real provas");
+  const probe = path.join(work, "probe.ndjson");
+  const result = await runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_PROBE: probe, NODE_OPTIONS: `--import=${TRACES_PROBE}`, SKILL_ME_TEST_TRACES_LOCK_KEPT: "1" } });
+  const [created] = launchCapturesOnDisk(prepared.root);
+  const lock = rootLockOf(prepared);
+  assert.deepEqual([result.status, existsSync(probe), JSON.parse(readFileSync(lock, "utf8")).pid], [5, false, result.pid]);
+  assert.equal(result.stderr, [openedLine(created.invocation, created.id, "io_failure"), ...endFailedLines(prepared, created.invocation, created.id, "lock_present"), lockLine(lock, result.pid), ""].join("\n"));
+  assert.deepEqual([created.state, created.endedAt], ["active", null]);
+  recoverDeclared(prepared, created.id, result.pid);
+  const next = await runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_PROBE: path.join(work, "probe-seguinte.ndjson") } });
+  assert.equal(next.status, 0, next.stderr);
+  assert.ok(existsSync(path.join(work, "probe-seguinte.ndjson")), "a nova abertura inicia o agente");
+});
+
+test("I25-C43 abertura pelo launcher (processo real) com a confirmação da liberação perdida: o agente não inicia, o encerramento conclui e o resumo mostra a captura stopped, sem linha de lock", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c43 confirmacao", { agents: ["claude"] });
+  const probe = path.join(scratch("i25 c43 confirmacao provas"), "probe.ndjson");
+  const result = await runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_PROBE: probe, NODE_OPTIONS: `--import=${TRACES_PROBE}`, SKILL_ME_TEST_TRACES_LOST_CONFIRMATION: "1" } });
+  const [created] = launchCapturesOnDisk(prepared.root);
+  assert.deepEqual([result.status, existsSync(probe)], [5, false]);
+  assert.equal(
+    result.stderr,
+    [
+      openedLine(created.invocation, created.id, "io_failure"),
+      `skill-me: execução ${created.invocation} encerrada; capturas: 1; eventos gravados: 0.`,
+      `skill-me: segmento 1: captura ${created.id} stopped; gravados 0; descartados: nenhum.`,
+      "skill-me: consulte com: skill-me report",
+      "",
+    ].join("\n"),
+  );
+  assert.deepEqual([created.state, existsSync(pointerFile(prepared.root, created.invocation)), existsSync(rootLockOf(prepared))], ["stopped", false, false]);
 });

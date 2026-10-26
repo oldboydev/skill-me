@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
@@ -8,10 +8,10 @@ import { createLaunchDelivery } from "../../../src/integrations/observe/delivery
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
 import { appendRecords, endLaunch, startLaunch } from "../../../src/integrations/privacy/store.mjs";
 import { makeScratch } from "../helpers/cli.mjs";
-import { HEX32, ofInvocation, pointerFile } from "../helpers/launch.mjs";
+import { HEX32, launchCapturesOnDisk, ofInvocation, pointerFile } from "../helpers/launch.mjs";
 import { claudePayload } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
-import { captureDir, expectedPseudonym, exportOf, statusOf } from "../helpers/traces.mjs";
+import { captureDir, expectedPseudonym, exportOf, statusOf, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
 // Provas da issue #25 na camada do store e da entrega em processo (C17, C24,
@@ -521,4 +521,100 @@ test("I25-C41 ponteiro de A com a captura de B ilegível por um instante: o ence
   assert.deepEqual(outcome, { rejected: { code: "io_failure", revoked: true, unverified: true, unreadable: [b.capture], captures: [] } });
   assert.deepEqual(segmentsOf(root, a.invocation), [[1, "stopped", 0]]);
   assert.deepEqual(bytesOf(root, b), before, "state.json e ponteiro de B intactos");
+});
+
+// C43 (segunda revisão formal em 6d57e6e, P2 de store.mjs:1042; linha "Lock
+// após a abertura" do Landing): a abertura grava o segmento 1 e o ponteiro, e
+// só a liberação do lock da raiz falha. `mode`: "kept" — o unlink do `.lock`
+// lança EIO sem apagá-lo; "lost" — apaga e lança EIO (confirmação perdida).
+const rootLock = (root) => path.join(storeDir(root), ".lock");
+const EIO = () => Object.assign(new Error("falha de E/S injetada"), { code: "EIO" });
+const lockRelease = (mode) => {
+  const base = createStoreIo();
+  return {
+    ...base,
+    async unlink(file) {
+      if (path.basename(file) !== ".lock") return base.unlink(file);
+      if (mode === "lost") await base.unlink(file);
+      throw EIO();
+    },
+  };
+};
+const openingOf = (error) => ({
+  code: error.code,
+  opened: error.opened,
+  invocation: error.invocation,
+  capture: error.capture,
+  launchedAt: error.launchedAt,
+  lockPath: error.lockPath,
+  lockLeft: error.lockLeft,
+});
+const rejection = (promise) => promise.then(() => null, (error) => error);
+
+test("I25-C43 abertura com a liberação do lock falhando por E/S: o erro leva a execução gravada e o lock, que fica com os bytes da invocação; removido nas condições declaradas, privacy stop encerra a captura", async () => {
+  const root = launchRoot("i25 c43 lock fica");
+  const other = await startLaunch({ root, expectedReal: root });
+  const otherBefore = bytesOf(root, other);
+  const rejected = await rejection(startLaunch({ root, expectedReal: root, io: lockRelease("kept") }));
+  const [created] = launchCapturesOnDisk(root).filter((s) => s.invocation !== other.invocation);
+  assert.deepEqual(openingOf(rejected ?? {}), { code: "io_failure", opened: true, invocation: created.invocation, capture: created.id, launchedAt: created.launchedAt, lockPath: rootLock(root), lockLeft: true });
+  assert.deepEqual([created.segment, created.state, created.endedAt, readPointer(root, created.invocation).capture], [1, "active", null, created.id]);
+  assert.equal(JSON.parse(readFileSync(rootLock(root), "utf8")).pid, process.pid, "o lock que ficou é o desta invocação");
+  // O impedimento: enquanto o lock existe, nada grava na raiz, e a outra execução não muda.
+  assert.equal((await rejection(startLaunch({ root, expectedReal: root })))?.code, "lock_present");
+  assert.deepEqual(bytesOf(root, other), otherBefore, "a outra execução fica byte a byte igual");
+  // Recuperação declarada: o lock ainda tem o pid desta invocação e ela terminou.
+  unlinkSync(rootLock(root));
+  assert.equal(runPrivacy(["stop", "--root", root, "--capture", created.id]).status, 0);
+  assert.equal(statusOf(root, created.id).state, "stopped");
+  assert.deepEqual(bytesOf(root, other), otherBefore);
+  assert.deepEqual((await deliver(root, other.invocation, [claudePayload("pre_tool_bash")])).report(), LAUNCHED(1), "a raiz volta a aceitar entregas");
+});
+
+test("I25-C43 abertura com a confirmação da liberação perdida: o lock saiu, o erro leva a execução e o encerramento seguinte a deixa stopped", async () => {
+  const root = launchRoot("i25 c43 confirmação");
+  const rejected = await rejection(startLaunch({ root, expectedReal: root, io: lockRelease("lost") }));
+  const [created] = launchCapturesOnDisk(root);
+  assert.deepEqual(openingOf(rejected ?? {}), { code: "io_failure", opened: true, invocation: created.invocation, capture: created.id, launchedAt: created.launchedAt, lockPath: rootLock(root), lockLeft: true });
+  assert.deepEqual([created.state, existsSync(rootLock(root)), readPointer(root, created.invocation).capture], ["active", false, created.id]);
+  const ended = await endLaunch({ root, expectedReal: root, invocation: created.invocation });
+  assert.deepEqual(ended.captures.map((c) => [c.id, c.state]), [[created.id, "stopped"]]);
+});
+
+test("I25-C43 abertura com o lock trocado por outro processo depois de gravar: root_changed com a execução, e o lock alheio fica byte a byte", async () => {
+  const root = launchRoot("i25 c43 lock trocado");
+  const FOREIGN = '{"lockVersion":1,"pid":1,"nonce":"0000000000000000"}';
+  const base = createStoreIo();
+  const io = {
+    ...base,
+    async rename(from, to) {
+      await base.rename(from, to);
+      // O ponteiro é a última gravação da abertura: logo depois, outro processo põe o lock dele.
+      if (path.basename(path.dirname(to)) === "launches") writeFileSync(rootLock(root), FOREIGN);
+    },
+  };
+  const rejected = await rejection(startLaunch({ root, expectedReal: root, io }));
+  const [created] = launchCapturesOnDisk(root);
+  assert.deepEqual(openingOf(rejected ?? {}), { code: "root_changed", opened: true, invocation: created.invocation, capture: created.id, launchedAt: created.launchedAt, lockPath: rootLock(root), lockLeft: false });
+  assert.equal(readFileSync(rootLock(root), "utf8"), FOREIGN, "o lock alheio não foi removido");
+  assert.equal(created.state, "active");
+});
+
+test("I25-C43 prioridade: falha ao gravar o ponteiro e falha da liberação juntas devolvem o erro do callback, sem execução aberta", async () => {
+  const root = launchRoot("i25 c43 prioridade");
+  const base = createStoreIo();
+  const io = {
+    ...base,
+    async rename(from, to) {
+      if (path.basename(path.dirname(to)) === "launches") throw EIO();
+      return base.rename(from, to);
+    },
+    async unlink(file) {
+      if (path.basename(file) === ".lock") throw EIO();
+      return base.unlink(file);
+    },
+  };
+  const rejected = await rejection(startLaunch({ root, expectedReal: root, io }));
+  const [created] = launchCapturesOnDisk(root);
+  assert.deepEqual([rejected?.code, rejected?.opened, rejected?.orphan, created.state], ["io_failure", undefined, undefined, "stopped"]);
 });

@@ -106,7 +106,14 @@ no encerramento (falha de E/S), o stderr diz que não foi possível conferir se
 todas as capturas da execução pararam e lista as não lidas, cada uma com o
 `privacy status` que mostra de qual execução ela é e o `privacy stop` para
 quando ela for desta execução e estiver `active`; capturas de outras execuções
-não são tocadas.
+não são tocadas. Se a abertura gravar a captura e o ponteiro mas a liberação do
+`.lock` da raiz falhar, o agente não é iniciado: o stderr diz qual execução e
+qual captura foram abertas e o launcher tenta o encerramento de sempre. Se ele
+não concluir e o lock gravado pela invocação puder ter ficado, o stderr diz
+onde ele está e que, quando a E/S voltar, ele só deve ser removido se ainda
+contiver o `pid` do launcher e esse processo tiver terminado — e só então o
+`privacy stop` mostrado encerra a captura. Um lock trocado por outro processo
+nunca é removido nem dado como desta invocação.
 
 Se a gravação do ponteiro de uma sucessora falhar, aquela entrega falha
 (`io_failure`) e a entrega seguinte grava na mesma sucessora, sem repetir o

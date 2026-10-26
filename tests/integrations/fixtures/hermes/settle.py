@@ -20,13 +20,20 @@ def delivery_state(stats):
     Com a entrega ativa, todo registro posto na fila (``enqueued``) sai dela como
     entregue, grande demais (``oversize``) ou não serializável; enquanto algum
     não saiu, a entrega está pendente — mesmo com os contadores parados, como
-    durante a abertura do processo de entrega. Desligada, a entrega falhou se
-    contou perdas, ou nunca teve destino.
+    durante a abertura do processo de entrega. Desligada, a entrega só termina
+    quando todo registro da fila tem destino contado, também a perda
+    (``deliveryFailed``): o plugin marca a entrega desligada antes de contar a
+    perda, e ``observer_stats`` lê ``active`` fora do lock dos contadores, então
+    uma leitura pode trazer ``active`` falso com a perda ainda por contar
+    (issue #25, C44). Contada, a entrega falhou se houve perda, ou nunca teve
+    destino.
     """
-    if not stats["active"]:
-        return "failed" if stats["deliveryFailed"] > 0 else "inactive"
     processed = stats["delivered"] + stats["oversize"] + stats["serializationFailed"]
-    return "concluded" if processed >= stats["enqueued"] else "pending"
+    if stats["active"]:
+        return "concluded" if processed >= stats["enqueued"] else "pending"
+    if processed + stats["deliveryFailed"] < stats["enqueued"]:
+        return "pending"
+    return "failed" if stats["deliveryFailed"] > 0 else "inactive"
 
 
 def settle_max_ms(scenario):
