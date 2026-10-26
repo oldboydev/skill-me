@@ -389,3 +389,16 @@ Fechamento das regressões da segunda revisão formal, C1–C44 (registros acima
   liberação do próprio lock automaticamente; remover lock no encerramento seguinte ou por comando
   `unlock`/`--force`; janela de contadores parados ou leitura do estado interno do plugin na
   harness.
+
+Exceção autorizada depois de C1–C44 (registros acima preservados):
+
+- O que o proprietário decidiu: “Autorizar as duas rodadas adicionais”
+  ([comentário 6423912091](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6423912091)),
+  respondendo à pergunta sobre uma 4ª verificação independente e uma 3ª revisão Codex, só para a
+  #25. Novos tetos desta entrega: Verifier, 4 rodadas no total; revisão formal (perfil light), 3
+  tentativas no total, registradas em `roundOverrides["25"]` de `code-review.config.json`. As três
+  verificações e as duas revisões `changes_requested` anteriores continuam no histórico; nenhuma
+  outra rodada foi autorizada. A verificação precisa passar antes da revisão; push e PR só com
+  `ready`; merge e publicação não autorizados.
+- Onde a fronteira caiu: só configuração e documentação; produto em `d71c143`, C1–C44 e os
+  critérios da issue sem mudança.

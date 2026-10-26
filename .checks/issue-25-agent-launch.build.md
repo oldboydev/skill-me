@@ -523,3 +523,22 @@ os temporários também.
   plugin, fora do escopo.
 - Continuam: uso real sem sessão de agente (`Unresolved` 2, `blocks go-live`); console real e pty
   dependem do Python do sistema; C23 sem asserção de tempo para o “sem espera”.
+
+## Exceção autorizada: rodadas adicionais de verificação e revisão
+
+O proprietário autorizou, depois das correções prontas em `e22b52a`, “Autorizar as duas rodadas
+adicionais” ([comentário 6423912091](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6423912091);
+contexto em `.checks/code-review/issue-25/context-exception-approved.json`): uma 4ª verificação
+independente e uma 3ª revisão formal Codex, só para a #25, preservando o histórico.
+
+- Tetos desta entrega: Verifier, 4 rodadas no total; revisão formal, 3 tentativas no total
+  (`roundOverrides["25"] = {profile: "light", maxRounds: 3}` em `code-review.config.json`, com a
+  autorização e a URL em `approval`). Os perfis globais continuam com `maxRounds` 2, as outras
+  issues e o core vendorizado não mudam.
+- As três verificações e as duas revisões `changes_requested` anteriores continuam no histórico.
+  Nenhuma outra rodada foi autorizada; a verificação precisa passar antes da revisão; push e PR só
+  com `ready`; merge e publicação não autorizados.
+- Fonte do produto sem mudança (`d71c143`): o alvo I25 de 95 testes nos três ambientes e o
+  `npm test` (987 testes: 969 pass, 0 fail, 18 skip de plataforma) da seção anterior continuam
+  valendo. Nesta mudança, só os gates da configuração: `npm run test:governance` e
+  `npm run test:code-review`.

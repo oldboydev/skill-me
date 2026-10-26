@@ -50,6 +50,11 @@
       "profile": "light",
       "maxRounds": 4,
       "approval": "Proprietário autorizou em 24/10/2026 até 4 tentativas formais no total, exclusivas da issue #23, preservando o histórico e mantendo os pilotos intocados; registro em https://github.com/oldboydev/skill-me/issues/23#issuecomment-6391764562. Novo HEAD exige revisão ready antes de atualizar o PR #24."
+    },
+    "25": {
+      "profile": "light",
+      "maxRounds": 3,
+      "approval": "Proprietário autorizou em 26/10/2026: “Autorizar as duas rodadas adicionais” — uma quarta verificação independente e uma terceira tentativa formal no total, exclusivas da issue #25, preservando as três verificações e as duas revisões changes_requested anteriores; registro em https://github.com/oldboydev/skill-me/issues/25#issuecomment-6423912091. A verificação precisa passar antes da revisão; push e PR somente com status ready; merge e publicação não autorizados."
     }
   }
 }
