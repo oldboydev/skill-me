@@ -234,6 +234,34 @@ AC3/AC4 (encerramento verificável, segmentos sucessivos com limites e chave pr�
     Ctrl+C). Depois de o agente iniciar, os critérios 5, 6, 20 e 22 continuam valendo sem
     mudança.
 
+### Regressões da segunda revisão formal (dentro de AC4 e AC6; sem escopo novo)
+
+A segunda revisão formal, em `6d57e6e` (`.checks/code-review/issue-25/formal-review2.stdout.txt`),
+apontou dois defeitos bloqueantes P2: `src/integrations/privacy/store.mjs:1042` (abertura que perde
+a identidade quando a liberação do lock falha) e `tests/integrations/fixtures/hermes/settle.py:26`
+(espera que termina sobre contadores transitórios de falha). Os critérios abaixo fixam o que AC4 e
+AC6 já exigem nesses caminhos.
+
+35. Se, na abertura, a captura do segmento 1 e o ponteiro já foram gravados e só a liberação do
+    lock da raiz falhar, o agente não inicia e a execução não perde a identidade: o stderr diz
+    `skill-me: a execução <invocation> foi aberta com a captura <id>, mas a liberação do lock da
+    raiz falhou [<código>]; o agente não foi iniciado.` e o launcher tenta o encerramento de
+    sempre. Se ele concluir, o resumo de sempre mostra a captura `stopped`; se não, a falha de
+    sempre dá o `privacy stop` dela e nunca a declara encerrada. Quando a falha foi de E/S e o
+    lock gravado pela invocação pode ter ficado, o stderr diz onde ele está, que enquanto existir
+    gravações e comandos na raiz saem com `lock_present`, e que, quando a E/S voltar, se ele ainda
+    contiver o `pid` do launcher e esse processo tiver terminado, removê-lo e só então rodar o
+    comando mostrado encerra a captura. Lock trocado por outro ou ausente não é removido nem
+    reivindicado. Outra execução da mesma raiz não muda. A saída é a do código (5 para
+    `io_failure`, 4 para `root_changed`).
+36. A espera da harness nativa do Hermes só termina como falha terminal quando todo registro
+    posto na fila tem destino contado (entregue, grande demais, não serializável ou contado em
+    `deliveryFailed`). Uma leitura com a entrega desligada e registros ainda sem destino contado
+    — por exemplo `active` falso com `deliveryFailed` 0, ou com só parte da perda contada —
+    continua pendente até a contagem fechar ou até o `settleMaxMs` do cenário (5000 ms por
+    padrão), quando termina como `timeout`. Sem destino configurado (nada posto na fila), a
+    espera continua terminando na hora como `inactive`. Plugin, callbacks e prazos não mudam.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
