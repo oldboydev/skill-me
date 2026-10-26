@@ -423,3 +423,16 @@ Exceção autorizada depois de C1–C44 (registros acima preservados):
   `ready`; merge e publicação não autorizados.
 - Onde a fronteira caiu: só configuração e documentação; produto em `d71c143`, C1–C44 e os
   critérios da issue sem mudança.
+
+Fechamento da regressão da terceira revisão formal, C1–C45 (registros acima preservados):
+
+- Onde a fronteira caiu agora: lote único, C1–C45 fechados pelo autor. Achado, task 37, S9 e
+  Landing em `9922e63`; correção e provas em `7ab5dbf`. RED/GREEN, execuções finais do alvo I25
+  (98 testes) em Windows Node 24.22.1, Windows Node 24.13.0 e WSL Node 24.13.0 e o `npm test`
+  inteiro no Windows com o Hermes real em `.checks/issue-25-agent-launch.build.md`.
+- O que o proprietário decidiu depois do C1–C44: nada novo. A quarta verificação aprovou 44/44
+  (`9cd06d5`) e a terceira revisão formal pediu mudanças com um P2 em AC1 (`agent.mjs:30`). Os
+  tetos da exceção (4 Verifiers e 3 revisões formais) foram consumidos: estas provas são do autor
+  e não autorizam entrega nem `ready`; outra rodada depende de nova exceção específica.
+- O que foi abandonado: mudar `resolveAgents` ou `runDiagnostics`; usar `.` no lugar do componente
+  vazio; deixar o runtime procurar pelo nome; caminho padrão para PATH ausente.

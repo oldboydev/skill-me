@@ -542,3 +542,72 @@ independente e uma 3ª revisão formal Codex, só para a #25, preservando o hist
   `npm test` (987 testes: 969 pass, 0 fail, 18 skip de plataforma) da seção anterior continuam
   valendo. Nesta mudança, só os gates da configuração: `npm run test:governance` e
   `npm run test:code-review`.
+
+## Regressão da terceira revisão formal em `9cd06d5` (S9, C45)
+
+A quarta verificação independente deu PASS 44/44 (`9cd06d5`, só `.verified.md`, intacto aqui). A
+terceira revisão formal, autorizada pela exceção do comentário 6423912091
+(`.checks/code-review/issue-25/formal-review3.stdout.txt`), confirmou os achados anteriores como
+corrigidos e pediu mudanças com um único P2 novo, em AC1. **Tetos da exceção consumidos: 4
+Verifiers e 3 revisões formais.** Nada aqui roda revisão, Verifier, push, PR ou merge, nem muda
+limites, configuração ou estado de review; estas provas são do autor e não autorizam entrega nem
+`ready`. Outra rodada depende de nova exceção específica, pedida pelo orquestrador.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `9922e63` | Task 37, S9 com C45 e a linha “Componentes vazios do PATH” do Landing, antes do código |
+| `7ab5dbf` | `launchPathDirs` em `agent.mjs`, provas de C45 e o campo `path` (PATH recebido) no registro do agente falso |
+
+Logs em `.checks/code-review/issue-25/builder-formal3/` (pasta ignorada).
+
+- **Semântica do runtime** (`posix-path-semantics-wsl.txt`, fixture sintética
+  `posix-path-semantics.sh`: dois `skillme-probe` executáveis, no diretório atual e num `B`
+  posterior, programas do sistema por caminho absoluto, nenhum agente): bash, dash, `execvp` (GNU
+  `env`) e `spawn` do Node 24.13 escolhem o do diretório atual em `:B`, `X::B`, `X:`, `::B`,
+  `X:::` e `PATH=""`, e o de `B` em `B`, `X:B` e `B:`; com o PATH ausente nenhum deles procura no
+  diretório atual (todos “not found”).
+- **Reprodução** (RED): `resolveAgentLaunch` dava `executable_not_found` para `/vazio:`,
+  `/vazio:::` e `""`, e escolhia `/depois/bin/codex` em `:/depois/bin`, `/vazio::/depois/bin` e
+  `::/depois/bin`, com `codex` no diretório atual; pelo launcher real no WSL, os mesmos PATHs
+  saíam com 127 (`skill-me: codex não encontrado no PATH [executable_not_found]`) ou iniciavam o
+  agente de `<depois>`.
+- **Correção**: só `resolveAgentLaunch` muda. No POSIX, `launchPathDirs` divide o PATH em `:` e
+  troca cada componente vazio pelo `cwd` da resolução, na posição dele; os demais seguem na ordem.
+  O PATH entregue ao agente, os argumentos, o stdio e o código de saída não mudam. PATH ausente
+  continua sem diretórios. Windows (`;`, vazios ignorados, PATHEXT, shim), `resolveAgents`,
+  `runDiagnostics` e `integrations run` não mudam.
+
+| Execução | Resultado |
+| --- | --- |
+| RED, Windows Node 24.22.1, produto de `9922e63` (= `9cd06d5`) com as provas novas (`red-win-24.22.1.spec.txt`) | 3 testes: a decisão do resolver falha (os 6 casos POSIX com vazio), o controle do Windows em processo real passa (como antes), o caso POSIX em processo real é pulado |
+| RED, WSL Node 24.13.0, árvore `3f9473fe…`, archive LF `e0cc62ab…` (`red-wsl-24.13.0.spec.txt`) | 3 testes: decisão e processo real falham (127 ou o agente de `<depois>`), controle do Windows pulado |
+| GREEN, Windows Node 24.22.1 (`green-win-24.22.1.spec.txt`) | C45, C4 e C7: 7 testes, 6 pass, 1 skip (o caso POSIX em processo real) |
+| GREEN, WSL Node 24.13.0, no alvo final abaixo (`green-wsl-24.13.0-c45.txt`) | decisão e processo real POSIX passam; o controle do Windows é pulado |
+
+### Gate e execuções finais (HEAD `7ab5dbf`)
+
+Uma execução por vez, sem suítes concorrentes e sem repetir até passar; logs em
+`builder-formal3/final/`.
+
+| Execução | Resultado |
+| --- | --- |
+| Windows, Node 24.22.1, alvo I25 (`launch/*.test.mjs` + `hermes-harness.unit.test.mjs`), 15:57:10–15:58:53 | 98 testes: 93 pass, 0 fail, 5 skip (C45 POSIX, C5 e C6 POSIX, C42 POSIX, C15 pty) |
+| Windows, Node 24.13.0 oficial (PATH e `execPath` dele, npm 11.6.2 do zip, sem `npm_execpath`), 15:59:04–16:00:58 | 98 testes: 93 pass, 0 fail, 5 skip |
+| WSL `Ubuntu`, Node 24.13.0, npm 11.6.2, Python 3.12.3, uid 1000, 16:01:14–16:01:52, sobre `git -c core.autocrlf=false archive 7ab5dbf` (sha256 `828122a9…48eda9f1f2308`; `get-tar-commit-id` = `7ab5dbf6…`; árvore extraída `43773e12…` = `HEAD^{tree}`; `cli.mjs` 755) | 98 testes: 92 pass, 0 fail, 6 skip (C4 shim, C45 controle do Windows, C5 console, C42 console, C8 LOCALAPPDATA, C38 console) |
+| Windows, Node 24.22.1, `npm test` (16:01:58–16:12:48) | **exit 0**: 990 testes, 971 pass, 0 fail, 19 skip de plataforma — governança 6/6; motor 16/16; doctor 417 (410 pass, 7 skip POSIX/FIFO); integrações 551 (539 pass, **0 fail**, 12 skip, todos POSIX, Linux ou macOS), com I4-C18–C23, I4-C37, I4-C44b, os três I23-C8 e o I25-C40 nativo executados e verdes no Hermes real |
+
+Os 98 nomes I25 são os mesmos nos três TAP, sem `not ok`; em cada ambiente rodaram os dois C45
+aplicáveis. `~/.skill-me` e `~/.skill-me-authorization.json` do uid 1000 ausentes antes e depois. Os
+320 scratches `skill-me i4 i25 *` da janela do 24.13.0 foram removidos por script do 24.22.1 com o
+caminho conferido no `%TEMP%`, 0 recusas; as cópias do WSL e os temporários também.
+
+### Limites e declarações desta rodada
+
+- PATH ausente continua `executable_not_found`: os runtimes usam um caminho padrão do sistema (sem o
+  diretório atual), e o launcher não inventa esse padrão.
+- `runDiagnostics` do doctor e `integrations run` continuam descartando componentes vazios: é a
+  política deles, fora deste achado e não alterada.
+- No Windows, o `cmd.exe` procura no diretório atual antes do PATH; isso é do shell e continua não
+  modelado, como antes.
+- Continuam: uso real sem sessão de agente (`Unresolved` 2, `blocks go-live`); console real e pty
+  dependem do Python do sistema; C23 sem asserção de tempo para o “sem espera”.
