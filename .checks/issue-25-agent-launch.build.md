@@ -631,3 +631,78 @@ histórico preservado e parada no primeiro `ready`.
 - Produto sem mudança (`7ab5dbf`): continuam valendo o alvo I25 de 98 testes nos três ambientes e o
   `npm test` (990 testes: 971 pass, 0 fail, 19 skip de plataforma) da seção anterior. Nesta mudança,
   só os gates da configuração: `npm run test:governance` e `npm run test:code-review`.
+
+## CI do PR #28: `npm run` das provas sem `sh` (run 40397022558)
+
+Estado de partida: HEAD `d11030f`, formal 4 `ready` (6 AC), Verifier 6 PASS (45 checks; o relatório R5
+do incidente e o R6 ficam no histórico de `.verified.md`, intacto). A CI do PR no mesmo HEAD falhou
+no Ubuntu 22.04 (integrações 551: 528 pass, 2 fail, 21 skip); Windows e macOS foram cancelados pelo
+`fail-fast`. Falharam I25-C33 (`end.e2e.test.mjs:255`, `npm run on`) e I25-C34
+(`report.cli.test.mjs:153`, `npm run status`), em `runNpmScript`/`singleJson`
+(`helpers/observe.mjs`) com stdout e stderr vazios. O usuário autorizou corrigir as falhas da CI do
+PR #28 e, verde, o merge; push, edição do PR e merge ficam com o orquestrador depois da revisão do
+novo HEAD.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `cee3de8` | Causa e arranjo no checklist (linha “Ambiente do npm run nas provas” do Landing e acréscimo em C33), antes da correção |
+| `2dfe676` | `npmScriptEnv` em `helpers/launch.mjs`, uso em C33 e C34, prova nomeada `I25-C33 arranjo do npm run`, `status` no erro de `singleJson` |
+
+Logs em `.checks/code-review/issue-25/builder-ci28/` (pasta ignorada).
+
+### Causa medida
+
+- **Layout como o da CI no WSL** (`layout.sh`): o binário do Node 24.13.0 do sistema copiado para
+  `/tmp/sm-ci28-wsl-*/node/bin/node`, o npm 11.6.2 em `node/lib/node_modules/npm` (como no
+  `hostedtoolcache`), nenhum `sh` ao lado; checkout pelo `git -c core.autocrlf=false archive` exato
+  (árvore conferida, `cli.mjs` 755); `env -i`, `HOME` do scratch e PATH explícito: o bin desse Node
+  e uma pasta `tools` só com `sh`, `git`, `mkfifo` e `python3` — sem `/usr/bin`, que no WSL tem
+  `claude`, `codex` e `gemini` reais. Nenhum agente real foi executado.
+- **RED** (`red-wsl-isolado-24.13.0.spec.txt`, HEAD `d11030f`): I25-C33 e I25-C34 (`npm run status`)
+  falham com `stdout não é um JSON único: "" stderr=""`, como na CI; os outros dois I25-C34 passam.
+- **Causa** (`causa-npm-wsl-isolado.txt`, o mesmo spawn de `runNpmScript`): com o PATH dos dois
+  testes (bin do Node + bin de fixture), `npm run --silent status` sai com 254, sem sinal nem erro de
+  spawn, stdout e stderr vazios; sem `--silent`, o stderr é `npm error code ENOENT` / `npm error
+  syscall spawn sh` / `npm error enoent spawn sh ENOENT`. Com uma pasta só com `sh` no meio, o mesmo
+  comando sai com 0 e o JSON do `status`. O npm procura `sh` no PATH (`@npmcli/promise-spawn`; no
+  Windows, `ComSpec`) e não acrescenta o diretório do Node (`@npmcli/run-script/lib/set-path.js`).
+  No WSL de antes passava porque o Node está em `/usr/bin`, que tem `sh`.
+
+### Correção (só provas)
+
+`npmScriptEnv(scratch, env)`: no POSIX, uma pasta do scratch só com `node` (link para o
+`process.execPath`) e `sh` (link para `/bin/sh`), seguida do PATH de fixture; no Windows, o diretório
+do Node e a fixture, como antes. Asserções, skips, prazos, workflow e `fail-fast` não mudam; o PATH
+real não é herdado. A prova `I25-C33 arranjo do npm run (POSIX)` reproduz o layout da CI com uma
+pasta só com o `node`: `npm run status` sai com código diferente de 0 e `spawn sh ENOENT`, e com o
+PATH das provas (só `node`, `sh` e fixture, conferidos pelos links) responde o JSON.
+
+### RED, GREEN e gates (HEAD `2dfe676`)
+
+Uma execução por vez, sem repetir até passar.
+
+| Execução | Resultado |
+| --- | --- |
+| GREEN, layout isolado do WSL, `I25-C3[34]` (`green-wsl-isolado-24.13.0.spec.txt`; árvore `ab177034…`) | 5/5, com a prova nomeada |
+| GREEN, Windows Node 24.22.1, `I25-C3[34]` (`green-win-24.22.1.spec.txt`) | 5 testes: 4 pass, 1 skip (a prova nomeada é POSIX) |
+| Windows, Node 24.22.1, alvo I25 (`launch/*.test.mjs` + `hermes-harness.unit.test.mjs`), 18:01:57–18:03:55 | 99 testes: 93 pass, 0 fail, 6 skip (C45 POSIX, C5, C6, C42 POSIX, C33 arranjo, C15 pty) |
+| Windows, Node 24.13.0 oficial (PATH e `execPath` dele, npm 11.6.2 do zip, sem `npm_execpath`), 18:04:06–18:06:34 | 99 testes: 93 pass, 0 fail, 6 skip; 320 scratches do 24.13.0 removidos por script do 24.22.1, 0 recusas |
+| WSL Ubuntu, Node 24.13.0 do sistema, uid 1000, 18:06:51–18:07:39, sobre `git -c core.autocrlf=false archive 2dfe676` (sha256 `e32cd799…3125c75f`; `get-tar-commit-id` = `2dfe6761…`; árvore extraída `ab177034…` = `HEAD^{tree}`; `cli.mjs` 755) | 99 testes: 93 pass, 0 fail, 6 skip (só Windows); `~/.skill-me*` ausentes antes e depois |
+| Windows, Node 24.22.1, `npm test`, 18:07:44–18:20:32 | **exit 1**: governança 6/6; motor 16/16; doctor 417 (410 pass, 7 skip); integrações 552 (538 pass, **1 fail**, 13 skip), com os 12 nativos do Hermes executados e verdes. A falha: `T7-C10` (`report/report.e2e.test.mjs`, issue #7) com `partial` no lugar de `sufficient` — o teste só confere `status 0` das entregas, e uma perdida sob carga dá esse resultado; sozinho, uma vez, passou (`t7-c10-isolado-win-24.22.1.spec.txt`, 7,3 s contra 12,3 s no lote). Não repetido |
+| WSL, layout isolado, as quatro suítes da CI uma a uma, 1ª vez (`tools` mínima), 18:21:15–18:22:13 | governança 6/6; motor 16/16; doctor 417: 415 pass, 1 fail (`collector-probe-C10`, “retornou cedo demais: 280ms”), 1 skip; integrações 552: 527 pass, 4 fail, 21 skip — I25-C33 e C34 passam. Três falhas (I4-C44, I23-C14, T8-C16) são do ambiente montado: o runner de hooks do Codex nas provas usa `/bin/sh -lc`, o `/etc/profile` do WSL chama `id` e `grep`, ausentes na `tools` mínima, e o stderr esperado vazio recebeu os erros; I4-C36 é a falha abaixo |
+| WSL, layout isolado corrigido (`tools` com os 990 executáveis de `/usr/bin` menos `claude`, `codex`, `gemini`, `hermes`, `node`, `nodejs`, `nsolid`, `npm`, `npx`, `corepack`…; `gate2/`), 18:23:29–18:24:32 | governança 6/6; motor 16/16; doctor 417: 416 pass, 1 skip (o `collector-probe-C10` passou); integrações 552: 530 pass, **1 fail** (`I4-C36`, `codex/desconexao` com `status: null`, issue #4), 21 skip. I4-C36 sozinho passou no layout isolado e com o Node do sistema (`gate2/i4-c36-*.spec.txt`). Não repetido |
+
+### Limites e estado
+
+- As falhas restantes nos gates completos (`T7-C10` no Windows, `I4-C36` e, na 1ª vez,
+  `collector-probe-C10` no WSL) são de testes de outras issues, fora dos arquivos tocados, e
+  passaram isoladas; não foram repetidas até passar. A CI do PR é a referência para elas.
+- A execução isolada de I4-C36 com o Node do sistema usou o PATH `/usr/local/bin:/usr/bin:/bin`,
+  que no WSL tem agentes reais; o teste só roda os hooks instalados, por caminho absoluto do Node, e
+  nenhum agente foi iniciado.
+- O layout isolado reproduz o diretório do Node da CI, não o runner inteiro: macOS e o runner do
+  GitHub não foram executados aqui. No Windows o arranjo não mudou (o npm usa o `ComSpec`).
+- **Entrega pendente**: o HEAD novo precisa de verificação independente e de revisão formal. Os
+  tetos da exceção do comentário 6425235841 (6 Verifiers e 5 revisões formais) estão com 6 Verifiers
+  e 4 revisões usados; um Verifier 7 depende de nova exceção, que o orquestrador trata. Nenhum
+  Verifier, revisão, push, edição do PR ou merge foi feito aqui.

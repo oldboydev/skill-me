@@ -452,3 +452,16 @@ Nova exceção autorizada depois de C1–C45 (registros acima preservados):
   merge e publicação não autorizados.
 - Onde a fronteira caiu: só configuração e documentação; produto em `7ab5dbf`, C1–C45 e os
   critérios da issue sem mudança.
+
+Correção da CI do PR #28 (registros acima preservados):
+
+- Onde a fronteira caiu agora: só provas e documentação. Causa e arranjo em `cee3de8`; correção em
+  `2dfe676` (`npmScriptEnv` e a prova nomeada do layout da CI). Produto sem mudança desde
+  `7ab5dbf`. RED/GREEN no layout isolado do WSL, alvos nos três ambientes, `npm test` do Windows e
+  gate das quatro suítes da CI no layout isolado em `.checks/issue-25-agent-launch.build.md`, com as
+  falhas de outras issues registradas sem repetição.
+- O que o proprietário decidiu: corrigir as falhas da CI do PR #28 e, verde, fazer o merge (merge
+  com o orquestrador, depois da verificação e revisão do novo HEAD). Os tetos da exceção 6425235841
+  continuam valendo: 6 Verifiers e 4 revisões formais usados.
+- O que foi abandonado: herdar o PATH real no `npm run` das provas; acrescentar `/bin` ou
+  `/usr/bin`; `npm_config_script_shell`; pular os testes sem `sh`.
