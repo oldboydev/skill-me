@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
@@ -74,7 +74,16 @@ test("I25-C18 execução indisponível: raiz ausente, store inválido, lock alhe
   const observed = {};
   const expected = {};
   const cases = {
-    root_not_found: { exit: 3, arrange: (p) => rmSync(p.root, { recursive: true }) },
+    // A raiz preparada ainda está vazia (o setup não cria o store): `rmdirSync`,
+    // não `rmSync` — no Windows, o do Node 24.13.0 (o da CI) não apaga num
+    // caminho com "ação" e não lança (nodejs/node#56049).
+    root_not_found: {
+      exit: 3,
+      arrange: (p) => {
+        rmdirSync(p.root);
+        assert.equal(existsSync(p.root), false, "a raiz saiu");
+      },
+    },
     store_invalid: { exit: 3, arrange: (p) => writeFileSync(storeDir(p.root), "não é o store\n") },
     lock_present: {
       exit: 4,
@@ -89,13 +98,15 @@ test("I25-C18 execução indisponível: raiz ausente, store inválido, lock alhe
     const prepared = preparedLaunch(scratch, `i25 c18 ${code}`, { agents: ["claude"] });
     arrange(prepared);
     const probe = path.join(scratch(`i25 c18 ${code} provas`), "probe.ndjson");
-    const started = Date.now();
+    // Relógio monotônico, como a paciência do produto: o de parede pode recuar
+    // durante a espera (achado F3 da verificação, WSL).
+    const started = performance.now();
     const result = await runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_PROBE: probe } });
     observed[code] = {
       status: result.status,
       stderr: result.stderr,
       started: existsSync(probe),
-      waited: code === "lock_present" ? Date.now() - started >= 2000 : true,
+      waited: code === "lock_present" ? performance.now() - started >= 2000 : true,
     };
     expected[code] = { status: exit, stderr: `skill-me: não foi possível abrir a execução [${code}]\n`, started: false, waited: true };
   }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { runSkillMe as runInProcess } from "../../../src/integrations/launch/command.mjs";
@@ -266,7 +266,10 @@ test("I25-C14 falha do preparo: setup em conflito (4), instalador em conflito (4
     { exitCode: 4, code: true, started: false, config: true },
     b.stderr,
   );
-  rmSync(foreignTemp);
+  // `unlinkSync`, não `rmSync`: no Windows, o do Node 24.13.0 (o da CI) não
+  // apaga num caminho com "ação" e não lança (nodejs/node#56049).
+  unlinkSync(foreignTemp);
+  assert.equal(existsSync(foreignTemp), false, "o temporário alheio saiu");
   const next = await interactive(["claude", ...agentArgs("claude")], { env: { ...ctx.env, FAKE_AGENT_PROBE: probeB }, home: ctx.home, answers: ["s"] });
   assert.deepEqual(
     { exitCode: next.exitCode, asked: next.asked, rootPrompt: next.stderr.includes(ROOT_PROMPT) || next.stderr.includes("pasta proposta"), changes: next.stderr.includes(`skill-me: mudanças em ${target}:`), started: readJsonLines(probeB).length },
@@ -291,16 +294,101 @@ test("I25-C14 falha do preparo: setup em conflito (4), instalador em conflito (4
 
 const PTY = WINDOWS ? "pseudoterminal só no POSIX; no Windows o primeiro uso é provado em processo (C8–C14)" : locateSystemPython().skipReason ? `python-ausente: ${locateSystemPython().skipReason}` : false;
 
-function ptySession({ env, argv, answers }, work) {
+let driverRuns = 0;
+// Um driver Python de terminal real (fixtures/launch): grava a configuração,
+// roda e devolve o JSON de resultado. `detached` no Windows: o driver cria o
+// próprio console, sem o do teste.
+function terminalDriver(script, config, work) {
   const python = locateSystemPython();
-  const config = path.join(work, `pty-${Date.now()}.json`);
-  const result = path.join(work, `pty-resultado-${Date.now()}.json`);
-  writeFileSync(config, JSON.stringify({ argv, env, answers }));
+  driverRuns += 1;
+  const configFile = path.join(work, `driver-${driverRuns}.json`);
+  const resultFile = path.join(work, `driver-resultado-${driverRuns}.json`);
+  writeFileSync(configFile, JSON.stringify(config));
   return new Promise((resolve) => {
-    const child = spawn(python.command, [...python.prefix, "-I", path.join(FIXTURES_DIR, "launch", "pty-session.py"), config, result], { stdio: "ignore" });
-    child.on("exit", () => resolve(JSON.parse(readFileSync(result, "utf8"))));
+    const child = spawn(python.command, [...python.prefix, "-I", path.join(FIXTURES_DIR, "launch", script), configFile, resultFile], { stdio: "ignore", detached: WINDOWS });
+    child.on("exit", () => resolve(JSON.parse(readFileSync(resultFile, "utf8"))));
   });
 }
+
+const ptySession = ({ env, argv, answers }, work) => terminalDriver("pty-session.py", { argv, env, answers }, work);
+
+const SETUP_REQUIRED_LINE = "skill-me: preparação pendente [setup_required]; rode skill-me codex num terminal para revisar e confirmar.";
+const ONE_SIDE = locateSystemPython().skipReason ? `python-ausente: ${locateSystemPython().skipReason}` : false;
+
+// Um lado fora do terminal e o outro num terminal real (pty no POSIX, console
+// próprio no Windows), com um `n` já digitado no terminal: quem perguntasse
+// mesmo assim leria a recusa (setup_declined) ou o EOF do outro lado, em vez de
+// sair com setup_required sem perguntar.
+async function oneSideOff(side, ctx, work) {
+  const argv = [process.execPath, LAUNCHER, "codex", ...agentArgs("codex")];
+  const stderrFile = path.join(work, `stderr-${side}.txt`);
+  if (!WINDOWS) {
+    const run = await terminalDriver("pty-session.py", side === "stdin" ? { argv, env: ctx.env, stdin: "null", pretype: "n\n" } : { argv, env: ctx.env, stderrFile, pretype: "n\n" }, work);
+    return { status: run.status, terminal: run.screen.replaceAll("\r", ""), stderrFile: side === "stderr" ? readFileSync(stderrFile, "utf8") : null };
+  }
+  const config = { argv, env: ctx.env, stdoutFile: path.join(work, `stdout-${side}.txt`), pretype: "n\r", ...(side === "stdin" ? { stdin: "null", stderr: "console" } : { stdin: "console", stderr: "file", stderrFile }) };
+  const run = await terminalDriver("console-stdio.py", config, work);
+  assert.equal(run.stage, "done", JSON.stringify(run));
+  return { status: run.status, terminal: run.screen, stderrFile: side === "stderr" ? readFileSync(stderrFile, "utf8") : null };
+}
+
+const CONSOLE = !WINDOWS ? "console do Windows só no Windows; no POSIX o terminal real é o pty (C15 acima)" : ONE_SIDE;
+
+test("I25-C38 console real do Windows: a prévia sai legível, um caminho digitado com acento vira a raiz exata e a linha digitada depois chega intacta ao agente", { skip: CONSOLE }, async () => {
+  const ctx = firstUse("i25 c15 console");
+  const work = scratch("i25 c15 console provas");
+  const probe = path.join(work, "probe.ndjson");
+  const typed = path.join(ctx.home, "minhas capturas ação");
+  const run = await terminalDriver(
+    "console-stdio.py",
+    {
+      argv: [process.execPath, LAUNCHER, "claude", ...agentArgs("claude")],
+      env: { ...ctx.env, FAKE_AGENT_PROBE: probe, FAKE_AGENT_READ_LINE: "1" },
+      stdin: "console",
+      stderr: "console",
+      stdoutFile: path.join(work, "stdout.txt"),
+      pretype: `${typed}\rs\rlinha do agente\r`,
+      timeoutSec: 60,
+    },
+    work,
+  );
+  assert.deepEqual([run.stage, run.status], ["done", 0], JSON.stringify(run));
+  for (const line of [
+    "skill-me: primeiro uso de claude; nada foi alterado ainda.",
+    `skill-me: ${RECORDING_LINE.replace("{agent}", "claude")}`,
+    "skill-me: passo manual de confiança:",
+  ]) {
+    assert.ok(run.screen.includes(line), `${line}\n---\n${run.screen}`);
+  }
+  assert.equal(JSON.parse(readFileSync(configFile(ctx.home), "utf8")).root, typed, "a raiz é o caminho digitado, com acento");
+  const [seen] = readJsonLines(probe);
+  assert.deepEqual([seen.stdin, seen.env.SKILL_ME_LAUNCH_ROOT], ["linha do agente", realpathSync.native(typed)], "o agente recebe a linha seguinte e a execução na raiz digitada");
+});
+
+test("I25-C12 sem terminal: só o stdin ou só o stderr fora do terminal, com o outro num terminal real, também saem com 3 setup_required sem perguntar nem alterar nada", { skip: ONE_SIDE }, async () => {
+  const observed = {};
+  const expected = {};
+  for (const side of ["stdin", "stderr"]) {
+    const ctx = firstUse(`i25 c12 ${side} fora`);
+    const work = scratch(`i25 c12 ${side} provas`);
+    const probe = path.join(work, "probe.ndjson");
+    ctx.env = { ...ctx.env, FAKE_AGENT_PROBE: probe };
+    const before = everything(ctx);
+    const run = await oneSideOff(side, ctx, work);
+    const shown = side === "stdin" ? run.terminal : run.stderrFile;
+    observed[side] = {
+      status: run.status,
+      required: shown.includes(SETUP_REQUIRED_LINE),
+      asked: [ROOT_PROMPT.trim(), CONFIRM_PROMPT.trim(), "primeiro uso", "setup_declined"].some((text) => run.terminal.includes(text) || (run.stderrFile ?? "").includes(text)),
+      trees: everything(ctx),
+      started: existsSync(probe),
+      root: existsSync(proposedRoot(ctx.env, ctx.home)),
+    };
+    expected[side] = { status: 3, required: true, asked: false, trees: before, started: false, root: false };
+    if (side === "stderr") assert.equal(run.stderrFile, SETUP_REQUIRED_LINE + "\n", "o stderr em arquivo traz só a orientação");
+  }
+  assert.deepEqual(observed, expected);
+});
 
 test("I25-C15 terminal real (pty): a prévia aparece, a confirmação aplica e o agente inicia; a recusa não altera nada", { skip: PTY }, async () => {
   const work = scratch("i25 c15 provas");

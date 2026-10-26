@@ -235,8 +235,12 @@ test("I25-C30 falha de início: ENOENT sai com 127 e outro erro com 126, com o s
   const prepared = preparedLaunch(scratch, "i25 c30", { agents: ["claude", "codex"] });
   const cases = {};
   if (WINDOWS) {
-    // ENOENT: o shim reconhecido aponta um bin/codex.js que sumiu.
-    rmSync(path.join(prepared.bin, "node_modules", "@openai", "codex", "bin", "codex.js"));
+    // ENOENT: o shim reconhecido aponta um bin/codex.js que sumiu. `unlinkSync`,
+    // não `rmSync`: no Windows, o do Node 24.13.0 (o da CI) não apaga num
+    // caminho com "ação" e não lança (nodejs/node#56049).
+    const entry = path.join(prepared.bin, "node_modules", "@openai", "codex", "bin", "codex.js");
+    unlinkSync(entry);
+    assert.equal(existsSync(entry), false, "a entrada do shim saiu");
     cases.ENOENT = { agent: "codex", status: 127 };
     // Outro erro: claude.exe que não é executável do Windows.
     unlinkSync(path.join(prepared.bin, "claude.exe"));

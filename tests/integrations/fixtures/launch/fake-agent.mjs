@@ -4,7 +4,7 @@
 // (como o Claude e o Codex os iniciam), entrega Hermes pelo `hermesDelivery`
 // da configuração única (como o plugin), sinais, esperas e código de saída.
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, readSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { readClaudeHandlers, readCodexHandlers, runClaudeHandler, runCodexHandler } from "../../helpers/installed-hooks.mjs";
 
@@ -36,10 +36,19 @@ function launchView() {
   return { captures, pointer: existsSync(pointerFile) ? JSON.parse(readFileSync(pointerFile, "utf8")) : null };
 }
 
+// Uma linha do terminal herdado (sem o fim de linha), como um agente que lê o
+// primeiro pedido do usuário.
+function readOneLine() {
+  const bytes = [];
+  const one = Buffer.alloc(1);
+  while (readSync(0, one, 0, 1, null) === 1 && one[0] !== 0x0a) bytes.push(one[0]);
+  return Buffer.from(bytes).toString("utf8").replace(/\r$/, "");
+}
+
 const SKILL_ME_VARS = (source) => Object.fromEntries(Object.entries(source).filter(([name]) => name.toUpperCase().startsWith("SKILL_ME_")));
 
 if (env.FAKE_AGENT_PROBE) {
-  const stdin = env.FAKE_AGENT_READ_STDIN === "1" ? readFileSync(0, "utf8") : null;
+  const stdin = env.FAKE_AGENT_READ_STDIN === "1" ? readFileSync(0, "utf8") : env.FAKE_AGENT_READ_LINE === "1" ? readOneLine() : null;
   const probe = { argv: process.argv.slice(2), execPath: process.execPath, script: process.argv[1], stdin, env: SKILL_ME_VARS(env), cwd: process.cwd(), atStart: launchView() };
   appendFileSync(env.FAKE_AGENT_PROBE, JSON.stringify(probe) + "\n");
 }

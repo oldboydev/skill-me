@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
@@ -171,7 +171,10 @@ test("I25-C31 encerramento falha: com lock alheio por mais de 2 s, o código, a 
     ].join("\n"),
   );
   assert.deepEqual([capture.state, existsSync(pointerFile(prepared.root, inv))], ["active", true]);
-  rmSync(lock);
+  // `unlinkSync`, não `rmSync`: no Windows, o do Node 24.13.0 (o da CI) não
+  // apaga num caminho com "ação" e não lança (nodejs/node#56049).
+  unlinkSync(lock);
+  assert.equal(existsSync(lock), false, "o lock alheio saiu");
   const stop = spawnSync(process.execPath, [INTEGRATIONS_CLI, "privacy", "stop", "--root", prepared.root, "--capture", capture.id], { encoding: "utf8", env: prepared.env });
   assert.equal(stop.status, 0, stop.stdout);
   assert.equal(statusOf(prepared.root, capture.id).state, "stopped", "o comando mostrado encerra a captura");

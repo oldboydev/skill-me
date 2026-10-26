@@ -3,14 +3,15 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { SKILL_ME_HELP } from "../../../src/integrations/launch/command.mjs";
-import { LAUNCH_DELIVERY_CODES } from "../../../src/integrations/observe/delivery.mjs";
-import { PRIVACY_LIMITS } from "../../../src/integrations/privacy/lifecycle.mjs";
-import { DELIVERY_DEADLINE_MS } from "../../../src/integrations/traces/delivery.mjs";
 import { REPO_ROOT } from "../helpers/cli.mjs";
 
 // Prova C37 da issue #25 (critério 30): o README apresenta o preparo único e o
 // fluxo diário do `skill-me` antes do on/off, e o README e os três guias
-// declaram os limites reais, com os números tirados do código.
+// declaram os limites reais, com os valores literais do critério 30 e do
+// Landing de .checks/issue-25-agent-launch.md (não as constantes do código).
+
+// Linha "Entrega da execução" do Landing, na ordem.
+const LAUNCH_CODES = ["launch_ended", "root_not_found", "root_not_directory", "store_invalid", "capture_invalid", "lock_present", "link_refused", "foreign_entry", "root_changed", "io_failure", "delivery_timeout"];
 
 const read = (rel) => readFileSync(path.join(REPO_ROOT, rel), "utf8").replaceAll("\r\n", "\n");
 const prose = (text) => text.replace(/\s+/g, " ");
@@ -45,9 +46,9 @@ const LIMITS = {
   "sem evento de skill no Codex": /evento nativo de ativação de skill/,
   "SKILL.md só como ferramenta": /ler um `SKILL\.md` aparece só como operação de ferramenta/,
   "só ferramentas locais": /cobrem só ferramentas locais/,
-  "limite por captura": new RegExp(`${PRIVACY_LIMITS.maxEvents} eventos ou ${PRIVACY_LIMITS.maxBytes / 1024 / 1024} MiB`),
+  "limite por captura": /500 eventos ou 8 MiB/,
   "capturas sucessivas com chave própria": /capturas? sucessivas?, com chave própria/,
-  "janela depois da saída": new RegExp(`${DELIVERY_DEADLINE_MS} ms depois da saída do agente não entram`),
+  "janela depois da saída": /750 ms depois da saída do agente não entram/,
   "encerramento forçado": /\(SIGKILL, TerminateProcess\) deixa a captura corrente `active`[^.]*execução aberta/,
   "próximo passo": /próximo passo [^.]*`skill-me report`/,
 };
@@ -89,6 +90,6 @@ test("I25-C37 documentação: os guias citam o par SKILL_ME_LAUNCH_* e a preced�
   }
   const launch = section(DOCS["docs/traces.md"], "## Execução do `skill-me <agente>` (issue #25)");
   const codes = launch.split("\n").filter((line) => line.startsWith("| `")).map((line) => line.slice(1).split(" | ")[0].trim().replaceAll("`", ""));
-  assert.deepEqual(codes, [...LAUNCH_DELIVERY_CODES]);
+  assert.deepEqual(codes, LAUNCH_CODES);
   assert.match(prose(DOCS["docs/privacidade.md"]), /`SKILL_ME_LAUNCH_ROOT`\/`SKILL_ME_LAUNCH_ID` só aponta para a execução que `skill-me <agente>` abriu/);
 });

@@ -54,8 +54,8 @@ function previewLines({ agent, target, config, plan, proposed }) {
 
 // { config, manualSteps } quando o agente pode iniciar; senão { exitCode },
 // com o motivo já escrito no stderr. `terminal`: stdin e stderr são
-// terminais; `readLine()` devolve a próxima linha digitada sem o fim de linha,
-// ou null no EOF.
+// terminais; `readLine()` devolve, ou promete, a próxima linha digitada sem o
+// fim de linha, ou null no EOF.
 export async function prepareLaunch({ agent, env, platform, home, io, terminal, readLine, writeErr }) {
   const say = (line) => writeErr(line + "\n");
   const read = await readObserveConfig({ home, io });
@@ -82,7 +82,7 @@ export async function prepareLaunch({ agent, env, platform, home, io, terminal, 
   let root = null;
   if (config === null) {
     writeErr("Pasta das capturas (Enter aceita a proposta; ou digite outro caminho absoluto): ");
-    const answer = readLine();
+    const answer = await readLine();
     if (answer === null) return declined(say);
     root = answer === "" ? proposed : answer;
     if (!path.isAbsolute(root)) {
@@ -91,7 +91,7 @@ export async function prepareLaunch({ agent, env, platform, home, io, terminal, 
     }
   }
   writeErr("Confirmar? [s/N]: ");
-  const confirmation = readLine();
+  const confirmation = await readLine();
   if (confirmation === null || !CONFIRMATIONS.has(confirmation.trim().toLowerCase())) return declined(say);
 
   if (root !== null) {

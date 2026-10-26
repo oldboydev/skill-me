@@ -7,7 +7,11 @@ import { runSkillMe } from "./command.mjs";
 // `npm link`). Liga o comando ao processo real: escritas síncronas — nada fica
 // na fila de um pipe quando o launcher reemite o sinal do agente — e respostas
 // do primeiro uso lidas direto do fd 0, sem um stream que continue lendo o
-// terminal depois que o agente o herda (linha "Primeiro uso" do Landing).
+// terminal depois que o agente o herda (linha "Primeiro uso" do Landing). No
+// console do Windows, as duas passam pelos streams tty do Node (linha "Console
+// do Windows").
+
+const WINDOWS_CONSOLE = (fd) => process.platform === "win32" && isatty(fd);
 
 function write(fd, text) {
   const bytes = Buffer.from(text, "utf8");
@@ -20,6 +24,18 @@ function write(fd, text) {
       if (error.code !== "EAGAIN") return;
     }
   }
+}
+
+// O console do Windows lê os bytes de uma escrita no fd pela página de código
+// dele (`prepara├º├úo`); o stream tty escreve o texto por `WriteConsoleW`. O
+// stream só é criado nesse caso: o de um pipe mudaria o fd que o agente herda.
+function writerFor(fd, streamOf) {
+  if (!WINDOWS_CONSOLE(fd)) return (text) => write(fd, text);
+  const stream = streamOf();
+  stream.on("error", () => {});
+  return (text) => {
+    stream.write(text);
+  };
 }
 
 const pause = new Int32Array(new SharedArrayBuffer(4));
@@ -46,13 +62,60 @@ function readLine() {
   }
 }
 
+// Console do Windows: a leitura síncrona chega na página de código OEM (um
+// caminho com acento virava outro). O stream tty lê por `ReadConsoleW`; depois
+// de cada linha ele para — o libuv cancela a leitura pendente do console — e sai
+// do laço de eventos, para o agente herdar o terminal sem disputa. Linhas a mais
+// de uma leitura ficam para a pergunta seguinte.
+let pending = "";
+let ended = false;
+
+function readConsoleLine() {
+  const stdin = process.stdin;
+  const take = () => {
+    const end = pending.indexOf("\n");
+    if (end === -1) return undefined;
+    const line = pending.slice(0, end).replace(/\r$/, "");
+    pending = pending.slice(end + 1);
+    return line;
+  };
+  const ready = take();
+  if (ready !== undefined) return Promise.resolve(ready);
+  if (ended) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      stdin.removeListener("data", onData);
+      stdin.removeListener("end", onEnd);
+      stdin.pause();
+      stdin.unref();
+      resolve(value);
+    };
+    const onData = (chunk) => {
+      pending += chunk;
+      const line = take();
+      if (line !== undefined) finish(line);
+    };
+    const onEnd = () => {
+      ended = true;
+      const rest = pending;
+      pending = "";
+      finish(rest === "" ? null : rest.replace(/\r$/, ""));
+    };
+    stdin.setEncoding("utf8");
+    stdin.ref();
+    stdin.on("data", onData);
+    stdin.on("end", onEnd);
+    stdin.resume();
+  });
+}
+
 const result = await runSkillMe({
   argv: process.argv.slice(2),
   deps: {
-    writeOut: (text) => write(1, text),
-    writeErr: (text) => write(2, text),
+    writeOut: writerFor(1, () => process.stdout),
+    writeErr: writerFor(2, () => process.stderr),
     terminal: isatty(0) && isatty(2),
-    readLine,
+    readLine: WINDOWS_CONSOLE(0) ? readConsoleLine : readLine,
   },
 });
 
