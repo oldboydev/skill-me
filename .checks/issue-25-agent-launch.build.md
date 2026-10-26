@@ -401,3 +401,125 @@ caminho conferido no `%TEMP%`, 0 recusas; as cópias do WSL e os temporários de
   `privacy stop` nela não muda nada.
 - Continuam: uso real sem sessão de agente (`Unresolved` 2, `blocks go-live`); console real e pty
   dependem do Python do sistema; C23 sem asserção de tempo para o “sem espera”.
+
+## Regressões da segunda revisão formal em `6d57e6e` (S8, C43–C44)
+
+A rodada 3 do Verifier deu PASS 42/42 (`6d57e6e`, só `.verified.md`, intacto aqui). A segunda
+revisão formal (`.checks/code-review/issue-25/formal-review2.stdout.txt`) pediu mudanças com dois
+P2 bloqueantes, um em AC4 e um em AC6. **Tetos atingidos: 2 revisões formais e 3 Verifiers.** Nada
+aqui roda revisão, Verifier, push, PR ou merge; estas provas são do autor e não autorizam entrega
+nem `ready`. Verificação ou revisão adicionais dependem de exceção pedida pelo orquestrador ao
+proprietário.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `57e031c` | Task 35–36, S8 com C43–C44 e as linhas “Lock após a abertura” e “Leitura transitória na espera da harness” do Landing, antes do código |
+| `dd18af0` | `startLaunch` e o launcher (C43), `settle.py` (C44), provas, variável de teste `SKILL_ME_TEST_TRACES_LOCK_KEPT` na pré-carga e `docs/traces.md` |
+| `858b583` | C43 (e), task 35 e Landing: a mesma regra no encerramento, antes do código (achado do autor pela sonda `probe-end-release.txt` em `dd18af0`) |
+| `d71c143` | `keepingResult` comum a `startLaunch` e `endLaunch`, resumo mantido no launcher, provas de (e) e `docs/traces.md` |
+
+Logs em `.checks/code-review/issue-25/builder-formal2/` (pasta ignorada).
+
+### C43 — liberação do lock depois da abertura gravada (P2 de `store.mjs:1042`)
+
+- **Reprodução** (RED abaixo, em processo e em processo real): com o `unlink` do `.lock` falhando
+  por EIO na liberação da abertura, o launcher escrevia só `skill-me: não foi possível abrir a
+  execução [io_failure]`, sem IDs, e saía com 5; o segmento 1 ficava `active` com `endedAt: null`,
+  o ponteiro ficava e o lock também, e a abertura seguinte na raiz saía com `lock_present`. Com a
+  confirmação perdida (o `unlink` apaga e lança), a captura ficava `active` sem lock e sem orientação.
+  Com o lock trocado por outro processo, `[root_changed]`, também sem IDs.
+- **Correção**: `holdLockFile` não mudou (prioridade do erro do callback, bytes conferidos, lock
+  alheio nunca removido), então nenhum consumidor dele muda. `startLaunch` guarda a identidade quando
+  o callback termina e, se a liberação falhar, o erro leva `opened`, `invocation`, `capture`,
+  `launchedAt`, `lockPath` e `lockLeft`. O launcher não inicia o agente, escreve a linha da abertura,
+  chama o encerramento de sempre e, se ele não concluir e `lockLeft`, a linha do lock com o `pid`
+  dele e a condição de remoção. Nenhum comando novo, nenhuma remoção automática.
+- **Provas** (4 no store, 3 pelo launcher em processo e 2 pelo launcher em processo real):
+  liberação falhando uma vez e sempre (`io_failure`, lock com o `pid`, outra execução byte a byte
+  igual, entregas dela com `lock_present` só enquanto o lock existe, nova abertura com
+  `lock_present` sem captura nem agente), confirmação perdida (encerramento conclui, resumo com a
+  captura `stopped`, sem linha de lock), lock trocado (`root_changed`, lock alheio intacto e não
+  citado), prioridade do callback (controle). A recuperação declarada — conferir o `pid` no lock com
+  o processo terminado, removê-lo, rodar o `privacy stop` mostrado — deixa a captura `stopped`, e a
+  raiz volta a aceitar entregas e uma nova abertura que inicia o agente.
+- **(e) No encerramento** (achado do autor depois de `dd18af0`, mesma classe — liberação que falha
+  depois de um callback bem-sucedido): a sonda `probe-end-release.txt` mostrou, com a captura já
+  `stopped`, o ponteiro fora e o lock preso, `skill-me: não foi possível encerrar a execução …
+  [io_failure]; a captura <id> continua active.` e o `privacy stop`, sem falar do lock. Agora
+  `startLaunch` e `endLaunch` passam pelo mesmo `keepingResult` (só em `store.mjs`, sobre `withLock`):
+  `endLaunch` devolve `closed`, `lockPath` e `lockLeft`; o launcher escreve o resumo de sempre, a
+  linha `skill-me: a execução <invocation> foi encerrada, mas a liberação do lock da raiz falhou
+  [<código>].` e a linha do lock; a saída é a do agente. 3 provas (store, launcher em processo e em
+  processo real com `SKILL_ME_TEST_TRACES_LOCK_KEPT=2`): captura `stopped` com o evento gravado,
+  ponteiro fora, lock com o `pid`; `skill-me report` sai com 4 (`lock_present`) enquanto o lock
+  existe e responde depois da remoção declarada.
+
+### C44 — leitura transitória na espera da harness (P2 de `settle.py:26`)
+
+- **Reprodução**: a leitura `active: false`, `deliveryFailed: 0`, `enqueued: 5`, `delivered: 2`
+  virava `inactive` na hora, e a com a perda contada em parte (`deliveryFailed: 1`) virava `failed`;
+  pela harness real com o Hermes simulado, o resultado gravava `settle.state: "inactive"` e
+  `deliveryFailed: 0` aos ~300 ms.
+- **Correção**: só `settle.py` e as provas mudam. Com `active` falso, `pending` enquanto
+  `delivered + oversize + serializationFailed + deliveryFailed < enqueued`; depois `failed` se houve
+  perda, senão `inactive`. Plugin, callbacks, leitura a cada 50 ms e `settleMaxMs` (5000 por
+  padrão) não mudam; uma contagem que não fecha termina `timeout` no prazo.
+- **Provas**: 7 leituras puras (desligada sem perda contada, perda parcial, perda inteira, fechada
+  com grande demais e não serializável, sem destino, ativa pendente, ativa concluída); a espera com
+  relógio controlado (sequência ativa → desligada sem perda → parcial → final termina `failed` aos
+  400 ms com os contadores finais; leitura que não fecha → `timeout` aos 1000 ms do cenário e aos
+  5000 ms do padrão); a `harness.py` real com o Hermes simulado (`failed`, contadores finais,
+  `waitedMs` ≥ 600; sem destino, `inactive`).
+
+### RED e GREEN
+
+| Execução | Resultado |
+| --- | --- |
+| RED, Windows Node 24.22.1, produto de `57e031c` (= `6d57e6e`) com as provas novas (`red-win-24.22.1.spec.txt`) | 12 testes: 11 fail (todos `AssertionError` com o comportamento acima), 1 pass (o controle de prioridade, que já valia) |
+| RED, WSL Ubuntu Node 24.13.0, árvore do índice temporário `643eaa09…`, archive LF `1984df24…` (`red-wsl-24.13.0.spec.txt`) | 12 testes: 11 fail, 1 pass, os mesmos |
+| GREEN, Windows Node 24.22.1, com a correção (`green-win-24.22.1.spec.txt`) | 12/12; o arquivo da harness inteiro 8/8 (C39 e C40 inalterados) |
+| Nativo, Windows, Hermes real, `hermes-plugin.native.test.mjs` sozinho (14:34:31–14:34:51; `native-green-win-24.22.1.spec.txt`) | 12/12, com I4-C22 e I25-C40 (`spawnfail`, `exit`, `disconnect` → `failed`) |
+| RED de (e), Windows Node 24.22.1, produto de `858b583` (= `dd18af0`) (`red-e-win-24.22.1.spec.txt`) | 3 testes: 3 fail (`continua active` com a captura `stopped`; o `skill-me report` da prova ganhou `--skill` depois, sem mudar o que falhou) |
+| RED de (e), WSL Node 24.13.0, árvore `4d052f48…`, archive LF `fa01015b…` (`red-e-wsl-24.13.0.spec.txt`) | 3 testes: 3 fail, os mesmos |
+| GREEN de (e), Windows Node 24.22.1 (`green-e-win-24.22.1.spec.txt`) | C41, C43 e C44: 32/32 |
+
+### Execuções intermediárias (HEAD `dd18af0`, antes de (e); logs em `builder-formal2/`)
+
+Windows 24.22.1 e 24.13.0: 92 testes, 88 pass, 4 skip; WSL (archive `b37f49ff…`, árvore `42c4fc7f…`):
+92 testes, 87 pass, 5 skip; `npm test` (14:39–14:47): exit 0, integrações 545 (534 pass, 0 fail, 11
+skip). Superadas pelas execuções abaixo, porque (e) mudou o produto.
+
+### Gate e execuções finais (HEAD `d71c143`)
+
+Uma execução por vez, sem suítes concorrentes e sem repetir até passar; logs em
+`builder-formal2/final/`.
+
+| Execução | Resultado |
+| --- | --- |
+| Windows, Node 24.22.1, alvo I25 (`launch/*.test.mjs` + `hermes-harness.unit.test.mjs`), 14:53:57–14:55:48 | 95 testes: 91 pass, 0 fail, 4 skip (C5 e C6 POSIX, C42 POSIX, C15 pty) |
+| Windows, Node 24.13.0 oficial (PATH e `execPath` dele, npm 11.6.2 do zip, sem `npm_execpath`), 14:55:56–14:57:50 | 95 testes: 91 pass, 0 fail, 4 skip |
+| WSL `Ubuntu`, Node 24.13.0, npm 11.6.2, Python 3.12.3, uid 1000, 14:58:01–14:58:38, sobre `git -c core.autocrlf=false archive d71c143` (sha256 `f10f78cb…12589b18c2`; `get-tar-commit-id` = `d71c143b…`; árvore extraída `89f2d839…` = `HEAD^{tree}`; `cli.mjs` 755) | 95 testes: 90 pass, 0 fail, 5 skip (C4 shim, C5 console, C42 console, C8 LOCALAPPDATA, C38 console) |
+| Windows, Node 24.22.1, `npm test` (14:58:44–15:09:16) | **exit 0**: governança 6/6; motor 16/16; doctor 417 (410 pass, 7 skip POSIX/FIFO); integrações 548 (537 pass, **0 fail**, 11 skip, todos POSIX, Linux ou macOS), com I4-C18–C23, I4-C37, I4-C44b, os três I23-C8 e o I25-C40 nativo executados e verdes no Hermes real |
+
+Os 95 nomes I25 são os mesmos nos três TAP, sem `not ok`; os 15 C43/C44 rodaram (nenhum pulado) nos
+três. `~/.skill-me` e `~/.skill-me-authorization.json` do uid 1000 ausentes antes e depois. Os
+scratches `skill-me i4 i25 *` das janelas do 24.13.0 (302 em `dd18af0`, 314 em `d71c143`) foram
+removidos por script do 24.22.1 com o caminho conferido no `%TEMP%`, 0 recusas; as cópias do WSL e
+os temporários também.
+
+### Recuperação manual que continua necessária e limitações
+
+- **C43, lock que ficou**: quando a liberação falha por E/S e o lock da invocação continua no
+  disco, só o usuário o remove, nas condições declaradas pelo launcher (E/S de volta, lock ainda
+  com o `pid` do launcher, processo terminado); depois disso, o `privacy stop` mostrado encerra a
+  captura. O ponteiro da execução continua, como no contrato de C31: `skill-me report` mostra a
+  execução aberta, sem agente que grave nela. Não há repetição automática nem remoção do lock.
+- **C43 (e)**: com o lock preso no fim, a recuperação é a mesma (remover o lock nas condições
+  declaradas); as capturas já estão `stopped` e o ponteiro saiu, então não há `privacy stop` a rodar.
+- **C44**: `deliveryFailed` do plugin também conta callbacks recusados depois do desligamento; se
+  eles rodarem durante a drenagem, a soma pode fechar antes de a perda drenada ser contada — o estado
+  sai `failed` (correto), com `deliveryFailed` menor que o final. Um registro posto na fila depois da
+  drenagem nunca é contado pelo plugin e leva a `timeout` no `settleMaxMs`. As duas janelas são do
+  plugin, fora do escopo.
+- Continuam: uso real sem sessão de agente (`Unresolved` 2, `blocks go-live`); console real e pty
+  dependem do Python do sistema; C23 sem asserção de tempo para o “sem espera”.

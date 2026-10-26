@@ -376,9 +376,10 @@ Fechamento das regressões da revisão formal, C1–C42 (registros acima preserv
 Fechamento das regressões da segunda revisão formal, C1–C44 (registros acima preservados):
 
 - Onde a fronteira caiu agora: lote único, C1–C44 fechados pelo autor. Achados, task 35–36, S8 e
-  Landing em `57e031c`; correção e provas em `dd18af0`. RED/GREEN, execuções finais do alvo I25
-  (92 testes) em Windows Node 24.22.1, Windows Node 24.13.0 e WSL Node 24.13.0 e o `npm test`
-  inteiro no Windows com o Hermes real em `.checks/issue-25-agent-launch.build.md`.
+  Landing em `57e031c`; correção e provas em `dd18af0`; C43 (e), a mesma regra no encerramento, em
+  `858b583` (Landing) e `d71c143`. RED/GREEN, execuções finais do alvo I25 (95 testes) em Windows
+  Node 24.22.1, Windows Node 24.13.0 e WSL Node 24.13.0 e o `npm test` inteiro no Windows com o
+  Hermes real em `.checks/issue-25-agent-launch.build.md`.
 - O que o proprietário decidiu depois do C1–C42: nada novo. A rodada 3 do Verifier aprovou 42/42
   (`6d57e6e`) e a segunda revisão formal pediu mudanças (dois P2, `store.mjs:1042` e
   `settle.py:26`), dentro de AC4 e AC6. Os tetos de 2 revisões formais e 3 Verifiers foram
