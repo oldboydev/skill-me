@@ -180,6 +180,23 @@ Proof: `node --test --test-name-pattern="I25-C36 " tests/integrations/launch/com
 **C37** — README apresenta preparo e fluxo diário antes do `on`/`off`; README e os três guias declaram confiança manual, ausência de evento de skill no Codex, cobertura só de ferramentas locais, capturas sucessivas de 500 eventos/8 MiB com chave própria, a janela de 750 ms, o encerramento forçado e `skill-me report`; os guias citam o par `SKILL_ME_LAUNCH_*` e a precedência dele.
 Proof: `node --test --test-name-pattern="I25-C37 " tests/integrations/launch/docs.test.mjs`
 
+### S6 — Conclusão da harness Hermes autorizada · 3 arquivos existentes · 46 KB · ~12k
+
+**C38** — A harness não considera concluída uma entrega pendente só porque os contadores
+ficaram estáveis por 300 ms; inicialização atrasada além desse intervalo só conclui quando
+a entrega efetivamente termina, com os eventos esperados preservados (task 31, AC6).
+Proof: `node --test --test-name-pattern="I25-C38 " tests/integrations/hermes-harness.unit.test.mjs`
+
+**C39** — Falha terminal e destino travado são diferenciados de conclusão bem-sucedida;
+o prazo `settleMaxMs` existente, inclusive o padrão 5000 ms, permanece e as provas nativas
+mantêm callbacks e ferramentas inalterados (task 32, AC6).
+Proof: `node --test --test-name-pattern="I25-C39 " tests/integrations/hermes-harness.unit.test.mjs`
+Proof: `node --test --test-name-pattern="I4-C20 |I4-C21 |I4-C37 " tests/integrations/hermes-plugin.native.test.mjs`
+
+O gate `npm test` completo continua obrigatório e deve executar os casos nativos aplicáveis.
+A autorização está em issuecomment-6419121665. Não altera C1–C37, tolerâncias, plugin do produto
+ou runtimes pessoais. A implementação registra no Landing, antes do código, a forma da espera.
+
 ## Swept
 
 - validation: C4, C7, C11, C17, C20; C2 (argumentos sem interpretação).
@@ -198,6 +215,11 @@ Um lote: S1 ~11k + S2 ~21k + S3 ~27k + S4 ~8k + S5 ~31k = ~98k tokens de leitura
 (`wc -c` dos arquivos tocados ÷ 4), abaixo do teto de 150k; nenhuma fronteira de entrega é
 necessária. Boa parte de S1–S4 já foi lida no planejamento. O Verifier e a revisão formal ficam
 com o orquestrador depois do último commit; este agente não os convoca.
+
+Ampliação autorizada em 26/10/2026: S6 lê 46.018 bytes existentes (harness,
+prova nativa e plugin para interpretar os contadores), ~12k. Total mínimo
+~110k, ainda no mesmo lote abaixo de 150k; C38/C39 são acrescidos sem alterar
+C1–C37 e serão verificados no diff completo.
 
 - Onde a fronteira caiu: lote único, C1–C37 fechados; produto em `7bb3f45` (store e entrega),
   `8629415` (launcher, consulta e provas S1–S4), `95ec7bd` (documentação) e `dedd5b4` (correção de

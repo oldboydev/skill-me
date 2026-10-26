@@ -89,3 +89,11 @@ Proposta para autorização do proprietário, na mesma entrega:
 As correções dos testes novos da #25 (remoções com Node 24.13.0, medição
 monotônica e matriz stdin/stderr) já pertencem ao escopo aprovado e continuam
 independentemente desta decisão adicional.
+
+## Autorização adicional recebida
+
+Em 26/10/2026, o proprietário respondeu: “Autorizar ajuste pontual da harness”.
+A proposta acima passa a integrar esta entrega, limitada à espera da harness e
+às provas, preservando prazo máximo e asserções. O critério correspondente foi
+acrescentado à issue. As correções dos testes novos já estavam em andamento e
+o ajuste da harness será executado em seguida pelo Claude.

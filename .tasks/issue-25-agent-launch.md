@@ -26,7 +26,7 @@ captura, com chave e limites próprios, até o agente sair. A execução termina
 e `skill-me report` consulta a execução inteira, captura por captura, sem que o usuário copie um
 ID. A observação global `on`/`off` não muda.
 
-30 critérios em 5 fatias · 6 decisões sem volta aprovadas com o plano · 4 questões em aberto: nenhuma bloqueia a implementação e 1 bloqueia o uso real.
+32 critérios em 6 fatias · 6 decisões sem volta aprovadas com o plano · 4 questões em aberto: nenhuma bloqueia a implementação e 1 bloqueia o uso real. A fatia da harness foi autorizada em 26/10/2026 (ver Sources).
 
 ## Criteria
 
@@ -188,6 +188,18 @@ ID. A observação global `on`/`off` não muda.
     `SKILL_ME_LAUNCH_ID`, definido só pelo launcher, e a precedência dele sobre o par manual e o
     `on`.
 
+### Concluir corretamente a espera da harness nativa do Hermes
+
+31. Dada uma entrega ainda pendente cujos contadores ficam estáveis por mais de 300 ms,
+    a harness não termina a espera como se a entrega tivesse concluído. Uma prova com
+    inicialização atrasada além de 300 ms observa a conclusão efetiva e conserva os mesmos
+    eventos e asserções das provas nativas existentes.
+32. Quando o destino falha ou permanece travado, a espera distingue falha terminal de trabalho
+    ainda pendente e conserva o prazo máximo `settleMaxMs` já configurado (5000 ms por padrão).
+    Os callbacks e resultados das ferramentas continuam inalterados; as provas existentes e
+    o gate completo são executados sem desabilitar casos nativos aplicáveis nem afrouxar
+    asserções ou tolerâncias.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
@@ -320,6 +332,8 @@ erDiagram
 | `package.json` `bin` | `npm link` no checkout | comando `skill-me` no prefixo npm | do npm | 1 |
 
 ## Sources
+
+- [Autorização adicional do proprietário, 26/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6419121665): “Autorizar ajuste pontual da harness”. Inclui somente a espera da harness antiga e suas provas nesta entrega, preservando o prazo máximo e as asserções; não autoriza mudar o plugin do produto ou runtimes pessoais. O AC6 da issue registra essa ampliação.
 
 - [Issue #25](https://github.com/oldboydev/skill-me/issues/25), lida de
   `.checks/code-review/issue-25/context.json`, com o AC3 atualizado. Define o problema, o
