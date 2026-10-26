@@ -26,7 +26,7 @@ captura, com chave e limites próprios, até o agente sair. A execução termina
 e `skill-me report` consulta a execução inteira, captura por captura, sem que o usuário copie um
 ID. A observação global `on`/`off` não muda.
 
-32 critérios em 6 fatias · 6 decisões sem volta aprovadas com o plano · 4 questões em aberto: nenhuma bloqueia a implementação e 1 bloqueia o uso real. A fatia da harness foi autorizada em 26/10/2026 (ver Sources).
+34 critérios em 6 fatias · 6 decisões sem volta aprovadas com o plano · 4 questões em aberto: nenhuma bloqueia a implementação e 1 bloqueia o uso real. A fatia da harness foi autorizada em 26/10/2026 (ver Sources); os critérios 33–34 são regressões da revisão formal dentro de AC1, AC3 e AC4.
 
 ## Criteria
 
@@ -199,6 +199,33 @@ ID. A observação global `on`/`off` não muda.
     Os callbacks e resultados das ferramentas continuam inalterados; as provas existentes e
     o gate completo são executados sem desabilitar casos nativos aplicáveis nem afrouxar
     asserções ou tolerâncias.
+
+### Regressões da revisão formal (dentro de AC1, AC3 e AC4; sem escopo novo)
+
+A revisão formal da feature em `2fd858a` (`.checks/code-review/issue-25/formal-review.stdout.txt`)
+apontou dois defeitos bloqueantes P2. Os critérios abaixo fixam o comportamento já exigido por
+AC3/AC4 (encerramento verificável, segmentos sucessivos com limites e chave próprios) e por AC1
+(sinais aplicáveis), nos caminhos de falha que as provas não cobriam.
+
+33. Se a publicação do ponteiro da sucessora falhar (escrita do temporário ou `rename`) depois
+    de a sucessora ter sido criada, a entrega daquele lote sai com `io_failure` e conta as
+    entradas como perdidas; a próxima entrega da mesma execução incorpora essa sucessora ao
+    ponteiro (mesmo `id`, `segment` N+1), e nenhuma outra captura da execução recebe o
+    número N+1. O encerramento normal deixa `stopped` toda captura `active` da execução —
+    inclusive uma sucessora nunca publicada — e o resumo de sucesso nunca lista captura
+    `active`; se parar uma delas falhar, o encerramento sai com o código, o stderr dá para
+    cada captura que ficou `active` o comando `privacy stop` que a encerra, e a execução já
+    não recebe registros. Capturas de outra execução da mesma raiz não mudam. Na abertura,
+    se publicar o ponteiro falhar e parar o segmento 1 também falhar, o stderr diz que essa
+    captura ficou `active` e dá o comando que a encerra.
+34. Um SIGINT, SIGQUIT ou SIGHUP do terminal, ou um SIGTERM, recebido depois do preparo e antes
+    de o agente iniciar — durante a espera do lock na abertura, com a abertura em curso ou na
+    conferência da entrada do shim — cancela a abertura: o agente não inicia; a captura já
+    criada passa a `stopped` com 0 eventos e o ponteiro sai; o stderr mostra
+    `skill-me: abertura cancelada por <SINAL>; o agente não foi iniciado.`; no POSIX o
+    launcher termina pelo mesmo sinal e no Windows sai com 128 + o número do sinal (130 para
+    Ctrl+C). Depois de o agente iniciar, os critérios 5, 6, 20 e 22 continuam valendo sem
+    mudança.
 
 ## States
 
