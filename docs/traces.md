@@ -99,9 +99,19 @@ a execução: apaga o ponteiro e encerra a corrente, e daí em diante um produto
 com o par recebe `launch_ended` e nada grava. O resumo vai ao stderr. `npm run
 on`/`off` não tocam a execução, e duas invocações simultâneas têm execuções,
 capturas e chaves próprias. Se o encerramento falhar (lock ocupado por mais de
-2 s ou E/S), o stderr mostra o código, a captura que ficou `active`, o comando
-`privacy stop` que a encerra e se a execução ainda está aberta; `privacy stop`
-encerra só a captura.
+2 s ou E/S), o stderr mostra o código, cada captura que ficou `active` com o
+comando `privacy stop` que a encerra e se a execução ainda está aberta;
+`privacy stop` encerra só a captura.
+
+Se a gravação do ponteiro de uma sucessora falhar, aquela entrega falha
+(`io_failure`) e a entrega seguinte grava na mesma sucessora, sem repetir o
+número do segmento; o encerramento para toda captura `active` da execução,
+também uma sucessora nunca publicada. Um Ctrl+C, SIGQUIT, SIGHUP ou SIGTERM
+recebido antes de o agente iniciar (por exemplo, enquanto a abertura espera o
+lock) cancela a abertura: o agente não inicia, a captura já criada é encerrada,
+o stderr diz `skill-me: abertura cancelada por <SINAL>; o agente não foi
+iniciado.` e o launcher termina pelo mesmo sinal (no Windows, sai com 130 no
+Ctrl+C).
 
 | Código de entrega | Significado |
 | --- | --- |
