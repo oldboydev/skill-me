@@ -689,14 +689,16 @@ Uma execução por vez, sem repetir até passar.
 | Windows, Node 24.13.0 oficial (PATH e `execPath` dele, npm 11.6.2 do zip, sem `npm_execpath`), 18:04:06–18:06:34 | 99 testes: 93 pass, 0 fail, 6 skip; 320 scratches do 24.13.0 removidos por script do 24.22.1, 0 recusas |
 | WSL Ubuntu, Node 24.13.0 do sistema, uid 1000, 18:06:51–18:07:39, sobre `git -c core.autocrlf=false archive 2dfe676` (sha256 `e32cd799…3125c75f`; `get-tar-commit-id` = `2dfe6761…`; árvore extraída `ab177034…` = `HEAD^{tree}`; `cli.mjs` 755) | 99 testes: 93 pass, 0 fail, 6 skip (só Windows); `~/.skill-me*` ausentes antes e depois |
 | Windows, Node 24.22.1, `npm test`, 18:07:44–18:20:32 | **exit 1**: governança 6/6; motor 16/16; doctor 417 (410 pass, 7 skip); integrações 552 (538 pass, **1 fail**, 13 skip), com os 12 nativos do Hermes executados e verdes. A falha: `T7-C10` (`report/report.e2e.test.mjs`, issue #7) com `partial` no lugar de `sufficient` — o teste só confere `status 0` das entregas, e uma perdida sob carga dá esse resultado; sozinho, uma vez, passou (`t7-c10-isolado-win-24.22.1.spec.txt`, 7,3 s contra 12,3 s no lote). Não repetido |
-| WSL, layout isolado, as quatro suítes da CI uma a uma, 1ª vez (`tools` mínima), 18:21:15–18:22:13 | governança 6/6; motor 16/16; doctor 417: 415 pass, 1 fail (`collector-probe-C10`, “retornou cedo demais: 280ms”), 1 skip; integrações 552: 527 pass, 4 fail, 21 skip — I25-C33 e C34 passam. Três falhas (I4-C44, I23-C14, T8-C16) são do ambiente montado: o runner de hooks do Codex nas provas usa `/bin/sh -lc`, o `/etc/profile` do WSL chama `id` e `grep`, ausentes na `tools` mínima, e o stderr esperado vazio recebeu os erros; I4-C36 é a falha abaixo |
-| WSL, layout isolado corrigido (`tools` com os 990 executáveis de `/usr/bin` menos `claude`, `codex`, `gemini`, `hermes`, `node`, `nodejs`, `nsolid`, `npm`, `npx`, `corepack`…; `gate2/`), 18:23:29–18:24:32 | governança 6/6; motor 16/16; doctor 417: 416 pass, 1 skip (o `collector-probe-C10` passou); integrações 552: 530 pass, **1 fail** (`I4-C36`, `codex/desconexao` com `status: null`, issue #4), 21 skip. I4-C36 sozinho passou no layout isolado e com o Node do sistema (`gate2/i4-c36-*.spec.txt`). Não repetido |
+| WSL, layout isolado, as quatro suítes da CI uma a uma, 1ª vez (`tools` mínima), 18:21:15–18:22:13 | governança 6/6; motor 16/16; doctor 417: 415 pass, 1 fail (`collector-probe-C10`, “retornou cedo demais: 280ms”), 1 skip; integrações 552: 527 pass, 4 fail, 21 skip — I25-C33 e C34 passam. Três falhas (I4-C44, I23-C14, T8-C16) são do ambiente montado: o runner de hooks do Codex nas provas usa `/bin/sh -lc`, o `/etc/profile` do WSL chama `id` e `grep`, ausentes na `tools` mínima, e o stderr esperado vazio recebeu os erros. A quarta, I4-C36, foi `codex/desconexao: null !== 0` (status `null`, processo terminado por sinal), no caso em que a prova destrói o canal de relatório do Codex — o fd 2, o mesmo stderr onde o `/etc/profile` escreveu `id: not found`; consistente com a mesma causa do ambiente (com `id` e `grep` presentes, esse caso passou na execução seguinte) |
+| WSL, layout isolado corrigido (`tools` com os 990 executáveis de `/usr/bin` menos `claude`, `codex`, `gemini`, `hermes`, `node`, `nodejs`, `nsolid`, `npm`, `npx`, `corepack`…; `gate2/`), 18:23:29–18:24:32 | governança 6/6; motor 16/16; doctor 417: 416 pass, 1 skip (o `collector-probe-C10` passou); integrações 552: 530 pass, **1 fail**, 21 skip. A falha é `I4-C36` (issue #4) num caso diferente do da 1ª vez: `claude timeout: 900 ms`, a asserção `elapsedMs >= 1900 && < 6000` da linha 82 de `failure-matrix.cli.test.mjs`, que mede com `Date.now()` o hook que desiste do stdin em 2000 ms (`setTimeout`, relógio monotônico). [Correção factual posterior: a primeira versão desta linha atribuiu a esta execução o `codex/desconexao` da 1ª vez; o log `gate2/gate-wsl-isolado-test:integrations.log` mostra o timeout do Claude.] I4-C36 sozinho passou no layout isolado e com o Node do sistema (`gate2/i4-c36-*.spec.txt`). Não repetido |
 
 ### Limites e estado
 
 - As falhas restantes nos gates completos (`T7-C10` no Windows, `I4-C36` e, na 1ª vez,
   `collector-probe-C10` no WSL) são de testes de outras issues, fora dos arquivos tocados, e
   passaram isoladas; não foram repetidas até passar. A CI do PR é a referência para elas.
+  [Revisto na seção seguinte: passar isolado não resolve a falha do gate, e a CI não substitui o
+  gate local; o diagnóstico de cada uma está em “Diagnóstico das falhas dos gates completos”.]
 - A execução isolada de I4-C36 com o Node do sistema usou o PATH `/usr/local/bin:/usr/bin:/bin`,
   que no WSL tem agentes reais; o teste só roda os hooks instalados, por caminho absoluto do Node, e
   nenhum agente foi iniciado.
@@ -706,3 +708,68 @@ Uma execução por vez, sem repetir até passar.
   tetos da exceção do comentário 6425235841 (6 Verifiers e 5 revisões formais) estão com 6 Verifiers
   e 4 revisões usados; um Verifier 7 depende de nova exceção, que o orquestrador trata. Nenhum
   Verifier, revisão, push, edição do PR ou merge foi feito aqui.
+
+### Diagnóstico das falhas dos gates completos (depois de `7e46de1`)
+
+Correção factual feita acima, sem apagar o texto: a 1ª execução isolada teve I4-C36 em
+`codex/desconexao` (`null !== 0`) e a 2ª (`gate2`) em `claude timeout: 900 ms`; são casos diferentes.
+Nada abaixo muda fonte, prazos, asserções, skips, o runner ou testes de outras issues.
+
+**WSL: relógio de parede com passos para trás** (`builder-ci28/final/wsl-relogio-journal.txt`,
+leitura do journal do sistema). Durante as duas execuções isoladas, o `systemd-journald` registrou
+`Time jumped backwards` a cada ~29 s, e o `systemd-resolved` registrou pares de `Clock change detected`
+com o segundo carimbo até 0,68 s antes do primeiro (por exemplo 18:21:49,304 → 18:21:48,626 e
+18:24:13,233 → 18:24:12,548); o mesmo padrão aparece desde 18:00. As duas falhas de tempo medem
+duração com `Date.now()` e o código medido usa timer monotônico:
+- `I4-C36` (2ª vez): `elapsedMs` com `Date.now()` em `installed-hooks.mjs` contra o `setTimeout` de
+  2000 ms (`HOOK_STDIN_DEADLINE_MS`) do hook; 900 ms medidos para um prazo de 2000 ms só acontecem com
+  o relógio de parede voltando no meio.
+- `collector-probe-C10` (1ª vez, doctor): `elapsed = Date.now() - start` contra o prazo de 1000 ms;
+  280 ms medidos. Passou na 2ª execução.
+Conclusão: o ambiente WSL desta máquina não é suficiente para asserções de duração por `Date.now()`
+de testes antigos (#4 e doctor); o runner da CI do GitHub não tem esse ajuste (lá elas passaram).
+Corrigir esses testes exigiria um contrato de regressão próprio (relógio monotônico na medida) e
+fica fora deste pedido; tolerâncias não foram tocadas.
+
+**Windows: T7-C10 sob carga, não resolvido.** No `npm test` em `2dfe676` (integrações com 8
+arquivos em paralelo nesta máquina de 32 núcleos), `T7-C10` (#7) deu `partial` no primeiro item e
+`inconclusive` no sexto, o que corresponde a uma entrega perdida (o `post_tool_bash` de `npm test`):
+o teste confere só `status 0` dos hooks, e uma entrega que estoura o prazo de 750 ms não aparece na
+captura. É a mesma classe do G1 da #23, onde o `T7-C10` já tinha falhado junto com o `T8-C15` sob
+carga (`.checks/issue-23-observacao-on-off.build.md`, seção “G1: confiabilidade do gate no
+Windows”). Sozinho, passou.
+
+**Fontes do teto de 8 arquivos.** `scripts/test-integrations.mjs` roda
+`--test-concurrency=min(núcleos lógicos − 1, 8)` (no mínimo 1); entrou em `a3a76d8` pela decisão do
+G1 da #23 (3 rodadas de cada lado nesta máquina: padrão de 31 arquivos com 7 `delivery_timeout` numa
+delas, 8 arquivos com 0 nas três). O valor é **vinculante**: `tests/integrations/fixtures-inventory.test.mjs`
+fixa `MAX_PARALLEL_FILES === 8` e a tabela `1→1, 2→1, 3→2, 4→3, 9→8, 10→8, 32→8, 128→8`, e o Verifier
+da #23 registrou o gate verde com esse teto. Nos runners da CI (4 vCPU no Ubuntu e no Windows, 3 no
+macOS) a fórmula já dá 3 e 2 arquivos; o teto de 8 só age em máquinas com mais de 8 núcleos.
+
+**Medida 8 contra 4, mesmas condições** (`builder-ci28/medida/`, HEAD `7e46de1`, Windows 11, Node
+24.22.1, 32 núcleos lógicos, `node --test --test-concurrency=<n> "tests/integrations/**/*.test.mjs"`,
+uma execução de cada, em sequência, sem outra suíte minha):
+
+| Paralelismo | Resultado | Duração |
+| --- | --- | --- |
+| 8 (18:32:08–18:40:29) | 552 testes, 539 pass, 0 fail, 13 skip; 12 nativos do Hermes | 501 s |
+| 4 (18:40:29–18:49:59) | 552 testes, 539 pass, 0 fail, 13 skip; 12 nativos do Hermes | 569 s |
+
+Uma execução de cada não mede taxa: o 8 também passou, e a falha do `T7-C10` não se repetiu. Não
+há medida que justifique trocar o teto, e trocá-lo mudaria um valor aprovado e fixado por um teste
+da #23. **O runner não foi alterado**; a decisão volta ao orquestrador, com as opções medidas:
+manter o teto (a CI usa 3/2 arquivos de qualquer forma) ou abrir uma mudança própria do teto, com a
+#23 como dona do contrato.
+
+### Estado ao final desta rodada
+
+- C33/C34: causa da CI resolvida e provada (RED/GREEN no layout isolado, alvos I25 verdes nos três
+  ambientes).
+- Gates completos locais: o `npm test` do Windows em `2dfe676` saiu 1 (`T7-C10`, carga, não
+  resolvido); as integrações completas depois passaram com 8 e com 4 arquivos. No WSL isolado, as
+  falhas restantes são de medida por `Date.now()` com o relógio do WSL voltando (evidência acima).
+- O relatório do Verifier 6 (PASS de 45 checks em `d11030f`) está desatualizado para o HEAD novo.
+  Entrega pendente de verificação independente e de revisão formal do HEAD novo; tetos da exceção
+  6425235841 com 6 Verifiers e 4 revisões usados. Nenhum Verifier, revisão, push, edição do PR ou
+  merge foi feito.
