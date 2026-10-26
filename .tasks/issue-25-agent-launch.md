@@ -1,8 +1,9 @@
 # Iniciar o agente com captura: `skill-me <agente>`
 
-> Implementar com **tlc-implement** depois da aprovação do proprietário e da resposta à
-> `Unresolved` 1. Cada critério abaixo vira um check com prova, referenciado pelo número.
-> Nada em `Unresolved` é decidido durante a implementação.
+> Implementar com **tlc-implement**. Cada critério abaixo vira um check com prova, referenciado
+> pelo número. Nada em `Unresolved` é decidido durante a implementação. A questão bloqueante
+> (capturas sucessivas) foi respondida pelo proprietário em 26/10/2026 com a alternativa B (ver
+> `Sources`); o pedido “pega a proxima issue planejar e implementar” autoriza executar este escopo.
 
 ## Intent
 
@@ -18,11 +19,13 @@ Depois da entrega, o usuário instala o comando uma vez a partir do checkout (`n
 Depois, roda `skill-me codex`, `skill-me claude` ou `skill-me hermes` e o agente abre no terminal,
 como abriria sem o comando. No primeiro uso, o próprio comando mostra a pasta das capturas, a
 instalação da integração e o passo de confiança nativa, e só aplica as mudanças depois da
-confirmação. Cada invocação grava apenas a própria sessão numa captura local. A captura termina
-quando o agente sai, e `skill-me report` consulta essa captura sem que o usuário copie um ID. A
-observação global `on`/`off` não muda.
+confirmação. Cada invocação abre uma execução própria e grava apenas a sessão iniciada por ela,
+em capturas locais sucessivas: ao chegar a 500 eventos ou 8 MiB, a execução continua numa nova
+captura, com chave e limites próprios, até o agente sair. A execução termina quando o agente sai,
+e `skill-me report` consulta a execução inteira, captura por captura, sem que o usuário copie um
+ID. A observação global `on`/`off` não muda.
 
-30 critérios em 5 fatias · 4 decisões sem volta, que valem quando o plano for aprovado · 5 questões em aberto: 1 bloqueia a implementação e 1 bloqueia o uso real.
+30 critérios em 5 fatias · 6 decisões sem volta, que valem com o plano · 4 questões em aberto: nenhuma bloqueia a implementação e 1 bloqueia o uso real.
 
 ## Criteria
 
@@ -63,7 +66,7 @@ observação global `on`/`off` não muda.
      `codexHome` e `hermesHome` do doctor, que seguem `CLAUDE_CONFIG_DIR`, `CODEX_HOME` e
      `HERMES_HOME`);
    - que cada invocação grava localmente os argumentos e resultados suportados depois da
-     sanitização, com retenção de 7 dias;
+     sanitização, em capturas sucessivas de até 500 eventos ou 8 MiB, com retenção de 7 dias;
    - a pergunta de confirmação.
 9. Quando o usuário confirma, então a pasta é criada se faltar, a raiz é gravada em
    `.skill-me/observe.json` no formato da #23 e a integração é aplicada pelo `install --apply`
@@ -86,58 +89,71 @@ observação global `on`/`off` não muda.
     o stderr mostra o código e os itens do instalador, o agente não inicia e `skill-me` sai com
     esse código. A raiz já gravada permanece, e a próxima execução mostra só o que ainda falta.
 
-### Sessão isolada da invocação
+### Execução isolada da invocação, em capturas sucessivas
 
-15. Antes de iniciar o agente, `skill-me <agente>` cria uma captura nova na raiz configurada com
-    `origin: "launch"`, `content: true`, `retentionDays: 7`, chave própria e
-    `limits` `{maxEvents: 500, maxBytes: 8388608}`. O ambiente do processo do agente recebe o
-    `SKILL_ME_CAPTURE_ROOT` (absoluto) e o `SKILL_ME_CAPTURE_ID` dessa captura, que substituem os
-    valores herdados, inclusive um par incompleto. O usuário não define nenhuma variável nem roda
-    `npm run on`/`off`.
-16. Se a captura não puder ser criada, o agente não inicia e o stderr mostra só o código fechado,
+15. Antes de iniciar o agente, `skill-me <agente>` abre uma execução nova na raiz configurada: um
+    ID de execução próprio (32 hex) e a primeira captura dela, com `origin: "launch"`, o ID da
+    execução em `invocation`, `segment: 1`, `content: true`, `retentionDays: 7`, chave própria e
+    `limits` `{maxEvents: 500, maxBytes: 8388608}`. O ambiente do processo do agente recebe
+    `SKILL_ME_LAUNCH_ROOT` (o caminho real absoluto da raiz) e `SKILL_ME_LAUNCH_ID` (o ID da
+    execução); valores herdados de `SKILL_ME_LAUNCH_ROOT`, `SKILL_ME_LAUNCH_ID`,
+    `SKILL_ME_CAPTURE_ROOT` e `SKILL_ME_CAPTURE_ID`, inclusive incompletos, não chegam ao agente.
+    O usuário não define nenhuma variável nem roda `npm run on`/`off`.
+16. Se a execução não puder ser aberta, o agente não inicia e o stderr mostra só o código fechado,
     sem caminho. Os códigos são: 3 para `root_not_found`, `root_not_directory` e `store_invalid`;
     4 para `lock_present` depois de 2 s, `link_refused`, `foreign_entry` e `root_changed`; 5 para
     `io_failure`.
 17. Quando os hooks Claude e Codex, executados pela linha instalada, e o plugin Hermes, pelo
     `ingest`, recebem eventos nativos de fixture na sessão iniciada, cada evento suportado vira no
-    máximo um registro `recordVersion: 1` nessa captura, com pseudônimos `h1:` da chave dela e
-    conteúdo só da matriz sanitizada. Nenhum registro vai para outra captura, nem para uma captura
-    automática quando a observação global estiver `on`.
+    máximo um registro `recordVersion: 1` na captura corrente da execução, com pseudônimos `h1:`
+    da chave dessa captura e conteúdo só da matriz sanitizada. Nenhum registro vai para captura de
+    outra execução, para uma captura manual nem para uma captura automática, também com a
+    observação global `on`. Com o par `SKILL_ME_LAUNCH_*` incompleto ou inválido, nada é gravado
+    (`binding_invalid`) e o evento não cai no par manual nem na observação automática.
 18. Sempre, uma invocação deixa `<raiz>/skill-me-privacy/observe.json` e
     `<home>/.skill-me-authorization.json` com os mesmos bytes, ou ausentes, com a observação global
     `on` ou `off`.
-19. Se a sessão passar de 500 eventos ou 8 MiB, os excedentes são descartados e contados em
-    `counters.dropped.capture_event_limit` ou `counters.dropped.capture_byte_limit` da mesma
-    captura, sem que outra seja criada.
+19. Quando a captura corrente da execução não comporta o próximo registro (500 eventos ou 8 MiB),
+    ela passa a `stopped` sem descartar nada, e uma captura sucessora da mesma execução
+    (`segment` seguinte, mesma `invocation`, chave nova, os mesmos `limits`, `content` e retenção)
+    recebe esse registro e os seguintes, inclusive em outro processo produtor. Nenhuma captura
+    passa de 500 eventos ou 8 MiB.
 
 ### Encerramento verificável e consulta sem ID
 
-20. Quando o agente sai, com qualquer código, a captura da invocação passa a `stopped`, com
-    `endedAt`, antes de o launcher sair. O stderr mostra o ID da captura, o estado `stopped`, o
-    `counters.persisted` e os descartes. Com `persisted` 0, o resumo diz que nada foi gravado e
-    repete o passo de confiança do agente.
-21. Dado um Hermes de fixture cujo plugin entrega N registros (3 na prova) e sai logo depois do
-    último, quando `skill-me hermes` termina, a captura tem `counters.persisted` = N e
-    `state: "stopped"`.
-22. Quando o agente termina por sinal (do terminal, ou SIGTERM repassado), a captura fica
-    `stopped` e o launcher termina pelo mesmo sinal no POSIX. No Windows, o launcher sai com o
+20. Quando o agente sai, com qualquer código, o launcher espera 750 ms pelas entregas em voo e
+    então encerra a execução: a captura corrente passa a `stopped`, com `endedAt`, e nenhum
+    registro novo entra na execução, antes de o launcher sair. O stderr mostra o ID da execução e,
+    por captura, o segmento, o ID, o estado `stopped`, o `counters.persisted` e os descartes. Com
+    `persisted` 0 em todas, o resumo diz que nada foi gravado e repete o passo de confiança do
+    agente.
+21. Dado um Hermes de fixture cujo processo de entrega já está em execução (como depois do
+    `on_session_start`) e cujo plugin entrega N registros (3 na prova) e sai logo depois do
+    último, quando `skill-me hermes` termina, as capturas da execução somam
+    `counters.persisted` = N e estão `stopped`.
+22. Quando o agente termina por sinal (do terminal, ou SIGTERM repassado), a execução é encerrada
+    como em 20 e o launcher termina pelo mesmo sinal no POSIX. No Windows, o launcher sai com o
     código do agente.
-23. Se o agente não iniciar (`ENOENT` → 127; outro erro de início → 126), a captura criada fica
-    `stopped` com 0 eventos, e o stderr mostra o código de início.
-24. Se o encerramento da captura falhar (lock ocupado por mais de 2 s, ou E/S), o stderr mostra o
-    código fechado, que a captura continua `active`, o ID dela e o comando `privacy stop` que a
-    encerra. O código de saída continua o do agente.
+23. Se o agente não iniciar (`ENOENT` → 127; outro erro de início → 126), a execução é encerrada
+    sem espera, com a captura `segment: 1` `stopped` e 0 eventos, e o stderr mostra o código de
+    início.
+24. Se o encerramento da execução falhar (lock ocupado por mais de 2 s, ou E/S), o stderr mostra o
+    código fechado, que a captura corrente continua `active`, o ID dela e o comando `privacy stop`
+    que a encerra. O código de saída continua o do agente.
 25. Quando duas invocações rodam ao mesmo tempo, com agentes de fixture gravando de forma
-    intercalada, cada uma tem ID e chave próprios e nenhuma captura contém registro da outra. A
-    saída da primeira encerra só a captura dela: a outra continua `active` e grava os eventos
-    seguintes.
-26. Quando `npm run off` ou `npm run on` roda durante uma invocação, a captura dela continua
-    `active` e o próximo evento da sessão é gravado nela.
+    intercalada, cada uma tem ID de execução, capturas e chaves próprios e nenhuma captura contém
+    registro da outra. A saída da primeira encerra só a execução dela: a captura da outra continua
+    `active` e grava os eventos seguintes.
+26. Quando `npm run off` ou `npm run on` roda durante uma invocação, a captura corrente dela
+    continua `active` e o próximo evento da sessão é gravado nela.
 27. Quando o usuário executa `skill-me report [--skill <SKILL.md>] [--format text|markdown|json]`,
-    sai o relatório existente da captura `origin: "launch"` de maior (`createdAt`, `id`) na raiz
-    configurada, sem `--root` nem `--capture`, com a linha `Captura: <id>` (no JSON,
-    `timeline.capture.id`). `integrations report --latest` e `npm run status` continuam
-    escolhendo e listando só capturas `origin: "automatic"`.
+    sem `--root` nem `--capture`, sai o relatório da execução `skill-me` iniciada por último na
+    raiz configurada: todas as capturas encontradas dela, em ordem de segmento, uma seção por
+    captura com o relatório existente dessa captura (linha `Captura: <id>`), precedidas do ID da
+    execução, dos segmentos encontrados, dos segmentos ausentes e de se a execução ainda está
+    aberta. No JSON, o mesmo em `skillMeLaunchReport` (Landing do checklist). Cada seção avalia só
+    a própria captura. `integrations report --latest` e `npm run status` continuam escolhendo e
+    listando só capturas `origin: "automatic"`.
 28. Sem nenhuma captura `origin: "launch"` na raiz, `skill-me report` sai com 3
     (`no_launch_capture`). Sem raiz configurada, sai com 3 (`not_configured`). Os dois erros saem
     no JSON de erro `schemaVersion: 1` do `report` atual.
@@ -160,21 +176,27 @@ observação global `on`/`off` não muda.
     - o Codex não tem evento nativo de ativação de skill: ler um `SKILL.md` aparece só como
       operação de ferramenta;
     - os hooks do Codex cobrem só ferramentas locais, e as hospedadas ficam fora;
-    - o limite é de 500 eventos ou 8 MiB por invocação;
-    - um encerramento forçado do launcher (SIGKILL, TerminateProcess) deixa a captura `active`;
+    - cada captura tem até 500 eventos ou 8 MiB, e a execução continua em capturas sucessivas,
+      com chave própria cada uma, até o agente sair;
+    - entregas que chegam mais de 750 ms depois da saída do agente não entram na execução;
+    - um encerramento forçado do launcher (SIGKILL, TerminateProcess) deixa a captura corrente
+      `active` e a execução aberta;
     - o próximo passo depois da sessão é `skill-me report`.
 
-    As frases dos guias que dizem que o par de variáveis só aponta para uma captura criada com
-    `privacy start` passam a incluir a captura criada pela invocação.
+    Os guias que descrevem o vínculo por ambiente passam a citar o par `SKILL_ME_LAUNCH_ROOT`/
+    `SKILL_ME_LAUNCH_ID`, definido só pelo launcher, e a precedência dele sobre o par manual e o
+    `on`.
 
 ## States
 
-Ciclo de vida da captura `origin: "launch"`.
+Ciclo de vida de cada captura `origin: "launch"`.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> active: skill-me <agente> cria a captura (15)
-    active --> stopped: o agente sai (20)
+    [*] --> active: skill-me <agente> abre a execução com o segmento 1 (15)
+    [*] --> active: a captura corrente não comporta o registro; nasce a sucessora (19)
+    active --> stopped: não comporta o próximo registro; a sucessora assume (19)
+    active --> stopped: o agente sai e a execução é encerrada (20)
     active --> stopped: o agente termina por sinal (22)
     active --> stopped: o agente não inicia (23)
     active --> active: o encerramento falha (24)
@@ -184,13 +206,24 @@ stateDiagram-v2
     stopped --> [*]: privacy prune/delete --apply depois da retenção (existing)
 ```
 
+Ciclo de vida da execução (o ponteiro do checklist).
+
+```mermaid
+stateDiagram-v2
+    [*] --> aberta: skill-me <agente> antes de iniciar o agente (15)
+    aberta --> aberta: captura sucessora (19)
+    aberta --> encerrada: o agente sai, termina por sinal ou não inicia (20, 22, 23)
+    aberta --> aberta: o encerramento falha (24)
+    aberta --> aberta: launcher encerrado à força (Unresolved 5)
+```
+
 ## Out of scope
 
 - Migração para SQLite e `skill-me teach`: são entregas próprias, segundo a issue.
 - Publicar o pacote, enviar dados pela rede ou fazer merge automático: a issue não autoriza.
 - Ligar ou desligar a observação global a partir do launcher, ou mudar `observe setup/on/off/status`, `integrations report --latest` e o wrapper `integrations run --agent codex`: a invocação autoriza só a própria sessão.
-- Capturas sucessivas dentro de uma invocação: a questão está aberta na `Unresolved` 1, e o plano foi escrito com o descarte.
-- Encerrar, numa execução seguinte, uma captura deixada `active` por encerramento forçado: depende da `Unresolved` 5 e exige um novo campo persistido.
+- Encerrar, numa execução seguinte, uma execução deixada aberta por encerramento forçado: depende da `Unresolved` 5 e exige um novo campo persistido.
+- Avaliar a skill sobre a execução inteira, juntando capturas: seria um motor de avaliação novo; o relatório projeta o existente, uma seção por captura.
 - Conceder confiança nativa ou ler a confiança de Claude/Codex: o instalador nunca altera `plugins.enabled` do Hermes, e não há fonte estática documentada para a confiança de Claude/Codex (`docs/agent-compatibility.md`).
 - Primeiro uso não interativo (`--yes`), flags próprias misturadas aos argumentos do agente e escolha de outro diretório de configuração do agente por invocação: a issue não pede nenhum deles.
 - Iniciar `.cmd`/`.bat` por shell: os argumentos deixariam de chegar literais. O wrapper atual já recusa pelo mesmo motivo.
@@ -209,7 +242,7 @@ stateDiagram-v2
 | comando `skill-me <agente>`, primeiro uso | defaults propostos | 8 |
 | comando `skill-me <agente>`, primeiro uso | códigos de saída | 10, 11, 12, 14 |
 | comando `skill-me <agente>`, primeiro uso | execução repetida | 13 |
-| comando `skill-me report` | formato de saída | existing: renderizador do `report` (texto, Markdown, JSON) |
+| comando `skill-me report` | formato de saída | 27: relatório existente por captura, com o cabeçalho da execução; JSON `skillMeLaunchReport` |
 | comando `skill-me report` | flags e defaults | 27 |
 | comando `skill-me report` | estado vazio e códigos | 28 |
 | comando `skill-me report` | falha no meio | existing: consulta só leitura, sem lock; `lock_present` → 4 sem mudar nada |
@@ -223,40 +256,43 @@ stateDiagram-v2
 
 ## Swept
 
-- validation: 4, 7, 11; 2 (argumentos repassados sem interpretação).
+- validation: 4, 7, 11; 2 (argumentos repassados sem interpretação); 17 (par `SKILL_ME_LAUNCH_*` inválido).
 - failure modes: 14, 16, 23, 24.
 - idempotency and retry: 13. Existing: encerrar uma captura já `stopped` não muda nada (`transition` em `privacy/lifecycle.mjs`), e nenhuma entrega é reenviada (#8, `traces/delivery.mjs`).
-- authorization: 9 e 10 (consentimento no primeiro uso), 15 (vínculo só no ambiente do agente), 18 (autorização global intacta).
-- concurrency and ordering: 21 (entregas Hermes em voo antes do encerramento), 25 (invocações simultâneas), 26 (`on`/`off` concorrentes).
-- data lifecycle: 15 (retenção de 7 dias) e 20 (`endedAt` inicia a retenção; a limpeza continua o `privacy prune` existente); Unresolved 5 (encerramento forçado).
+- authorization: 9 e 10 (consentimento no primeiro uso), 15 (vínculo só no ambiente do agente), 18 (autorização global intacta), 20 (nenhum registro entra depois do encerramento).
+- concurrency and ordering: 19 (sucessora criada sob o lock que gravou a cheia, também entre produtores), 21 (entregas Hermes em voo antes do encerramento), 25 (invocações simultâneas), 26 (`on`/`off` concorrentes).
+- data lifecycle: 15 e 19 (retenção de 7 dias por captura) e 20 (`endedAt` inicia a retenção; a limpeza continua o `privacy prune` existente); Unresolved 5 (encerramento forçado).
 - external-dependency failure: 7 (agente ausente), 20 (sem confiança, nada gravado e o resumo explica). Existing: uma falha de entrega nunca bloqueia o agente (#8, `docs/traces.md`).
-- state transitions: 20, 22, 23, 24, 26 (ver `States`).
-- observability: 20 (resumo final), 27 e 28 (consulta sem ID).
+- state transitions: 19, 20, 22, 23, 24, 26 (ver `States`).
+- observability: 20 (resumo final), 27 e 28 (consulta sem ID, com segmentos e lacunas).
 
 ## Impact
 
 | Frente | O que muda |
 | --- | --- |
-| domínio | Termo novo: `invocação`. É uma execução de `skill-me <agente>`: um processo do agente e uma captura `origin: "launch"`. Vive no novo launcher e no `state.json` do store. |
-| domínio | Termo existente: `origin`. Hoje fica ausente (manual) ou vale `automatic`; passa a aceitar `launch`. Ramificam nele: `isValidState`, `publicCapture`, `automaticCaptures` (filtro do `off` e do `status`), `latestAutomaticCapture` (`report --latest`), a saída de `privacy list/status/export` e as provas de formato do store. |
-| domínio | Termo existente: a `root` de `<home>/.skill-me/observe.json`. Hoje é a raiz da observação automática; passa a ser também a raiz das capturas do launcher, e o primeiro uso a grava. Dependem dela: `observe setup/on/off/status`, `report --latest`, a rota automática de hooks e `ingest`, e o plugin Hermes (`hermesDelivery`, gravado junto). Trocar a raiz pelo `setup` muda onde as próximas invocações gravam. |
-| domínio | Termo existente: o par `SKILL_ME_CAPTURE_ROOT`/`SKILL_ME_CAPTURE_ID`. Hoje só o usuário o define; passa a ser definido também pelo launcher, só no ambiente do agente. A precedência sobre o `on` não muda. Depende dele: `captureDeliveryFor` (hooks, `ingest` e wrapper). |
+| domínio | Termo novo: `execução` (`invocation` nos dados). É uma execução de `skill-me <agente>`: um processo do agente e as capturas `origin: "launch"` sucessivas que ele grava, numeradas por `segment` a partir de 1. Vive no novo launcher, no `state.json` de cada captura e no ponteiro da execução aberta no store. |
+| domínio | Termo existente: `origin`. Hoje fica ausente (manual) ou vale `automatic`; passa a aceitar `launch`, que traz também `invocation` e `segment`. Ramificam nele: `isValidState`, `publicCapture`, `automaticCaptures` (filtro do `off` e do `status`), `latestAutomaticCapture` (`report --latest`), a saída de `privacy list/status/export` e as provas de formato do store. |
+| domínio | Termo existente: a sucessão de capturas por limite. Hoje só a observação automática a faz (`appendAutomatic`, chave por sessão no `observe.json` da raiz); passa a servir também à execução, pela mesma rotina, com o ponteiro da execução no lugar do mapa de sessões. |
+| domínio | Termo existente: a `root` de `<home>/.skill-me/observe.json`. Hoje é a raiz da observação automática; passa a ser também a raiz das execuções do launcher, e o primeiro uso a grava. Dependem dela: `observe setup/on/off/status`, `report --latest`, a rota automática de hooks e `ingest`, e o plugin Hermes (`hermesDelivery`, gravado junto). Trocar a raiz pelo `setup` muda onde as próximas invocações gravam. |
+| domínio | Vínculo por ambiente: hoje há o par manual `SKILL_ME_CAPTURE_ROOT`/`SKILL_ME_CAPTURE_ID`, com precedência sobre o `on`. Entra o par `SKILL_ME_LAUNCH_ROOT`/`SKILL_ME_LAUNCH_ID`, definido só pelo launcher no ambiente do agente, com precedência sobre os dois para hooks e `ingest`. Depende disso: `captureDeliveryFor` (hooks, `ingest` e wrapper; o wrapper continua só com o par manual). |
 | pacote | `package.json` ganha `bin` com `skill-me` e continua `private: true`; os scripts não mudam. |
 | configuração do agente | O primeiro uso grava hooks/plugin pelo instalador existente no diretório de configuração de usuário do agente, só depois da confirmação. Mover o checkout continua exigindo reinstalar, e o `plan` passa a mostrar a mudança. |
-| dados armazenados | Nada a migrar: as capturas existentes continuam legíveis. Uma captura `launch` só é legível por um checkout com esta entrega; um checkout anterior responde `capture_invalid`. |
+| dados armazenados | Nada a migrar: as capturas existentes continuam legíveis. A pasta do store ganha `launches/`, com um arquivo por execução aberta. Uma captura `launch` só é legível por um checkout com esta entrega; um checkout anterior responde `capture_invalid` para ela. |
 | documentação | README, `docs/traces.md`, `docs/privacidade.md` e `docs/agent-observation.md` mudam (30). As provas de documentação existentes (`tests/integrations/**/docs*.test.mjs`) acompanham. |
 | testes | Agentes de fixture no PATH, com home, prefixo npm e diretórios de configuração temporários. Verifier independente (perfil `light`). |
 
 ## Decided
 
-Estas decisões são propostas deste plano, derivadas da issue e do código. Valem quando o
-proprietário aprovar o plano.
+Estas decisões derivam da issue, da resposta do proprietário e do código. A forma literal de
+cada formato fica no `Landing` de `.checks/issue-25-agent-launch.md`, escrita antes do código.
 
 | Decisão | Forma | Alternativa descartada |
 | --- | --- | --- |
 | Executável local | `package.json` → `"bin": { "skill-me": "<entrada do launcher>" }`, mantendo `"private": true`. O comando é disponibilizado por `npm link` (ou `npm install --global <checkout>`) a partir do checkout, ao qual fica ligado. | Instalador próprio que grava shims no PATH: cria um padrão de escrita fora do checkout sem outro consumidor. Publicar o pacote: a issue não autoriza. |
-| Vínculo da sessão | Uma captura por invocação, criada antes do agente. O par existente `SKILL_ME_CAPTURE_ROOT`/`SKILL_ME_CAPTURE_ID` vai só no ambiente do processo do agente e substitui os valores herdados. O launcher encerra a captura (`stopped`) no fim. Com isso, capturas sucessivas numa invocação exigiriam trocar este vínculo. | Ligar o `on` global durante a invocação: autorizaria toda sessão do usuário até o `off`, e o `off` de uma invocação cortaria a outra. Vínculo novo com capturas sucessivas: exige variável e mapa persistidos novos, sem decisão (`Unresolved` 1). |
-| Proveniência persistida | `state.json`, ainda `captureVersion: 1`, com `"origin":"launch"` só nas capturas do launcher. As manuais e as `automatic` não mudam. Checkouts anteriores recusam essas capturas (`capture_invalid`). | `origin: "automatic"`: o `off` encerra toda captura automática ativa (`changeObservation` em `privacy/store.mjs`) e cortaria uma invocação em curso, e `status` e `report --latest` misturariam as duas origens. Captura manual com um ponteiro no home: estado extra, e invocações simultâneas sobrescreveriam o ponteiro. |
+| Vínculo da execução | O launcher abre a execução antes do agente e põe só no ambiente do processo do agente o par novo `SKILL_ME_LAUNCH_ROOT`/`SKILL_ME_LAUNCH_ID` (raiz real e ID da execução). Os produtores encontram a captura corrente pelo ponteiro da execução no store, lido e trocado sob o `.lock` da raiz. Para hooks e `ingest`, o par novo tem precedência sobre o par manual e sobre o `on`; incompleto ou inválido não grava. O launcher encerra a execução no fim, e o ponteiro sai. | Par manual `SKILL_ME_CAPTURE_ROOT`/`SKILL_ME_CAPTURE_ID` com ID fixo: cada produtor ficaria preso à captura do início e não troca de captura no limite. Reusar `SKILL_ME_CAPTURE_ID` com o ID da execução: um checkout anterior o leria como ID de captura. Ligar o `on` global durante a invocação: autorizaria toda sessão do usuário até o `off`, e o `off` de uma invocação cortaria a outra. |
+| Proveniência persistida | `state.json`, ainda `captureVersion: 1`, com `"origin":"launch"`, `"invocation"` e `"segment"` só nas capturas do launcher. As manuais e as `automatic` não mudam. Checkouts anteriores recusam essas capturas (`capture_invalid`). | `origin: "automatic"`: o `off` encerra toda captura automática ativa (`changeObservation` em `privacy/store.mjs`) e cortaria uma invocação em curso, e `status` e `report --latest` misturariam as duas origens. Lista de segmentos só no ponteiro: cresce sem limite e some com o ponteiro no fim. |
+| Sucessão no limite | A mesma rotina de `appendAutomatic` (#23): numa só tomada do lock, a cheia vira `stopped` e a sucessora nasce com chave nova e recebe o registro que não coube. | Copiar a rotina para o launcher: duas regras de sucessão que divergem em silêncio. Descartar o excedente numa captura única (alternativa A): recusada pelo proprietário. |
+| Encerramento | Depois da saída do agente, uma espera fixa de 750 ms (o prazo de entrega de um evento da #8) e o encerramento sob o lock: a corrente vira `stopped` e o ponteiro sai; entrega posterior é recusada sem gravar. | Encerrar sem espera: o `ingest` do Hermes lê o pipe depois da saída do agente e perderia os últimos eventos. Registro persistido de cada produtor vivo: mais estado em disco, e um produtor que ainda está iniciando continua fora dele. |
 | Raiz única | As capturas do launcher usam a `root` de `<home>/.skill-me/observe.json`. O primeiro uso grava esse arquivo com o formato, a validação e a barreira do `observe setup` da #23. | Configuração própria do launcher: seria uma segunda raiz, um segundo preparo e outra fonte de verdade para o mesmo usuário. |
 
 ## Relations
@@ -265,16 +301,19 @@ proprietário aprovar o plano.
 erDiagram
     CONFIGURACAO_DO_USUARIO ||--|| RAIZ : "aponta - decisão Raiz única"
     RAIZ ||--o{ CAPTURA : "guarda"
-    INVOCACAO ||--|| CAPTURA : "grava em - origin launch, decisões Vínculo e Proveniência"
+    RAIZ ||--o{ PONTEIRO_DA_EXECUCAO : "guarda as execuções abertas - decisão Vínculo"
+    EXECUCAO ||--|{ CAPTURA : "grava em segmentos 1..n - decisões Proveniência e Sucessão"
+    EXECUCAO ||--o| PONTEIRO_DA_EXECUCAO : "existe enquanto aberta - decisões Vínculo e Encerramento"
+    PONTEIRO_DA_EXECUCAO ||--|| CAPTURA : "aponta a corrente - decisão Sucessão"
 ```
 
 ## Surface
 
 | Comando | Entrada | Saída | Código | Critérios |
 | --- | --- | --- | --- | --- |
-| `skill-me <codex\|claude\|hermes> [args…]` | argumentos literais para o agente; terminal herdado; no primeiro uso, a resposta à prévia | stdout e stderr do agente; no stderr do launcher, prévia, passo de confiança e resumo final | código do agente ou o mesmo sinal; 127/126 no início; 2 `root_not_absolute`; 3 `setup_declined`, `setup_required` ou captura indisponível; 4/5 do setup, do instalador ou do store | 2–26 |
-| ambiente do agente | — | `SKILL_ME_CAPTURE_ROOT` e `SKILL_ME_CAPTURE_ID` da captura da invocação | — | 15 |
-| `skill-me report` | `--skill <SKILL.md>`, `--format text\|markdown\|json` | relatório existente com `Captura: <id>` | 0; 2; 3 `no_launch_capture` ou `not_configured`; 4; 5 | 27, 28 |
+| `skill-me <codex\|claude\|hermes> [args…]` | argumentos literais para o agente; terminal herdado; no primeiro uso, as respostas à prévia | stdout e stderr do agente; no stderr do launcher, prévia, passo de confiança e resumo final | código do agente ou o mesmo sinal; 127/126 no início; 2 `root_not_absolute`; 3 `setup_declined`, `setup_required` ou execução indisponível; 4/5 do setup, do instalador ou do store | 2–26 |
+| ambiente do agente | — | `SKILL_ME_LAUNCH_ROOT` e `SKILL_ME_LAUNCH_ID` da execução | — | 15, 17 |
+| `skill-me report` | `--skill <SKILL.md>`, `--format text\|markdown\|json` | cabeçalho da execução e relatório existente de cada captura; JSON `skillMeLaunchReport` | 0; 2; 3 `no_launch_capture` ou `not_configured`; 4; 5 | 27, 28 |
 | `skill-me --help`, `skill-me help` | — | ajuda em stdout | 0 | 29 |
 | `skill-me` sem argumento ou com subcomando desconhecido | — | ajuda em stderr | 2 | 29 |
 | `package.json` `bin` | `npm link` no checkout | comando `skill-me` no prefixo npm | do npm | 1 |
@@ -282,19 +321,25 @@ erDiagram
 ## Sources
 
 - [Issue #25](https://github.com/oldboydev/skill-me/issues/25), lida de
-  `.checks/code-review/issue-25/context.json`, sem comentários. Define o problema, o resultado e
-  os critérios de aceite. Trechos que decidem:
+  `.checks/code-review/issue-25/context.json`, com o AC3 atualizado. Define o problema, o
+  resultado e os critérios de aceite. Trechos que decidem:
   - “O proprietário pediu nesta conversa `skill-me codex` como forma de uso e confirmou que o
     comando deve abrir o Codex CLI, capturar automaticamente até sair e seguir o mesmo padrão para
     Claude e Hermes.”
+  - AC3: “Ao atingir 500 eventos ou 8 MiB, a invocação continua em capturas sucessivas até o
+    agente sair, preservando os limites e a chave própria de cada captura.”
   - “Esta issue trata da experiência de execução; a migração para SQLite e o futuro
     `skill-me teach` ficam em entregas próprias. Não há autorização para publicar o pacote, enviar
     dados pela rede ou fazer merge automático.”
+- [Decisão do proprietário, 26/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6407670364),
+  resposta à antiga `Unresolved` 1 (A: descarte numa captura; B: capturas sucessivas): “Capturas
+  sucessivas até o agente sair (recomendado)”. Fecha a questão bloqueante com B e substitui o
+  descarte do plano inicial (critério 19 e decisão “Vínculo” reescritos acima).
 - Pedido do proprietário nesta sessão (sem endereço): “pega a proxima issue planejar e
-  implementar”. Autoriza executar o escopo já decidido da #25; não aprova decisões novas.
+  implementar”. Autoriza executar o escopo decidido da #25; não aprova decisões novas.
 - `.tasks/issue-23-observacao-on-off.md` e o Landing de `.checks/issue-23-observacao-on-off.md`:
-  configuração única, `origin: "automatic"`, o `off` encerra as automáticas, conteúdo ligado pelo
-  `on`, códigos 0/2/3/4/5 e a paciência de 2 s com o lock.
+  configuração única, `origin: "automatic"`, a sucessão de capturas por limite, o `off` encerra as
+  automáticas, conteúdo ligado pelo `on`, códigos 0/2/3/4/5 e a paciência de 2 s com o lock.
 - `.tasks/issue-8-traces.md` e `docs/traces.md`: o par herdado pelo agente, a precedência sobre o
   `on`, o prazo de entrega de 750 ms e os códigos de entrega.
 - `.tasks/issue-5-privacidade.md` e `docs/privacidade.md`: a política, os limites de 500 eventos/8
@@ -308,7 +353,9 @@ erDiagram
 - `src/integrations/codex-run.mjs`: o precedente de repasse de sinais, dos códigos 127/126 e da
   recusa de `.cmd`/`.bat`.
 - `src/integrations/privacy/store.mjs`: `isValidState`, `automaticCaptures`,
-  `changeObservation` e `latestAutomaticCapture`.
+  `changeObservation`, `appendAutomatic` e `latestAutomaticCapture`.
+- `src/integrations/hermes/plugin/__init__.py`: o plugin entrega por uma thread daemon a um
+  processo `ingest` que herda o ambiente do Hermes e lê o pipe até o EOF, depois da saída dele.
 - `README.md`: as pastas sugeridas para as capturas, usadas como defaults em 8.
 - [OpenAI Docs: Hooks](https://learn.chatgpt.com/docs/hooks): a cobertura só de ferramentas
   locais e a falta de evento de skill. A #23 já citava esta página; este plano não a consultou de
@@ -322,10 +369,12 @@ implementar.
 
 ## Unresolved
 
+A antiga questão 1 (o que fazer no limite de 500 eventos ou 8 MiB) foi respondida pelo
+proprietário com B (ver `Sources`) e saiu desta tabela; as demais mantêm o número.
+
 | # | Kind | Question | Until answered |
 | --- | --- | --- | --- |
-| 1 | blocks | Quando uma invocação passa de 500 eventos ou 8 MiB, o que acontece? **(A)** O excedente é descartado e contado na mesma captura (uma captura por invocação). **(B)** A sessão continua em capturas sucessivas, como no `on`. Recomendação: **A**. O critério de aceite 3 pede “limites e retenção da política existente”; A reaproveita o par atual, sem vínculo nem formato persistido novos, e o descarte aparece nos contadores e no resumo final. B exige um vínculo novo por invocação, com variável e mapa persistidos. | O critério 19 e a decisão “Vínculo da sessão” foram escritos com A. Se a resposta for B, os dois mudam antes de implementar o vínculo. |
-| 2 | blocks go-live | Para o uso real, o proprietário precisa confirmar a confiança de cada agente (`/hooks` no Claude e no Codex, `hermes plugins enable skill-me-observer`) e rodar uma sessão real com `skill-me <agente>`. Só essa sessão confirma que os hooks do agente herdam o par. | As provas usam agentes de fixture e não iniciam nenhum agente real. Até essa sessão, o uso real não está comprovado; sem confiança, o resumo final mostra 0 eventos gravados (20). |
-| 3 | open | Conteúdo nas capturas da invocação: o padrão é `content: true`, como no `on` aprovado na #23. O critério de aceite 3 fala em eventos “sanitizados”, e o relatório depende dos comandos literais. A prévia do primeiro uso anuncia esse comportamento. A alternativa é deixar o conteúdo desligado; aí o relatório não comprova comandos. | Os critérios 8 e 15 foram escritos com `content: true`. |
-| 4 | open | Falha de preparação (recusa, instalador, raiz ou captura indisponível): o padrão é não iniciar o agente e sair com o código. A alternativa é iniciar o agente sem captura, com um aviso. | Os critérios 10, 14 e 16 foram escritos com o padrão. |
-| 5 | open | Encerramento forçado do launcher (SIGKILL, TerminateProcess, queda de energia): o padrão é a captura ficar `active`, visível em `skill-me report` e `privacy list` e encerrável com `privacy stop`, com o limite documentado. A alternativa é a próxima invocação encerrar capturas `launch` órfãs, o que exige gravar o processo dono num campo persistido novo. | `States` mostra a aresta sem critério; o critério 30 documenta o limite. |
+| 2 | blocks go-live | Para o uso real, o proprietário precisa confirmar a confiança de cada agente (`/hooks` no Claude e no Codex, `hermes plugins enable skill-me-observer`) e rodar uma sessão real com `skill-me <agente>`. Só essa sessão confirma que os hooks do agente herdam o par da execução. | As provas usam agentes de fixture e não iniciam nenhum agente real. Até essa sessão, o uso real não está comprovado; sem confiança, o resumo final mostra 0 eventos gravados (20). |
+| 3 | open | Conteúdo nas capturas da invocação: o padrão é `content: true`, como no `on` aprovado na #23. O critério de aceite 3 fala em eventos “sanitizados”, e o relatório depende dos comandos literais. A prévia do primeiro uso anuncia esse comportamento. A alternativa é deixar o conteúdo desligado; aí o relatório não comprova comandos. | Os critérios 8, 15 e 19 foram escritos com `content: true`. |
+| 4 | open | Falha de preparação (recusa, instalador, raiz ou execução indisponível): o padrão é não iniciar o agente e sair com o código. A alternativa é iniciar o agente sem captura, com um aviso. | Os critérios 10, 14 e 16 foram escritos com o padrão. |
+| 5 | open | Encerramento forçado do launcher (SIGKILL, TerminateProcess, queda de energia): o padrão é a captura corrente ficar `active` e a execução aberta, visíveis em `skill-me report` e `privacy list`, com a captura encerrável por `privacy stop` e o limite documentado. A alternativa é a próxima invocação encerrar execuções órfãs, o que exige gravar o processo dono num campo persistido novo. | `States` mostra as arestas sem critério; o critério 30 documenta o limite. |

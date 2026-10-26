@@ -25,3 +25,16 @@ Verificação desta etapa: `git diff --check` sem erros. Não foram executados
 testes de produto; só documentos de planejamento foram criados. O fluxo formal
 `review:run` fica para a entrega implementada e verificada, sem consumir uma
 tentativa por um plano ainda bloqueado.
+
+## Decisão recebida
+
+Em 26/10/2026, o proprietário respondeu à pergunta de Planning:
+“Capturas sucessivas até o agente sair (recomendado)”. A alternativa B passa a
+integrar o escopo solicitado para implementação. O AC3 e o
+[registro na issue](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6407670364)
+foram atualizados. O plano inicial com descarte deve ser substituído antes do
+código; o vínculo por invocação e a consulta precisam alcançar todos os segmentos.
+
+O Claude foi iniciado para atualizar plano e checklist antes de implementar,
+executar as provas e registrar commits locais. Verifier independente e revisão
+formal continuam como etapas posteriores obrigatórias do orquestrador.
