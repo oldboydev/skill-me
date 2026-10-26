@@ -193,6 +193,7 @@ o prazo `settleMaxMs` existente, inclusive o padrão 5000 ms, permanece e as pro
 mantêm callbacks e ferramentas inalterados (task 32, AC6).
 Proof: `node --test --test-name-pattern="I25-C40 " tests/integrations/hermes-harness.unit.test.mjs`
 Proof: `node --test --test-name-pattern="I4-C20 |I4-C21 |I4-C37 " tests/integrations/hermes-plugin.native.test.mjs`
+Proof: `node --test --test-name-pattern="I25-C40 " tests/integrations/hermes-plugin.native.test.mjs` (acréscimo do build: com o runtime local, a harness real reporta `concluded`, `inactive`, `failed` e `timeout` nos destinos de captura, ingest, sem destino, falha e travado)
 
 O gate `npm test` completo continua obrigatório e deve executar os casos nativos aplicáveis.
 A autorização está em issuecomment-6419121665. Não altera C1–C37, tolerâncias, plugin do produto

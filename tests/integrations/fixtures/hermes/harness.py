@@ -6,9 +6,17 @@ real (que dispara pre_tool_call/post_tool_call pelo ``invoke_hook`` do host); os
 hooks são disparados pelo ``hermes_cli.plugins.invoke_hook`` real com os kwargs dos
 locais de disparo. O resultado vai para o arquivo indicado no cenário."""
 
+import importlib.util
 import json
 import sys
 import time
+from pathlib import Path
+
+# Quando parar de esperar a entrega (settle.py, ao lado): com ``-I`` a pasta do
+# script não está no sys.path, então o módulo é carregado pelo caminho.
+_spec = importlib.util.spec_from_file_location("skill_me_harness_settle", Path(__file__).with_name("settle.py"))
+settle = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(settle)
 
 
 def main():
@@ -69,20 +77,14 @@ def main():
 
     observer = sys.modules.get("hermes_plugins.skill_me_observer")
     stats = None
+    settled = None
     if observer is not None:
-        # Espera a thread de entrega ficar quieta (contadores estáveis por 300 ms).
-        deadline = time.monotonic() + scenario.get("settleMaxMs", 5000) / 1000
-        last = None
-        stable_since = time.monotonic()
-        while time.monotonic() < deadline:
-            current = observer.observer_stats()
-            if current != last:
-                last = current
-                stable_since = time.monotonic()
-            elif time.monotonic() - stable_since > 0.3:
-                break
-            time.sleep(0.05)
-        stats = observer.observer_stats()
+        # Espera a entrega concluir, falhar ou o prazo do cenário acabar — não
+        # contadores parados: a abertura do processo de entrega pode passar de
+        # 300 ms sem mudar nenhum (issue #25, S6).
+        outcome = settle.wait_for_delivery(observer.observer_stats, settle.settle_max_ms(scenario))
+        stats = outcome["stats"]
+        settled = {"state": outcome["state"], "waitedMs": outcome["waitedMs"]}
 
     fixture_tool = sys.modules.get("hermes_plugins.skillme_fixture_tool")
     result = {
@@ -95,6 +97,7 @@ def main():
         "invokeResults": invoke_results,
         "blockMessage": block,
         "stats": stats,
+        "settle": settled,
         "dontWriteBytecode": sys.flags.dont_write_bytecode,
         "isolated": sys.flags.isolated,
     }

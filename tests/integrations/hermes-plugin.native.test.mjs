@@ -327,6 +327,20 @@ test("I4-C37 Hermes: seis casos de falha mantêm callbacks neutros e ferramenta 
   assert.equal(runs.capture.result.stats.oversize, 1);
 });
 
+// Issue #25, S6: com o runtime real, a harness termina a espera pelo estado da
+// entrega (fixtures/hermes/settle.py), não por 300 ms de contadores parados.
+test("I25-C40 harness nativa: entrega concluída, sem destino, destino que falha e destino travado terminam a espera com estados distintos", { skip: SKIP }, () => {
+  const observed = {};
+  for (const name of ["capture", "ingest", "inactive", "spawnfail", "exit", "disconnect", "stall"]) observed[name] = runs[name].result.settle?.state;
+  assert.deepEqual(observed, { capture: "concluded", ingest: "concluded", inactive: "inactive", spawnfail: "failed", exit: "failed", disconnect: "failed", stall: "timeout" });
+  // Concluída: todo registro posto na fila saiu dela (entregue ou grande demais).
+  const capture = runs.capture.result.stats;
+  assert.equal(capture.delivered + capture.oversize, capture.enqueued, JSON.stringify(capture));
+  // Travado: espera o prazo do cenário inteiro (settleMaxMs 2000), com a fila ainda cheia.
+  assert.ok(runs.stall.result.settle.waitedMs >= 2000, `esperou ${runs.stall.result.settle.waitedMs} ms`);
+  assert.ok(runs.stall.result.stats.droppedQueueFull > 0);
+});
+
 // Capturas automáticas legíveis da raiz, pelo CLI (sem assert: usado na espera).
 function automaticCaptures(root) {
   const run = runIntegrations(["privacy", "list", "--root", root]);
