@@ -233,3 +233,17 @@ C1–C37 e serão verificados no diff completo.
 - O que foi abandonado: prova do Ctrl+C do Windows por `emit("SIGINT")` em processo — não exercita
   o console; substituída pelo `CTRL_C_EVENT` real. Escolha da execução pelo `createdAt` do menor
   segmento restante — escolhe a execução errada com o segmento 1 apagado.
+
+Fechamento do escopo final, C1–C40 (registros acima preservados; o lote inicial fechou C1–C37):
+
+- Onde a fronteira caiu agora: lote único, C1–C40 fechados. Correções da verificação 1 e C38 em
+  `3b16e3b` (Landing) e `86e9ba1`; harness do Hermes (C39, C40) em `c89b8f3` (Landing) e `9148a5d`.
+  Execuções finais do alvo I25 (59 testes) em Windows Node 24.22.1, Windows Node 24.13.0 e WSL
+  Node 24.13.0, e o `npm test` inteiro no Windows, em `.checks/issue-25-agent-launch.build.md`.
+- O que o proprietário decidiu depois do lote inicial: “Autorizar ajuste pontual da harness”
+  (comentário 6419121665, AC6), limitado à espera da harness antiga e às provas, sem mudar plugin,
+  callbacks, runtimes pessoais, tolerâncias ou prazo máximo. O orquestrador fixou C38 = console do
+  Windows e C39/C40 = harness (`af3c7b7`).
+- O que foi abandonado: escrita e leitura síncronas no console do Windows (mojibake e caminho com
+  acento trocado, medidos); a espera por 300 ms de contadores parados (encerra com a fila cheia
+  enquanto o `Popen` leva 454–469 ms).

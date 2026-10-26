@@ -235,3 +235,66 @@ corrigidas, e o gate nativo antigo (F2) depende da decisão do proprietário.
   fez. Os arquivos dessa edição não foram tocados nem commitados aqui.
 - Limitações anteriores continuam: uso real sem sessão de agente (`Unresolved`
   2); C23 sem asserção de tempo para o “sem espera”.
+
+## Ajuste autorizado da harness Hermes (S6, C39–C40)
+
+Autorização do proprietário: “Autorizar ajuste pontual da harness”
+([comentário 6419121665](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6419121665)),
+registrada na issue como AC6 (`.checks/code-review/issue-25/context-harness-approved.json`).
+Mudança de escopo: a entrega passa a incluir a espera da harness nativa antiga do Hermes
+(`tests/integrations/fixtures/hermes/harness.py`) e as provas dela; continua fora mudar o plugin
+do produto, os callbacks, os runtimes pessoais, as tolerâncias ou o prazo máximo. O orquestrador
+registrou critérios 31–32, S6 e a numeração C38 (console) / C39–C40 (harness) em `c4a3927` e
+`af3c7b7`; nenhum outro arquivo dele foi alterado aqui. Isto encerra o F2 da verificação 1, que a
+seção anterior deixava bloqueado.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `c89b8f3` | Landing “Espera da harness nativa do Hermes”, antes do código |
+| `9148a5d` | `fixtures/hermes/settle.py`, a harness usando-o, `hermes-harness.unit.test.mjs` (I25-C39/C40) e a prova nativa I25-C40 |
+
+- **Forma**: `delivery_state(stats)` → `concluded` quando `delivered + oversize +
+  serializationFailed >= enqueued` com a entrega ativa; `failed` desligada com `deliveryFailed > 0`;
+  `inactive` desligada sem perdas; senão `pending`. `wait_for_delivery` relê a cada 50 ms (relógio
+  injetável) até sair de `pending` ou chegar a `settleMaxMs` (`timeout`); o padrão continua 5000 ms.
+  A harness grava `settle: {state, waitedMs}` ao lado dos `stats` de sempre.
+- **RED da espera antiga** (`builder-harness/red.spec.txt`, `c89b8f3`): com um `settle.py`
+  provisório que transcrevia a regra antiga (300 ms parados, linhas 73–84 da harness em
+  `c89b8f3`) e a harness ainda sem mudança, as 5 provas I25-C39/C40 falharam: a harness real
+  gravou `[enqueued, delivered, deliveryFailed] = [12, 0, 0]` (o mesmo sintoma nativo), a
+  pendência encerrou aos 350 ms, a falha terminal e o destino travado saíram como `concluded`. A
+  transcrição não foi commitada. **GREEN** (`green.spec.txt`): 5/5.
+- **Nativo, mesmas condições da máquina** (`Popen` do `node.exe` como o plugin: 469, 468, 469, 469 e
+  454 ms; `popen-latency.txt`): com a harness antiga de `c89b8f3`, o arquivo nativo teve 12 testes,
+  8 pass e 4 fail (I4-C19, I4-C23, I4-C37 e o novo I25-C40; o I23-C8 passou nessa vez); com a nova,
+  12/12 (`native-red-oldharness.spec.txt`, `native-green-isolated.spec.txt`).
+- As asserções nativas antigas (I4-C18 a I4-C23, I4-C37, I4-C44b, I23-C8) não mudaram. O destino
+  travado agora espera o `settleMaxMs` inteiro do cenário (2000 ms) em vez de ~300 ms.
+
+### Gate e execuções finais (HEAD `9148a5d`)
+
+Logs em `.checks/code-review/issue-25/builder-harness/` (pasta ignorada). Uma execução por vez,
+sem suítes concorrentes.
+
+| Execução | Resultado |
+| --- | --- |
+| Windows, Node 24.22.1, `npm test` (12:13–12:21) | **exit 0**: governança 6/6; motor 16/16; doctor 417 (410 pass, 7 skip POSIX/FIFO); integrações 512 (502 pass, **0 fail**, 10 skip), com I4-C18–C23, I4-C37, I4-C44b, os três I23-C8 e o I25-C40 nativo executados e verdes |
+| Windows, Node 24.22.1, alvo I25 (`launch/*.test.mjs` + `hermes-harness.unit.test.mjs`) | 59 testes: 56 pass, 0 fail, 3 skip (C5 POSIX, C6, C15 pty) |
+| Windows, Node 24.13.0 oficial (PATH e `execPath` dele, npm 11.6.2 do zip, sem `npm_execpath`), 12:22–12:24 | 59 testes: 56 pass, 0 fail, 3 skip |
+| WSL `Ubuntu`, Node 24.13.0, npm 11.6.2, Python 3.12.3, uid 1000, sobre `git -c core.autocrlf=false archive 9148a5d` (sha256 `4de22298…71702362`; `get-tar-commit-id` = `9148a5da…`; árvore extraída `4752eb20…` = `HEAD^{tree}`; `cli.mjs` 755) | 59 testes: 55 pass, 0 fail, 4 skip (C4 shim, C5 console, C8 LOCALAPPDATA, C38 console) |
+
+As 5 provas I25-C39/C40 rodaram nos três ambientes (nenhuma pulada); os 59 nomes I25 aparecem um a um
+em cada TAP. `~/.skill-me` e `~/.skill-me-authorization.json` do uid 1000 ausentes antes e depois. Os
+232 scratches `skill-me i4 i25 *` da janela do 24.13.0 (o `after` com `rmSync` não os apaga) foram
+removidos por script do 24.22.1 com caminho conferido no `%TEMP%`, 0 recusas; a cópia do WSL e os
+temporários desta rodada também.
+
+### Riscos e limitações que continuam
+
+- Uso real sem sessão de agente (`Unresolved` 2, `blocks go-live`).
+- A prova pelo console real do Windows (C38, C5) e pelo pty (C15, C12 de um lado) dependem do Python
+  do sistema; sem ele ficam puladas com motivo. C39/C40 também, mas a CI tem Python nos três runners.
+- A espera nativa ainda depende dos contadores do plugin: um registro posto na fila e perdido sem
+  contagem (por exemplo, o processo do Hermes morto no meio) deixaria a espera em `pending` até o
+  `settleMaxMs`, como `timeout` — não como conclusão.
+- C23 continua sem asserção de tempo para o “sem espera”.
