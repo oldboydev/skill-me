@@ -30,7 +30,7 @@ function singleJson(result) {
   try {
     return JSON.parse(result.stdout);
   } catch (cause) {
-    throw new Error(`stdout não é um JSON único: ${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)}`, { cause });
+    throw new Error(`stdout não é um JSON único: ${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)} status=${result.status}`, { cause });
   }
 }
 

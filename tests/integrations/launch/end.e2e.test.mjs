@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
@@ -13,8 +13,8 @@ import { appendRecords, startLaunch } from "../../../src/integrations/privacy/st
 import { INTEGRATIONS_CLI, REPO_ROOT, makeScratch, runIntegrationsJson } from "../helpers/cli.mjs";
 import { FIXTURES_DIR } from "../helpers/fixtures.mjs";
 import { locateSystemPython } from "../helpers/hermes-runtime.mjs";
-import { agentArgs, launchCapturesOnDisk, ofInvocation, pointerFile, preparedLaunch, readJsonLines, runSkillMe, writeScenario } from "../helpers/launch.mjs";
-import { automaticOf, runNpmScript } from "../helpers/observe.mjs";
+import { agentArgs, agentBin, launchCapturesOnDisk, npmScriptEnv, ofInvocation, pointerFile, preparedLaunch, readJsonLines, runSkillMe, writeScenario } from "../helpers/launch.mjs";
+import { automaticOf, homeEnv, npmCli, runNpmScript } from "../helpers/observe.mjs";
 import { claudePayload, hermesRecord } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
 import { ISO_MS, TRACES_PROBE, captureDir, expectedPseudonym, exportOf, runHook, statusOf, storeDir } from "../helpers/traces.mjs";
@@ -262,8 +262,8 @@ test("I25-C33 on e off durante a invocação: a corrente continua active e os ev
   const running = runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_SCENARIO: scenario, FAKE_AGENT_REPORTS: reports } });
   await waitFor(() => existsSync(f("E1")), "primeiro evento");
   const [capture] = launchCapturesOnDisk(prepared.root);
-  // O npm roda o script com o `node` do PATH, como no terminal do usuário.
-  const npmEnv = { ...prepared.env, PATH: [path.dirname(process.execPath), prepared.env.PATH].join(path.delimiter) };
+  // O npm roda o script com o `node` e o `sh` do PATH, como no terminal do usuário.
+  const npmEnv = npmScriptEnv(scratch, prepared.env);
   const on = runNpmScript("on", { env: npmEnv });
   assert.deepEqual([on.status, on.body.observation.state], [0, "on"]);
   assert.equal(statusOf(prepared.root, capture.id).state, "active", "on não muda a execução");
@@ -282,6 +282,32 @@ test("I25-C33 on e off durante a invocação: a corrente continua active e os ev
   );
   assert.deepEqual(automaticOf(prepared.root), [], "nenhuma captura automática nasceu da sessão");
   assert.equal(ofInvocation(prepared.root, capture.invocation).length, 1);
+});
+
+// Acréscimo da CI do PR #28 (run 40397022558; linha "Ambiente do npm run nas
+// provas" do Landing): na CI o Node fica num diretório sem `sh` ao lado. Uma
+// pasta só com o `node` reproduz esse layout em qualquer POSIX.
+test("I25-C33 arranjo do npm run (POSIX): com o node num diretório sem sh, como na CI, npm run status falha com spawn sh ENOENT; o PATH das provas tem só node, sh e a fixture, e o npm run status responde", { skip: process.platform === "win32" ? "o npm do Windows roda o script pelo ComSpec, não por um sh do PATH" : false }, () => {
+  const home = scratch("i25 c33 npm home");
+  const bin = agentBin(path.join(scratch("i25 c33 npm fixture"), "bin"), ["claude"]);
+  const env = homeEnv(home, { PATH: bin });
+  const nodeOnly = scratch("i25 c33 npm so node");
+  symlinkSync(process.execPath, path.join(nodeOnly, "node"));
+  const ciLayout = spawnSync(process.execPath, [npmCli(), "run", "status"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    timeout: 60_000,
+    env: { ...env, PATH: [nodeOnly, bin].join(path.delimiter), npm_config_update_notifier: "false", npm_config_cache: path.join(home, "npm cache") },
+  });
+  assert.notEqual(ciLayout.status, 0, ciLayout.stdout);
+  assert.match(ciLayout.stderr, /spawn sh ENOENT/);
+  const npmEnv = npmScriptEnv(scratch, env);
+  const [dir, ...rest] = npmEnv.PATH.split(path.delimiter);
+  assert.deepEqual(rest, [bin], "depois da pasta, só o bin de fixture");
+  assert.deepEqual(readdirSync(dir).sort(), ["node", "sh"]);
+  assert.deepEqual([readlinkSync(path.join(dir, "node")), readlinkSync(path.join(dir, "sh"))], [process.execPath, "/bin/sh"]);
+  const status = runNpmScript("status", { env: npmEnv });
+  assert.deepEqual([status.status, status.body.status, status.body.observation.state], [0, "ok", "off"]);
 });
 
 // C41 (revisão formal em 2fd858a, P2 de store.mjs:1071; linha "Sucessora não

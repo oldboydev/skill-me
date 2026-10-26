@@ -4,7 +4,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
 import { makeScratch, runIntegrations } from "../helpers/cli.mjs";
-import { agentArgs, freshHome, launchCapturesOnDisk, launchEnv, ofInvocation, preparedLaunch, readJsonLines, runSkillMe, writeScenario } from "../helpers/launch.mjs";
+import { agentArgs, freshHome, launchCapturesOnDisk, launchEnv, npmScriptEnv, ofInvocation, preparedLaunch, readJsonLines, runSkillMe, writeScenario } from "../helpers/launch.mjs";
 import { automaticOf, observeOk, runNpmScript } from "../helpers/observe.mjs";
 import { claudePayload } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy } from "../helpers/privacy-store.mjs";
@@ -164,8 +164,7 @@ test("I25-C34 report --latest e npm run status continuam sÃ³ com capturas automÃ
   const latest = runIntegrations(["report", "--latest", "--skill", skill, "--format", "json"], { env: prepared.env, cwd: project });
   assert.equal(latest.status, 0, latest.stdout);
   assert.equal(JSON.parse(latest.stdout).timeline.capture.id, automatic.id);
-  const npmEnv = { ...prepared.env, PATH: [path.dirname(process.execPath), prepared.env.PATH].join(path.delimiter) };
-  const status = runNpmScript("status", { env: npmEnv });
+  const status = runNpmScript("status", { env: npmScriptEnv(scratch, prepared.env) });
   assert.deepEqual([status.status, status.body.automaticCaptures, status.body.captures.map((c) => c.id)], [0, 1, [automatic.id]]);
 });
 

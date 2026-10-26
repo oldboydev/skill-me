@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { CODEX_GLOBAL_WINDOWS_TARGET, npmCmdShim } from "../../doctor/helpers/npm-shims.mjs";
@@ -49,6 +49,24 @@ export function agentBin(dir, agents = AGENT_NAMES) {
     }
   }
   return dir;
+}
+
+// Ambiente do `npm run on/off/status` nas provas da execução (C33, C34; linha
+// "Ambiente do npm run nas provas" do Landing): o npm roda o script com o
+// `node` do PATH, como no terminal do usuário, e no POSIX por um `sh` também
+// procurado no PATH. O diretório do Node da suíte não serve: na CI ele não tem
+// `sh`, e no WSL é o `/usr/bin`, que tem agentes reais. No POSIX, o PATH é uma
+// pasta do scratch só com `node` e `sh` (ligados ao `process.execPath` e ao
+// `/bin/sh`), seguida do bin de fixture; no Windows, onde o npm usa o
+// `ComSpec`, o diretório do Node e o bin de fixture, como antes.
+export function npmScriptEnv(scratch, env) {
+  let dir = path.dirname(process.execPath);
+  if (!WINDOWS) {
+    dir = scratch("npm run node e sh");
+    symlinkSync(process.execPath, path.join(dir, "node"));
+    symlinkSync("/bin/sh", path.join(dir, "sh"));
+  }
+  return { ...env, PATH: [dir, env.PATH].join(path.delimiter) };
 }
 
 // Argumentos de `skill-me <agente>` que fazem o agente falso receber `args`:
