@@ -298,3 +298,106 @@ temporários desta rodada também.
   contagem (por exemplo, o processo do Hermes morto no meio) deixaria a espera em `pending` até o
   `settleMaxMs`, como `timeout` — não como conclusão.
 - C23 continua sem asserção de tempo para o “sem espera”.
+
+## Regressões da revisão formal em `2fd858a` (S7, C41–C42) e dois refinamentos de C41
+
+A revisão formal (`.checks/code-review/issue-25/formal-review.stdout.txt`) pediu mudanças com dois
+P2: a sucessora criada cuja publicação do ponteiro falha ficava órfã e repetia o segmento
+(`store.mjs:1071`), e um sinal antes de o agente iniciar não cancelava a abertura
+(`agent.mjs:61`). Depois, o orquestrador fez duas observações concretas sobre a correção, dentro de
+AC3/AC4 e C17/C41. Cada forma foi registrada no Landing, na task 33/34 e no checklist antes do
+código. C1–C40 não mudaram.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `fb99b58` | Achados da revisão formal; task 33–34, S7, C41–C42; Landing “Sucessora não publicada” e “Cancelamento antes do agente” |
+| `e238cc0` | Sucessora não publicada adotada (`nextLaunchSegment`), encerramento de toda `active` da execução, órfã da abertura nomeada, cancelamento por sinal antes do agente; provas |
+| `eb8cdd7` | `docs/traces.md` |
+| `e07ce47` | Refinamento 1 (Landing “Descoberta das capturas no encerramento”, task 33, C41) |
+| `82837eb` | Descoberta lida captura a captura; encerramento não conferido; provas e `docs/traces.md` |
+| `53de34f` | Refinamento 2 (Landing “Vínculo do ponteiro no encerramento”, task 33, C41) |
+| `f0d5238` | Vínculo do ponteiro conferido antes de parar e no diagnóstico; provas |
+
+Logs em `.checks/code-review/issue-25/builder-formal-fix/` e `builder-final-refine/` (pastas
+ignoradas).
+
+### C41–C42 (achados da revisão formal)
+
+- **RED** (produto de `2fd858a` com as provas novas; `red-win-24.22.1.spec.txt`,
+  `red-wsl-24.13.0.spec.txt`): 11 testes, 9 fail, 1 pass (a outra execução da mesma raiz, que já
+  não mudava), 1 skip de plataforma (a variante C42 do outro sistema), em Windows Node 24.22.1 e WSL
+  Node 24.13.0.
+- **GREEN** em `e238cc0`: 10 pass, 1 skip nos dois. C42 pelo processo real no POSIX (lock da
+  abertura ocupado, SIGINT ao grupo, SIGTERM ao launcher) e pelo `CTRL_C_EVENT` real no console do
+  Windows (`console-ctrl-c.py`), saída 130.
+
+### Refinamento 1 — leitura transitória no encerramento (observação sobre `eb8cdd7`)
+
+- **Hipótese confirmada.** Sonda com a injeção de E/S existente (`readBounded` lança `EIO` só para o
+  `state.json` da sucessora não publicada, arquivo íntegro; `refine-probe-win-24.22.1.txt`):
+  `endLaunch` resolvia `{ended: true, captures: null, summaryCode: "io_failure"}`, o ponteiro saía e
+  a sucessora ficava `active` com `endedAt: null`; o launcher escrevia “execução … encerrada; o
+  resumo das capturas não pôde ser lido” sem nenhum comando que a encerrasse. Uma captura de outra
+  execução ilegível tinha o mesmo efeito.
+- **Correção**: a descoberta lê cada nome de `captures/` com `readCapture`; `StoreError` fica de
+  fora (contrato aprovado); erro de E/S cru → `unreadable`; listagem falha → não conferida. O resumo
+  sai dos estados já parados, sem reler. Sem conferência, o erro leva `revoked`, `unverified`,
+  `unreadable`, e o launcher lista as não lidas com `privacy status` + critério de `invocation` e
+  `state` + `privacy stop` (sem nomes, `privacy list`). Nada é feito numa captura não lida.
+- **RED** (6 provas novas: 4 no store, 2 pelo launcher; `refine-red-*.spec.txt`): Windows 24.22.1 e
+  WSL 24.13.0 (árvore do índice temporário `2b73d736…`, archive LF `26f531a2…`), 5 fail e 1 pass —
+  o controle de formato inválido, que já passava e continua igual.
+- **GREEN** em `82837eb`: 6/6 (`refine-green-win-24.22.1.spec.txt`); sonda depois: erro
+  `io_failure` com `revoked`, `unverified` e `unreadable: [sucessora]`, e a prova roda o `privacy
+  status` e o `privacy stop` mostrados e a sucessora fica `stopped`. Arquivos `store.unit`,
+  `end.e2e` e `command.cli`: 39 testes, 36 pass, 3 skip.
+
+### Refinamento 2 — vínculo do ponteiro (observação sobre `e238cc0`)
+
+- **Hipótese confirmada, nos dois pontos.** Com o ponteiro de A nomeando a captura `active` de B
+  (outra execução da mesma raiz, demais campos válidos): (1) o encerramento de A parava B
+  (`state` `stopped`, `endedAt` gravado), no store e pelo launcher real; (2) com o encerramento
+  falhando antes de começar (lock alheio), o stderr dizia “a captura <B> continua active” e
+  mandava rodar `privacy stop` de B. Caso combinado: com B ilegível por um instante, o erro dava B
+  em `captures`, como captura de A que ficou `active`. A entrega de A já era recusada
+  (`store_invalid`), e a prova confere isso.
+- **Correção**: a captura do ponteiro só para se o `state.json` dela tiver `origin: "launch"` e a
+  `invocation` da execução; a que não pôde ser lida segue o contrato da descoberta (não vira falha
+  ao parar). `peekLaunch` só devolve o ponteiro cuja captura se confere desta execução; senão vale a
+  orientação conservadora já existente, com a captura que a invocação abriu.
+- **RED** (4 provas novas: 2 no store, 2 pelo launcher; `ownership-red-*.spec.txt`): Windows
+  24.22.1 e WSL 24.13.0 (árvore `a649e736…`, archive LF `478366c6…`), 4/4 fail.
+- **GREEN** em `f0d5238`: os 17 `I25-C41` passam (`ownership-green-win-24.22.1.spec.txt`); B fica
+  byte a byte igual (`state.json` e ponteiro), continua gravando (`LAUNCHED(1)`), e o comando
+  mostrado no diagnóstico encerra a captura de A sem tocar B.
+
+### Gate e execuções finais (HEAD `f0d5238`)
+
+Uma execução por vez, sem suítes concorrentes; logs em `builder-final-refine/`.
+
+| Execução | Resultado |
+| --- | --- |
+| Windows, Node 24.22.1, alvo I25 (`launch/*.test.mjs` + `hermes-harness.unit.test.mjs`), 13:32–13:34 | 80 testes: 76 pass, 0 fail, 4 skip (C5 e C6 POSIX, C42 POSIX, C15 pty) |
+| Windows, Node 24.13.0 oficial (PATH e `execPath` dele, npm 11.6.2 do zip, sem `npm_execpath`), 13:34–13:36 | 80 testes: 76 pass, 0 fail, 4 skip |
+| WSL `Ubuntu`, Node 24.13.0, npm 11.6.2, Python 3.12.3, uid 1000, sobre `git -c core.autocrlf=false archive f0d5238` (sha256 `7d37ac59…a914d16c4`; `get-tar-commit-id` = `f0d52384…`; árvore extraída `f68f4c9a…` = `HEAD^{tree}`; `cli.mjs` 755) | 80 testes: 75 pass, 0 fail, 5 skip (C4 shim, C5 console, C42 console, C8 LOCALAPPDATA, C38 console) |
+| Windows, Node 24.22.1, `npm test` (13:37–13:45) | **exit 0**: governança 6/6; motor 16/16; doctor 417 (410 pass, 7 skip POSIX/FIFO); integrações 533 (522 pass, **0 fail**, 11 skip, todos POSIX, Linux ou macOS), com I4-C18–C23, I4-C37, I4-C44b, os três I23-C8 e o I25-C40 nativo executados e verdes |
+
+Os 80 nomes I25 aparecem um a um nos três TAP, iguais entre eles; nenhum `not ok`.
+`~/.skill-me` e `~/.skill-me-authorization.json` do uid 1000 ausentes antes e depois. Os 273
+scratches `skill-me i4 i25 *` da janela do 24.13.0 foram removidos por script do 24.22.1 com o
+caminho conferido no `%TEMP%`, 0 recusas; as cópias do WSL e os temporários desta rodada também.
+
+### Limitações desta rodada
+
+- Uma captura de outra execução ilegível por E/S também impede o encerramento conferido: sem lê-la
+  não há como saber de quem é. O launcher dá o critério; não há nova tentativa automática.
+- Com uma falha de leitura persistente, a recuperação depende de o usuário rodar o `privacy status`
+  e o `privacy stop` mostrados quando a leitura voltar.
+- A captura do ponteiro com formato inválido (`StoreError`) agora segue o contrato da descoberta:
+  fica fora do resumo, em vez de sair como falha ao parar.
+- No diagnóstico de um encerramento que não começou, um ponteiro cuja captura não se confere (de
+  outra execução ou ilegível) leva à orientação conservadora com a captura que a invocação abriu (o
+  segmento 1); se a execução já tinha passado a outro segmento, essa pode estar `stopped`, e
+  `privacy stop` nela não muda nada.
+- Continuam: uso real sem sessão de agente (`Unresolved` 2, `blocks go-live`); console real e pty
+  dependem do Python do sistema; C23 sem asserção de tempo para o “sem espera”.

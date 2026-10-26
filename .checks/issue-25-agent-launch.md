@@ -296,3 +296,19 @@ Fechamento do escopo final, C1–C40 (registros acima preservados; o lote inicia
 - O que foi abandonado: escrita e leitura síncronas no console do Windows (mojibake e caminho com
   acento trocado, medidos); a espera por 300 ms de contadores parados (encerra com a fila cheia
   enquanto o `Popen` leva 454–469 ms).
+
+Fechamento das regressões da revisão formal, C1–C42 (registros acima preservados):
+
+- Onde a fronteira caiu agora: lote único, C1–C42 fechados. Achados e checks em `fb99b58`; correção
+  em `e238cc0` e `docs/traces.md` em `eb8cdd7`; refinamento da descoberta no encerramento em
+  `e07ce47` (Landing) e `82837eb`; refinamento do vínculo do ponteiro em `53de34f` (Landing) e
+  `f0d5238`. RED/GREEN de cada um e as execuções finais do alvo I25 (80 testes) em Windows Node
+  24.22.1, Windows Node 24.13.0 e WSL Node 24.13.0, mais o `npm test` inteiro no Windows, em
+  `.checks/issue-25-agent-launch.build.md`.
+- O que o proprietário decidiu depois do C1–C40: a revisão formal em `2fd858a` pediu mudanças (dois
+  P2, `store.mjs:1071` e `agent.mjs:61`); o orquestrador acrescentou duas observações dentro de
+  AC3/AC4 — leitura transitória no encerramento e vínculo do ponteiro com a captura —, ambas
+  confirmadas com prova antes da correção.
+- O que foi abandonado: compensar a sucessora no ato da falha de publicação; repetir a varredura do
+  encerramento até ler tudo; diário de sucessões; recusar o encerramento inteiro com `store_invalid`
+  quando o ponteiro nomeia captura alheia; regravar o ponteiro com a captura certa.
