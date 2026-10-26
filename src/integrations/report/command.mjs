@@ -1,12 +1,12 @@
 import { assertNoOtherAuthorization, ObserveConfigError, readObserveConfig, userHome } from "../observe/config.mjs";
 import { parsePrivacyArgs, PrivacyUsageError } from "../privacy/args.mjs";
-import { latestAutomaticCapture, StoreError } from "../privacy/store.mjs";
+import { latestAutomaticCapture, latestLaunch, StoreError } from "../privacy/store.mjs";
 import { createStoreIo } from "../privacy/fs.mjs";
 import { replayCaptureReadOnly } from "../traces/replay.mjs";
 import { correlateTrace } from "../correlation/timeline.mjs";
 import { readSkillSource, SkillSourceError } from "./skill-source.mjs";
 import { evaluateReport } from "./evaluate.mjs";
-import { renderReport } from "./render.mjs";
+import { renderLaunchReport, renderReport } from "./render.mjs";
 
 export const REPORT_HELP = `Uso:
   integrations report --root <diretório> --capture <id> [--skill <SKILL.md>] [--format text|markdown|json]
@@ -25,18 +25,18 @@ const ALLOWED = new Set(["--root", "--capture", "--skill", "--format", "--latest
 const FORMATS = new Set(["text", "markdown", "json"]);
 const STORE_EXIT = Object.freeze({
   root_not_found: 3, root_not_directory: 3, store_invalid: 3, capture_not_found: 3, capture_invalid: 3, capture_not_active: 3,
-  not_configured: 3, config_invalid: 3, no_automatic_capture: 3,
+  not_configured: 3, config_invalid: 3, no_automatic_capture: 3, no_launch_capture: 3,
   lock_present: 4, link_refused: 4, foreign_entry: 4, root_changed: 4, observe_on: 4,
   io_failure: 5,
 });
 
-function parseArgs(tokens) {
+function readFlags(tokens, allowed) {
   const values = {};
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
     const at = token.indexOf("=");
     const flag = at < 0 ? token : token.slice(0, at);
-    if (!ALLOWED.has(flag)) throw new PrivacyUsageError("unknown_flag");
+    if (!allowed.has(flag)) throw new PrivacyUsageError("unknown_flag");
     if (Object.hasOwn(values, flag)) throw new PrivacyUsageError("unexpected_argument");
     if (flag === "--latest") {
       if (at >= 0) throw new PrivacyUsageError("unexpected_argument");
@@ -47,6 +47,11 @@ function parseArgs(tokens) {
     if (value === undefined || value === "" || (at < 0 && value.startsWith("--"))) throw new PrivacyUsageError("missing_flag_value");
     values[flag] = value;
   }
+  return values;
+}
+
+function parseArgs(tokens) {
+  const values = readFlags(tokens, ALLOWED);
   const format = values["--format"] ?? "text";
   const options = { skill: values["--skill"] ?? null, format };
   // --latest dispensa e recusa a raiz e o ID: a raiz é a do setup.
@@ -67,18 +72,42 @@ function failure(code, exitCode) {
   return { exitCode, output: JSON.stringify({ schemaVersion: 1, command: "report", status: "error", error: { code } }) + "\n" };
 }
 
+async function configuredRoot({ io, home }) {
+  const read = await readObserveConfig({ home, io });
+  if (read.state === "missing") throw new StoreError("not_configured");
+  if (read.state === "invalid") throw new StoreError(read.code);
+  return read.config;
+}
+
 // Raiz e ID da consulta; com --latest, da configuração deste usuário e da
 // captura automática mais recente, sem criar lock (#23, crit. 5). Com outra
 // raiz registrada, a observação do usuário pode estar nela, e a captura da
 // configuração não é escolhida (linha "Conflito com o registro").
 async function target(args, { io, home }) {
   if (!args.latest) return { root: args.root, id: args.capture };
-  const read = await readObserveConfig({ home, io });
-  if (read.state === "missing") throw new StoreError("not_configured");
-  if (read.state === "invalid") throw new StoreError(read.code);
-  const { root, rootReal } = read.config;
+  const { root, rootReal } = await configuredRoot({ io, home });
   await assertNoOtherAuthorization({ home, io }, rootReal);
   return { root, id: await latestAutomaticCapture({ root, expectedReal: rootReal, io }) };
+}
+
+// O relatório da #7 de uma captura, lida sem lock.
+function captureReport({ root, id, skill, cwd, io }) {
+  return replayCaptureReadOnly({
+    root,
+    id,
+    io,
+    consumer: async (trace) => {
+      const timeline = correlateTrace(trace);
+      const source = await readSkillSource({ timeline, explicitPath: skill, cwd });
+      return evaluateReport({ trace, skill: source });
+    },
+  });
+}
+
+function failureOf(error) {
+  if (error instanceof SkillSourceError) return failure(error.code, error.code === "skill_io_failure" ? 5 : 3);
+  if (error instanceof StoreError || error instanceof ObserveConfigError) return failure(error.code, STORE_EXIT[error.code] ?? 5);
+  return failure("io_failure", 5);
 }
 
 export async function runReportCommand({ argv, io = createStoreIo(), cwd = process.cwd(), home = userHome() }) {
@@ -91,20 +120,38 @@ export async function runReportCommand({ argv, io = createStoreIo(), cwd = proce
   }
   try {
     const { root, id } = await target(args, { io, home });
-    const report = await replayCaptureReadOnly({
-      root,
-      id,
-      io,
-      consumer: async (trace) => {
-        const timeline = correlateTrace(trace);
-        const skill = await readSkillSource({ timeline, explicitPath: args.skill, cwd });
-        return evaluateReport({ trace, skill });
-      },
-    });
+    const report = await captureReport({ root, id, skill: args.skill, cwd, io });
     return { exitCode: 0, output: renderReport(report, args.format) };
   } catch (error) {
-    if (error instanceof SkillSourceError) return failure(error.code, error.code === "skill_io_failure" ? 5 : 3);
-    if (error instanceof StoreError || error instanceof ObserveConfigError) return failure(error.code, STORE_EXIT[error.code] ?? 5);
-    return failure("io_failure", 5);
+    return failureOf(error);
+  }
+}
+
+// `skill-me report` (issue #25, crit. 27–28; linhas "Consulta" e "Início da
+// execução" do Landing em .checks/issue-25-agent-launch.md): a execução
+// iniciada por último na raiz configurada, com o relatório existente de cada
+// captura dela, em ordem de segmento. Cada seção avalia só a própria captura;
+// a falha de uma falha o comando com o JSON de erro atual.
+const LAUNCH_ALLOWED = new Set(["--skill", "--format"]);
+
+export async function runLaunchReportCommand({ argv, io = createStoreIo(), cwd = process.cwd(), home = userHome() }) {
+  let format;
+  let skill;
+  try {
+    const values = readFlags(argv, LAUNCH_ALLOWED);
+    format = values["--format"] ?? "text";
+    skill = values["--skill"] ?? null;
+    if (!FORMATS.has(format)) throw new PrivacyUsageError("invalid_format");
+  } catch (error) {
+    return failure(error instanceof PrivacyUsageError ? error.code : "unknown_flag", 2);
+  }
+  try {
+    const { root, rootReal } = await configuredRoot({ io, home });
+    const launch = await latestLaunch({ root, expectedReal: rootReal, io });
+    const reports = [];
+    for (const { capture } of launch.segments) reports.push(await captureReport({ root, id: capture, skill, cwd, io }));
+    return { exitCode: 0, output: renderLaunchReport({ launch, reports }, format) };
+  } catch (error) {
+    return failureOf(error);
   }
 }

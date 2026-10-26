@@ -43,21 +43,24 @@ function packageRootFromAbsolutePath(resolvedPath, sep) {
 }
 
 // O dialeto vem da extensão do launcher, como o SO decide quem interpreta o
-// arquivo: .cmd/.bat pelo cmd.exe, o shim sem extensão pelo sh.
-function packageRootsInvokedByShim(text, launcherPath, sep) {
+// arquivo: .cmd/.bat pelo cmd.exe, o shim sem extensão pelo sh. Devolve, por
+// pacote, os arquivos de entrada que o shim executa com o node.
+function packageEntriesInvokedByShim(text, launcherPath, sep) {
   const dialect = /\.(?:cmd|bat)$/i.test(launcherPath) ? "cmd" : "sh";
   const invocation = dialect === "cmd" ? CMD_SHIM_INVOCATION : SH_SHIM_INVOCATION;
   const launcherDir = dirnameGeneric(launcherPath);
-  const roots = new Set();
+  const entries = new Map();
   for (const line of commandStartLines(text, dialect)) {
     const reference = invocation.exec(line)?.[1];
     if (reference === undefined) continue;
     const resolved = resolveRelative(launcherDir, reference, sep);
     if (resolved === null) continue;
     const root = packageRootFromAbsolutePath(resolved, sep);
-    if (root) roots.add(root);
+    if (!root) continue;
+    if (!entries.has(root)) entries.set(root, new Set());
+    entries.get(root).add(resolved);
   }
-  return [...roots];
+  return entries;
 }
 
 async function readCodexPackageVersion(pkgRootPath, sep, fs) {
@@ -135,8 +138,26 @@ export async function resolveCodexVersion(launcherPath, { fs }) {
   // O separador para montar o caminho do pacote vem do diretório do
   // launcher já resolvido (estilo nativo e consistente com o PATH).
   const sep = detectSeparator(dirnameGeneric(launcherPath));
-  const roots = packageRootsInvokedByShim(linked.text, launcherPath, sep);
+  const roots = [...packageEntriesInvokedByShim(linked.text, launcherPath, sep).keys()];
   if (roots.length === 0) return { version: null, reasonCode: "launcher_not_recognized" };
   if (roots.length > 1) return { version: null, reasonCode: "version_source_ambiguous" };
   return readCodexPackageVersion(roots[0], sep, fs);
+}
+
+// Arquivo de entrada que um shim de texto do npm executa com o node (issue
+// #25, linha "Início do agente" do Landing em .checks/issue-25-agent-launch.md):
+// a mesma linha de invocação que liga o shim ao pacote na versão acima, e só
+// ela. null quando o shim não é reconhecido, aponta mais de um pacote ou mais
+// de uma entrada, ou o pacote não é @openai/codex com versão legível — o
+// launcher então recusa o shim em vez de interpretá-lo.
+export async function resolveCodexShimEntry(launcherPath, { fs }) {
+  const linked = await readLinkedText(launcherPath, fs);
+  if (linked.state !== "ok") return null;
+  const sep = detectSeparator(dirnameGeneric(launcherPath));
+  const byRoot = packageEntriesInvokedByShim(linked.text, launcherPath, sep);
+  if (byRoot.size !== 1) return null;
+  const [[root, entries]] = byRoot;
+  if (entries.size !== 1) return null;
+  const pkg = await readCodexPackageVersion(root, sep, fs);
+  return pkg.versionSource === "package_metadata" ? [...entries][0] : null;
 }

@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "skill-me": "src/integrations/launch/cli.mjs"
+  },
   "engines": {
     "node": ">=24"
   },
