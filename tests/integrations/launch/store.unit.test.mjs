@@ -110,7 +110,7 @@ test("I25-C17 formato persistido: state.json launch fora da forma é capture_inv
   assert.deepEqual(observed, expected);
 });
 
-test("I25-C17 formato persistido: ponteiro ilegível, fora da forma ou link é recusado sem gravar", async () => {
+test("I25-C17 formato persistido: ponteiro ilegível, fora da forma ou link é recusado sem gravar", async (t) => {
   const root = launchRoot("i25 c17 ponteiro");
   const opened = await startLaunch({ root, expectedReal: root });
   const file = pointerFile(root, opened.invocation);
@@ -142,7 +142,8 @@ test("I25-C17 formato persistido: ponteiro ilegível, fora da forma ou link é r
   try {
     symlinkSync(target, file, "file");
   } catch {
-    linked = false; // Windows sem privilégio de link simbólico: a variante fica de fora.
+    linked = false;
+    t.diagnostic("variante link não executada: sem privilégio de link simbólico de arquivo (Windows sem modo de desenvolvedor)");
   }
   if (linked) {
     const producer = await deliver(root, opened.invocation, [payload]);

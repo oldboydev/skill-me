@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
@@ -249,7 +249,9 @@ test("I25-C30 falha de início: ENOENT sai com 127 e outro erro com 126, com o s
     if (process.getuid?.() === 0) t.diagnostic("root executa qualquer arquivo com bit x: o caso 126 (EACCES) fica de fora");
     else {
       // Outro erro: bit de execução só para outros usuários (EACCES no execve).
-      writeFileSync(path.join(prepared.bin, "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o001 });
+      // O arquivo já existe (agentBin): o modo vai por chmod, não pela escrita.
+      writeFileSync(path.join(prepared.bin, "claude"), "#!/bin/sh\nexit 0\n");
+      chmodSync(path.join(prepared.bin, "claude"), 0o001);
       cases.outro = { agent: "claude", status: 126 };
     }
   }
