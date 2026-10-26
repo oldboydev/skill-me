@@ -72,12 +72,34 @@ function summaryLines({ invocation, captures, manualSteps, agentRan }) {
   return lines;
 }
 
-const stopCommand = (config, capture) => `"${process.execPath}" "${CLI_PATH}" privacy stop --root "${config.root}" --capture ${capture}`;
+const privacyCommand = (config, action, capture) =>
+  `"${process.execPath}" "${CLI_PATH}" privacy ${action} --root "${config.root}"` + (capture === undefined ? "" : ` --capture ${capture}`);
+const stopCommand = (config, capture) => privacyCommand(config, "stop", capture);
 
-// Falha do encerramento (crit. 24; linhas "Ordem e falha do encerramento" e
-// "Sucessora não publicada"): a orientação depende de o ponteiro ainda existir
-// — `privacy stop` encerra só a captura, nunca a execução —, e cada captura
-// que ficou `active` tem o comando que a encerra.
+// Encerramento não conferido (linha "Descoberta das capturas no encerramento"):
+// uma captura que não pôde ser lida pode ser de qualquer execução, então nada
+// a encerra sozinho; quando a leitura voltar, o status (ou o list, sem nomes)
+// mostra se é desta execução e se continua `active`.
+function uncheckedLines({ code, invocation, config, unreadable }) {
+  const criterion = `se mostrar "invocation":"${invocation}" e "state":"active", encerre com`;
+  const lines = [`skill-me: a execução ${invocation} já não recebe registros, mas não foi possível conferir se todas as capturas dela pararam [${code}].`];
+  if (unreadable.length === 0) {
+    lines.push("skill-me: a pasta das capturas não pôde ser lida.");
+    lines.push(`skill-me: quando a leitura voltar, confira com ${privacyCommand(config, "list")}; ${criterion} ${stopCommand(config, "<id>")}`);
+    return lines;
+  }
+  lines.push(`skill-me: capturas que não puderam ser lidas: ${unreadable.join(", ")}.`);
+  for (const id of unreadable) {
+    lines.push(`skill-me: quando a leitura voltar, confira com ${privacyCommand(config, "status", id)}; ${criterion} ${stopCommand(config, id)}`);
+  }
+  return lines;
+}
+
+// Falha do encerramento (crit. 24; linhas "Ordem e falha do encerramento",
+// "Sucessora não publicada" e "Descoberta das capturas no encerramento"): a
+// orientação depende de o ponteiro ainda existir — `privacy stop` encerra só a
+// captura, nunca a execução —, cada captura que ficou `active` tem o comando
+// que a encerra, e as que não puderam ser lidas vêm depois, com o critério.
 async function failedEndLines({ error, invocation, config, io, fallbackCapture }) {
   const code = codeOf(error);
   let open = true;
@@ -92,6 +114,8 @@ async function failedEndLines({ error, invocation, config, io, fallbackCapture }
       // Ponteiro ilegível: a orientação conservadora é a da execução aberta.
     }
   }
+  const unchecked = error.unverified === true ? uncheckedLines({ code, invocation, config, unreadable: error.unreadable }) : [];
+  if (captures.length === 0) return unchecked;
   const [capture] = captures;
   const lines = [
     captures.length === 1
@@ -106,7 +130,7 @@ async function failedEndLines({ error, invocation, config, io, fallbackCapture }
         ? `skill-me: a execução ${invocation} já não recebe registros; o comando acima só encerra a captura.`
         : `skill-me: a execução ${invocation} já não recebe registros; os comandos acima só encerram as capturas.`,
   );
-  return lines;
+  return [...lines, ...unchecked];
 }
 
 // Sinal recebido antes de o agente iniciar (task 34; linha "Cancelamento antes
@@ -132,12 +156,7 @@ async function launchAgent(agent, args, deps) {
     const { invocation } = opened;
     try {
       const ended = await patiently(() => endLaunch({ root: config.root, expectedReal: config.rootReal, invocation, nowMs: now(), io }));
-      if (ended.captures === null) {
-        say(`skill-me: execução ${invocation} encerrada; o resumo das capturas não pôde ser lido [${knownCode(ended.summaryCode)}].`);
-        say("skill-me: consulte com: skill-me report");
-      } else {
-        for (const line of summaryLines({ invocation, captures: ended.captures, manualSteps, agentRan })) say(line);
-      }
+      for (const line of summaryLines({ invocation, captures: ended.captures, manualSteps, agentRan })) say(line);
     } catch (error) {
       for (const line of await failedEndLines({ error, invocation, config, io, fallbackCapture: opened.capture })) say(line);
     }

@@ -101,7 +101,12 @@ on`/`off` não tocam a execução, e duas invocações simultâneas têm execuç
 capturas e chaves próprias. Se o encerramento falhar (lock ocupado por mais de
 2 s ou E/S), o stderr mostra o código, cada captura que ficou `active` com o
 comando `privacy stop` que a encerra e se a execução ainda está aberta;
-`privacy stop` encerra só a captura.
+`privacy stop` encerra só a captura. Se uma captura da raiz não puder ser lida
+no encerramento (falha de E/S), o stderr diz que não foi possível conferir se
+todas as capturas da execução pararam e lista as não lidas, cada uma com o
+`privacy status` que mostra de qual execução ela é e o `privacy stop` para
+quando ela for desta execução e estiver `active`; capturas de outras execuções
+não são tocadas.
 
 Se a gravação do ponteiro de uma sucessora falhar, aquela entrega falha
 (`io_failure`) e a entrega seguinte grava na mesma sucessora, sem repetir o

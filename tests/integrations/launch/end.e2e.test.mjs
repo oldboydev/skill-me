@@ -334,6 +334,111 @@ test("I25-C41 encerramento pelo launcher com sucessora não publicada: o resumo 
   assert.equal(existsSync(pointerFile(prepared.root, invocation)), false);
 });
 
+// Refinamento de C41 (linha "Descoberta das capturas no encerramento"): a
+// leitura do state.json da sucessora não publicada falha por E/S só no
+// encerramento, com o arquivo íntegro; a orientação mostrada, rodada depois,
+// confere e encerra a captura.
+test("I25-C41 encerramento pelo launcher com a sucessora não lida: o launcher não declara a execução conferida e a orientação mostrada a encerra quando a leitura volta", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c41 nao lida", { agents: ["claude"] });
+  const work = scratch("i25 c41 nao lida provas");
+  const f = (name) => path.join(work, name);
+  const scenario = writeScenario(work, "espera", [{ touch: f("pronto") }, { waitFile: f("segue") }]);
+  const base = createStoreIo();
+  const unreadable = new Set();
+  const launcherIo = {
+    ...base,
+    async readBounded(file, maxBytes) {
+      if (path.basename(file) === "state.json" && unreadable.has(path.basename(path.dirname(file)))) throw Object.assign(new Error("falha de leitura injetada"), { code: "EIO" });
+      return base.readBounded(file, maxBytes);
+    },
+  };
+  let stderr = "";
+  const running = runInProcess({
+    argv: ["claude", ...agentArgs("claude")],
+    deps: { env: { ...prepared.env, FAKE_AGENT_SCENARIO: scenario, FAKE_AGENT_PROBE: f("probe.ndjson") }, home: prepared.home, io: launcherIo, proc: new EventEmitter(), terminal: false, writeOut: () => {}, writeErr: (t) => (stderr += t), readLine: () => null },
+  });
+  await waitFor(() => existsSync(f("pronto")), "agente pronto");
+  const invocation = readJsonLines(f("probe.ndjson"))[0].env.SKILL_ME_LAUNCH_ID;
+  const [first] = ofInvocation(prepared.root, invocation);
+  const records = Array.from({ length: 500 }, (_, i) => sanitizedRecord(i));
+  assert.equal((await appendRecords({ root: prepared.rootReal, id: first.id, batch: { records, malformed: 0, dropped: {}, contentOmitted: {} } })).admitted, 500);
+  let armed = true;
+  const producerIo = {
+    ...base,
+    async rename(from, to) {
+      if (armed && path.basename(to) === `${invocation}.json`) {
+        armed = false;
+        throw Object.assign(new Error("falha de E/S injetada"), { code: "EIO" });
+      }
+      return base.rename(from, to);
+    },
+  };
+  const producer = createLaunchDelivery({ root: prepared.rootReal, invocation, agent: "claude", io: producerIo });
+  const payload = claudePayload("pre_tool_bash");
+  producer.submit(claudeHookDraft(payload), payload);
+  await producer.settle();
+  const orphan = ofInvocation(prepared.root, invocation).find((c) => c.segment === 2);
+  unreadable.add(orphan.id);
+  writeFileSync(f("segue"), "");
+  const result = await running;
+  assert.equal(result.exitCode, 0);
+  const cli = `"${process.execPath}" "${INTEGRATIONS_CLI}"`;
+  assert.equal(
+    stderr,
+    [
+      `skill-me: a execução ${invocation} já não recebe registros, mas não foi possível conferir se todas as capturas dela pararam [io_failure].`,
+      `skill-me: capturas que não puderam ser lidas: ${orphan.id}.`,
+      `skill-me: quando a leitura voltar, confira com ${cli} privacy status --root "${prepared.root}" --capture ${orphan.id}; se mostrar "invocation":"${invocation}" e "state":"active", encerre com ${cli} privacy stop --root "${prepared.root}" --capture ${orphan.id}`,
+      "",
+    ].join("\n"),
+  );
+  assert.deepEqual(ofInvocation(prepared.root, invocation).map((c) => [c.segment, c.state, c.counters.persisted]), [[1, "stopped", 500], [2, "active", 0]]);
+  assert.equal(existsSync(pointerFile(prepared.root, invocation)), false);
+  const status = spawnSync(process.execPath, [INTEGRATIONS_CLI, "privacy", "status", "--root", prepared.root, "--capture", orphan.id], { encoding: "utf8", env: prepared.env });
+  assert.equal(status.status, 0, status.stdout);
+  assert.ok(status.stdout.includes(`"invocation":"${invocation}"`) && status.stdout.includes('"state":"active"'), status.stdout);
+  const stop = spawnSync(process.execPath, [INTEGRATIONS_CLI, "privacy", "stop", "--root", prepared.root, "--capture", orphan.id], { encoding: "utf8", env: prepared.env });
+  assert.equal(stop.status, 0, stop.stdout);
+  assert.deepEqual(ofInvocation(prepared.root, invocation).map((c) => c.state), ["stopped", "stopped"]);
+});
+
+test("I25-C41 encerramento pelo launcher sem listar a pasta das capturas: o launcher não declara a execução conferida e indica o privacy list", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c41 listagem", { agents: ["claude"] });
+  const base = createStoreIo();
+  let listing = false;
+  const io = {
+    ...base,
+    async readdir(dir) {
+      if (listing && path.basename(dir) === "captures") throw Object.assign(new Error("falha de listagem injetada"), { code: "EIO" });
+      return base.readdir(dir);
+    },
+    async unlink(file) {
+      // O ponteiro sai no início do encerramento: daí em diante a listagem falha.
+      if (path.basename(path.dirname(file)) === "launches") listing = true;
+      return base.unlink(file);
+    },
+  };
+  let stderr = "";
+  const result = await runInProcess({
+    argv: ["claude", ...agentArgs("claude")],
+    deps: { env: prepared.env, home: prepared.home, io, proc: new EventEmitter(), terminal: false, writeOut: () => {}, writeErr: (t) => (stderr += t), readLine: () => null },
+  });
+  const [capture] = launchCapturesOnDisk(prepared.root);
+  const inv = capture.invocation;
+  const cli = `"${process.execPath}" "${INTEGRATIONS_CLI}"`;
+  assert.equal(result.exitCode, 0);
+  assert.equal(
+    stderr,
+    [
+      `skill-me: a execução ${inv} já não recebe registros, mas não foi possível conferir se todas as capturas dela pararam [io_failure].`,
+      "skill-me: a pasta das capturas não pôde ser lida.",
+      `skill-me: quando a leitura voltar, confira com ${cli} privacy list --root "${prepared.root}"; se mostrar "invocation":"${inv}" e "state":"active", encerre com ${cli} privacy stop --root "${prepared.root}" --capture <id>`,
+      "",
+    ].join("\n"),
+  );
+  assert.deepEqual([capture.state, existsSync(pointerFile(prepared.root, inv))], ["stopped", false], "a corrente, lida pelo ponteiro, parou");
+});
+
 test("I25-C41 abertura pelo launcher: falha do ponteiro e falha ao parar o segmento 1 nomeiam a captura active e o comando privacy stop a encerra", async () => {
   const prepared = preparedLaunch(scratch, "i25 c41 abertura", { agents: ["claude"] });
   const base = createStoreIo();

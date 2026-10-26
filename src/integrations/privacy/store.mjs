@@ -820,7 +820,12 @@ async function capturesOfOrigin(ctx, origin) {
   return { found, failed };
 }
 
-const stopCapture = (ctx, { dir, state }, nowIso) => writeStateAtomic(ctx.io, dir, transition(state, "stop", nowIso).capture);
+// Devolve o estado gravado: o resumo do encerramento sai dele, sem reler.
+async function stopCapture(ctx, { dir, state }, nowIso) {
+  const stopped = transition(state, "stop", nowIso).capture;
+  await writeStateAtomic(ctx.io, dir, stopped);
+  return stopped;
+}
 
 // on/off. Só o `on` cria a pasta do store; `off` sem store não tem o que
 // desligar. Depois de gravar off, encerra toda captura automática ativa —
@@ -1103,8 +1108,8 @@ export function appendLaunch({ root, expectedReal, invocation, entries, produce,
   });
 }
 
-// Capturas legíveis de uma execução, por segmento. Uma ilegível de qualquer
-// origem não impede o resumo do encerramento.
+// Capturas legíveis de uma execução, por segmento (a seguinte, em
+// nextLaunchSegment). Uma ilegível de qualquer origem fica de fora.
 async function launchCaptures(ctx, invocation) {
   const { found } = await capturesOfOrigin(ctx, LAUNCH_ORIGIN);
   return found
@@ -1113,11 +1118,44 @@ async function launchCaptures(ctx, invocation) {
     .sort((a, b) => a.segment - b.segment);
 }
 
+// Capturas da execução lidas uma a uma no encerramento (linha "Descoberta das
+// capturas no encerramento" do Landing). `StoreError` (formato inválido, link,
+// entrada alheia) fica de fora, como em launchCaptures; um erro de E/S cru põe
+// o nome em `unreadable` sem perder as demais. A pasta que não pôde ser listada
+// torna a descoberta inteira não conferida. `error`: a primeira falha.
+async function discoverLaunch(ctx, invocation) {
+  const found = [];
+  const unreadable = [];
+  let names;
+  try {
+    names = (await capturesDirKind(ctx)) === "missing" ? [] : (await ctx.io.readdir(ctx.capturesDir)).sort();
+  } catch (error) {
+    return { found, unreadable, complete: false, error };
+  }
+  let error = null;
+  for (const name of names) {
+    if (!CAPTURE_ID_PATTERN.test(name)) continue;
+    try {
+      const capture = await readCapture(ctx, name);
+      if (capture.state.origin === LAUNCH_ORIGIN && capture.state.invocation === invocation) found.push(capture);
+    } catch (failure) {
+      if (failure instanceof StoreError) continue;
+      unreadable.push(name);
+      error ??= failure;
+    }
+  }
+  found.sort((a, b) => a.state.segment - b.state.segment);
+  return { found, unreadable, complete: unreadable.length === 0, error };
+}
+
 // Encerramento (crit. 20): o ponteiro sai antes de qualquer captura parar —
 // sem ele nenhum produtor grava, mesmo que parar falhe depois. Então para a
 // corrente e qualquer outra `active` da execução, como uma sucessora cujo
 // ponteiro não foi gravado (task 33). As que não pararam vão no erro, para
 // quem chama dizer quais são; o resumo de sucesso nunca traz uma `active`.
+// Uma captura que não pôde ser lida pode ser desta execução: o erro diz que o
+// encerramento não foi conferido (`unverified`) e quais nomes faltaram, sem
+// tocar nelas — podem ser de outra execução.
 export function endLaunch({ root, expectedReal, invocation, nowMs = Date.now(), io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openStore(root, io, { expectedReal });
@@ -1130,35 +1168,25 @@ export function endLaunch({ root, expectedReal, invocation, nowMs = Date.now(), 
       const stop = async (id, read) => {
         try {
           const capture = await read();
-          if (capture !== null && capture.state.state === "active") await stopCapture(ctx, capture, nowIso);
+          if (capture !== null && capture.state.state === "active") return await stopCapture(ctx, capture, nowIso);
         } catch (error) {
           failures.push({ id, error });
         }
+        return null;
       };
       if (launch !== null) await stop(launch.capture, () => activeCapture(ctx, launch.capture));
-      let known;
-      try {
-        known = await launchCaptures(ctx, invocation);
-      } catch (error) {
-        if (failures.length === 0) return { ended: launch !== null, captures: null, summaryCode: error instanceof StoreError ? error.code : "io_failure" };
-        known = [];
+      const discovered = await discoverLaunch(ctx, invocation);
+      const states = [];
+      for (const capture of discovered.found) {
+        const failed = failures.some((failure) => failure.id === capture.state.id);
+        states.push((failed ? null : await stop(capture.state.id, async () => capture)) ?? capture.state);
       }
-      for (const state of known) {
-        if (state.state === "active" && !failures.some((failure) => failure.id === state.id)) {
-          await stop(state.id, async () => ({ dir: path.join(ctx.capturesDir, state.id), state }));
-        }
-      }
-      if (failures.length > 0) {
+      if (failures.length > 0 || !discovered.complete) {
         const ids = failures.map((failure) => failure.id);
-        throw leftActive(failures[0].error, { revoked: true, capture: ids[0], captures: ids });
+        const unverified = discovered.complete ? {} : { unverified: true, unreadable: discovered.unreadable };
+        throw leftActive(failures[0]?.error ?? discovered.error, { revoked: true, capture: ids[0], captures: ids, ...unverified });
       }
-      let captures;
-      try {
-        captures = (await launchCaptures(ctx, invocation)).map(publicCapture);
-      } catch (error) {
-        return { ended: launch !== null, captures: null, summaryCode: error instanceof StoreError ? error.code : "io_failure" };
-      }
-      return { ended: launch !== null, captures };
+      return { ended: launch !== null, captures: states.map(publicCapture) };
     });
   });
 }

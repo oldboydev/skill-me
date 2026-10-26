@@ -403,3 +403,86 @@ test("I25-C41 abertura: falha do ponteiro seguida de falha ao parar o segmento 1
   const [only] = runPrivacy(["list", "--root", root]).body.captures;
   assert.deepEqual([rejected.code, rejected.orphan, rejected.capture, only.state], ["io_failure", true, only.id, "active"]);
 });
+
+// Refinamento de C41 (observação do orquestrador sobre eb8cdd7; linha
+// "Descoberta das capturas no encerramento" do Landing): a leitura do
+// state.json de uma captura falha por E/S durante o encerramento, com o arquivo
+// íntegro no disco — falha transitória, não formato inválido.
+const readFailure = (ids) => {
+  const base = createStoreIo();
+  return {
+    ...base,
+    async readBounded(file, maxBytes) {
+      if (path.basename(file) === "state.json" && ids.includes(path.basename(path.dirname(file)))) {
+        throw Object.assign(new Error("falha de leitura injetada"), { code: "EIO" });
+      }
+      return base.readBounded(file, maxBytes);
+    },
+  };
+};
+
+async function endOutcome(root, invocation, io) {
+  try {
+    return { resolved: await endLaunch({ root, expectedReal: root, invocation, io }) };
+  } catch (error) {
+    return { rejected: { code: error.code, revoked: error.revoked, unverified: error.unverified, unreadable: error.unreadable, captures: error.captures } };
+  }
+}
+
+test("I25-C41 leitura transitória da sucessora no encerramento: o encerramento não se declara conferido, nomeia a captura não lida e, com a leitura de volta, privacy status e stop a encerram", async () => {
+  const root = launchRoot("i25 c41 leitura da sucessora");
+  const opened = await fullFirstSegment(root, "leitura da sucessora");
+  await deliver(root, opened.invocation, [claudePayload("pre_tool_bash")], pointerFailure(opened.invocation, "rename"));
+  const orphan = ofInvocation(root, opened.invocation).find((s) => s.segment === 2);
+  const outcome = await endOutcome(root, opened.invocation, readFailure([orphan.id]));
+  assert.deepEqual(outcome, { rejected: { code: "io_failure", revoked: true, unverified: true, unreadable: [orphan.id], captures: [] } });
+  // A execução foi revogada e a corrente parou; a sucessora não lida continua active, sem endedAt.
+  assert.throws(() => readFileSync(pointerFile(root, opened.invocation)), { code: "ENOENT" });
+  assert.deepEqual(segmentsOf(root, opened.invocation), [[1, "stopped", 500], [2, "active", 0]]);
+  assert.equal(statusOf(root, orphan.id).endedAt, null);
+  assert.equal((await deliver(root, opened.invocation, [claudePayload("pre_tool_bash")])).report().code, "launch_ended");
+  // Com a leitura de volta, a recuperação indicada é verificável e encerra a sucessora.
+  const shown = runPrivacy(["status", "--root", root, "--capture", orphan.id]).body.capture;
+  assert.deepEqual([shown.invocation, shown.state], [opened.invocation, "active"]);
+  assert.equal(runPrivacy(["stop", "--root", root, "--capture", orphan.id]).status, 0);
+  assert.deepEqual(segmentsOf(root, opened.invocation), [[1, "stopped", 500], [2, "stopped", 0]]);
+});
+
+test("I25-C41 leitura transitória de captura de outra execução: o encerramento não se declara conferido e não altera a captura alheia", async () => {
+  const root = launchRoot("i25 c41 leitura alheia");
+  const a = await startLaunch({ root, expectedReal: root });
+  const b = await startLaunch({ root, expectedReal: root });
+  const outcome = await endOutcome(root, b.invocation, readFailure([a.capture]));
+  assert.deepEqual(outcome, { rejected: { code: "io_failure", revoked: true, unverified: true, unreadable: [a.capture], captures: [] } });
+  assert.deepEqual(segmentsOf(root, b.invocation), [[1, "stopped", 0]], "a legível desta execução parou");
+  assert.deepEqual(segmentsOf(root, a.invocation), [[1, "active", 0]], "a alheia não mudou");
+  assert.equal(readPointer(root, a.invocation).capture, a.capture);
+});
+
+test("I25-C41 falha ao listar a pasta das capturas no encerramento: a descoberta inteira não é conferida e a corrente, lida pelo ponteiro, para", async () => {
+  const root = launchRoot("i25 c41 listagem");
+  const opened = await startLaunch({ root, expectedReal: root });
+  const base = createStoreIo();
+  const io = {
+    ...base,
+    async readdir(dir) {
+      if (path.basename(dir) === "captures") throw Object.assign(new Error("falha de listagem injetada"), { code: "EIO" });
+      return base.readdir(dir);
+    },
+  };
+  const outcome = await endOutcome(root, opened.invocation, io);
+  assert.deepEqual(outcome, { rejected: { code: "io_failure", revoked: true, unverified: true, unreadable: [], captures: [] } });
+  assert.throws(() => readFileSync(pointerFile(root, opened.invocation)), { code: "ENOENT" });
+  assert.deepEqual(segmentsOf(root, opened.invocation), [[1, "stopped", 0]]);
+});
+
+test("I25-C41 captura de formato inválido na raiz: continua fora do resumo e não impede o encerramento conferido", async () => {
+  const root = launchRoot("i25 c41 formato inválido");
+  const opened = await startLaunch({ root, expectedReal: root });
+  const foreign = captureDir(root, "f".repeat(32));
+  mkdirSync(foreign);
+  writeFileSync(path.join(foreign, "state.json"), "{");
+  const outcome = await endOutcome(root, opened.invocation);
+  assert.deepEqual(outcome.resolved?.captures.map((c) => [c.id, c.segment, c.state]), [[opened.capture, 1, "stopped"]]);
+  assert.equal(readFileSync(path.join(foreign, "state.json"), "utf8"), "{", "a captura inválida não foi tocada");
+});
