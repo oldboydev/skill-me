@@ -113,7 +113,9 @@ não concluir e o lock gravado pela invocação puder ter ficado, o stderr diz
 onde ele está e que, quando a E/S voltar, ele só deve ser removido se ainda
 contiver o `pid` do launcher e esse processo tiver terminado — e só então o
 `privacy stop` mostrado encerra a captura. Um lock trocado por outro processo
-nunca é removido nem dado como desta invocação.
+nunca é removido nem dado como desta invocação. Se a falha da liberação vier
+no fim, com as capturas já paradas, o resumo sai como sempre, seguido da falha
+da liberação e, se for o caso, da mesma orientação sobre o lock.
 
 Se a gravação do ponteiro de uma sucessora falhar, aquela entrega falha
 (`io_failure`) e a entrega seguinte grava na mesma sucessora, sem repetir o

@@ -618,3 +618,16 @@ test("I25-C43 prioridade: falha ao gravar o ponteiro e falha da liberação junt
   const [created] = launchCapturesOnDisk(root);
   assert.deepEqual([rejected?.code, rejected?.opened, rejected?.orphan, created.state], ["io_failure", undefined, undefined, "stopped"]);
 });
+
+test("I25-C43 encerramento com a liberação do lock falhando por E/S: o erro leva as capturas já paradas e o lock, e nenhuma fica active", async () => {
+  const root = launchRoot("i25 c43 encerramento");
+  const opened = await startLaunch({ root, expectedReal: root });
+  const rejected = await rejection(endLaunch({ root, expectedReal: root, invocation: opened.invocation, io: lockRelease("kept") }));
+  assert.deepEqual(
+    { code: rejected?.code, ended: rejected?.closed?.ended, captures: rejected?.closed?.captures.map((c) => [c.id, c.state]), lockPath: rejected?.lockPath, lockLeft: rejected?.lockLeft },
+    { code: "io_failure", ended: true, captures: [[opened.capture, "stopped"]], lockPath: rootLock(root), lockLeft: true },
+  );
+  assert.deepEqual(segmentsOf(root, opened.invocation), [[1, "stopped", 0]]);
+  assert.throws(() => readFileSync(pointerFile(root, opened.invocation)), { code: "ENOENT" });
+  assert.equal(JSON.parse(readFileSync(rootLock(root), "utf8")).pid, process.pid);
+});

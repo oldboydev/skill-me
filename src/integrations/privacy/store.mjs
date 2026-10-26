@@ -1037,15 +1037,13 @@ const leftActive = (error, fields) => Object.assign(error instanceof StoreError 
 // criada não fica `active`; se nem pará-la der certo, o erro diz qual ficou
 // (task 33; linha "Sucessora não publicada" do Landing). Com captura e ponteiro
 // gravados, só a liberação do lock pode falhar: a execução já existe, e o erro
-// leva a identidade dela e o lock (task 35; linha "Lock após a abertura").
-// `lockLeft`: a falha foi de E/S, e o lock gravado aqui pode ter ficado; um
-// lock ausente ou com outros bytes (`StoreError`) não é desta abertura.
+// leva a identidade dela (`opened`) e o lock.
 export function startLaunch({ root, expectedReal, nowMs = Date.now(), io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openStore(root, io, { create: true, expectedReal });
-    let opened = null;
-    try {
-      return await withLock(ctx, async () => {
+    return keepingResult(
+      ctx,
+      async () => {
         await initStore(ctx);
         const invocation = randomBytes(16).toString("hex");
         const launchedAt = new Date(nowMs).toISOString();
@@ -1060,14 +1058,27 @@ export function startLaunch({ root, expectedReal, nowMs = Date.now(), io = creat
           }
           throw error;
         }
-        opened = { invocation, capture: first.state.id, launchedAt };
-        return opened;
-      });
-    } catch (error) {
-      if (opened === null) throw error;
-      throw leftActive(error, { ...opened, opened: true, lockPath: path.join(ctx.storeDir, LOCK_FILE), lockLeft: !(error instanceof StoreError) });
-    }
+        return { invocation, capture: first.state.id, launchedAt };
+      },
+      (opened) => ({ ...opened, opened: true }),
+    );
   });
+}
+
+// Liberação do lock que falha depois de o callback terminar (task 35; linha
+// "Lock após a abertura" do Landing): holdLockFile lança a falha e o resultado
+// já gravado se perderia. `describe(resultado)` diz o que vai no erro, com o
+// lock: `lockLeft` quando a falha foi de E/S e o lock gravado aqui pode ter
+// ficado; um lock ausente ou com outros bytes (`StoreError`) não é desta
+// operação. Uma falha do próprio callback continua a que sai, sem resultado.
+async function keepingResult(ctx, fn, describe) {
+  let done = null;
+  try {
+    return await withLock(ctx, async () => (done = { result: await fn() }).result);
+  } catch (error) {
+    if (done === null) throw error;
+    throw leftActive(error, { ...describe(done.result), lockPath: path.join(ctx.storeDir, LOCK_FILE), lockLeft: !(error instanceof StoreError) });
+  }
 }
 
 // Captura seguinte da execução, ainda sem publicar (task 33; linha "Sucessora
@@ -1170,46 +1181,51 @@ async function discoverLaunch(ctx, invocation) {
 // quem chama dizer quais são; o resumo de sucesso nunca traz uma `active`.
 // Uma captura que não pôde ser lida pode ser desta execução: o erro diz que o
 // encerramento não foi conferido (`unverified`) e quais nomes faltaram, sem
-// tocar nelas — podem ser de outra execução.
+// tocar nelas — podem ser de outra execução. Com tudo parado, só a liberação
+// do lock pode falhar: o erro leva o resultado (`closed`) e o lock.
 export function endLaunch({ root, expectedReal, invocation, nowMs = Date.now(), io = createStoreIo() }) {
   return storeOp(async () => {
     const ctx = await openStore(root, io, { expectedReal });
     if (ctx === null) return { ended: false, captures: [] };
-    return withLock(ctx, async () => {
-      const nowIso = new Date(nowMs).toISOString();
-      const launch = await readLaunchFile(ctx, invocation);
-      if (launch !== null) await io.unlink(launchFile(ctx, invocation));
-      const failures = [];
-      // Para a captura lida só se ela for desta execução e estiver `active`;
-      // devolve o estado que fica (o gravado, quando parou).
-      const stop = async (capture) => {
-        if (capture.state.state !== "active" || !ofLaunch(capture.state, invocation)) return capture.state;
-        try {
-          return await stopCapture(ctx, capture, nowIso);
-        } catch (error) {
-          failures.push({ id: capture.state.id, error });
-          return capture.state;
+    return keepingResult(
+      ctx,
+      async () => {
+        const nowIso = new Date(nowMs).toISOString();
+        const launch = await readLaunchFile(ctx, invocation);
+        if (launch !== null) await io.unlink(launchFile(ctx, invocation));
+        const failures = [];
+        // Para a captura lida só se ela for desta execução e estiver `active`;
+        // devolve o estado que fica (o gravado, quando parou).
+        const stop = async (capture) => {
+          if (capture.state.state !== "active" || !ofLaunch(capture.state, invocation)) return capture.state;
+          try {
+            return await stopCapture(ctx, capture, nowIso);
+          } catch (error) {
+            failures.push({ id: capture.state.id, error });
+            return capture.state;
+          }
+        };
+        // A captura do ponteiro vale pelo vínculo do estado dela (linha "Vínculo
+        // do ponteiro no encerramento"); a que não pôde ser lida fica para a
+        // descoberta, que a relê ou a dá como não lida.
+        if (launch !== null) {
+          const current = await readCapture(ctx, launch.capture).catch(() => null);
+          if (current !== null) await stop(current);
         }
-      };
-      // A captura do ponteiro vale pelo vínculo do estado dela (linha "Vínculo
-      // do ponteiro no encerramento"); a que não pôde ser lida fica para a
-      // descoberta, que a relê ou a dá como não lida.
-      if (launch !== null) {
-        const current = await readCapture(ctx, launch.capture).catch(() => null);
-        if (current !== null) await stop(current);
-      }
-      const discovered = await discoverLaunch(ctx, invocation);
-      const states = [];
-      for (const capture of discovered.found) {
-        states.push(failures.some((failure) => failure.id === capture.state.id) ? capture.state : await stop(capture));
-      }
-      if (failures.length > 0 || !discovered.complete) {
-        const ids = failures.map((failure) => failure.id);
-        const unverified = discovered.complete ? {} : { unverified: true, unreadable: discovered.unreadable };
-        throw leftActive(failures[0]?.error ?? discovered.error, { revoked: true, capture: ids[0], captures: ids, ...unverified });
-      }
-      return { ended: launch !== null, captures: states.map(publicCapture) };
-    });
+        const discovered = await discoverLaunch(ctx, invocation);
+        const states = [];
+        for (const capture of discovered.found) {
+          states.push(failures.some((failure) => failure.id === capture.state.id) ? capture.state : await stop(capture));
+        }
+        if (failures.length > 0 || !discovered.complete) {
+          const ids = failures.map((failure) => failure.id);
+          const unverified = discovered.complete ? {} : { unverified: true, unreadable: discovered.unreadable };
+          throw leftActive(failures[0]?.error ?? discovered.error, { revoked: true, capture: ids[0], captures: ids, ...unverified });
+        }
+        return { ended: launch !== null, captures: states.map(publicCapture) };
+      },
+      (closed) => ({ closed }),
+    );
   });
 }
 

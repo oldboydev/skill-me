@@ -153,8 +153,19 @@ async function launchAgent(agent, args, deps) {
   const { config, manualSteps } = prepared;
   const sayCancelled = (signal) => say(`skill-me: abertura cancelada por ${signal}; o agente não foi iniciado.`);
 
+  // Lock desta invocação que pode ter ficado depois de uma liberação que falhou
+  // (task 35; linha "Lock após a abertura"): o launcher nunca o remove; diz
+  // qual é e quando removê-lo à mão.
+  const sayLockLeft = (error) => {
+    if (error.lockLeft !== true) return;
+    say(
+      `skill-me: o lock "${error.lockPath}" desta invocação pode ter ficado na raiz; enquanto existir, gravações e comandos nela saem com lock_present. Quando a E/S voltar, se ele ainda contiver "pid":${process.pid} e esse processo tiver terminado, remova-o e só então rode o comando acima.`,
+    );
+  };
+
   // Encerra a execução e escreve o resumo ou a falha (crit. 20 e 24); devolve
-  // se encerrou.
+  // se encerrou. Com tudo parado e só a liberação do lock falhando, o resumo é
+  // o de sempre (`closed`), seguido da falha da liberação.
   const finish = async (opened, agentRan) => {
     const { invocation } = opened;
     try {
@@ -162,6 +173,12 @@ async function launchAgent(agent, args, deps) {
       for (const line of summaryLines({ invocation, captures: ended.captures, manualSteps, agentRan })) say(line);
       return true;
     } catch (error) {
+      if (error?.closed !== undefined) {
+        for (const line of summaryLines({ invocation, captures: error.closed.captures, manualSteps, agentRan })) say(line);
+        say(`skill-me: a execução ${invocation} foi encerrada, mas a liberação do lock da raiz falhou [${codeOf(error)}].`);
+        sayLockLeft(error);
+        return true;
+      }
       for (const line of await failedEndLines({ error, invocation, config, io, fallbackCapture: opened.capture })) say(line);
       return false;
     }
@@ -169,17 +186,11 @@ async function launchAgent(agent, args, deps) {
 
   // Abertura gravada cuja liberação do lock falhou (task 35; linha "Lock após a
   // abertura"): o agente não inicia e a execução passa pelo encerramento de
-  // sempre. Se ele não concluir e o lock desta invocação puder ter ficado, o
-  // stderr diz qual é e quando removê-lo à mão — nunca o remove.
+  // sempre. Se ele não concluir, vale a linha do lock da abertura.
   const unconfirmedOpening = async (error) => {
     const code = codeOf(error);
     say(`skill-me: a execução ${error.invocation} foi aberta com a captura ${error.capture}, mas a liberação do lock da raiz falhou [${code}]; o agente não foi iniciado.`);
-    const ended = await finish(error, false);
-    if (!ended && error.lockLeft === true) {
-      say(
-        `skill-me: o lock "${error.lockPath}" desta invocação pode ter ficado na raiz; enquanto existir, gravações e comandos nela saem com lock_present. Quando a E/S voltar, se ele ainda contiver "pid":${process.pid} e esse processo tiver terminado, remova-o e só então rode o comando acima.`,
-      );
-    }
+    if (!(await finish(error, false))) sayLockLeft(error);
     return { exitCode: exitFor(code) };
   };
 
