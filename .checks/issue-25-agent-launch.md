@@ -194,3 +194,14 @@ Um lote: S1 ~11k + S2 ~21k + S3 ~27k + S4 ~8k + S5 ~31k = ~98k tokens de leitura
 (`wc -c` dos arquivos tocados ÷ 4), abaixo do teto de 150k; nenhuma fronteira de entrega é
 necessária. Boa parte de S1–S4 já foi lida no planejamento. O Verifier e a revisão formal ficam
 com o orquestrador depois do último commit; este agente não os convoca.
+
+- Onde a fronteira caiu: lote único, C1–C37 fechados; produto em `7bb3f45` (store e entrega),
+  `8629415` (launcher, consulta e provas S1–S4), `95ec7bd` (documentação) e `dedd5b4` (correção de
+  prova). Provas e totais em `.checks/issue-25-agent-launch.build.md`.
+- O que o proprietário decidiu durante o build: aprovação do plano completo e do checklist
+  (“Aprovar plano completo e implementar”, issue #25, comentário 6415701125), mantida a decisão B.
+  Os riscos 1–4 da conferência do plano viraram as linhas “Início da execução” e “Ordem e falha do
+  encerramento” do Landing e o reforço das provas de C5, C28, C31 e C34, antes do código.
+- O que foi abandonado: prova do Ctrl+C do Windows por `emit("SIGINT")` em processo — não exercita
+  o console; substituída pelo `CTRL_C_EVENT` real. Escolha da execução pelo `createdAt` do menor
+  segmento restante — escolhe a execução errada com o segmento 1 apagado.
