@@ -217,7 +217,11 @@ AC3/AC4 (encerramento verificável, segmentos sucessivos com limites e chave pr�
     cada captura que ficou `active` o comando `privacy stop` que a encerra, e a execução já
     não recebe registros. Capturas de outra execução da mesma raiz não mudam. Na abertura,
     se publicar o ponteiro falhar e parar o segmento 1 também falhar, o stderr diz que essa
-    captura ficou `active` e dá o comando que a encerra.
+    captura ficou `active` e dá o comando que a encerra. Se o encerramento não conseguir ler
+    uma captura da raiz por falha de E/S, ele não se declara conferido: a execução já não
+    recebe registros, toda captura legível dela fica `stopped`, nenhuma de outra execução muda,
+    e o stderr lista as não lidas com o `privacy status` que as confere e o `privacy stop` que
+    encerra a que for desta execução e estiver `active`.
 34. Um SIGINT, SIGQUIT ou SIGHUP do terminal, ou um SIGTERM, recebido depois do preparo e antes
     de o agente iniciar — durante a espera do lock na abertura, com a abertura em curso ou na
     conferência da entrada do shim — cancela a abertura: o agente não inicia; a captura já
