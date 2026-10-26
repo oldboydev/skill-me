@@ -10,7 +10,7 @@ Sources:
 - `.tasks/issue-5-privacidade.md`, `docs/privacidade.md` — política, chave por captura, limites 500 eventos/8 MiB, retenção.
 - `docs/agent-observation.md`, `src/integrations/install/run.mjs` — `plan`, `install --apply`, `manualSteps`.
 - `src/doctor/agent-resolution.mjs`, `src/doctor/config-sources.mjs`, `src/doctor/launcher-link/codex.mjs` — resolução no PATH, diretórios de configuração, shim do npm.
-- Pedido do proprietário (conversa): “pega a proxima issue planejar e implementar” — autoriza executar o escopo decidido.
+- Pedido do proprietário (conversa): “pega a proxima issue planejar e implementar” — pedido da entrega; a decisão B está aprovada, e o plano completo aguarda aprovação explícita antes do código.
 
 ## Out of scope
 

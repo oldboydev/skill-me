@@ -38,3 +38,20 @@ código; o vínculo por invocação e a consulta precisam alcançar todos os seg
 O Claude foi iniciado para atualizar plano e checklist antes de implementar,
 executar as provas e registrar commits locais. Verifier independente e revisão
 formal continuam como etapas posteriores obrigatórias do orquestrador.
+
+## Aprovação do plano completo pendente
+
+A revisão automática de aprovação recusou mover a issue para Ready: considerou
+aprovada somente a decisão de rollover, enquanto faltava aprovação explícita do
+plano completo. O Project permanece em Planning. O processo Claude foi interrompido.
+
+Nesse intervalo ele havia concluído plano/checklist no commit `4b1ba61` e iniciado
+um WIP de 38 linhas em `src/integrations/privacy/store.mjs`, sem commit de produto.
+O WIP foi preservado em `.checks/code-review/issue-25/product.pending-approval.patch`
+e `store.pending-approval.mjs`, e somente esse arquivo foi restaurado ao HEAD.
+Nenhuma implementação de produto permanece na árvore. Não foram executadas provas
+de produto, Verifier ou revisão formal desta entrega.
+
+O plano completo e os 37 checks estão concretos para aprovação. Continuar o código
+e mudar para Ready/In Progress depende agora da aprovação explícita do proprietário;
+nenhum teto de revisão nem histórico foi alterado.
