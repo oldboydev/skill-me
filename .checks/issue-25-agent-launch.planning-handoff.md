@@ -64,3 +64,28 @@ continuar a implementação da #25 com a alternativa B e desbloqueia o workflow
 Ready/In Progress. O bloqueio anterior permanece registrado acima como histórico.
 As provas, o Verifier independente, a revisão local e o comando de entrega continuam
 obrigatórios; merge e publicação do pacote não foram autorizados.
+
+## Proposta adicional pendente: harness nativa do Hermes
+
+A primeira verificação independente (`.checks/issue-25-agent-launch.verified.md`)
+comprovou quatro falhas nativas iguais em HEAD e na base `63621c6`. A harness
+antiga considera a entrega concluída após 300 ms sem mudança nos contadores,
+mesmo havendo eventos pendentes; a abertura do processo de entrega mediu
+453–469 ms nesta máquina. O Verifier classificou esse ajuste como fora do
+escopo originalmente aprovado da #25. Nenhuma correção da harness foi aplicada.
+
+Proposta para autorização do proprietário, na mesma entrega:
+
+- ajustar somente a espera de conclusão em
+  `tests/integrations/fixtures/hermes/harness.py` e as provas necessárias;
+- distinguir entrega concluída, entrega ainda pendente e falha terminal,
+  preservando o prazo máximo já definido e as asserções existentes;
+- provar que uma inicialização acima de 300 ms não é encerrada como concluída
+  enquanto houver eventos pendentes, e que destinos travados/falhos continuam
+  limitados pelo prazo e sem alterar argumentos ou resultados das ferramentas;
+- repetir o gate completo, sem desabilitar casos nativos, elevar tolerâncias
+  para obter verde, mudar o plugin do produto ou alterar runtimes pessoais.
+
+As correções dos testes novos da #25 (remoções com Node 24.13.0, medição
+monotônica e matriz stdin/stderr) já pertencem ao escopo aprovado e continuam
+independentemente desta decisão adicional.
