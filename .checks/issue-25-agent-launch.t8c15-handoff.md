@@ -49,3 +49,26 @@ PASS independente e ready do novo conteúdo continuam necessários antes do push
 Em andamento: registro da decisão no plano e no checklist antes do código. Provas, comandos e a
 execução completa instrumentada entram aqui e em `.checks/issue-25-agent-launch.build.md`.
 
+Atualização em 27/10/2026, depois das provas do autor (detalhes, comandos e logs nas seções
+“Diagnóstico do T8-C15” e “Primeira criação concorrente do store” do build):
+
+- Registro antes do código em `b7ad0f3`; instrumentação e as três provas I25-C46 em `710076e`, só na
+  prova. RED na prova antiga: falha antes do commit e confirmação perdida davam a mesma mensagem.
+  GREEN 4/4 (a primeira tentativa falhou só pela minha comparação da mensagem do Node, que anexa o
+  diff); duas mutações detectadas; arquivo de concorrência 13/13 em Windows 24.22.1, Windows 24.13.0 e
+  WSL isolado.
+- Execução completa instrumentada em `710076e` (a única desta investigação): `npm test` com **exit
+  1**, 997 testes, 976 pass, 1 fail, 20 skip. O T8-C15 e os C46 passaram; a falha da R9 não se
+  reproduziu (limite, sem taxa). A única falha foi o I25-C32: B saiu com `store_invalid` na primeira
+  criação do store da raiz. O processo do CLI do autor ficou aberto depois do relato; o orquestrador
+  encerrou só o PID 117484, depois do gate e do relato, sem interromper testes nem descartar logs.
+- Causa do C32 reproduzida com o io injetado, também na base: o marcador do store, conferido antes do
+  lock, era lido no meio da criação por outra abertura. Correção no escopo original da #25, com os
+  contratos mantidos: registro em `8e8893b`, correção e provas em `f734441` (RED 5/5, GREEN 5/5, três
+  mutações detectadas).
+- Alvo completo da #25 mais concorrência em `f734441`: 120 testes, 114 pass, 0 fail, 6 skip de
+  plataforma em Windows 24.22.1, Windows 24.13.0 (clone novo com `core.autocrlf=true`) e WSL isolado;
+  `npm test` completo: **exit 0**, 1.002 testes, 982 pass, 0 fail, 20 skip, com os 12 nativos do Hermes.
+- A causa da falha da R9 continua desconhecida; a instrumentação não a corrige. Pendentes: Verifier 10
+  e revisão formal 6, do orquestrador.
+

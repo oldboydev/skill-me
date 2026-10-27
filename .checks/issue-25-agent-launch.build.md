@@ -1025,3 +1025,167 @@ ACs), só para a #25, com o histórico preservado.
   três ambientes) e o `npm test` de `abae80a` (993: 973 pass, 0 fail, 20 skip) da seção anterior
   continuam como estão. Nesta mudança, só os gates da configuração: `npm run test:governance` e
   `npm run test:code-review`.
+
+## Diagnóstico do T8-C15 (AC7, autorização 6440482031; S10, C46)
+
+Estado de partida: HEAD `a718865` (proposta), árvore limpa. A 9ª verificação ficou como FAIL em
+`4e66de2`: 45/45 checks com prova verde e o alvo de 102 testes verde em A, B e C; o gate D (`npm test`
+no Windows, Node 24.22.1, teto 8) teve 994 testes, 973 pass, 1 fail, 20 skip. A falha foi o `T8-C15`
+(`concurrency.cli.test.mjs:107`): o produtor `b` com `{bound: true, code: "io_failure", entries: 40,
+committed: 20, persisted: 20, lost: 20}`; `a` confirmou 40. **Não se sabe** se as 20 sem confirmação
+ficaram no disco, quantos lotes falharam, nem a operação e o código de erro. O caminho de E/S da
+captura manual não mudou na #25 (diff complementar fechado pelo orquestrador). O registro de
+`io_failure` anterior à #23 não mede taxa nem demonstra a mesma causa. O proprietário respondeu
+“Autorizar ajuste pontual e 10ª verificação”
+([comentário 6440482031](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6440482031)); o
+Verifier 10 é do orquestrador, depois destas provas, e o teto formal continua 6, com 5 consumidas.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `b7ad0f3` | Task 38 e Sources, Landing “Diagnóstico do T8-C15”, S10/C46, Handoff e o handoff do T8-C15 marcado como autorizado (texto original preservado), antes do código |
+| `710076e` | `concurrency.cli.test.mjs`: rotina comum do T8-C15 e das três provas I25-C46 |
+
+Logs em `.checks/code-review/issue-25/builder-t8c15/` (pasta ignorada).
+
+- **O que mudou (só a prova antiga)**: os dois produtores continuam dois `ingest --agent hermes`
+  iniciados juntos por `Promise.all`, 40 linhas cada com pausas de 4 ms, na mesma captura manual; cada
+  um carrega a pré-carga de tempos existente por `timedEnv` (`NODE_OPTIONS`), com um arquivo por
+  produtor num scratch próprio. Antes das asserções, `inspectProducers` (nunca lança) junta status,
+  sinal, ms da saída e relatório de cada produtor; `describeTiming`/`deliveryTiming` com as operações
+  com erro e a fase (`antes do commit`, `depois do commit`, `tomada do lock`, `fora do lock`), com o
+  `open lock EEXIST` contado à parte; o export por produtor, o status, segmentos, temporários e o
+  lock, ou `indisponível [<código>]`. As asserções são as mesmas (status 0, 40/40/40/0/`null` por
+  produtor, 80 eventos, segmento coerente, hooks, recusa com lock alheio); só a mensagem das duas
+  primeiras ganha a evidência.
+- **Pré-carga conferida** (`tests/integrations/helpers/traces-probe.mjs:118-168`): cada operação vai
+  para um array em memória (`ops.push`), e o `process.on("exit")` grava uma única linha com
+  `appendFileSync`. O custo possível no tempo dos produtores é o carregamento da pré-carga por
+  `NODE_OPTIONS` e, por operação, dois `performance.now()` e um `push`. Não foi medido à parte: na
+  execução A cada produtor fez de 1.000 a 1.600 operações de disco, com 109 a 187 ms de CPU.
+- **RED** (a prova antiga numa cópia descartável de `b7ad0f3`, com só o env do produtor `b` alterado
+  por `red-patch.mjs`): `SKILL_ME_TEST_TRACES_SEGMENT_EIO=1` (falha antes do commit) e
+  `SKILL_ME_TEST_TRACES_LOST_CONFIRMATION=2` (confirmação perdida depois dele) deram a **mesma**
+  mensagem, `AssertionError: b` com `{code: "io_failure", committed: 34, persisted: 34, lost: 6}`: sem
+  operação, código nem export, os dois casos eram indistinguíveis
+  (`red-old-*-win-24.22.1.spec.txt`).
+- **Primeira GREEN, falha da minha comparação** (`green-first-win-24.22.1.spec.txt`): o T8-C15 passou e
+  os três controles falharam só porque eu comparava `failure.message` por igualdade; no Node 24 a
+  mensagem de um `AssertionError` com texto próprio recebe o diff dos valores no fim. A evidência já
+  estava certa: antes do commit, export `b 30/40` e `rename segmento.tmp EIO (antes do commit)`;
+  confirmação perdida, `b` com 33 confirmadas e 7 perdidas e export `b 40/40`, com `unlink lock EIO
+  (depois do commit)`; lock preso, `a` com `lock_present` (7/33), `b` com `io_failure` (0/40), export e
+  status `indisponível [lock_present]`, lock presente. A prova passou a conferir o `actual` e o
+  `expected` da asserção original e o início da mensagem (nome e evidência inteira); **GREEN** 4/4
+  (`green-second-win-24.22.1.spec.txt`).
+- **Mutações** (cópia descartável): fase que ignora o commit → os controles (b) e (c) falham
+  (`unlink lock EIO (antes do commit)`); inspeção que inventa contagens zero quando o CLI falha → (c)
+  falha (`mutation-*-win-24.22.1.spec.txt`).
+
+| Alvo `concurrency.cli.test.mjs` inteiro em `710076e` | Resultado |
+| --- | --- |
+| A — Windows, Node 24.22.1, checkout principal, 08:27:29–08:28:01 | 13 testes: 13 pass, 0 fail, 0 skip; T8-C15 3,2 s, C46 1,0/1,0/1,1 s |
+| B — Windows, Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, 08:28:12–08:29:37 | 13/13; T8-C15 11,5 s, C46 3,2/3,2/3,6 s; 20 scratches do 24.13.0 removidos, 0 recusas |
+| C — WSL Ubuntu uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, npm 11.6.2, `env -i`, `HOME` do scratch, PATH só com o prefixo e `tools` (`sh`, `git`, `python3`, `id`, `grep`, `mkfifo`), `git -c core.autocrlf=false archive 710076e` (5.591.040 bytes, sha256 `f9cfb8af…5af8b24e`, árvore extraída `ff13a1ba…` = `HEAD^{tree}`), 08:30:44–08:31:04 | 13/13; T8-C15 1,6 s, C46 0,3/0,3/0,9 s; `~/.skill-me` ausente antes e depois |
+
+Os 13 nomes são os mesmos nos três TAP (`final/*.names`).
+
+**Execução completa instrumentada em `710076e`** (a única desta investigação; Windows, Node 24.22.1,
+runner padrão com 8 arquivos, 32 núcleos, os 12 nativos do Hermes; 08:31:42–08:37:03): **`npm test`
+saiu com 1** (`final/npm-test.exit` = 1, `EXIT=1` em `final/npm-test.env.txt`). 997 testes: 976 pass,
+**1 fail**, 20 skip — governança 6/6; motor 16/16; doctor 417 (410/0/7); integrações 558 (544/1/13).
+O T8-C15 (3,7 s) e os três C46 (1,0/1,0/1,6 s) passaram; a falha de R9 **não se reproduziu** nessa
+execução, o que não mede taxa. A única falha foi o I25-C32 (seção seguinte). O processo em segundo
+plano que envolvia o `npm test` terminou com 0: esse é o código do script, não o do teste.
+
+**Processo do autor**: o meu processo do CLI desta sessão continuou aberto depois de emitir o relato.
+O orquestrador encerrou **só** o PID 117484 (pai 124104, criado às 08:14:31; dados dele em
+`builder-t8c15/completed-author-process.json`, não alterado), depois de o gate terminar e do relato
+completo; nenhum teste foi interrompido e nenhum log descartado. O código de saída desse processo não
+é resultado de teste: o do gate é o `EXIT=1` acima.
+
+Limpeza: as cópias descartáveis (RED, mutações) foram apagadas; 127 pastas de testes de outras issues
+criadas na janela do `npm test` (`skill-me i4 i5 …` 124, `skill-me i4 t7 …` 2, `skill-me i5 c7 …` 1)
+foram removidas do `%TEMP%` com linha de base, prefixo e janela conferidos (0 recusas); as 3 entradas
+fora desses prefixos ficaram.
+
+Limites: a causa da falha da R9 continua **desconhecida**; a instrumentação a torna diagnosticável,
+não a corrige. A pré-carga pode mudar um pouco o tempo dos produtores. Os controles dependem da ordem
+da n-ésima operação injetada (`rename` de segmento, `unlink` do lock); no do lock preso, o primeiro
+produtor que falha pode ser `a` ou `b`, e a prova aceita os dois. A linha de tempos do
+`describeTiming` lista um flush por commit e fica longa.
+
+## Primeira criação concorrente do store (I25-C32 da execução completa em `710076e`)
+
+**Evidência** (rodapé de `builder-t8c15/final/npm-test.log`): `eventos intercalados: B terminou antes`
+em 3,064 s; no instante, marcadores `[]`, probes de A e B nulos, a captura de A no segmento 1 `active`
+com `persisted` 0. Depois de liberar as barreiras: A com status 0, `capturas: 1; eventos gravados: 2.`,
+`stopped`; **B com status 3 e `skill-me: não foi possível abrir a execução [store_invalid]`**, sem
+iniciar o agente. A raiz do C32 só tem o `observe setup` (`preparedLaunch`); a pasta do store nasce
+na primeira abertura, e as duas invocações a criam juntas.
+
+**Reprodução e causa** (descartável, `builder-t8c15/repro-*.mjs`, io do store injetado, sem carga):
+com A parada dentro da criação exclusiva do `store.json` (arquivo criado pelo `wx`, bytes ainda não
+escritos), B sai com `store_invalid` e, depois, abre — no `privacy start` da base `63621c6`, no do HEAD
+e no `startLaunch`. Com B decidindo inicializar antes do lock e tomando-o depois de A, B sai com
+`io_failure` (`EEXIST` no marcador), nos mesmos três. O `openStore` confere o marcador antes do lock
+por ele ser imutável depois de criado, mas não durante a criação: (1) marcador vazio lido no meio do
+`writeExclusive`; (2) marcador ausente na leitura e presente na listagem; (3) `needsInit` decidido
+antes do lock. Código comum da criação (sem diff na #25 até aqui). A operação exata do gate não ficou
+registrada: o `store_invalid` dele é a janela 1 ou 2.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `8e8893b` | Landing “Primeira criação concorrente do store”, nota na task e acréscimo no C32, antes do código |
+| `f734441` | `privacy/store.mjs` (`openStore`, `needsAdoption`, `readMarker`, `initStore`), `markerPausedIo` em `helpers/launch.mjs`, quatro provas em `store.unit` e uma em `end.e2e` |
+
+Logs em `.checks/code-review/issue-25/builder-store-creation/` (pasta ignorada).
+
+- **Correção**: o marcador é publicado por temporário `store.json.<hex8>.skill-me-tmp` + `rename`; quem
+  cria lista a pasta antes de ler o marcador e só o lê se listado (exato, senão `store_invalid`); sem
+  ele, adota a pasta vazia ou só com o `.lock`, e aceita o temporário do marcador só junto do `.lock`;
+  sob o lock, `initStore` relê o marcador (presente e exato, não regrava) e só publica com a pasta
+  contendo apenas o `.lock` da operação. Quem não cria lê o marcador como antes. A segunda abertura
+  durante uma criação recebe `lock_present` — a paciência de 2 s do launcher, sem retry novo.
+- **RED** (provas novas no produto de `8e8893b`, igual a `710076e`; `red-win-24.22.1.spec.txt`): 5/5
+  falham. Pelo launcher, `B terminou antes de encontrar o lock: skill-me: não foi possível abrir a
+  execução [store_invalid]` (o sintoma do gate); marcador em publicação, B com `store_invalid` e a
+  pasta em `[[".lock",57],["store.json",0]]`; pasta vazia vista antes do lock, `io_failure`; marcador
+  publicado entre a leitura e a listagem, `store_invalid`; nas recusas, só o caso novo (lock alheio
+  com o temporário do marcador) muda — `store_invalid` no código anterior; os demais já valiam.
+- **GREEN** (`green-win-24.22.1.spec.txt`, `green2-win-24.22.1.spec.txt`, este com as provas
+  reforçadas: a segunda abertura não regrava o marcador e as recusas `store_invalid` não gravam nada,
+  nem o `.lock`): 5/5.
+- **Mutações da correção** (cópia descartável, `mutation-*-win-24.22.1.spec.txt`): marcador de novo
+  por `writeExclusive` direto → o launcher e o marcador em publicação voltam ao `store_invalid`;
+  publicar sob o lock sem reler → `a segunda não regravou o marcador` falha; temporário adotável sem o
+  `.lock` → a recusa `temporário do marcador sem lock` falha.
+- **Regressão rápida antes do commit**: `tests/integrations/privacy/*.test.mjs`,
+  `tests/integrations/observe/*.test.mjs` e `launch/store.unit`, uma vez: 179/179
+  (`regression-privacy-observe-win-24.22.1.spec.txt`).
+
+| Alvo da #25 completo (`launch/*.test.mjs`, `hermes-harness.unit.test.mjs` e `traces/concurrency.cli.test.mjs`, `--test-concurrency=4`) em `f734441` | Resultado |
+| --- | --- |
+| A — Windows, Node 24.22.1, checkout principal, 08:56:01–08:58:12 | 120 testes: 114 pass, 0 fail, 6 skip; `git status` vazio antes e depois |
+| B — Windows, Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, **clone novo com `core.autocrlf=true`** (`package.json` `w/crlf`, `cli.mjs` `w/lf attr/text eol=lf`), 08:58:31–09:01:00 | 120: 114 pass, 0 fail, 6 skip; `git status` do clone vazio antes e depois; clone removido; 375 scratches do 24.13.0 removidos, 0 recusas |
+| C — WSL Ubuntu uid 1000, o mesmo prefixo isolado sem `sh`, `env -i`, `HOME` do scratch, PATH sem `/usr/bin`, `git -c core.autocrlf=false archive f734441` (5.621.760 bytes, sha256 `1e9ad157…98fcecf8`, árvore extraída `023bc9af…` = `HEAD^{tree}`, `cli.mjs` 755), 09:01:37–09:02:39 | 120: 114 pass, 0 fail, 6 skip; `~/.skill-me` e a autorização ausentes antes e depois |
+
+Os 120 nomes são os mesmos nos três TAP: os 102 de antes, os 5 novos I25-C32 e os 13 do arquivo de
+concorrência. Os 7 I25-C32, o T8-C15 e os três C46 passaram nos três. Skips, todos de plataforma: em A
+e B, C45 POSIX, C5, C6, C42 POSIX, C33 arranjo e C15 pty; em C, C4 shim, C45 controle, C5 console, C42
+console, C8 LOCALAPPDATA e C38 console.
+
+**`npm test` completo em `f734441`** (Windows, Node 24.22.1, runner padrão com 8 arquivos, 12 nativos do
+Hermes; 09:02:58–09:11:01; `builder-store-creation/final/npm-test.*`): **exit 0**. 1.002 testes: 982
+pass, 0 fail, 20 skip — governança 6/6; motor 16/16; doctor 417 (410/0/7); integrações 563 (550/0/13).
+Os 12 nativos do Hermes passaram; os 7 I25-C32 (inclusive o de processos reais, 8,9 s), o T8-C15
+(12,5 s) e os três C46 também; `git status` vazio antes e depois. 127 pastas de testes de outras
+issues da janela removidas do `%TEMP%` como na execução anterior.
+
+Limites: o código mudado é o comum da criação do store, também do `privacy start` (#5) e do `on`
+(#23). Numa criação concorrente, o `privacy start` passa a responder 4 `lock_present` (o usuário
+repete, como já documentado) em vez de 3 `store_invalid`, e o `on` espera na paciência dele. Um
+criador que morre com o `.lock` e o temporário do marcador deixa `lock_present` até o usuário remover
+o lock (recuperação já documentada) e, depois, `store_invalid` pelo temporário — a mesma rigidez de um
+marcador pela metade antes. A falha de C32 na CI 40443538957 (tempo esgotado, sem saídas) continua sem
+causa demonstrada; esta correção cobre a classe observada agora (`store_invalid` na abertura). Uma
+execução completa verde não mede taxa. Pendentes: Verifier 10 e revisão formal 6, do orquestrador.

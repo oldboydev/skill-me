@@ -581,3 +581,19 @@ Ampliação autorizada: diagnóstico do T8-C15 (registros acima preservados):
   só depois de PASS, `ready` e toda a CI verde; nenhuma publicação.
 - Onde a fronteira caiu: o registro (task 38, Landing, S10/C46, este Handoff e o handoff do T8-C15)
   vem antes do código; provas, comandos e resultados ficam em `.checks/issue-25-agent-launch.build.md`.
+
+Diagnóstico do T8-C15 e primeira criação concorrente do store (registros acima preservados):
+
+- Onde a fronteira caiu agora: C46 em `710076e` (só a prova antiga); a execução completa instrumentada
+  nesse HEAD saiu com 1 só pelo I25-C32 (B com `store_invalid` na primeira criação do store), com o
+  T8-C15 e os C46 verdes. Causa reproduzida e registrada antes do código em `8e8893b` (linha “Primeira
+  criação concorrente do store” e acréscimo em C32); correção em `privacy/store.mjs` e provas em
+  `f734441`. Alvo completo da #25 mais concorrência (120 testes) verde nos três ambientes e `npm test`
+  com exit 0 em `f734441`, em `.checks/issue-25-agent-launch.build.md`.
+- O que o proprietário decidiu: a autorização 6440482031 (diagnóstico do T8-C15 e 10ª verificação). O
+  orquestrador pediu corrigir no escopo original da #25 a causa demonstrada do C32, sem retry novo,
+  prazo maior, teto menor, serialização ou aceitação de store inválido. Verifier 10 e revisão formal 6
+  continuam com o orquestrador; nenhum foi executado aqui.
+- O que foi abandonado: inicializar o store antes da prova ou abrir B depois de A; repetir
+  `store_invalid` na paciência; tomar o lock antes de conferir o marcador; aceitar marcador vazio ou
+  parcial; criar a pasta do store por pasta temporária + `rename`.
