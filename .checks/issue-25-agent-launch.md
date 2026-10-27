@@ -2,6 +2,8 @@
 
 Sources:
 
+- [Exceção para a correção da CI do PR #28, 26/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6431483843): o proprietário autorizou “Autorizar a 7ª verificação”, exclusivamente para a #25, com histórico preservado. O teto do Verifier passa de 6 para 7; o de revisões formais permanece 5 (quatro consumidas). A correção e o merge após CI verde foram autorizados no pedido atual. O pacote continua privado. Contexto em `.checks/code-review/issue-25/context-ci28-verifier7-approved.json`.
+
 - [Issue #25](https://github.com/oldboydev/skill-me/issues/25), com o AC3 atualizado — problema, resultado e critérios de aceite.
 - [Decisão do proprietário](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6407670364): “Capturas sucessivas até o agente sair (recomendado)” — alternativa B.
 - `.tasks/issue-25-agent-launch.md` — os 30 critérios, estados, decisões e questões abertas deste checklist.

@@ -773,3 +773,16 @@ manter o teto (a CI usa 3/2 arquivos de qualquer forma) ou abrir uma mudança pr
   Entrega pendente de verificação independente e de revisão formal do HEAD novo; tetos da exceção
   6425235841 com 6 Verifiers e 4 revisões usados. Nenhum Verifier, revisão, push, edição do PR ou
   merge foi feito.
+
+## Exceção autorizada para a verificação da correção da CI
+
+O proprietário respondeu “Autorizar a 7ª verificação” à pergunta que explicitou uma sétima
+verificação independente, exclusiva da #25 e com histórico preservado ([registro](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6431483843)).
+A correção estava pronta em `0f2e069`, com alvo de 99 testes verde nos três ambientes e as
+falhas antigas registradas. O teto do Verifier passa somente de 6 para 7; o de revisões formais
+continua 5, com quatro consumidas. A quinta é necessária para o conteúdo alterado depois do
+`ready` da quarta. Configuração do motor, perfis globais, core e outras issues permanecem iguais.
+
+O pedido atual autoriza corrigir a CI do PR #28 e fazer o merge quando tudo estiver verde.
+Atualização da branch exige Verifier e revisão `ready` do novo conteúdo; merge aguarda CI verde.
+Nenhuma publicação foi autorizada. Os relatórios e falhas anteriores ficam no histórico.
