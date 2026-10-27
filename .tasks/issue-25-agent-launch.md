@@ -328,6 +328,27 @@ o proprietário autorizou o diagnóstico pontual nesta entrega (AC7, ver `Source
     for demonstrada e couber nos contratos atuais (sem nova tentativa de E/S, aceitação de perdas,
     redução de concorrência ou mudança de prazos); senão, o caso concreto volta ao proprietário.
 
+### Regressão da execução completa instrumentada: primeira criação concorrente do store (C32; critério 25 sem mudança)
+
+Na execução completa instrumentada em `710076e` (Windows, Node 24.22.1, teto de 8 arquivos), o T8-C15 e
+os três C46 passaram e o I25-C32 falhou em 3,1 s com `eventos intercalados: B terminou antes`: B saiu
+com 3 e `skill-me: não foi possível abrir a execução [store_invalid]`, sem iniciar o agente; A terminou
+com 0 e 2 eventos. A raiz do C32 só tem o `observe setup`: a pasta do store nasce na primeira
+abertura, e as duas invocações a criam juntas. Uma reprodução com o `io` do store injetado mostrou a
+causa no código comum de criação do store (`openStore`/`initStore`, sem mudança desde a base): o
+marcador é conferido antes do lock porque é imutável depois de criado, mas não durante a criação.
+Com a primeira abertura dentro da criação exclusiva do `store.json` (arquivo criado, bytes ainda não
+escritos), ou publicando-o entre a leitura e a listagem da segunda, a segunda sai com
+`store_invalid`; se a segunda decide inicializar antes do lock e o toma depois da primeira, sai com
+`io_failure`. O mesmo vale para o `privacy start` da base. A operação exata do gate não ficou
+registrada. O critério 25 continua o mesmo: duas primeiras invocações na mesma raiz abrem execuções
+próprias. A correção publica o marcador por temporário e `rename` e decide a adoção da pasta sob o
+lock; a conferência do marcador antes do lock para store existente, a recusa de pasta alheia, link,
+raiz trocada e lock alheio e os limites continuam (linha “Primeira criação concorrente do store” do
+Landing; acréscimo em C32). Pedido do orquestrador em 27/10/2026: corrigir a causa demonstrada dentro
+do escopo original da #25, sem retry novo, prazo maior, teto menor, serialização ou aceitação de store
+inválido.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
