@@ -401,6 +401,8 @@ Proof: `node --test --test-name-pattern="T8-C15 |I25-C46 " tests/integrations/tr
 
 ## Handoff
 
+Rodada necessária seguinte: **Verifier11**, registrada em https://github.com/oldboydev/skill-me/issues/25#issuecomment-6442514838 usando a autorização humana “Pode fazer quantas precisar”, após o FAIL10 (`788d160`) e a correção/provas concretas (`619c8e0`, registro `9e289f3`). As dez verificações e cinco revisões formais anteriores permanecem no histórico. Formal6 continua disponível; configuração, limites globais, core e outras issues não mudam. Escopo e C1–C46 preservados; contexto atual `context-ci28-verifier11-approved.json`. PASS/ready e CI verde continuam exigidos para a entrega e o merge já autorizado.
+
 Um lote: S1 ~11k + S2 ~21k + S3 ~27k + S4 ~8k + S5 ~31k = ~98k tokens de leitura mínima
 (`wc -c` dos arquivos tocados ÷ 4), abaixo do teto de 150k; nenhuma fronteira de entrega é
 necessária. Boa parte de S1–S4 já foi lida no planejamento. O Verifier e a revisão formal ficam
