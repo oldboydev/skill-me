@@ -13,7 +13,7 @@ import { appendRecords, startLaunch } from "../../../src/integrations/privacy/st
 import { INTEGRATIONS_CLI, REPO_ROOT, makeScratch, runIntegrationsJson } from "../helpers/cli.mjs";
 import { FIXTURES_DIR } from "../helpers/fixtures.mjs";
 import { locateSystemPython } from "../helpers/hermes-runtime.mjs";
-import { agentArgs, agentBin, launchCapturesOnDisk, npmScriptEnv, ofInvocation, pointerFile, preparedLaunch, readJsonLines, readLines, runSkillMe, writeScenario } from "../helpers/launch.mjs";
+import { agentArgs, agentBin, launchCapturesOnDisk, npmScriptEnv, ofInvocation, pointerFile, preparedLaunch, readJsonLines, readLines, runSkillMe, withOverlappingRuns, writeScenario } from "../helpers/launch.mjs";
 import { automaticOf, homeEnv, npmCli, runNpmScript } from "../helpers/observe.mjs";
 import { claudePayload, hermesRecord } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
@@ -258,41 +258,8 @@ test("I25-C31 encerramento falha: com E/S depois de apagar o ponteiro, a execuç
   assert.equal(statusOf(prepared.root, capture.id).state, "stopped");
 });
 
-// Invocações simultâneas de C32 (linha "Diagnóstico de C32" do Landing): cada
-// espera pelos marcadores corre com o limite de 30 s, mas só enquanto as
-// invocações que precisam estar vivas estão vivas. Em qualquer falha, os
-// marcadores de barreira são gravados (os agentes de fixture saem), as duas
-// invocações terminam, e o erro traz o que se viu: marcadores, o ID da execução
-// de cada probe, as capturas (segmento, estado, persisted) e status, sinal e
-// stderr de cada launcher.
-async function withOverlappingRuns({ root, work, runs, probes, markers }, body) {
-  const settled = {};
-  for (const [name, run] of Object.entries(runs)) run.then((result) => (settled[name] = result));
-  const whileAlive = async (predicate, label, names) => {
-    const deadline = Date.now() + 30_000;
-    while (!predicate()) {
-      const ended = names.filter((name) => settled[name] !== undefined);
-      if (ended.length > 0) throw new Error(`${label}: ${ended.join(" e ")} terminou antes`);
-      if (Date.now() > deadline) throw new Error(`tempo esgotado: ${label}`);
-      await sleep(20);
-    }
-  };
-  try {
-    return await body(whileAlive);
-  } catch (error) {
-    const seen = markers.filter((name) => existsSync(path.join(work, name)));
-    const started = Object.fromEntries(Object.entries(probes).map(([name, file]) => [name, readJsonLines(file)[0]?.env.SKILL_ME_LAUNCH_ID ?? null]));
-    const captures = launchCapturesOnDisk(root).map((c) => [c.invocation, c.segment, c.state, c.counters.persisted]);
-    for (const name of markers) writeFileSync(path.join(work, name), "");
-    const launchers = {};
-    for (const [name, run] of Object.entries(runs)) {
-      const { status, signal, stderr } = await run;
-      launchers[name] = { status, signal, stderr };
-    }
-    throw new Error(`${error.message}\n${JSON.stringify({ marcadores: seen, probes: started, capturas: captures, launchers })}`, { cause: error });
-  }
-}
-
+// Esperas de C32 pelo apoio withOverlappingRuns (helpers/launch.mjs; linha
+// "Diagnóstico de C32" do Landing).
 const C32_MARKERS = ["A1", "B1", "A2", "B2", "A-fim", "B-segue", "B3", "B-fim"];
 
 test("I25-C32 invocações simultâneas: capturas e chaves próprias, nenhum registro cruzado, e a saída da primeira não encerra a outra", async () => {

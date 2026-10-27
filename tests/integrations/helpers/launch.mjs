@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { runSkillMe as runLauncher } from "../../../src/integrations/launch/command.mjs";
 import { CODEX_GLOBAL_WINDOWS_TARGET, npmCmdShim } from "../../doctor/helpers/npm-shims.mjs";
 import { REPO_ROOT, baseEnv, runIntegrations, runIntegrationsJson } from "./cli.mjs";
 import { FIXTURES_DIR } from "./fixtures.mjs";
@@ -134,6 +137,74 @@ export function runSkillMe(args, { env, cwd, stdin = "ignore", timeout = 60_000 
 
 export const runSkillMeSync = (args, { env, cwd, input } = {}) =>
   spawnSync(process.execPath, [LAUNCHER, ...args], { env, cwd, input, encoding: "utf8", timeout: 60_000 });
+
+// `skill-me` em processo, com o `deps` de command.mjs (como as provas de
+// C41/C43), para a prova que precisa fixar o relógio de parede das aberturas:
+// `now` só carimba a abertura e o encerramento da execução (linha "Cronologia
+// explícita no C34" do Landing). Devolve a forma de runSkillMe.
+export async function runSkillMeInProcess(args, { env, home, now }) {
+  let stderr = "";
+  const result = await runLauncher({
+    argv: args,
+    deps: { env, home, now, proc: new EventEmitter(), terminal: false, writeOut: () => {}, writeErr: (text) => (stderr += text), readLine: () => null },
+  });
+  return { status: result.exitCode, signal: null, stderr };
+}
+
+// Relógio de parede de uma abertura em processo: começa em `startMs` e anda com
+// o tempo monotônico, sem recuar com o relógio do host; depois de `release()`, é
+// o relógio do sistema (o do encerramento).
+export function launchClock(startMs) {
+  const origin = performance.now();
+  let released = false;
+  return {
+    now: () => (released ? Date.now() : startMs + Math.round(performance.now() - origin)),
+    release: () => {
+      released = true;
+    },
+  };
+}
+
+// Invocações sobrepostas (linhas "Diagnóstico de C32" e "Cronologia explícita no
+// C34" do Landing): cada espera pelos marcadores corre com o limite de 30 s, mas
+// só enquanto as invocações que precisam estar vivas estão vivas. `track` inclui
+// uma invocação aberta depois. Em qualquer falha, os marcadores de barreira são
+// gravados (os agentes de fixture saem), as invocações terminam, e o erro traz o
+// que se viu: marcadores, o ID da execução de cada probe, as capturas (segmento,
+// estado, persisted, launchedAt, createdAt) e status, sinal e stderr de cada
+// launcher.
+export async function withOverlappingRuns({ root, work, runs, probes, markers }, body) {
+  const settled = {};
+  const track = (name, run) => {
+    runs[name] = run;
+    run.then((result) => (settled[name] = result));
+    return run;
+  };
+  for (const [name, run] of Object.entries(runs)) track(name, run);
+  const whileAlive = async (predicate, label, names) => {
+    const deadline = Date.now() + 30_000;
+    while (!predicate()) {
+      const ended = names.filter((name) => settled[name] !== undefined);
+      if (ended.length > 0) throw new Error(`${label}: ${ended.join(" e ")} terminou antes`);
+      if (Date.now() > deadline) throw new Error(`tempo esgotado: ${label}`);
+      await sleep(20);
+    }
+  };
+  try {
+    return await body(whileAlive, track);
+  } catch (error) {
+    const seen = markers.filter((name) => existsSync(path.join(work, name)));
+    const started = Object.fromEntries(Object.entries(probes).map(([name, file]) => [name, readJsonLines(file)[0]?.env.SKILL_ME_LAUNCH_ID ?? null]));
+    const captures = launchCapturesOnDisk(root).map((c) => [c.invocation, c.segment, c.state, c.counters.persisted, c.launchedAt, c.createdAt]);
+    for (const name of markers) writeFileSync(path.join(work, name), "");
+    const launchers = {};
+    for (const [name, run] of Object.entries(runs)) {
+      const { status, signal, stderr } = await run;
+      launchers[name] = { status, signal, stderr };
+    }
+    throw new Error(`${error.message}\n${JSON.stringify({ marcadores: seen, probes: started, capturas: captures, launchers })}`, { cause: error });
+  }
+}
 
 export function writeScenario(dir, name, steps) {
   const file = path.join(dir, `${name}.json`);
