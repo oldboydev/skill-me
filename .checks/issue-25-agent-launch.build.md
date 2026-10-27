@@ -786,3 +786,71 @@ continua 5, com quatro consumidas. A quinta é necessária para o conteúdo alte
 O pedido atual autoriza corrigir a CI do PR #28 e fazer o merge quando tudo estiver verde.
 Atualização da branch exige Verifier e revisão `ready` do novo conteúdo; merge aguarda CI verde.
 Nenhuma publicação foi autorizada. Os relatórios e falhas anteriores ficam no histórico.
+
+## C28 na fixture: primeira entrega perdida (Verifier 7, `a755c37`)
+
+O Verifier 7 deu FAIL 44/45 só por C28 na execução B (Windows, Node 24.13.0 oficial): `end.e2e.test.mjs:143`
+com `undefined !== 0` em 62.170 ms; A, C e D verdes (relatório em `1a44ef1`, com R5 e R6 no histórico).
+Tetos: 7 Verifiers usados de 7; 4 revisões formais de 5. Nenhum Verifier ou revisão rodou aqui.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `c94a7e2` | Linha “Diagnóstico do C28 na fixture” do Landing, acréscimo em C28 e nota na task (critério 21 sem mudança), antes do código |
+| `8eafa11` | `hermes-plugin-session.py` com orçamento 25 s + 25 s e saída de diagnóstico; C28 com cenário e saída separados e conferência do supervisor antes do parse; regressão `I25-C28 primeira entrega perdida`; `SKILL_ME_TEST_TRACES_SEGMENT_EIO` na pré-carga de teste |
+
+Logs em `.checks/code-review/issue-25/builder-c28/` (pasta ignorada).
+
+### O que está provado e o que não
+
+- **Provado pelos artefatos de B** (`verifier-round7/B-c28-leftover/`): o arquivo de saída ainda era o
+  cenário (os dois eram `plugin.json`), a captura ficou `active` com `accepted` e `persisted` 0 e sem
+  segmento, o ponteiro ficou, e os 62 s batem com o limite de 60 s do `runSkillMe`. A fixture esperava
+  até 60 s pelo primeiro registro e mais 30 s pelos outros, acima do limite do supervisor.
+- **Inferido** (mtimes): uma operação sob o lock criou e removeu uma entrada no diretório da captura
+  ~1,5 s depois da abertura, compatível com uma gravação de segmento desfeita.
+- **Desconhecido**: a causa da perda do primeiro registro em B. A entrega da execução não publica
+  relatório e o plugin descarta a saída do processo de entrega. A regressão reproduz a **classe**
+  (primeira entrega perdida com gravação desfeita), não a causa; esta correção torna a falha
+  diagnosticável e limitada ao prazo, e não elimina a causa.
+
+### Correção (só prova e fixture)
+
+- C28 grava o cenário em `cenario.json` e a saída em `plugin.json`; antes do parse, confere `signal`
+  nulo e a existência da saída, com status e stderr do launcher na mensagem. As asserções do caso
+  saudável são as mesmas (`started`/`delivered` verdadeiros, `enqueued` 3, `sent` 3, fila e falhas 0,
+  `persisted` 3, todas `stopped`, status 0, `eventos gravados: 3.`).
+- `hermes-plugin-session.py`: até 25 s pelo primeiro registro gravado e até 25 s pela entrega dos
+  demais (10 s de margem até os 60 s do `runSkillMe`). Se o primeiro não é gravado, os outros hooks não
+  são disparados e a saída é `{"started": false, "delivered": false, "stats": …}`; nada é reenviado.
+- Regressão determinística: `SKILL_ME_TEST_TRACES_SEGMENT_EIO=1` faz a 1ª promoção de segmento lançar
+  EIO no processo de entrega (único processo que promove segmento nesta prova), propagada por
+  `NODE_OPTIONS`, e `SKILL_ME_TEST_TRACES_TIMING` registra operação, tipo e código, sem caminho nem
+  conteúdo. Esperado e obtido: launcher com status 0 e `signal` nulo; saída com `status` 0 e
+  `{"started": false, "delivered": false, "stats": {"enqueued": 1, "delivered": 1, "droppedQueueFull": 0,
+  "deliveryFailed": 0, "oversize": 0, "serializationFailed": 0, "active": true}}`; captura única
+  `stopped` com `accepted` 0 e `persisted` 0; ponteiro ausente; `eventos gravados: 0.`; um só `rename`
+  de `segmento.tmp` (com `EIO`) e um `unlink` de `segmento.tmp` somando todos os processos.
+
+### RED, GREEN e provas finais (HEAD `8eafa11`)
+
+| Execução | Resultado |
+| --- | --- |
+| RED, Windows Node 24.22.1, provas novas com a fixture antiga (`red-win-24.22.1.spec.txt`, HEAD `c94a7e2` com o diff dos testes e da pré-carga) | 2 testes: C28 saudável pass; `I25-C28 primeira entrega perdida` **fail** em 61.706 ms: `o launcher não terminou sozinho; launcher: status null, sinal SIGKILL; stderr: ` — o sintoma do Verifier 7 (limite de 60 s, sem saída da fixture) |
+| GREEN, Windows Node 24.22.1 (`green-win-24.22.1.spec.txt`) | 2/2; a regressão em 28.187 ms |
+| Alvo I25 (`launch/*.test.mjs` + `hermes-harness.unit.test.mjs`, `--test-concurrency=4`), Windows Node 24.22.1, 23:09:18–23:11:37 | 100 testes: 94 pass, 0 fail, 6 skip (C45 POSIX, C5, C6, C42 POSIX, C33 arranjo, C15 pty) |
+| O mesmo, Windows Node 24.13.0 oficial (PATH e `execPath` dele, npm 11.6.2 adjacente, `npm_execpath` ausente), 23:11:50–23:14:10 | 100 testes: 94 pass, 0 fail, 6 skip; 325 scratches do 24.13.0 removidos por script do 24.22.1, 0 recusas |
+| O mesmo, WSL Ubuntu uid 1000, Node 24.13.0 copiado num prefixo sem `sh` com npm 11.6.2, `env -i`, PATH sem `/usr/bin` (`tools`: `sh`, `git`, `mkfifo`, `python3`, `id`, `grep`), `git -c core.autocrlf=false archive 8eafa11` (5.509.120 bytes, sha256 `b5e416ee…5d996b25`, `get-tar-commit-id` = `8eafa11d…`, árvore extraída `347c3cf4…` = `HEAD^{tree}`, `cli.mjs` 755), 23:14:32–23:15:33 | 100 testes: 94 pass, 0 fail, 6 skip (só Windows); `~/.skill-me` ausente antes e depois |
+| Windows, Node 24.22.1, `npm test`, 23:15:38–23:24:48 | **exit 0**: governança 6/6; motor 16/16; doctor 417 (410 pass, 7 skip); integrações 553 (540 pass, **0 fail**, 13 skip); total 992: 972 pass, 0 fail, 20 skip; os 12 nativos do Hermes executados e verdes; os dois C28 verdes |
+
+Os 100 nomes I25 são os mesmos nos três TAP, sem `not ok`; os dois C28 rodaram nos três. A regressão
+levou 28,2 s, 28,2 s e 26,1 s; o C28 saudável 3,9 s, 4,1 s e 1,1 s. Os gates globais do WSL com medidas
+por `Date.now()` não foram repetidos (relógio do WSL comprovadamente instável, seção anterior).
+
+### Limites e pendências
+
+- A causa da perda do primeiro registro em B continua desconhecida; se ela se repetir, o C28 agora
+  falha em até ~50 s com `started: false` e os contadores do plugin, e a execução termina `stopped`.
+- A regressão acrescenta ~28 s ao alvo (o orçamento de 25 s do primeiro registro).
+- Entrega pendente: o HEAD novo precisa de verificação independente (Verifier 8, que exige nova
+  autorização do proprietário) e da revisão formal 5. Nenhum Verifier, revisão, push, edição do PR ou
+  merge foi feito aqui.

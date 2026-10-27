@@ -469,3 +469,16 @@ Correção da CI do PR #28 (registros acima preservados):
   continuam valendo: 6 Verifiers e 4 revisões formais usados.
 - O que foi abandonado: herdar o PATH real no `npm run` das provas; acrescentar `/bin` ou
   `/usr/bin`; `npm_config_script_shell`; pular os testes sem `sh`.
+
+Correção do C28 na fixture (CI do PR #28; registros acima preservados):
+
+- Onde a fronteira caiu agora: só prova, fixture e documentação. Contrato em `c94a7e2`; correção em
+  `8eafa11` (fixture com orçamento 25 s + 25 s e saída de diagnóstico, C28 com cenário e saída
+  separados, regressão `I25-C28 primeira entrega perdida`). Produto sem mudança desde `7ab5dbf`.
+  RED/GREEN e provas nos três ambientes e o `npm test` em `.checks/issue-25-agent-launch.build.md`.
+- O que o proprietário decidiu: corrigir as falhas da CI do PR #28 e, verde, o merge; o orquestrador
+  permitiu reduzir as esperas internas da fixture abaixo do supervisor de 60 s. Tetos: 7 Verifiers
+  usados de 7 e 4 revisões formais de 5; um Verifier 8 depende de nova autorização.
+- O que foi abandonado: aumentar o limite do `runSkillMe`; reenviar ou repetir na fixture; repetir o
+  `rename` no store ou publicar o relatório da entrega da execução (produto); atribuir a perda a um
+  código de erro sem evidência.
