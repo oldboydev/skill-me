@@ -13,7 +13,7 @@ import { appendRecords, startLaunch } from "../../../src/integrations/privacy/st
 import { INTEGRATIONS_CLI, REPO_ROOT, makeScratch, runIntegrationsJson } from "../helpers/cli.mjs";
 import { FIXTURES_DIR } from "../helpers/fixtures.mjs";
 import { locateSystemPython } from "../helpers/hermes-runtime.mjs";
-import { agentArgs, agentBin, launchCapturesOnDisk, npmScriptEnv, ofInvocation, pointerFile, preparedLaunch, readJsonLines, readLines, runSkillMe, withOverlappingRuns, writeScenario } from "../helpers/launch.mjs";
+import { agentArgs, agentBin, launchCapturesOnDisk, markerPausedIo, npmScriptEnv, ofInvocation, pointerFile, preparedLaunch, readJsonLines, readLines, runSkillMe, withOverlappingRuns, writeScenario } from "../helpers/launch.mjs";
 import { automaticOf, homeEnv, npmCli, runNpmScript } from "../helpers/observe.mjs";
 import { claudePayload, hermesRecord } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
@@ -324,6 +324,61 @@ test("I25-C32 diagnóstico das invocações simultâneas: uma invocação que te
   assert.equal(seen.launchers.A.status, 0, "a primeira, liberada da barreira, termina");
   assert.equal(readJsonLines(probeA).length, 1, "o agente de A rodou");
   assert.deepEqual(launchCapturesOnDisk(prepared.root).map((c) => c.state), ["stopped"]);
+});
+
+// A raiz do C32 nasce sem store, e as duas invocações o criam juntas (linha
+// "Primeira criação concorrente do store" do Landing; o gate em 710076e viu B
+// sair com store_invalid). Aqui o interleaving é fixado pelo io do store de
+// cada launcher em processo: A para dentro da publicação do marcador, e B só
+// encontra o lock de A — a paciência de sempre — antes de A seguir.
+test("I25-C32 primeira criação do store pelo launcher: com A dentro da publicação do marcador, B espera o lock na paciência de sempre, e os dois abrem, gravam na própria captura e encerram", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c32 criacao", { agents: ["claude"] });
+  assert.equal(existsSync(storeDir(prepared.root)), false, "raiz sem store");
+  const work = scratch("i25 c32 criacao provas");
+  const f = (name) => path.join(work, name);
+  const paused = markerPausedIo();
+  const base = createStoreIo();
+  let refusedLocks = 0;
+  const countingIo = {
+    ...base,
+    async writeExclusive(file, data, options) {
+      try {
+        return await base.writeExclusive(file, data, options);
+      } catch (error) {
+        if (path.basename(file) === ".lock" && error.code === "EEXIST") refusedLocks += 1;
+        throw error;
+      }
+    },
+  };
+  const launch = (name, io) => {
+    let stderr = "";
+    const scenario = writeScenario(work, name, [{ hook: { agent: "claude", payload: claudePayload("pre_tool_bash", { tool_use_id: `${name}-1` }) } }]);
+    const env = { ...prepared.env, FAKE_AGENT_SCENARIO: scenario, FAKE_AGENT_PROBE: f(`probe-${name}.ndjson`) };
+    return runInProcess({
+      argv: ["claude", ...agentArgs("claude")],
+      deps: { env, home: prepared.home, io, proc: new EventEmitter(), terminal: false, writeOut: () => {}, writeErr: (t) => (stderr += t), readLine: () => null },
+    }).then((result) => ({ ...result, stderr }));
+  };
+  const runA = launch("a", paused.io);
+  await paused.reached;
+  let endedB = null;
+  const runB = launch("b", countingIo).then((result) => (endedB = result));
+  await waitFor(() => refusedLocks > 0 || endedB !== null, "B encontra o lock da criação");
+  paused.release();
+  assert.equal(endedB, null, `B terminou antes de encontrar o lock: ${endedB?.stderr}`);
+  const [resultA, resultB] = await Promise.all([runA, runB]);
+  for (const [name, result] of [["a", resultA], ["b", resultB]]) {
+    assert.equal(result.exitCode, 0, `${name}: ${result.stderr}`);
+    const invocation = readJsonLines(f(`probe-${name}.ndjson`))[0].env.SKILL_ME_LAUNCH_ID;
+    const [capture, ...others] = ofInvocation(prepared.root, invocation);
+    assert.deepEqual([others, capture.state, capture.counters.persisted], [[], "stopped", 1], name);
+    assert.deepEqual(exportOf(prepared.root, capture.id).records.map((r) => r.envelope.ids.toolUseId), [expectedPseudonym(prepared.root, capture.id, `${name}-1`)], name);
+    assert.ok(result.stderr.startsWith(`skill-me: execução ${invocation} encerrada; capturas: 1; eventos gravados: 1.\n`), result.stderr);
+    assert.equal(existsSync(pointerFile(prepared.root, invocation)), false, name);
+  }
+  const [invA, invB] = ["a", "b"].map((name) => readJsonLines(f(`probe-${name}.ndjson`))[0].env.SKILL_ME_LAUNCH_ID);
+  assert.notEqual(invA, invB);
+  assert.equal(readFileSync(path.join(storeDir(prepared.root), "store.json"), "utf8"), '{"skillMePrivacyStore":1}');
 });
 
 test("I25-C33 on e off durante a invocação: a corrente continua active e os eventos seguintes entram nela, sem captura automática", async () => {

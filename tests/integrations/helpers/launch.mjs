@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { runSkillMe as runLauncher } from "../../../src/integrations/launch/command.mjs";
+import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
 import { CODEX_GLOBAL_WINDOWS_TARGET, npmCmdShim } from "../../doctor/helpers/npm-shims.mjs";
 import { REPO_ROOT, baseEnv, runIntegrations, runIntegrationsJson } from "./cli.mjs";
 import { FIXTURES_DIR } from "./fixtures.mjs";
@@ -235,6 +237,37 @@ export const pointerFile = (root, invocation) => path.join(storeDir(root), "laun
 
 export function invocationsOf(root) {
   return [...new Set(launchCapturesOnDisk(root).map((state) => state.invocation))];
+}
+
+// Primeira criação do store (linha "Primeira criação concorrente do store" do
+// Landing): io do store que, uma vez, para dentro da criação exclusiva do
+// marcador — o arquivo já nasceu pelo `wx` e os bytes ainda não foram escritos,
+// como no writeExclusive de privacy/fs.mjs — até a prova liberar. Reconhece o
+// marcador pelo nome, gravado direto ou por temporário.
+export function markerPausedIo() {
+  const base = createStoreIo();
+  let reach;
+  let release;
+  const reached = new Promise((resolve) => (reach = resolve));
+  const released = new Promise((resolve) => (release = resolve));
+  let armed = true;
+  const io = {
+    ...base,
+    async writeExclusive(file, data, options) {
+      if (!armed || !path.basename(file).startsWith("store.json")) return base.writeExclusive(file, data, options);
+      armed = false;
+      const handle = await open(file, "wx", 0o600);
+      try {
+        reach();
+        await released;
+        await handle.writeFile(data);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    },
+  };
+  return { io, reached, release };
 }
 
 export { runIntegrations };

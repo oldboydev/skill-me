@@ -38,6 +38,8 @@ const KEY_BYTES = 32;
 const DELETING_PREFIX = ".deleting-";
 const DATA_FILE_PATTERN = /^events-(\d{6})\.ndjson$/;
 const TEMP_PATTERN = /^(state\.json|events-\d{6}\.ndjson)\.[0-9a-f]{8}\.skill-me-tmp$/;
+// Temporário do marcador durante a publicação (initStore), na pasta do store.
+const MARKER_TEMP_PATTERN = /^store\.json\.[0-9a-f]{8}\.skill-me-tmp$/;
 // state.json tem forma fechada e pequena; um arquivo maior não é nosso.
 const MAX_STATE_BYTES = 64 * 1024;
 // Estado da observação automática (#23), ao lado do marcador do store. O teto
@@ -111,12 +113,13 @@ async function readSmallFile(io, file, maxBytes, invalidCode) {
   return bytes;
 }
 
-// Abre a pasta do store da raiz. Só `start` e o `on` da observação (create)
-// criam a pasta; os demais recebem null quando ela não existe. O marcador é
-// imutável depois de criado, então é conferido antes do lock: uma pasta alheia
-// com o mesmo nome nunca recebe o nosso lock. `expectedReal` (observação
-// automática, #23): o caminho real gravado no setup; outro destino é
-// `root_changed`, e `withLock` mantém a conferência até o fim da operação.
+// Abre a pasta do store da raiz. Só `start`, o `on` da observação e a abertura
+// do launcher (create) criam a pasta; os demais recebem null quando ela não
+// existe. O marcador é imutável depois de publicado, então é conferido antes do
+// lock: uma pasta alheia com o mesmo nome nunca recebe o nosso lock.
+// `expectedReal` (observação automática, #23): o caminho real gravado no setup;
+// outro destino é `root_changed`, e `withLock` mantém a conferência até o fim
+// da operação.
 async function openStore(rootArg, io, { create = false, expectedReal = null } = {}) {
   const rootReal = await resolveRoot(rootArg, io);
   if (expectedReal !== null && rootReal !== expectedReal) throw new StoreError("root_changed");
@@ -133,17 +136,38 @@ async function openStore(rootArg, io, { create = false, expectedReal = null } = 
   }
   if (kind === "link") throw new StoreError("link_refused");
   if (kind !== "dir") throw new StoreError("store_invalid");
-  const marker = await readSmallFile(io, path.join(storeDir, STORE_FILE), STORE_MARKER.length, "store_invalid");
   let needsInit = false;
-  if (marker === null) {
-    // Sem marcador, só uma pasta vazia (ou só com um lock) é adotada, e só por start.
-    const names = (await io.readdir(storeDir)).filter((name) => name !== LOCK_FILE);
-    if (!create || names.length > 0) throw new StoreError("store_invalid");
-    needsInit = true;
-  } else if (marker.toString("utf8") !== STORE_MARKER) {
-    throw new StoreError("store_invalid");
-  }
+  if (create) needsInit = await needsAdoption(io, storeDir);
+  else if (!(await readMarker(io, storeDir))) throw new StoreError("store_invalid");
   return { io, rootArg, rootReal, storeDir, capturesDir: path.join(storeDir, CAPTURES_DIR), needsInit };
+}
+
+// true com o marcador exato, false sem ele; outro conteúdo é store_invalid.
+async function readMarker(io, storeDir) {
+  const marker = await readSmallFile(io, path.join(storeDir, STORE_FILE), STORE_MARKER.length, "store_invalid");
+  if (marker === null) return false;
+  if (marker.toString("utf8") !== STORE_MARKER) throw new StoreError("store_invalid");
+  return true;
+}
+
+// Quem cria lista a pasta antes de ler o marcador (linha "Primeira criação
+// concorrente do store" do Landing da #25): duas primeiras aberturas na mesma
+// raiz criam o store juntas, e quem lia o marcador e depois listava a pasta
+// encontrava a criação da outra pela metade. Como initStore publica o marcador
+// por rename, um `store.json` listado já está inteiro; ausente na listagem, a
+// decisão final é sob o lock. Sem marcador, a pasta é adotável vazia, só com o
+// `.lock`, ou com o temporário do marcador junto do `.lock` — outra criação em
+// curso, sob o lock dela, que esta abertura vai encontrar (`lock_present`).
+// Qualquer outra entrada é store_invalid, antes do lock.
+async function needsAdoption(io, storeDir) {
+  const names = await io.readdir(storeDir);
+  if (names.includes(STORE_FILE)) {
+    if (!(await readMarker(io, storeDir))) throw new StoreError("store_invalid");
+    return false;
+  }
+  const creating = names.includes(LOCK_FILE);
+  if (names.some((name) => name !== LOCK_FILE && !(creating && MARKER_TEMP_PATTERN.test(name)))) throw new StoreError("store_invalid");
+  return true;
 }
 
 // A raiz e a pasta do store continuam as resolvidas no início: trocadas por
@@ -334,10 +358,24 @@ function publicCapture(state) {
   return { ...shown, origin: state.origin };
 }
 
-// Marcador gravado sob o lock pela operação que adotou a pasta vazia.
+// Marcador publicado sob o lock pela operação que adotou a pasta. Outra criação
+// pode tê-lo publicado entre a listagem (needsAdoption) e este lock: presente,
+// ele vale e nada é regravado. Ausente, a pasta só pode ter o nosso `.lock`, e
+// o marcador nasce por temporário + rename, como o state.json: nunca existe
+// pela metade para quem o lê sem o lock.
 async function initStore(ctx) {
   if (!ctx.needsInit) return;
-  await ctx.io.writeExclusive(path.join(ctx.storeDir, STORE_FILE), STORE_MARKER);
+  const { io, storeDir } = ctx;
+  if (await readMarker(io, storeDir)) return;
+  if ((await io.readdir(storeDir)).some((name) => name !== LOCK_FILE)) throw new StoreError("store_invalid");
+  const tmp = path.join(storeDir, tempName(STORE_FILE));
+  try {
+    await io.writeExclusive(tmp, STORE_MARKER);
+    await io.rename(tmp, path.join(storeDir, STORE_FILE));
+  } catch (error) {
+    await io.unlink(tmp).catch(() => {});
+    throw error;
+  }
   await assertUnchanged(ctx);
 }
 

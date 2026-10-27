@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
@@ -8,7 +8,7 @@ import { createLaunchDelivery } from "../../../src/integrations/observe/delivery
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
 import { appendRecords, endLaunch, startLaunch } from "../../../src/integrations/privacy/store.mjs";
 import { makeScratch } from "../helpers/cli.mjs";
-import { HEX32, launchCapturesOnDisk, ofInvocation, pointerFile } from "../helpers/launch.mjs";
+import { HEX32, launchCapturesOnDisk, markerPausedIo, ofInvocation, pointerFile } from "../helpers/launch.mjs";
 import { claudePayload } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
 import { captureDir, expectedPseudonym, exportOf, statusOf, storeDir } from "../helpers/traces.mjs";
@@ -630,4 +630,173 @@ test("I25-C43 encerramento com a liberação do lock falhando por E/S: o erro le
   assert.deepEqual(segmentsOf(root, opened.invocation), [[1, "stopped", 0]]);
   assert.throws(() => readFileSync(pointerFile(root, opened.invocation)), { code: "ENOENT" });
   assert.equal(JSON.parse(readFileSync(rootLock(root), "utf8")).pid, process.pid);
+});
+
+// I25-C32, primeira criação concorrente do store (linha "Primeira criação
+// concorrente do store" do Landing): duas aberturas na mesma raiz sem store,
+// com o interleaving fixado pelo io injetado, sem esperar tempo. Falha do gate
+// em 710076e: a segunda abertura saiu com store_invalid.
+const STORE_MARKER = '{"skillMePrivacyStore":1}';
+const MARKER_TEMP = /^store\.json\.[0-9a-f]{8}\.skill-me-tmp$/;
+const LIMITS = { maxEvents: 500, maxBytes: 8388608 };
+
+// Entradas da pasta do store com o tamanho de cada arquivo.
+const storeEntries = (root) =>
+  readdirSync(storeDir(root))
+    .sort()
+    .map((name) => {
+      const stats = statSync(path.join(storeDir(root), name));
+      return [MARKER_TEMP.test(name) ? "<temporário do marcador>" : name, stats.isDirectory() ? "pasta" : stats.size];
+    });
+
+// Para uma operação do io, uma vez, antes de chamá-la, até a prova liberar.
+// `writes`: nomes de tudo o que este io criou por writeExclusive.
+function gateBefore(operation, matches) {
+  const base = createStoreIo();
+  let reach;
+  let release;
+  const reached = new Promise((resolve) => (reach = resolve));
+  const released = new Promise((resolve) => (release = resolve));
+  let armed = true;
+  const writes = [];
+  const recorded = {
+    ...base,
+    writeExclusive(file, ...rest) {
+      writes.push(path.basename(file));
+      return base.writeExclusive(file, ...rest);
+    },
+  };
+  const io = {
+    ...recorded,
+    async [operation](file, ...rest) {
+      if (armed && matches(file)) {
+        armed = false;
+        reach();
+        await released;
+      }
+      return recorded[operation](file, ...rest);
+    },
+  };
+  return { io, reached, release, writes };
+}
+
+// As duas aberturas valem, cada uma com a sua execução, e encerram.
+async function assertTwoOpenings(root, first, second) {
+  assert.notEqual(first.invocation, second.invocation);
+  assert.notEqual(first.capture, second.capture);
+  for (const opened of [first, second]) {
+    const [capture, ...others] = ofInvocation(root, opened.invocation);
+    assert.deepEqual(others, []);
+    assert.deepEqual(
+      [capture.id, capture.origin, capture.segment, capture.state, capture.limits, readPointer(root, opened.invocation).capture],
+      [opened.capture, "launch", 1, "active", LIMITS, opened.capture],
+    );
+  }
+  const keys = [first, second].map((opened) => readFileSync(path.join(captureDir(root, opened.capture), "key")).toString("hex"));
+  assert.notEqual(keys[0], keys[1], "chaves próprias");
+  assert.equal(readFileSync(path.join(storeDir(root), "store.json"), "utf8"), STORE_MARKER);
+  assert.deepEqual(readdirSync(storeDir(root)).filter((name) => MARKER_TEMP.test(name)), [], "nenhum temporário do marcador");
+  for (const opened of [first, second]) {
+    const ended = await endPatiently(root, opened.invocation);
+    assert.deepEqual([ended.ended, ended.captures.map((c) => [c.id, c.state])], [true, [[opened.capture, "stopped"]]]);
+    assert.throws(() => readFileSync(pointerFile(root, opened.invocation)), { code: "ENOENT" });
+  }
+}
+
+test("I25-C32 primeira criação do store: marcador em publicação — a segunda abertura encontra o lock da primeira, não store_invalid, e as duas abrem e encerram", async () => {
+  const root = launchRoot("i25 c32 criacao publicacao");
+  const paused = markerPausedIo();
+  const first = startLaunch({ root, expectedReal: root, io: paused.io });
+  await paused.reached;
+  // O estado intermediário que a segunda abertura encontra.
+  const during = storeEntries(root);
+  const before = snapshotTree(storeDir(root));
+  const second = await rejection(startLaunch({ root, expectedReal: root }));
+  assert.equal(second?.code, "lock_present", `segunda abertura durante a criação: ${second?.code}; pasta do store: ${JSON.stringify(during)}`);
+  assert.deepEqual(during, [[".lock", during[0][1]], ["<temporário do marcador>", 0]], "só o lock e o marcador em publicação, vazio, sem store.json");
+  assert.deepEqual(snapshotTree(storeDir(root)), before, "a segunda abertura não mudou nada");
+  paused.release();
+  const opened = await first;
+  await assertTwoOpenings(root, opened, await startLaunch({ root, expectedReal: root }));
+});
+
+test("I25-C32 primeira criação do store: pasta vazia vista antes do lock — a segunda abertura, com o lock depois da primeira, abre sem regravar o marcador", async () => {
+  const root = launchRoot("i25 c32 criacao vazia");
+  const late = gateBefore("writeExclusive", (file) => path.basename(file) === ".lock");
+  const second = startLaunch({ root, expectedReal: root, io: late.io }).then(
+    (value) => value,
+    (error) => error,
+  );
+  await late.reached;
+  assert.deepEqual(storeEntries(root), [], "a segunda viu a pasta vazia e vai tomar o lock");
+  const first = await startLaunch({ root, expectedReal: root });
+  late.release();
+  const opened = await second;
+  assert.ok(!(opened instanceof Error), `segunda abertura: ${opened?.code}`);
+  assert.deepEqual(late.writes.filter((name) => name.startsWith("store.json")), [], "a segunda não regravou o marcador");
+  await assertTwoOpenings(root, first, opened);
+});
+
+test("I25-C32 primeira criação do store: marcador publicado entre a leitura e a listagem — a segunda abertura abre, não store_invalid", async () => {
+  const root = launchRoot("i25 c32 criacao listagem");
+  const listing = gateBefore("readdir", (dir) => path.basename(dir) === "skill-me-privacy");
+  const second = startLaunch({ root, expectedReal: root, io: listing.io }).then(
+    (value) => value,
+    (error) => error,
+  );
+  await listing.reached;
+  const first = await startLaunch({ root, expectedReal: root });
+  listing.release();
+  const opened = await second;
+  assert.ok(!(opened instanceof Error), `segunda abertura: ${opened?.code}`);
+  await assertTwoOpenings(root, first, opened);
+});
+
+test("I25-C32 primeira criação do store: recusas mantidas — pasta alheia, marcador inválido, sobra de criação, lock alheio, link e raiz trocada; pasta vazia continua adotada", async () => {
+  const foreignLock = "lock alheio\n";
+  const cases = [
+    ["entrada alheia sem marcador", "store_invalid", (dir) => writeFileSync(path.join(dir, "notas.txt"), "alheio")],
+    ["marcador diferente", "store_invalid", (dir) => writeFileSync(path.join(dir, "store.json"), '{"skillMePrivacyStore":2}')],
+    ["marcador vazio", "store_invalid", (dir) => writeFileSync(path.join(dir, "store.json"), "")],
+    ["temporário do marcador sem lock", "store_invalid", (dir) => writeFileSync(path.join(dir, "store.json.0123abcd.skill-me-tmp"), "")],
+    [
+      "lock alheio com o temporário do marcador",
+      "lock_present",
+      (dir) => {
+        writeFileSync(path.join(dir, ".lock"), foreignLock);
+        writeFileSync(path.join(dir, "store.json.0123abcd.skill-me-tmp"), "");
+      },
+    ],
+    ["lock alheio sozinho", "lock_present", (dir) => writeFileSync(path.join(dir, ".lock"), foreignLock)],
+  ];
+  for (const [label, code, arrange] of cases) {
+    const root = launchRoot(`i25 c32 recusa ${label}`);
+    mkdirSync(storeDir(root));
+    arrange(storeDir(root));
+    const before = snapshotTree(storeDir(root));
+    const recorder = gateBefore("readdir", () => false);
+    const refused = await rejection(startLaunch({ root, expectedReal: root, io: recorder.io }));
+    assert.equal(refused?.code, code, label);
+    assert.deepEqual(snapshotTree(storeDir(root)), before, `${label}: nada gravado, lock alheio intacto`);
+    // store_invalid sai antes de qualquer escrita, também do nosso `.lock`; com o
+    // lock alheio, só a tentativa de criá-lo, recusada.
+    assert.deepEqual(recorder.writes, code === "store_invalid" ? [] : [".lock"], label);
+  }
+
+  const linked = launchRoot("i25 c32 recusa link");
+  const outside = scratch("i25 c32 recusa link fora");
+  symlinkSync(outside, storeDir(linked), "junction");
+  assert.equal((await rejection(startLaunch({ root: linked, expectedReal: linked })))?.code, "link_refused");
+  assert.deepEqual(readdirSync(outside), [], "nada gravado pelo link");
+
+  const swapped = launchRoot("i25 c32 recusa raiz");
+  assert.equal((await rejection(startLaunch({ root: swapped, expectedReal: launchRoot("i25 c32 recusa outra raiz") })))?.code, "root_changed");
+  assert.equal(existsSync(storeDir(swapped)), false, "nenhum store criado na raiz trocada");
+
+  const empty = launchRoot("i25 c32 adocao vazia");
+  mkdirSync(storeDir(empty));
+  const adopted = await startLaunch({ root: empty, expectedReal: empty });
+  assert.equal(readFileSync(path.join(storeDir(empty), "store.json"), "utf8"), STORE_MARKER);
+  assert.deepEqual(storeEntries(empty), [["captures", "pasta"], ["launches", "pasta"], ["store.json", STORE_MARKER.length]]);
+  assert.deepEqual(ofInvocation(empty, adopted.invocation).map((c) => [c.segment, c.state, c.limits]), [[1, "active", LIMITS]]);
 });
