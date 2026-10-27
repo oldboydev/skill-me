@@ -304,6 +304,30 @@ conhecida. Os critérios 1 e 25 continuam os mesmos; a prova de C32 passa a falh
 das invocações termina antes, a liberar os agentes de fixture e a trazer o que cada launcher
 escreveu.
 
+### Diagnóstico pontual da prova antiga T8-C15 (AC7; autorização 6440482031; C46)
+
+Na 9ª verificação, em `dd89179`, o gate D (`npm test` no Windows, Node 24.22.1, teto de 8 arquivos)
+falhou só no T8-C15 (`tests/integrations/traces/concurrency.cli.test.mjs:107`, issue #8): o produtor
+`b` informou 40 entradas, 20 confirmadas e gravadas, 20 perdidas e `io_failure`; `a` confirmou 40. O
+teste parou antes do export: não se sabe se as 20 sem confirmação ficaram no disco, quantos lotes
+falharam, nem a operação e o código de erro. O caminho de E/S da captura manual não mudou na #25. Há
+registro de `io_failure` nesse teste antes da #23, sem taxa nem causa igual demonstrada. Em 27/10/2026
+o proprietário autorizou o diagnóstico pontual nesta entrega (AC7, ver `Sources`).
+
+38. Quando dois produtores `ingest --agent hermes` simultâneos, de 40 eventos cada, gravam na mesma
+    captura manual (T8-C15), a prova continua exigindo de cada um o status 0 e `{bound: true, code:
+    null, entries: 40, committed: 40, persisted: 40, lost: 0}`, os 80 eventos únicos, o segmento
+    coerente, os pares de hooks e a recusa com lock alheio, com os mesmos prazos e o teto de 8
+    arquivos. Quando ela falha, a mensagem traz, por produtor, o relatório de entrega e as operações
+    de E/S com erro (operação, tipo de arquivo, código e se ocorreram antes ou depois do commit) e,
+    da captura, as contagens por produtor no export, os contadores do status, os segmentos, os
+    temporários e o lock — ou que a inspeção não esteve disponível, com o código —, sem caminho,
+    conteúdo, chave ou ambiente. Com uma falha injetada antes do commit, a mensagem mostra a operação
+    e que as entradas perdidas não estão no export; com a confirmação perdida depois do commit,
+    mostra que estão. A instrumentação não é a correção da causa. Uma correção só segue se a causa
+    for demonstrada e couber nos contratos atuais (sem nova tentativa de E/S, aceitação de perdas,
+    redução de concorrência ou mudança de prazos); senão, o caso concreto volta ao proprietário.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
@@ -436,6 +460,7 @@ erDiagram
 | `package.json` `bin` | `npm link` no checkout | comando `skill-me` no prefixo npm | do npm | 1 |
 
 ## Sources
+- [Ajuste pontual do T8-C15 e 10ª verificação, 27/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6440482031): o proprietário respondeu “Autorizar ajuste pontual e 10ª verificação”, à proposta do comentário 6435260406 e de `.checks/issue-25-agent-launch.t8c15-handoff.md` (`a718865`). Inclui nesta entrega o diagnóstico pontual do teste antigo T8-C15 e a correção mínima de defeito confirmado dentro dos contratos atuais, preservando os 80 eventos, os produtores sobrepostos, as asserções, os prazos, o teto 8 e o histórico; sem nova tentativa de E/S, aceitação de perdas ou mudança de política (critério 38). Autoriza uma 10ª verificação independente depois das provas do autor, só para a #25; as nove anteriores ficam, inclusive o FAIL da 9ª em `4e66de2`. A 6ª revisão formal continua autorizada e não consumida; o teto formal continua 6, com 5 consumidas. Merge do PR #28 só depois de PASS, `ready` e toda a CI verde; nenhuma publicação. A issue ganhou o AC7; contexto em `.checks/code-review/issue-25/context-ci28-verifier10-approved.json` (18 comentários, 7 ACs).
 - [Exceção para a 9ª verificação e a 6ª revisão, 27/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6434588924): o proprietário respondeu “Autorizar a 9ª verificação e a 6ª revisão”, somente para a #25 e com histórico preservado (handoff em [6433972110](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6433972110)). Tetos: 9 verificações independentes e 6 tentativas formais no total (`roundOverrides["25"]`, perfil light, `maxRounds` 6). As oito verificações e as cinco revisões anteriores ficam no histórico; o PASS da 8ª e o `ready` da 5ª cobrem o conteúdo anterior, e o Verifier 9 e a revisão formal 6 são as únicas rodadas novas. Depois do PASS e do `ready` do conteúdo novo, atualizar o PR #28 e fazer o merge com toda a CI verde segue autorizado; o pacote continua privado e sem publicação. Contexto em `.checks/code-review/issue-25/context-ci28-verifier9-approved.json` (16 comentários, 6 ACs).
 - [Exceção para C28, 26/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6432258457): o proprietário respondeu “Autorizar a 8ª verificação”, somente para a #25 e com histórico preservado. O teto do Verifier passa de 7 para 8; o formal permanece 5 (quatro consumidas). A correção da fixture estava pronta em `22e8fc5`, com regressão e provas do autor verdes. PASS e `ready` exigidos antes da atualização do PR #28; merge autorizado quando a CI estiver toda verde. Contexto em `.checks/code-review/issue-25/context-ci28-verifier8-approved.json`.
 - [Exceção para a correção da CI do PR #28, 26/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6431483843): o proprietário autorizou “Autorizar a 7ª verificação”, exclusivamente para a #25, com histórico preservado. O teto do Verifier passa de 6 para 7; o de revisões formais permanece 5 (quatro consumidas). A correção e o merge após CI verde foram autorizados no pedido atual. O pacote continua privado. Contexto em `.checks/code-review/issue-25/context-ci28-verifier7-approved.json`.

@@ -1,5 +1,14 @@
 # T8-C15: proposta de ampliação pontual da issue #25
 
+**Atualização em 27/10/2026: proposta autorizada.** O proprietário respondeu “Autorizar ajuste pontual e
+10ª verificação” ([comentário 6440482031](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6440482031)),
+à proposta do comentário 6435260406 e deste arquivo (`a718865`). A issue ganhou o AC7 (contexto em
+`.checks/code-review/issue-25/context-ci28-verifier10-approved.json`, 18 comentários e 7 ACs); a task
+ganhou o critério 38 e o checklist o C46 e a linha “Diagnóstico do T8-C15” do Landing, antes do
+código. O Verifier 10 é do orquestrador, depois das provas do autor; o teto formal continua 6, com 5
+consumidas. O texto abaixo é o da proposta, preservado como foi escrito; o estado da implementação
+fica na seção “Estado da implementação”, no fim.
+
 Estado em 27/10/2026: **proposta não autorizada e não implementada**. O PR #28 aguarda.
 A nona verificação está preservada como FAIL em `4e66de2`; a sexta revisão ainda não foi executada.
 
@@ -34,4 +43,9 @@ Uma correção de produto só poderá seguir se a causa estiver demonstrada e o 
 Após mudanças e provas do autor, solicitar nesta mesma decisão **uma10ª verificação independente**, exclusiva da #25, com as nove anteriores preservadas. A sexta revisão formal já está autorizada e disponível; nenhum aumento formal é necessário. Não executar rodada10 antes da autorização humana.
 
 PASS independente e ready do novo conteúdo continuam necessários antes do push. Merge do PR #28 segue a autorização vigente, condicionado a toda a CI verde. Nenhuma publicação do pacote.
+
+## Estado da implementação
+
+Em andamento: registro da decisão no plano e no checklist antes do código. Provas, comandos e a
+execução completa instrumentada entram aqui e em `.checks/issue-25-agent-launch.build.md`.
 
