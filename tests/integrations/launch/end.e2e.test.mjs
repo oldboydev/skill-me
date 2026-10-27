@@ -258,6 +258,43 @@ test("I25-C31 encerramento falha: com E/S depois de apagar o ponteiro, a execuç
   assert.equal(statusOf(prepared.root, capture.id).state, "stopped");
 });
 
+// Invocações simultâneas de C32 (linha "Diagnóstico de C32" do Landing): cada
+// espera pelos marcadores corre com o limite de 30 s, mas só enquanto as
+// invocações que precisam estar vivas estão vivas. Em qualquer falha, os
+// marcadores de barreira são gravados (os agentes de fixture saem), as duas
+// invocações terminam, e o erro traz o que se viu: marcadores, o ID da execução
+// de cada probe, as capturas (segmento, estado, persisted) e status, sinal e
+// stderr de cada launcher.
+async function withOverlappingRuns({ root, work, runs, probes, markers }, body) {
+  const settled = {};
+  for (const [name, run] of Object.entries(runs)) run.then((result) => (settled[name] = result));
+  const whileAlive = async (predicate, label, names) => {
+    const deadline = Date.now() + 30_000;
+    while (!predicate()) {
+      const ended = names.filter((name) => settled[name] !== undefined);
+      if (ended.length > 0) throw new Error(`${label}: ${ended.join(" e ")} terminou antes`);
+      if (Date.now() > deadline) throw new Error(`tempo esgotado: ${label}`);
+      await sleep(20);
+    }
+  };
+  try {
+    return await body(whileAlive);
+  } catch (error) {
+    const seen = markers.filter((name) => existsSync(path.join(work, name)));
+    const started = Object.fromEntries(Object.entries(probes).map(([name, file]) => [name, readJsonLines(file)[0]?.env.SKILL_ME_LAUNCH_ID ?? null]));
+    const captures = launchCapturesOnDisk(root).map((c) => [c.invocation, c.segment, c.state, c.counters.persisted]);
+    for (const name of markers) writeFileSync(path.join(work, name), "");
+    const launchers = {};
+    for (const [name, run] of Object.entries(runs)) {
+      const { status, signal, stderr } = await run;
+      launchers[name] = { status, signal, stderr };
+    }
+    throw new Error(`${error.message}\n${JSON.stringify({ marcadores: seen, probes: started, capturas: captures, launchers })}`, { cause: error });
+  }
+}
+
+const C32_MARKERS = ["A1", "B1", "A2", "B2", "A-fim", "B-segue", "B3", "B-fim"];
+
 test("I25-C32 invocações simultâneas: capturas e chaves próprias, nenhum registro cruzado, e a saída da primeira não encerra a outra", async () => {
   const prepared = preparedLaunch(scratch, "i25 c32", { agents: ["claude"] });
   const work = scratch("i25 c32 provas");
@@ -269,26 +306,57 @@ test("I25-C32 invocações simultâneas: capturas e chaves próprias, nenhum reg
   const probeB = f("probe-b.ndjson");
   const runA = runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_SCENARIO: scenarioA, FAKE_AGENT_PROBE: probeA } });
   const runB = runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_SCENARIO: scenarioB, FAKE_AGENT_PROBE: probeB } });
-  await waitFor(() => existsSync(f("A2")) && existsSync(f("B2")), "eventos intercalados");
-  writeFileSync(f("A-fim"), "");
-  const resultA = await runA;
-  assert.equal(resultA.status, 0, resultA.stderr);
-  const invA = readJsonLines(probeA)[0].env.SKILL_ME_LAUNCH_ID;
-  const invB = readJsonLines(probeB)[0].env.SKILL_ME_LAUNCH_ID;
-  assert.notEqual(invA, invB);
-  const [capA] = ofInvocation(prepared.root, invA);
-  const [capB] = ofInvocation(prepared.root, invB);
-  assert.deepEqual([capA.state, capB.state], ["stopped", "active"], "a saída da primeira encerra só a dela");
-  writeFileSync(f("B-segue"), "");
-  await waitFor(() => existsSync(f("B3")), "evento depois da saída da outra");
-  writeFileSync(f("B-fim"), "");
-  const resultB = await runB;
-  assert.equal(resultB.status, 0, resultB.stderr);
-  const uses = (root, id) => exportOf(root, id).records.map((r) => r.envelope.ids.toolUseId);
-  assert.deepEqual(uses(prepared.root, capA.id), ["a-1", "a-2"].map((v) => expectedPseudonym(prepared.root, capA.id, v)));
-  assert.deepEqual(uses(prepared.root, capB.id), ["b-1", "b-2", "b-3"].map((v) => expectedPseudonym(prepared.root, capB.id, v)));
-  assert.notEqual(expectedPseudonym(prepared.root, capA.id, "sessao-compartilhada"), expectedPseudonym(prepared.root, capB.id, "sessao-compartilhada"), "chaves próprias");
-  assert.deepEqual([ofInvocation(prepared.root, invA).length, ofInvocation(prepared.root, invB).length], [1, 1]);
+  await withOverlappingRuns({ root: prepared.root, work, runs: { A: runA, B: runB }, probes: { A: probeA, B: probeB }, markers: C32_MARKERS }, async (whileAlive) => {
+    await whileAlive(() => existsSync(f("A2")) && existsSync(f("B2")), "eventos intercalados", ["A", "B"]);
+    writeFileSync(f("A-fim"), "");
+    const resultA = await runA;
+    assert.equal(resultA.status, 0, resultA.stderr);
+    const invA = readJsonLines(probeA)[0].env.SKILL_ME_LAUNCH_ID;
+    const invB = readJsonLines(probeB)[0].env.SKILL_ME_LAUNCH_ID;
+    assert.notEqual(invA, invB);
+    const [capA] = ofInvocation(prepared.root, invA);
+    const [capB] = ofInvocation(prepared.root, invB);
+    assert.deepEqual([capA.state, capB.state], ["stopped", "active"], "a saída da primeira encerra só a dela");
+    writeFileSync(f("B-segue"), "");
+    await whileAlive(() => existsSync(f("B3")), "evento depois da saída da outra", ["B"]);
+    writeFileSync(f("B-fim"), "");
+    const resultB = await runB;
+    assert.equal(resultB.status, 0, resultB.stderr);
+    const uses = (root, id) => exportOf(root, id).records.map((r) => r.envelope.ids.toolUseId);
+    assert.deepEqual(uses(prepared.root, capA.id), ["a-1", "a-2"].map((v) => expectedPseudonym(prepared.root, capA.id, v)));
+    assert.deepEqual(uses(prepared.root, capB.id), ["b-1", "b-2", "b-3"].map((v) => expectedPseudonym(prepared.root, capB.id, v)));
+    assert.notEqual(expectedPseudonym(prepared.root, capA.id, "sessao-compartilhada"), expectedPseudonym(prepared.root, capB.id, "sessao-compartilhada"), "chaves próprias");
+    assert.deepEqual([ofInvocation(prepared.root, invA).length, ofInvocation(prepared.root, invB).length], [1, 1]);
+  });
+});
+
+// O apoio de C32 com uma invocação que termina antes dos marcadores: a segunda
+// não tem agente no PATH e sai com 127 antes de iniciar. A espera falha na hora,
+// não por tempo, e a primeira, parada na barreira, é liberada e termina.
+test("I25-C32 diagnóstico das invocações simultâneas: uma invocação que termina antes dos marcadores faz a espera falhar na hora, com o stderr dela, e a outra é liberada da barreira", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c32 diagnostico", { agents: ["claude"] });
+  const work = scratch("i25 c32 diagnostico provas");
+  const f = (name) => path.join(work, name);
+  const scenarioA = writeScenario(work, "a", [{ touch: f("A1") }, { waitFile: f("B1") }, { touch: f("A2") }, { waitFile: f("A-fim") }]);
+  const probeA = f("probe-a.ndjson");
+  const probeB = f("probe-b.ndjson");
+  const runA = runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_SCENARIO: scenarioA, FAKE_AGENT_PROBE: probeA } });
+  const runB = runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, PATH: scratch("i25 c32 diagnostico sem agente"), FAKE_AGENT_PROBE: probeB } });
+  const failure = await withOverlappingRuns({ root: prepared.root, work, runs: { A: runA, B: runB }, probes: { A: probeA, B: probeB }, markers: C32_MARKERS }, (whileAlive) =>
+    whileAlive(() => existsSync(f("A2")) && existsSync(f("B2")), "eventos intercalados", ["A", "B"]),
+  ).then(
+    () => null,
+    (error) => error,
+  );
+  assert.ok(failure !== null, "a espera falhou");
+  const [first, ...rest] = failure.message.split("\n");
+  assert.equal(first, "eventos intercalados: B terminou antes");
+  const seen = JSON.parse(rest.join("\n"));
+  assert.deepEqual(seen.launchers.B, { status: 127, signal: null, stderr: "skill-me: claude não encontrado no PATH [executable_not_found]\n" });
+  assert.equal(seen.probes.B, null, "o agente de B não iniciou");
+  assert.equal(seen.launchers.A.status, 0, "a primeira, liberada da barreira, termina");
+  assert.equal(readJsonLines(probeA).length, 1, "o agente de A rodou");
+  assert.deepEqual(launchCapturesOnDisk(prepared.root).map((c) => c.state), ["stopped"]);
 });
 
 test("I25-C33 on e off durante a invocação: a corrente continua active e os eventos seguintes entram nela, sem captura automática", async () => {
