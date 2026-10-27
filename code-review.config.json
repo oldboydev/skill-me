@@ -53,8 +53,8 @@
     },
     "25": {
       "profile": "light",
-      "maxRounds": 5,
-      "approval": "Proprietário autorizou em 26/10/2026: “Autorizar até 2 de cada (tetos 6/5)” — até mais 2 verificações independentes e 2 revisões formais, exclusivas da issue #25: no total, até 6 rodadas de Verifier e 5 tentativas formais, preservando as 4 verificações e as 3 revisões changes_requested anteriores; registro em https://github.com/oldboydev/skill-me/issues/25#issuecomment-6425235841 (substitui o teto de 3 autorizado em https://github.com/oldboydev/skill-me/issues/25#issuecomment-6423912091). Usar só as rodadas necessárias e parar no primeiro ready; push e PR somente com verificação aprovada e revisão ready do conteúdo atual; merge e publicação não autorizados."
+      "maxRounds": 6,
+      "approval": "Proprietário autorizou em 27/10/2026: “Autorizar a 9ª verificação e a 6ª revisão” — uma verificação independente e uma tentativa formal a mais, exclusivas da issue #25: no total, 9 rodadas de Verifier e 6 tentativas formais, preservando as 8 verificações e as 5 revisões anteriores; registro em https://github.com/oldboydev/skill-me/issues/25#issuecomment-6434588924 (substitui o teto de 5 de https://github.com/oldboydev/skill-me/issues/25#issuecomment-6425235841). Usar só a rodada necessária e parar no primeiro ready; depois do PASS e do ready do conteúdo novo, atualizar o PR #28 e fazer o merge com toda a CI verde segue autorizado; nenhuma publicação do pacote."
     }
   }
 }

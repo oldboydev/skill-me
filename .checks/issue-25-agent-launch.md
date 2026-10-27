@@ -511,3 +511,16 @@ Correção da cronologia do C34 (bloqueio do alvo WSL em `abae80a`; registros ac
 - O que o proprietário decidiu: nada novo; tetos 8 Verifiers e 5 revisões formais consumidos.
 - O que foi abandonado: espera, repetição, tolerância ou skip no WSL; reescrever `launchedAt` das
   capturas; pré-carga trocando `Date.now`; mudar a regra de escolha.
+
+Exceção para a 9ª verificação e a 6ª revisão (registros acima preservados):
+
+- O que o proprietário decidiu: “Autorizar a 9ª verificação e a 6ª revisão”
+  ([comentário 6434588924](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6434588924);
+  contexto em `.checks/code-review/issue-25/context-ci28-verifier9-approved.json`, 16 comentários e 6
+  ACs), só para a #25. Tetos: 9 verificações e 6 revisões formais no total; `roundOverrides["25"]`
+  com `maxRounds` 6. O PASS da 8ª verificação e o `ready` da 5ª revisão cobrem o conteúdo anterior;
+  o Verifier 9 e a revisão 6 são as únicas rodadas novas. Depois do PASS e do `ready` do conteúdo
+  novo, atualizar o PR #28 e fazer o merge com toda a CI verde segue autorizado; o pacote continua
+  privado.
+- Onde a fronteira caiu: só configuração e documentação; o conteúdo a verificar é o de `6520599`
+  (último código de prova `6732475`).

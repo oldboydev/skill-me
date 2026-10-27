@@ -1003,3 +1003,25 @@ Limites: a regra do produto continua a de wall clock (`launchedAt` de `Date.now(
 host cujo relógio recua mais que o intervalo entre duas aberturas, “a iniciada por último” segue o
 carimbo, como a regressão mostra; isso é comportamento do contrato, não mudado aqui. A entrega
 continua pendente de Verifier 9 e revisão formal 6, com os tetos 8/5 consumidos.
+
+## Exceção autorizada: 9ª verificação e 6ª revisão
+
+O proprietário autorizou “Autorizar a 9ª verificação e a 6ª revisão”
+([comentário 6434588924](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6434588924);
+handoff [6433972110](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6433972110);
+contexto em `.checks/code-review/issue-25/context-ci28-verifier9-approved.json`, 16 comentários e 6
+ACs), só para a #25, com o histórico preservado.
+
+- Tetos desta entrega: 9 verificações independentes e 6 tentativas formais no total
+  (`roundOverrides["25"].maxRounds` de 5 para 6, perfil light, com a resposta, a URL e o teto
+  substituído em `approval`). Perfis globais com `maxRounds` 2, outras issues e core vendorizado sem
+  mudança.
+- As 8 verificações e as 5 revisões anteriores continuam no histórico; o PASS da 8ª e o `ready` da 5ª
+  cobrem o conteúdo anterior. O Verifier 9 e a revisão formal 6 são as únicas rodadas novas, sobre o
+  conteúdo de `6520599` (último código de prova `6732475`); usar só a necessária e parar no primeiro
+  `ready`. Depois do PASS e do `ready`, atualizar o PR #28 e fazer o merge com toda a CI verde segue
+  autorizado; nenhuma publicação do pacote.
+- Sem mudança de produto ou prova: os alvos I25 em `6732475` (102 testes, 96 pass, 0 fail, 6 skip nos
+  três ambientes) e o `npm test` de `abae80a` (993: 973 pass, 0 fail, 20 skip) da seção anterior
+  continuam como estão. Nesta mudança, só os gates da configuração: `npm run test:governance` e
+  `npm run test:code-review`.
