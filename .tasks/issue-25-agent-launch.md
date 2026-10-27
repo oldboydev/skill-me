@@ -349,6 +349,18 @@ Landing; acréscimo em C32). Pedido do orquestrador em 27/10/2026: corrigir a ca
 do escopo original da #25, sem retry novo, prazo maior, teto menor, serialização ou aceitação de store
 inválido.
 
+### Refinamento do diagnóstico de C32: captura em construção (Verifier 10; critério 25 sem mudança)
+
+O Verifier 10, em `df259ed`, terminou FAIL só no ambiente C (WSL isolado): o
+`I25-C32 diagnóstico das invocações simultâneas` recebeu como primeira linha um `ENOENT` ao abrir o
+`state.json` de uma captura, não `eventos intercalados: B terminou antes`; o gate D não foi
+iniciado. B terminou antes enquanto A ainda criava a captura da abertura (pasta presente, estado
+ainda não), e a coleta do diagnóstico em `withOverlappingRuns` lançou antes de liberar as barreiras:
+o erro dela mascarou o original e A ficaria na barreira até o limite do supervisor. O defeito é do
+apoio de prova, não do produto. O contrato do diagnóstico fica na linha “Diagnóstico de C32 com
+captura em construção” do Landing: inspeção de melhor esforço, indisponibilidade com código, e
+liberação das barreiras e espera das invocações sempre, com o erro original preservado.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
