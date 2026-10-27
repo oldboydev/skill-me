@@ -14,6 +14,10 @@
 // SKILL_ME_TEST_TRACES_LOCK_KEPT=<n>: o n-ésimo `unlink` do `.lock` lança EIO
 // sem tocar no disco — a liberação falha e o lock fica (issue #25, C43).
 //
+// SKILL_ME_TEST_TRACES_SEGMENT_EIO=<n>: a n-ésima promoção de segmento (`rename`
+// do temporário para `events-NNNNNN.ndjson`) lança EIO sem tocar no disco — a
+// gravação é desfeita e a entrega perde as entradas (issue #25, C28).
+//
 // SKILL_ME_TEST_TRACES_BUSY_LOCK=<n>: a n-ésima criação exclusiva do `.lock`
 // falha com EEXIST sem tocar no disco, como se outro processo o tivesse
 // naquele instante; a seguinte é real.
@@ -85,6 +89,17 @@ if (keptAt > 0) {
   fsp.unlink = async function keptUnlink(file) {
     if (isLock(file) && ++unlinks === keptAt) throw Object.assign(new Error("EIO injetado pelo teste"), { code: "EIO" });
     return realUnlink(file);
+  };
+}
+
+const segmentEioAt = Number(env.SKILL_ME_TEST_TRACES_SEGMENT_EIO ?? 0);
+const isSegment = (file) => typeof file === "string" && /^events-\d{6}\.ndjson$/.test(path.basename(file));
+if (segmentEioAt > 0) {
+  const realRename = fsp.rename;
+  let promotions = 0;
+  fsp.rename = async function failingPromotion(from, to) {
+    if (isSegment(to) && ++promotions === segmentEioAt) throw Object.assign(new Error("EIO injetado pelo teste"), { code: "EIO" });
+    return realRename(from, to);
   };
 }
 

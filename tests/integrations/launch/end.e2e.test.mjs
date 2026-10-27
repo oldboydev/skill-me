@@ -13,7 +13,7 @@ import { appendRecords, startLaunch } from "../../../src/integrations/privacy/st
 import { INTEGRATIONS_CLI, REPO_ROOT, makeScratch, runIntegrationsJson } from "../helpers/cli.mjs";
 import { FIXTURES_DIR } from "../helpers/fixtures.mjs";
 import { locateSystemPython } from "../helpers/hermes-runtime.mjs";
-import { agentArgs, agentBin, launchCapturesOnDisk, npmScriptEnv, ofInvocation, pointerFile, preparedLaunch, readJsonLines, runSkillMe, writeScenario } from "../helpers/launch.mjs";
+import { agentArgs, agentBin, launchCapturesOnDisk, npmScriptEnv, ofInvocation, pointerFile, preparedLaunch, readJsonLines, readLines, runSkillMe, writeScenario } from "../helpers/launch.mjs";
 import { automaticOf, homeEnv, npmCli, runNpmScript } from "../helpers/observe.mjs";
 import { claudePayload, hermesRecord } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
@@ -124,9 +124,14 @@ test("I25-C27 revogação: depois do encerramento, um produtor com o par da exec
 const PYTHON = locateSystemPython();
 const PLUGIN_SOURCE = path.join(REPO_ROOT, "src", "integrations", "hermes", "plugin", "__init__.py");
 
-test("I25-C28 entregas Hermes em voo: com o plugin real e o processo de entrega já em execução, 3 registros entregues logo antes da saída somam persisted 3, todos stopped", { skip: PYTHON.skipReason ? `python-ausente: ${PYTHON.skipReason}` : false }, async () => {
-  const prepared = preparedLaunch(scratch, "i25 c28", { agents: ["hermes"] });
-  const work = scratch("i25 c28 provas");
+// Sessão Hermes de fixture com o plugin real (C28): o agente falso roda
+// `hermes-plugin-session.py` e grava a saída dele em `plugin.json`, arquivo
+// diferente do cenário. Antes de ler a saída, a prova confere que o launcher
+// terminou sozinho e que a fixture gravou — com o status e o stderr do
+// launcher na mensagem (linha "Diagnóstico do C28 na fixture" do Landing).
+async function hermesSession(label, extraEnv = {}) {
+  const prepared = preparedLaunch(scratch, label, { agents: ["hermes"] });
+  const work = scratch(`${label} provas`);
   const executable = spawnSync(PYTHON.command, [...PYTHON.prefix, "-I", "-c", "import sys; print(sys.executable)"], { encoding: "utf8" }).stdout.trim();
   const hooks = [
     hermesRecord("on_session_start", { session_id: "sessao-voo" }),
@@ -135,11 +140,18 @@ test("I25-C28 entregas Hermes em voo: com o plugin real e o processo de entrega 
   ].map(({ hook, kwargs }) => ({ hook, kwargs }));
   writeFileSync(path.join(work, "hooks.json"), JSON.stringify(hooks));
   const output = path.join(work, "plugin.json");
-  const scenario = writeScenario(work, "plugin", [
+  const scenario = writeScenario(work, "cenario", [
     { run: { command: executable, args: ["-I", "-B", path.join(FIXTURES_DIR, "launch", "hermes-plugin-session.py"), PLUGIN_SOURCE, path.join(work, "hooks.json")], output } },
   ]);
-  const result = await runSkillMe(["hermes", ...agentArgs("hermes")], { env: { ...prepared.env, FAKE_AGENT_SCENARIO: scenario } });
-  const run = JSON.parse(readFileSync(output, "utf8"));
+  const result = await runSkillMe(["hermes", ...agentArgs("hermes")], { env: { ...prepared.env, FAKE_AGENT_SCENARIO: scenario, ...extraEnv } });
+  const supervisor = `launcher: status ${result.status}, sinal ${result.signal}; stderr: ${result.stderr}`;
+  assert.equal(result.signal, null, `o launcher não terminou sozinho; ${supervisor}`);
+  assert.ok(existsSync(output), `a fixture não gravou a saída; ${supervisor}`);
+  return { prepared, result, run: JSON.parse(readFileSync(output, "utf8")) };
+}
+
+test("I25-C28 entregas Hermes em voo: com o plugin real e o processo de entrega já em execução, 3 registros entregues logo antes da saída somam persisted 3, todos stopped", { skip: PYTHON.skipReason ? `python-ausente: ${PYTHON.skipReason}` : false }, async () => {
+  const { prepared, result, run } = await hermesSession("i25 c28");
   assert.equal(run.status, 0, run.out);
   const plugin = JSON.parse(run.out.trim().split("\n").at(-1));
   assert.deepEqual(
@@ -154,6 +166,33 @@ test("I25-C28 entregas Hermes em voo: com o plugin real e o processo de entrega 
     result.stderr,
   );
   assert.ok(result.stderr.includes("eventos gravados: 3."), result.stderr);
+});
+
+// A mesma sessão com a primeira entrega perdida: no processo de entrega, a
+// pré-carga de teste faz a 1ª promoção de segmento lançar EIO, e a gravação é
+// desfeita. Reproduz a classe da falha do Verifier 7 (primeiro registro não
+// gravado), não a causa original, que não é conhecida. O registro de tempos da
+// pré-carga só guarda operação, tipo de arquivo e código.
+test("I25-C28 primeira entrega perdida: com a 1ª promoção de segmento falhando no processo de entrega, a fixture termina antes do prazo do teste, diz que o primeiro registro não foi gravado sem disparar os outros, e a execução termina stopped com 0 gravados", { skip: PYTHON.skipReason ? `python-ausente: ${PYTHON.skipReason}` : false }, async () => {
+  const timing = path.join(scratch("i25 c28 perdida tempos"), "tempos.ndjson");
+  const { prepared, result, run } = await hermesSession("i25 c28 perdida", { NODE_OPTIONS: `--import=${TRACES_PROBE}`, SKILL_ME_TEST_TRACES_SEGMENT_EIO: "1", SKILL_ME_TEST_TRACES_TIMING: timing });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(run.status, 0, run.out);
+  assert.deepEqual(JSON.parse(run.out.trim().split("\n").at(-1)), {
+    started: false,
+    delivered: false,
+    stats: { enqueued: 1, delivered: 1, droppedQueueFull: 0, deliveryFailed: 0, oversize: 0, serializationFailed: 0, active: true },
+  });
+  const captures = launchCapturesOnDisk(prepared.root);
+  assert.deepEqual(captures.map((c) => [c.state, c.counters.accepted, c.counters.persisted]), [["stopped", 0, 0]]);
+  assert.equal(existsSync(pointerFile(prepared.root, captures[0].invocation)), false, "o ponteiro sumiu");
+  assert.ok(result.stderr.includes("eventos gravados: 0."), result.stderr);
+  // A injeção aconteceu e não houve nova tentativa: somando todos os processos,
+  // um só `rename` de segmento, com EIO, e o temporário removido.
+  const ops = readLines(timing).flatMap((line) => JSON.parse(line).ops);
+  const ofSegment = (name) => ops.filter(([op, kind]) => op === name && kind === "segmento.tmp");
+  assert.deepEqual(ofSegment("rename").map((entry) => entry[4]), ["EIO"]);
+  assert.equal(ofSegment("unlink").length, 1);
 });
 
 test("I25-C31 encerramento falha: com lock alheio por mais de 2 s, o código, a captura active, o comando privacy stop e a execução aberta; o comando encerra a captura", async () => {
