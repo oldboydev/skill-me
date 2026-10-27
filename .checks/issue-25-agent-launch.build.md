@@ -854,3 +854,16 @@ por `Date.now()` não foram repetidos (relógio do WSL comprovadamente instável
 - Entrega pendente: o HEAD novo precisa de verificação independente (Verifier 8, que exige nova
   autorização do proprietário) e da revisão formal 5. Nenhum Verifier, revisão, push, edição do PR ou
   merge foi feito aqui.
+
+## Exceção autorizada para a verificação da fixture C28
+
+O proprietário respondeu “Autorizar a 8ª verificação” à pergunta que explicitou uma oitava
+verificação independente, exclusiva da #25, com histórico preservado ([registro](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6432258457)).
+O teto do Verifier passa somente de 7 para 8. A sétima rodada FAIL fica preservada em `1a44ef1`.
+O teto formal permanece 5, com quatro consumidas; configuração do motor e limites globais não mudam.
+
+A correção estava pronta em `22e8fc5`, com alvo100 verde nos três ambientes e `npm test` com
+972 pass, zero falhas e 20 skips. A perda original segue com causa desconhecida; a fixture agora
+informa e encerra a execução no cenário reproduzido, mantendo as asserções saudáveis.
+PASS independente e `ready` do conteúdo novo precedem a atualização do PR #28; o merge está
+autorizado quando a CI estiver toda verde. Publicação não foi autorizada.
