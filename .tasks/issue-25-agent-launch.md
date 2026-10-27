@@ -294,6 +294,16 @@ fixture termina dentro do prazo do teste, informa que o primeiro registro não f
 dispara os outros hooks, e o launcher encerra a execução normalmente. Uma regressão só de teste
 reproduz essa classe de falha (primeira entrega perdida), sem afirmar a causa original.
 
+### Regressões da CI do PR #28 no Windows (C1 e C32; critérios 1 e 25 sem mudança)
+
+Na CI 40443538957, o Windows falhou em duas provas. C1: num checkout com `core.autocrlf=true`
+(o padrão do Git no Windows), o `npm link` reescreve a primeira linha de `cli.mjs` e o checkout fica
+alterado — a causa foi reproduzida, e a correção é manter esse arquivo em LF em qualquer checkout.
+C32: a espera pelos eventos intercalados esgotou o limite sem dizer por quê; a causa não é
+conhecida. Os critérios 1 e 25 continuam os mesmos; a prova de C32 passa a falhar na hora quando uma
+das invocações termina antes, a liberar os agentes de fixture e a trazer o que cada launcher
+escreveu.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
