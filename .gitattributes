@@ -1,0 +1,5 @@
+# O bin do skill-me (package.json "bin") sai em LF em qualquer checkout: com CRLF
+# na primeira linha, o npm link reescreve o arquivo e o checkout fica alterado
+# (CI do PR #28; linha "Bin do launcher em LF em todo checkout" do Landing em
+# .checks/issue-25-agent-launch.md).
+src/integrations/launch/cli.mjs text eol=lf
