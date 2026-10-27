@@ -72,3 +72,12 @@ Atualização em 27/10/2026, depois das provas do autor (detalhes, comandos e lo
 - A causa da falha da R9 continua desconhecida; a instrumentação não a corrige. Pendentes: Verifier 10
   e revisão formal 6, do orquestrador.
 
+Atualização depois do Verifier 10 (FAIL em `df259ed`, relatório em `788d160`; gate D não iniciado):
+a única falha foi o diagnóstico de C32 no WSL isolado, por um defeito do apoio de prova
+`withOverlappingRuns` — a coleta leu uma captura ainda sem `state.json`, lançou `ENOENT` antes de
+liberar as barreiras e mascarou o erro original. O T8-C15, os C46 e o produto não estavam envolvidos.
+Registro em `3328317`, correção e prova em `619c8e0` (RED com o mesmo sintoma, GREEN 3/3, duas
+mutações detectadas). Alvo completo com concorrência (122 testes) com 116 pass, 0 fail, 6 skip nos três
+ambientes; `npm test` completo com **exit 0**, 1.004 testes, 984 pass, 0 fail, 20 skip. Pendentes: o
+próximo Verifier e a revisão formal 6, do orquestrador.
+

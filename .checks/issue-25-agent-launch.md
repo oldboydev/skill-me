@@ -600,3 +600,18 @@ Diagnóstico do T8-C15 e primeira criação concorrente do store (registros acim
 - O que foi abandonado: inicializar o store antes da prova ou abrir B depois de A; repetir
   `store_invalid` na paciência; tomar o lock antes de conferir o marcador; aceitar marcador vazio ou
   parcial; criar a pasta do store por pasta temporária + `rename`.
+
+Diagnóstico de C32 com captura em construção (registros acima preservados):
+
+- Onde a fronteira caiu agora: o Verifier 10 terminou FAIL em `df259ed` (relatório em `788d160`), só
+  no ambiente C e só no diagnóstico de C32, com o gate D não iniciado. Defeito do apoio
+  `withOverlappingRuns`, registrado antes do código em `3328317` (linha “Diagnóstico de C32 com
+  captura em construção” e acréscimo em C32) e corrigido com a prova nova em `619c8e0`; produto sem
+  mudança desde `f734441`. Alvo completo com concorrência (122 testes) verde nos três ambientes e
+  `npm test` com exit 0 em `619c8e0`, em `.checks/issue-25-agent-launch.build.md`.
+- O que o proprietário decidiu: “Pode fazer quantas precisar”, com o ajuste do T8-C15 e o Verifier 10
+  já aprovados; o orquestrador registra as próximas rodadas antes de executá-las. Revisão formal 6
+  disponível e não consumida; nenhum teto mudou aqui. Nenhum Verifier, revisão, push ou merge foi
+  executado aqui.
+- O que foi abandonado: tornar `launchCapturesOnDisk` tolerante; liberar as barreiras só no fim do
+  teste; engolir a falha da coleta; esperar a captura ficar legível; `sleep` pelo interleaving.

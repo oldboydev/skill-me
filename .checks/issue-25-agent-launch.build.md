@@ -1189,3 +1189,81 @@ o lock (recuperação já documentada) e, depois, `store_invalid` pelo temporár
 marcador pela metade antes. A falha de C32 na CI 40443538957 (tempo esgotado, sem saídas) continua sem
 causa demonstrada; esta correção cobre a classe observada agora (`store_invalid` na abertura). Uma
 execução completa verde não mede taxa. Pendentes: Verifier 10 e revisão formal 6, do orquestrador.
+
+## Diagnóstico de C32 com captura em construção (Verifier 10 em `df259ed`)
+
+O Verifier 10 terminou **FAIL** em `df259ed` (relatório preservado pelo orquestrador em `788d160`,
+não alterado aqui): A e B com 120 testes, 114 pass, 0 fail, 6 skip; **C (WSL isolado) com 120, 113
+pass, 1 fail, 6 skip**; o gate **D não foi iniciado**. A falha foi `I25-C32 diagnóstico das invocações
+simultâneas…` (`end.e2e.test.mjs:320`), com a primeira linha do erro `ENOENT: … open
+'…/skill-me-privacy/captures/26c46f13…/state.json'` no lugar de `eventos intercalados: B terminou
+antes` (`verifier-round10/v10/C-wsl-24.13.0-isolado.spec.txt:137-156`). Os outros seis C32, o produto e
+a primeira criação do store (`f734441`) passaram. Os resultados das seções anteriores continuam como
+estão.
+
+**Causa** (leitura do apoio e reprodução abaixo): B termina antes (sem agente no PATH) enquanto A
+ainda cria a captura da abertura — a pasta existe, o `state.json` ainda não. O `catch` de
+`withOverlappingRuns` (`helpers/launch.mjs`) lia marcadores, probes e capturas antes de gravar as
+barreiras; `launchCapturesOnDisk` (estrito) lançou `ENOENT`, e um probe com JSON incompleto faria o
+`readJsonLines` lançar `SyntaxError`. O erro da leitura saía no lugar do original, as barreiras não
+eram gravadas e as invocações não eram esperadas: A ficaria na barreira até o limite de 60 s do
+`runSkillMe`. Defeito do apoio de prova; o produto não muda.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `3328317` | Landing “Diagnóstico de C32 com captura em construção”, acréscimo no C32 e nota na task, antes do código |
+| `619c8e0` | `withOverlappingRuns` com coleta de melhor esforço (`capturesForDiagnosis`, `orUnavailable`, `barreirasNaoGravadas`) e a prova `I25-C32 diagnóstico com captura em construção e probe incompleto` em duas variantes |
+
+Logs em `.checks/code-review/issue-25/builder-c32-diagnostico/` (pasta ignorada).
+
+- **Correção**: cada leitura do diagnóstico que falha vira `indisponível [<código>]` (o `code` `E…` ou
+  o nome do erro, sem mensagem nem caminho); as capturas passam por um leitor só do diagnóstico, em que
+  uma sem `state.json` legível vira `["indisponível", "<código>"]` ao lado das legíveis e a pasta que
+  não pôde ser listada vira `indisponível [<código>]` (pasta ausente continua `[]`). Depois, sempre,
+  todos os marcadores de barreira são gravados (falha de um vai para `barreirasNaoGravadas`) e cada
+  invocação é esperada (rejeição vira `indisponível`). O erro relançado começa pela primeira linha do
+  original, com ele em `cause`, e traz os status, sinais e stderr dos launchers. `launchCapturesOnDisk`
+  e `readJsonLines` continuam estritos para as provas saudáveis.
+- **Prova** (mesma rotina, sem tempo de espera): A para na barreira (marcador `A1`), a prova espera B
+  terminar (127), põe a árvore parcial — uma pasta de captura `fff…f` sem `state.json`, ou o probe de B
+  com `{"env":{"SKILL_ME_LAUNCH_ID":"` — e a espera de `eventos intercalados` falha. A prova tem limpeza
+  própria (grava as barreiras e espera as invocações no `finally`) para o código anterior não deixar A
+  presa.
+- **RED** (apoio de `3328317`; `red-win-24.22.1.spec.txt`): as duas variantes falham com o erro
+  mascarado — `ENOENT: no such file or directory, open '…\captures\ffff…\state.json'` e `Unterminated
+  string in JSON at position 30` no lugar de `eventos intercalados: B terminou antes`, o mesmo sintoma
+  do Verifier 10; a limpeza da prova soltou A (3,1 s cada, não os 60 s do supervisor). O diagnóstico
+  existente passou.
+- **GREEN** (`green-win-24.22.1.spec.txt`): 3/3. Primeira linha e `cause.message` exatas; `marcadores`
+  `["A1"]`; `barreirasNaoGravadas` `[]`; A já tinha terminado quando o erro saiu, com `launchers.A`
+  status 0 e sinal nulo; `launchers.B` = `{status: 127, signal: null, stderr: "skill-me: claude não
+  encontrado no PATH [executable_not_found]\n"}`; na variante da captura, `probes` `{A: <invocation>,
+  B: null}` e as capturas `[<A, 1, active, 0>, ["indisponível", "ENOENT"]]`, com `launchCapturesOnDisk`
+  ainda lançando `ENOENT`; na do probe, `probes.B` = `indisponível [SyntaxError]`, só a captura de A, e
+  `readJsonLines` ainda lançando `SyntaxError`.
+- **Mutações** (cópia descartável, `mutation-*-win-24.22.1.spec.txt`): captura ilegível omitida (o
+  diagnóstico diria “zero capturas”) → a variante da captura falha; barreiras gravadas sem esperar as
+  invocações → as três provas de diagnóstico falham (`A já tinha terminado quando o erro saiu`).
+
+| Alvo da #25 completo com concorrência (`launch/*.test.mjs`, `hermes-harness.unit.test.mjs`, `traces/concurrency.cli.test.mjs`, `--test-concurrency=4`) em `619c8e0` | Resultado |
+| --- | --- |
+| A — Windows, Node 24.22.1, checkout principal, 09:42:40–09:45:15 | 122 testes: 116 pass, 0 fail, 6 skip; `git status` vazio antes e depois |
+| B — Windows, Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, clone novo com `core.autocrlf=true` (`package.json` `w/crlf`, `cli.mjs` `w/lf attr/text eol=lf`), 09:45:32–09:48:06 | 122: 116 pass, 0 fail, 6 skip; `git status` do clone vazio antes e depois; clone removido; 385 scratches do 24.13.0 removidos, 0 recusas |
+| C — WSL Ubuntu uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, npm 11.6.2, `env -i`, `HOME` do scratch, PATH sem `/usr/bin`, `git -c core.autocrlf=false archive 619c8e0` (5.652.480 bytes, sha256 `475ce73d…3b60f6b2`, árvore extraída `7c4102d2…` = `HEAD^{tree}`, `cli.mjs` 755), 09:48:23–09:49:27 | 122: 116 pass, 0 fail, 6 skip; `~/.skill-me` e a autorização ausentes antes e depois |
+
+O alvo inteiro, e não só `end.e2e` e `report.cli`, porque `helpers/launch.mjs` é importado por todos os
+arquivos `launch/*`. Os 122 nomes são os mesmos nos três TAP (os 120 de antes e as duas variantes
+novas); em cada ambiente passaram os 9 I25-C32, os 4 I25-C34, o T8-C15 e os três C46. Skips, todos de
+plataforma, os mesmos da seção anterior.
+
+**`npm test` completo em `619c8e0`** (Windows, Node 24.22.1, runner padrão com 8 arquivos, 12 nativos do
+Hermes; 09:49:47–09:59:13; `builder-c32-diagnostico/final/npm-test.*`): **exit 0**. 1.004 testes: 984
+pass, 0 fail, 20 skip — governança 6/6; motor 16/16; doctor 417 (410/0/7); integrações 565 (552/0/13).
+Passaram os 12 nativos, os 9 I25-C32, os 4 I25-C34, o T8-C15 e os três C46; `git status` vazio antes e
+depois; 127 pastas de testes de outras issues da janela removidas do `%TEMP%`, 0 recusas.
+
+Limites: o interleaving exato do Verifier 10 (A no meio da criação da captura quando B terminou) não
+foi reproduzido com o processo real; a prova põe a mesma árvore parcial que a coleta encontrou. O
+diagnóstico mostra o código da falha de leitura, não o motivo. A falha original de C32 na CI
+40443538957 continua sem causa demonstrada. Pendentes: o próximo Verifier e a revisão formal 6, do
+orquestrador.
