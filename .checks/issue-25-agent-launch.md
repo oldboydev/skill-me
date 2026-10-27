@@ -501,3 +501,13 @@ Correção da CI 40443538957 no Windows (C1 e C32; registros acima preservados):
   Verifiers e 5 revisões formais usados; Verifier 9 e revisão 6 dependem de nova autorização.
 - O que foi abandonado: aceitar a mudança do link no C1, restaurar bytes, `.gitattributes` geral,
   isolar o C1 num clone; aumentar o limite de C32, serializar os agentes ou repetir a espera.
+
+Correção da cronologia do C34 (bloqueio do alvo WSL em `abae80a`; registros acima preservados):
+
+- Onde a fronteira caiu agora: só prova e documentação. Contrato em `f69d05f`; prova em `6732475`
+  (aberturas com relógio próprio pelo `deps.now`, precondições com tempos, regressão do recuo,
+  diagnóstico de falha compartilhado com C32). Alvos A/B/C em `6732475` verdes; o `npm test` mais
+  recente é o de `abae80a`, anterior a esta prova.
+- O que o proprietário decidiu: nada novo; tetos 8 Verifiers e 5 revisões formais consumidos.
+- O que foi abandonado: espera, repetição, tolerância ou skip no WSL; reescrever `launchedAt` das
+  capturas; pré-carga trocando `Date.now`; mudar a regra de escolha.

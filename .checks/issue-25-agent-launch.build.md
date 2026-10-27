@@ -948,3 +948,58 @@ sobre a ordem por `launchedAt` do C34; nem o report nem a prova mudaram nesta ro
   por outro teste nesse intervalo apareceria.
 - Entrega pendente: o HEAD novo precisa de verificação independente (Verifier 9) e revisão formal
   (6), que exigem nova autorização; nenhum Verifier, revisão, push, edição do PR ou merge foi feito.
+
+### C34 com cronologia explícita (bloqueio do alvo WSL em `abae80a`)
+
+O alvo POSIX completo em `abae80a` terminou FAIL em `I25-C34 … escolhe a iniciada por último`
+(`report.cli.test.mjs:130`, `[antiga, false]` no lugar de `[nova, true]`); o log fica em
+`builder-ci28b/final/wsl-24.13.0.*` e não foi repetido. Os `launchedAt` da falha não ficaram no log:
+o que se sabe é que a prova abria a nova depois de um marcador da antiga e dependia de o relógio do
+host crescer entre as duas aberturas, e que o journal do WSL registrou na janela recuos de até 1,24 s.
+Não se afirma causa única.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `f69d05f` | Linha “Cronologia explícita no C34” do Landing e acréscimo em C34, antes do código |
+| `6732475` | `report.cli.test.mjs`: aberturas em processo com relógio próprio (`runSkillMeInProcess`, `launchClock` sobre o `deps.now` existente), precondições com tempos, regressão do recuo; `withOverlappingRuns` movido para `helpers/launch.mjs`, com `track` e `launchedAt`/`createdAt` no diagnóstico; C32 passa a importá-lo |
+
+- **Contrato mantido**: `latestLaunch` escolhe o maior (`launchedAt`, `invocation`); nada no produto
+  mudou. `deps.now` só carimba abertura e encerramento; prazos, locks e entregas seguem com o tempo
+  real.
+- **Prova com tempos controlados**: antiga em início − 2 h e nova em início − 1 h, cada relógio
+  andando com o tempo monotônico e passando ao do sistema depois da abertura; a sucessora da antiga
+  nasce pelo hook, no relógio do sistema. A prova confere `launchedAt` da nova > da antiga e que a
+  captura de `createdAt` mais recente das duas execuções é a sucessora da antiga, antes da escolha;
+  depois, a escolha aberta e encerrada, o segmento 1 da antiga apagado sem contaminar a nova, e a
+  execução mais recente com o segmento 1 apagado e o ausente explícito, como antes.
+- **Erro plausível rejeitado** (`builder-c34/mutacao-createdAt-win-24.22.1.spec.txt`): numa cópia
+  descartável (árvore do índice temporário), com `latestLaunch` mutado para escolher pela captura de
+  `createdAt` mais recente, a prova falha na escolha com `[antiga, false]` contra `[nova, true]` — a
+  mesma forma da falha do WSL — e o erro traz o diagnóstico novo: marcadores, probes, capturas com
+  `launchedAt` (antiga 02:35:12, nova 03:35:14) e `createdAt` (sucessora 04:35:16), e os dois
+  launchers terminados com 0 depois da liberação das barreiras. A cópia foi apagada; o checkout não
+  foi tocado.
+- **Regressão do recuo** (`I25-C34 recuo do relógio entre as aberturas`): com a segunda abertura
+  carimbada 5 s antes da primeira, `skill-me report --format json` escolhe a primeira, aberta, e a
+  precondição temporal falha com a mensagem exata contendo os dois `launchedAt`. Mostra que o recuo
+  entre as aberturas basta para o sintoma do WSL; não prova que foi a causa daquela falha.
+- **`--latest`**: a abertura do launcher é carimbada 60 s depois do `createdAt` da automática; a
+  precondição “a do launcher é a mais recente” vale por construção.
+- **GREEN Windows 24.22.1** (`builder-c34/green-win-24.22.1.spec.txt`): C32 (2), C34 (4) e C35, 7/7.
+
+| Alvo I25 (`--test-concurrency=4`) em `6732475` | Resultado |
+| --- | --- |
+| A — Windows Node 24.22.1, checkout principal, 01:35:48–01:38:35 | 102 testes: 96 pass, 0 fail, 6 skip |
+| B — Windows Node 24.13.0 oficial (npm 11.6.2 adjacente, `npm_execpath` ausente), clone novo com `core.autocrlf=true`, 01:38:53–01:41:31 | 102 testes: 96 pass, 0 fail, 6 skip; `git status` do clone vazio antes e depois; 337 scratches removidos |
+| C — WSL Ubuntu uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, npm 11.6.2, `env -i`, PATH sem `/usr/bin`, `git -c core.autocrlf=false archive 6732475` (5.560.320 bytes, sha256 `c3968f55…828f61`, `get-tar-commit-id` = `6732475b…`, árvore extraída `d82e196f…` = `HEAD^{tree}`, `cli.mjs` 755), 01:41:56–01:43:08 | 102 testes: 96 pass, 0 fail, 6 skip; os 4 C34 passaram; o journal registrou recuos de ~1,27 s às 01:42:18 e 01:42:46 durante o alvo (`C-wsl-relogio-journal.txt`) |
+
+Os 102 nomes I25 são os mesmos nos três TAP, sem `not ok`. O `npm test` completo **não** foi repetido
+nesta mudança (só provas do alvo): o último é o de `abae80a`, no checkout principal do Windows com
+Node 24.22.1, 01:19:26–01:27:18, exit 0, 993 testes (973 pass, 0 fail, 20 skip), com os 12 nativos
+do Hermes (`builder-ci28b/final/npm-test.log`) — anterior à nova prova do C34. O gate D do próximo
+Verifier deve rodar no HEAD aprovado.
+
+Limites: a regra do produto continua a de wall clock (`launchedAt` de `Date.now()` no uso real): num
+host cujo relógio recua mais que o intervalo entre duas aberturas, “a iniciada por último” segue o
+carimbo, como a regressão mostra; isso é comportamento do contrato, não mudado aqui. A entrega
+continua pendente de Verifier 9 e revisão formal 6, com os tetos 8/5 consumidos.
