@@ -361,6 +361,15 @@ apoio de prova, não do produto. O contrato do diagnóstico fica na linha “Dia
 captura em construção” do Landing: inspeção de melhor esforço, indisponibilidade com código, e
 liberação das barreiras e espera das invocações sempre, com o erro original preservado.
 
+### CI 40514323240 no Windows: diagnóstico sem correção (critérios sem mudança)
+
+Na CI real depois da formal 6 `ready` e do Verifier 11 PASS (`d0d5a7f`), o Windows falhou no I23-C10
+(“codex A 0”) e no primeiro controle do C46, os dois por `delivery_timeout`, e o passo de integrações
+terminou junto do limite de 10 min do job. No C46, os dois produtores pararam na criação do `.lock`
+da abertura; o vermelho está certo, porque a precondição do controle não foi alcançada. O caminho do
+I23-C10 não mudou de E/S na #25. Nenhuma correção cabe nos contratos vinculantes. A decisão é do
+proprietário, com as propostas em `.checks/issue-25-agent-launch.ci40514323240-handoff.md`.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.

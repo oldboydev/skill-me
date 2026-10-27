@@ -617,3 +617,17 @@ Diagnóstico de C32 com captura em construção (registros acima preservados):
   executado aqui.
 - O que foi abandonado: tornar `launchCapturesOnDisk` tolerante; liberar as barreiras só no fim do
   teste; engolir a falha da coleta; esperar a captura ficar legível; `sleep` pelo interleaving.
+
+CI 40514323240 no Windows (registros acima preservados):
+
+- Onde a fronteira caiu agora: só diagnóstico, sem código. O I23-C10 e o primeiro controle do C46
+  falharam por `delivery_timeout`; no C46, os dois produtores pararam na criação do `.lock` da
+  abertura, demonstrado pela sequência das operações e por um controle local. Causa da parada,
+  operação do I23-C10 e taxa não conhecidas; o passo de integrações terminou junto do limite de 10
+  min do job. Nenhum check, critério, prazo, workflow ou produto mudou. Detalhes em
+  `.checks/issue-25-agent-launch.ci40514323240-handoff.md` e no build.
+- O que o proprietário precisa decidir: como tratar paradas além do prazo nas provas com processos
+  reais e o limite de 10 min do job Windows (propostas no handoff). Formal 6 `ready` e Verifier 11
+  PASS continuam preservados; um Verifier 12 ou uma formal 7 só depois de código, se houver.
+- O que foi abandonado: atribuir a parada a antivírus, relógio, disco ou lock sem prova; repetir
+  a CI ou o gate inalterados; afrouxar a precondição do C46.

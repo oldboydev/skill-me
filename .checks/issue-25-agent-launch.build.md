@@ -1267,3 +1267,46 @@ foi reproduzido com o processo real; a prova põe a mesma árvore parcial que a 
 diagnóstico mostra o código da falha de leitura, não o motivo. A falha original de C32 na CI
 40443538957 continua sem causa demonstrada. Pendentes: o próximo Verifier e a revisão formal 6, do
 orquestrador.
+
+## CI 40514323240 (Windows): I23-C10 e I25-C46 com `delivery_timeout`, diagnóstico sem correção
+
+Estado de partida: HEAD `d0d5a7f`, com a revisão formal 6 `ready` 7/7 e o Verifier 11 PASS 46/46
+(A, B e C com 122/116/0/6; D com 1.004/984/0/20), ambos preservados. Na CI real nova, Ubuntu e macOS
+passaram. No Windows (Node 24.13.0, npm 11.6.2), as integrações tiveram 565 testes, 539 pass, **2
+fail**, 24 skip, em 479.157,9 ms, com exit 1 às 13:52:09,9 UTC, e o job chegou ao limite de 10 min no
+pós-job. Log preservado pelo orquestrador: `.checks/code-review/issue-25/ci40514323240-windows.tail.txt`
+(os últimos 120.000 caracteres). Diagnóstico, propostas e comandos completos ficam em
+`.checks/issue-25-agent-launch.ci40514323240-handoff.md`; os logs, em
+`.checks/code-review/issue-25/builder-ci40514323240/` (pasta ignorada).
+
+- **I23-C10** (`observe/agents.e2e.test.mjs:195`, “codex A 0”, fase sequencial):
+  `delivery_timeout` 1/0/0/1, sem operação nem código, porque a prova antiga não instrumenta a
+  entrega. O diff da #25 nesse caminho (`observe/delivery.mjs` com núcleo comum, `appendAutomatic`
+  sobre `appendWithSuccession`, `readMarker` para quem não cria) foi lido inteiro e mantém a mesma
+  sequência de E/S. Causa não demonstrada.
+- **I25-C46 (a)** (`traces/concurrency.cli.test.mjs:311-315`): `a` e `b` com `delivery_timeout`
+  40/0/0/40, 10 operações cada, nenhum flush, nenhuma falha, nenhum `EEXIST`; lock presente e 0
+  segmentos. A injeção em `b` não chegou a acontecer.
+  - **Controle 1** (`ops-sequence.mjs`, produtor saudável com a pré-carga de tempos, Windows Node
+    24.22.1): as 10 primeiras operações são as do `openStore` até o `close` do `store.json`; a 11ª é
+    `open lock`, a criação `wx` do `.lock`.
+  - **Controle 2** (`stall-control.mjs` com a pré-carga descartável `stall-lock.mjs`, dois
+    produtores de 40 entradas): os dois parados antes de criar o lock dão o quadro por produtor da
+    CI com o lock **ausente**; `a` criando o lock sem a chamada voltar dá o quadro inteiro da CI, com
+    o lock **presente**.
+  - **Conclusão**: ao menos um produtor criou o `.lock` no disco sem que a chamada voltasse antes
+    do prazo de 650 ms, e o outro também não completou a criação. Entre a 10ª e a 11ª operação, o
+    código só gera o nonce do lock (`randomBytes(8)`) e chama `open`. A cronologia é a do contrato
+    da #8: abandono no prazo, `close`, entradas perdidas, saída com a criação pendente e o lock que
+    fica (`docs/traces.md:491-495`, que fala em commit). O vermelho está certo: a precondição do
+    controle não foi alcançada. Por que a criação parou ~620 ms nos dois processos não se sabe.
+- **Tempo do job**: o passo de integrações terminou junto do limite de 10 min. Na soma das durações
+  dos testes da CI, as provas da #25 são ~202 s de ~1.150 s; o tempo de parede com e sem elas não foi
+  medido.
+
+Nenhum produto, prova, workflow ou configuração mudou. Nenhuma suíte, alvo ou CI foi executado,
+porque não houve código novo; os dois controles são locais e finitos. Decisões pedidas ao
+proprietário, no handoff: como tratar paradas além do prazo nas provas com processos reais (a
+recomendação é instrumentar o I23-C10 com a pré-carga existente e decidir sobre a CI com as
+asserções intactas) e o que fazer com o limite de 10 min do job Windows. Prazos, retry, perdas,
+carga, paralelismo, teto 8 e o limite do job continuam sem mudança.
