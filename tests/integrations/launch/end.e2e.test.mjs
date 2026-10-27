@@ -17,7 +17,7 @@ import { agentArgs, agentBin, launchCapturesOnDisk, markerPausedIo, npmScriptEnv
 import { automaticOf, homeEnv, npmCli, runNpmScript } from "../helpers/observe.mjs";
 import { claudePayload, hermesRecord } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
-import { ISO_MS, TRACES_PROBE, captureDir, expectedPseudonym, exportOf, runHook, statusOf, storeDir } from "../helpers/traces.mjs";
+import { ISO_MS, TRACES_PROBE, captureDir, capturesDir, expectedPseudonym, exportOf, runHook, statusOf, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
 // Provas S4 da issue #25 sobre o encerramento (C25–C28, C31–C33): o fim da
@@ -325,6 +325,68 @@ test("I25-C32 diagnóstico das invocações simultâneas: uma invocação que te
   assert.equal(readJsonLines(probeA).length, 1, "o agente de A rodou");
   assert.deepEqual(launchCapturesOnDisk(prepared.root).map((c) => c.state), ["stopped"]);
 });
+
+// Verifier 10 em df259ed (linha "Diagnóstico de C32 com captura em construção"
+// do Landing): a coleta do diagnóstico encontrou uma captura ainda sem
+// state.json, lançou antes de liberar as barreiras e mascarou o erro. Aqui a
+// árvore parcial é posta pela prova, com A parada na barreira e B já terminada;
+// nada depende de tempo. Variantes: pasta de captura sem state.json; probe de B
+// com o JSON pela metade.
+const PARTIAL_DIAGNOSIS = [
+  ["captura em construção", ({ root }) => mkdirSync(path.join(capturesDir(root), "f".repeat(32)))],
+  ["probe incompleto", (_, probeB) => writeFileSync(probeB, '{"env":{"SKILL_ME_LAUNCH_ID":"')],
+];
+for (const [variant, arrange] of PARTIAL_DIAGNOSIS) {
+  test(`I25-C32 diagnóstico com captura em construção e probe incompleto — ${variant}: a espera falha com o erro original, a coleta marca a indisponibilidade e A é liberada e termina`, async () => {
+    const prepared = preparedLaunch(scratch, `i25 c32 parcial ${variant}`, { agents: ["claude"] });
+    const work = scratch(`i25 c32 parcial ${variant} provas`);
+    const f = (name) => path.join(work, name);
+    const scenarioA = writeScenario(work, "a", [{ touch: f("A1") }, { waitFile: f("A-fim") }]);
+    const probeA = f("probe-a.ndjson");
+    const probeB = f("probe-b.ndjson");
+    const runA = runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, FAKE_AGENT_SCENARIO: scenarioA, FAKE_AGENT_PROBE: probeA } });
+    const runB = runSkillMe(["claude", ...agentArgs("claude")], { env: { ...prepared.env, PATH: scratch(`i25 c32 parcial ${variant} sem agente`), FAKE_AGENT_PROBE: probeB } });
+    let endedA = false;
+    runA.then(() => (endedA = true));
+    let failure = null;
+    let endedAtFailure = null;
+    try {
+      await withOverlappingRuns({ root: prepared.root, work, runs: { A: runA, B: runB }, probes: { A: probeA, B: probeB }, markers: C32_MARKERS }, async (whileAlive) => {
+        await whileAlive(() => existsSync(f("A1")), "A na barreira", ["A"]);
+        await runB;
+        arrange(prepared, probeB);
+        await whileAlive(() => existsSync(f("A2")) && existsSync(f("B2")), "eventos intercalados", ["A", "B"]);
+      });
+    } catch (error) {
+      failure = error;
+      endedAtFailure = endedA;
+    } finally {
+      // Limpeza da própria prova: se o apoio não liberar A, ela não fica presa.
+      for (const name of C32_MARKERS) writeFileSync(f(name), "");
+      await Promise.all([runA, runB]);
+    }
+    assert.ok(failure !== null, "a espera falhou");
+    const [first, ...rest] = failure.message.split("\n");
+    assert.equal(first, "eventos intercalados: B terminou antes", failure.message);
+    assert.equal(failure.cause?.message, "eventos intercalados: B terminou antes");
+    assert.equal(endedAtFailure, true, "A já tinha terminado quando o erro saiu: o apoio a liberou e esperou");
+    const seen = JSON.parse(rest.join("\n"));
+    const invA = readJsonLines(probeA)[0].env.SKILL_ME_LAUNCH_ID;
+    const rowA = [invA, 1, "active", 0];
+    assert.deepEqual(seen.marcadores, ["A1"]);
+    assert.deepEqual(seen.barreirasNaoGravadas, []);
+    assert.equal(seen.launchers.A.status, 0, seen.launchers.A.stderr);
+    assert.equal(seen.launchers.A.signal, null);
+    assert.deepEqual(seen.launchers.B, { status: 127, signal: null, stderr: "skill-me: claude não encontrado no PATH [executable_not_found]\n" });
+    if (variant === "captura em construção") {
+      assert.deepEqual([seen.probes, seen.capturas.map((row) => row.slice(0, 4)).sort()], [{ A: invA, B: null }, [rowA, ["indisponível", "ENOENT"]].sort()]);
+      assert.throws(() => launchCapturesOnDisk(prepared.root), { code: "ENOENT" }, "o leitor das provas saudáveis continua estrito");
+    } else {
+      assert.deepEqual([seen.probes, seen.capturas.map((row) => row.slice(0, 4))], [{ A: invA, B: "indisponível [SyntaxError]" }, [rowA]]);
+      assert.throws(() => readJsonLines(probeB), SyntaxError, "o leitor das provas saudáveis continua estrito");
+    }
+  });
+}
 
 // A raiz do C32 nasce sem store, e as duas invocações o criam juntas (linha
 // "Primeira criação concorrente do store" do Landing; o gate em 710076e viu B

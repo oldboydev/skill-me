@@ -167,14 +167,51 @@ export function launchClock(startMs) {
   };
 }
 
+// Código de uma leitura do diagnóstico que falhou: o `code` E… da E/S ou o nome
+// do erro, nunca a mensagem, que traz caminho.
+const failureCode = (error) => (typeof error?.code === "string" && /^E[A-Z]+$/.test(error.code) ? error.code : (error?.name ?? "erro"));
+const orUnavailable = (read) => {
+  try {
+    return read();
+  } catch (error) {
+    return `indisponível [${failureCode(error)}]`;
+  }
+};
+
+// Capturas como o diagnóstico as vê: uma sem state.json legível — por exemplo,
+// ainda em criação pela abertura de outra invocação — vira ["indisponível",
+// <código>] ao lado das legíveis. O leitor das provas saudáveis,
+// launchCapturesOnDisk, continua estrito.
+function capturesForDiagnosis(root) {
+  let names;
+  try {
+    names = readdirSync(capturesDir(root));
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  return names
+    .filter((name) => HEX32.test(name))
+    .flatMap((name) => {
+      try {
+        const state = JSON.parse(readFileSync(path.join(capturesDir(root), name, "state.json"), "utf8"));
+        return state.origin === "launch" ? [[state.invocation, state.segment, state.state, state.counters.persisted, state.launchedAt, state.createdAt]] : [];
+      } catch (error) {
+        return [["indisponível", failureCode(error)]];
+      }
+    });
+}
+
 // Invocações sobrepostas (linhas "Diagnóstico de C32" e "Cronologia explícita no
 // C34" do Landing): cada espera pelos marcadores corre com o limite de 30 s, mas
 // só enquanto as invocações que precisam estar vivas estão vivas. `track` inclui
-// uma invocação aberta depois. Em qualquer falha, os marcadores de barreira são
-// gravados (os agentes de fixture saem), as invocações terminam, e o erro traz o
-// que se viu: marcadores, o ID da execução de cada probe, as capturas (segmento,
-// estado, persisted, launchedAt, createdAt) e status, sinal e stderr de cada
-// launcher.
+// uma invocação aberta depois. Em qualquer falha, o erro traz o que se viu:
+// marcadores, o ID da execução de cada probe, as capturas (segmento, estado,
+// persisted, launchedAt, createdAt) e status, sinal e stderr de cada launcher.
+// Essa coleta é de melhor esforço (linha "Diagnóstico de C32 com captura em
+// construção"): o que não pôde ser lido sai como indisponível, e os marcadores de
+// barreira são gravados (os agentes de fixture saem) e as invocações esperadas
+// de qualquer forma; o erro relançado começa pelo original, que fica em `cause`.
 export async function withOverlappingRuns({ root, work, runs, probes, markers }, body) {
   const settled = {};
   const track = (name, run) => {
@@ -195,16 +232,28 @@ export async function withOverlappingRuns({ root, work, runs, probes, markers },
   try {
     return await body(whileAlive, track);
   } catch (error) {
-    const seen = markers.filter((name) => existsSync(path.join(work, name)));
-    const started = Object.fromEntries(Object.entries(probes).map(([name, file]) => [name, readJsonLines(file)[0]?.env.SKILL_ME_LAUNCH_ID ?? null]));
-    const captures = launchCapturesOnDisk(root).map((c) => [c.invocation, c.segment, c.state, c.counters.persisted, c.launchedAt, c.createdAt]);
-    for (const name of markers) writeFileSync(path.join(work, name), "");
+    const seen = orUnavailable(() => markers.filter((name) => existsSync(path.join(work, name))));
+    const started = Object.fromEntries(Object.entries(probes).map(([name, file]) => [name, orUnavailable(() => readJsonLines(file)[0]?.env.SKILL_ME_LAUNCH_ID ?? null)]));
+    const captures = orUnavailable(() => capturesForDiagnosis(root));
+    const unwritten = [];
+    for (const name of markers) {
+      try {
+        writeFileSync(path.join(work, name), "");
+      } catch (failure) {
+        unwritten.push([name, failureCode(failure)]);
+      }
+    }
     const launchers = {};
     for (const [name, run] of Object.entries(runs)) {
-      const { status, signal, stderr } = await run;
-      launchers[name] = { status, signal, stderr };
+      try {
+        const { status, signal, stderr } = await run;
+        launchers[name] = { status, signal, stderr };
+      } catch (failure) {
+        launchers[name] = `indisponível [${failureCode(failure)}]`;
+      }
     }
-    throw new Error(`${error.message}\n${JSON.stringify({ marcadores: seen, probes: started, capturas: captures, launchers })}`, { cause: error });
+    const diagnosis = { marcadores: seen, probes: started, capturas: captures, barreirasNaoGravadas: unwritten, launchers };
+    throw new Error(`${error.message}\n${JSON.stringify(diagnosis)}`, { cause: error });
   }
 }
 
