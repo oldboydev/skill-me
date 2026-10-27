@@ -284,6 +284,16 @@ PATH resolve) nesse caso.
     diretórios, 127 com `executable_not_found`. No Windows, nada muda (componentes vazios
     continuam ignorados; PATHEXT e o shim do npm como antes), e a política do doctor também não.
 
+### Regressão de fixture da CI do PR #28 (C28; critério 21 sem mudança)
+
+O Verifier 7, em `a755c37`, registrou o C28 vermelho no Windows com o Node 24.13.0 da CI: o
+primeiro registro do Hermes não foi gravado, a fixture esperou mais que o prazo do teste e o
+resultado lido era o próprio cenário. A causa da perda do primeiro registro não é conhecida. O
+critério 21 continua o mesmo; a prova passa a mostrar o que aconteceu quando ele não é cumprido: a
+fixture termina dentro do prazo do teste, informa que o primeiro registro não foi gravado e não
+dispara os outros hooks, e o launcher encerra a execução normalmente. Uma regressão só de teste
+reproduz essa classe de falha (primeira entrega perdida), sem afirmar a causa original.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
