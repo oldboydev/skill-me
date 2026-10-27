@@ -867,3 +867,84 @@ A correção estava pronta em `22e8fc5`, com alvo100 verde nos três ambientes e
 informa e encerra a execução no cenário reproduzido, mantendo as asserções saudáveis.
 PASS independente e `ready` do conteúdo novo precedem a atualização do PR #28; o merge está
 autorizado quando a CI estiver toda verde. Publicação não foi autorizada.
+
+## CI 40443538957 (Windows): C1 e C32
+
+Estado de partida: HEAD `3bc40b1`, Verifier 8 PASS 45/45 e revisão formal 5 `ready` (6 AC), ambos
+preservados. Na CI 40443538957 (job 121989332792), Ubuntu 22.04 e macOS 14 passaram; o Windows
+(Node 24.13.0) falhou nas integrações em I25-C1 (`command.cli.test.mjs:77`, ` M src/integrations/launch/cli.mjs`
+depois do `npm link`) e I25-C32 (`end.e2e.test.mjs:272`, `tempo esgotado: eventos intercalados`,
+30,5 s). Tetos: 8 Verifiers de 8 e 5 revisões formais de 5, todos usados; nenhum rodou aqui.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `bcd984e` | Linhas “Bin do launcher em LF em todo checkout” e “Diagnóstico de C32” do Landing, acréscimos em C1 e C32, nota na task (critérios 1 e 25 sem mudança), antes do código |
+| `485467c` | C32: esperas pelo apoio `withOverlappingRuns` (mesmo limite de 30 s, falha na hora se uma invocação termina antes, libera barreiras e traz diagnóstico); prova `I25-C32 diagnóstico das invocações simultâneas` |
+| `abae80a` | `.gitattributes` com `src/integrations/launch/cli.mjs text eol=lf` |
+
+Logs em `.checks/code-review/issue-25/builder-ci28b/` (pasta ignorada). Clones novos do repositório
+local com `git clone --config core.autocrlf=<valor>` (config só no clone; a do sistema, `true`, não foi
+tocada), `node_modules` copiado, sem rede.
+
+### C1: causa confirmada e corrigida
+
+- **Causa**: num checkout com `core.autocrlf=true`, `cli.mjs` sai com CRLF; o `npm link` do npm 11.6.2
+  chama `bin-links/lib/fix-bin.js` (bin-links 5.0.0), que faz `chmod` e, se a primeira linha termina em
+  `\r\n`, reescreve o arquivo com `writeFileAtomic(file, content.replace(/^(#![^\n]+)\r\n/, '$1\n'))`.
+  No checkout local deste build o arquivo estava em LF, por isso o C1 passava aqui.
+- **RED** (clone novo de `3bc40b1`, Node 24.13.0 oficial, npm 11.6.2, sem `npm_execpath`;
+  `red-c1-*`): com `autocrlf=true`, `ls-files --eol` = `i/lf w/crlf`, primeira linha `node\r\n` antes e
+  `node\n` depois, 124 CR nas outras linhas, `git status` com ` M src/integrations/launch/cli.mjs` e C1
+  **fail** (`npm link não altera o checkout`); com `false`, `w/lf`, 0 CR e C1 pass.
+- **GREEN** (clone novo de `abae80a`; `green-c1-*`): com `true` e com `false`, `w/lf attr/text eol=lf`,
+  0 CR antes e depois, `git status` vazio, C1 pass. As asserções de C1 não mudaram.
+
+### C32: causa não demonstrada; diagnóstico e ciclo de vida
+
+- **Matriz M2** (`m2/`, finita e planejada): clones novos de `485467c` (já com o diagnóstico, ainda
+  sem a correção do C1), 3 com `autocrlf=true` e 3 com `false`, cada um uma vez com `command.cli`,
+  `end.e2e` e `prepare.cli` em `--test-concurrency=3`, Node 24.13.0 oficial. Resultado: 50 testes por
+  execução; C1 falhou nas 3 com `true` (sempre ` M cli.mjs`) e passou nas 3 com `false`; os dois C32
+  passaram nas 6 (8,4–9,7 s e 3,2–3,6 s), inclusive nas execuções em que o C1 reescreveu o `cli.mjs`.
+  A falha da CI não se reproduziu; a hipótese de interferência do C1 não ficou demonstrada (e o
+  `writeFileAtomic` troca o arquivo por `rename`).
+- **O que mudou na prova** (sem mudar contrato, concorrência, limite ou asserções): uma invocação que
+  termina antes dos marcadores faz a espera falhar na hora; em qualquer falha, os marcadores de
+  barreira são gravados, as duas invocações terminam, e o erro traz marcadores vistos, o ID da
+  execução de cada probe, as capturas (segmento, estado, `persisted`) e status, sinal e stderr de cada
+  launcher. É diagnóstico para a próxima CI, não a resolução da causa.
+- **Prova do apoio** (`I25-C32 diagnóstico das invocações simultâneas`): a segunda invocação sem
+  agente no PATH sai com 127; a espera falha com `eventos intercalados: B terminou antes` em 3,2–3,6 s
+  (não `tempo esgotado`), `launchers.B` = `{status: 127, signal: null, stderr: "skill-me: claude não
+  encontrado no PATH [executable_not_found]\n"}`, `probes.B` nulo, e A, liberada da barreira, termina
+  com 0. O RED do C32 antigo não foi reproduzido (limite).
+
+### Provas finais (HEAD `abae80a`)
+
+Uma execução por ambiente, em sequência, sem repetir até passar.
+
+| Execução | Resultado |
+| --- | --- |
+| Alvo I25 (`launch/*.test.mjs` + `hermes-harness.unit.test.mjs`, `--test-concurrency=4`), Windows Node 24.22.1, checkout principal, 01:12:17–01:14:43 | 101 testes: 95 pass, 0 fail, 6 skip |
+| O mesmo, Windows Node 24.13.0 oficial (npm 11.6.2 adjacente, `npm_execpath` ausente), **num clone novo com `core.autocrlf=true`**, 01:14:56–01:17:21 | 101 testes: 95 pass, 0 fail, 6 skip; `git status` do clone vazio depois; 330 scratches removidos |
+| O mesmo, WSL Ubuntu uid 1000, Node 24.13.0 copiado num prefixo sem `sh` com npm 11.6.2, `env -i`, PATH sem `/usr/bin`, `git -c core.autocrlf=false archive abae80a` (5.539.840 bytes, sha256 `2d316cad…5c0109f8`, `get-tar-commit-id` = `abae80ac…`, árvore extraída `9b5e3630…` = `HEAD^{tree}`, `cli.mjs` 755), 01:17:42–01:18:47 | **101 testes: 94 pass, 1 fail, 6 skip, exit 1** — `I25-C34 report da execução: escolhe a iniciada por último…` (`report.cli.test.mjs:130`): esperado `[nova, true]`, obtido `[antiga, false]`. Não repetido |
+| Windows, Node 24.22.1, `npm test`, checkout principal, 01:19:26–01:27:18 | **exit 0**: governança 6/6; motor 16/16; doctor 417 (410 pass, 7 skip); integrações 554 (541 pass, **0 fail**, 13 skip); total 993: 973 pass, 0 fail, 20 skip; os 12 nativos do Hermes executados e verdes; `git status` sem mudança de fonte depois |
+
+Os 101 nomes I25 são os mesmos nos três TAP. A falha de C34 no WSL: a prova só inicia a execução nova
+depois de o agente da antiga estar rodando, então a antiga recebeu o `launchedAt` (`Date.now()`,
+`store.mjs:1041/1049`) antes; o report escolher a antiga significa que o relógio de parede voltou entre
+as duas aberturas. O journal do WSL registra, dentro da janela, passos para trás de 0,56 s
+(01:17:47), **1,24 s** (01:18:15,918 → 01:18:14,677) e ~1,2 s (01:18:43–44)
+(`final/wsl-relogio-journal.txt`). É a mesma instabilidade do relógio do WSL registrada antes, agora
+sobre a ordem por `launchedAt` do C34; nem o report nem a prova mudaram nesta rodada.
+
+### Limites e pendências
+
+- C32: causa da falha da CI desconhecida; a matriz não reproduziu; a próxima falha vem com diagnóstico.
+- C34 no WSL: a escolha da execução mais recente usa o relógio de parede (contrato do Landing); com o
+  relógio do WSL voltando mais que o intervalo entre as duas aberturas da prova, ela escolhe a antiga.
+  Fica registrada como limite do ambiente; nenhuma mudança de produto ou de prova foi feita.
+- C1 continua comparando a árvore compartilhada antes e depois do link; um arquivo não rastreado criado
+  por outro teste nesse intervalo apareceria.
+- Entrega pendente: o HEAD novo precisa de verificação independente (Verifier 9) e revisão formal
+  (6), que exigem nova autorização; nenhum Verifier, revisão, push, edição do PR ou merge foi feito.

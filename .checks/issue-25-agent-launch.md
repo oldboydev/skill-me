@@ -488,3 +488,14 @@ Correção do C28 na fixture (CI do PR #28; registros acima preservados):
 - O que foi abandonado: aumentar o limite do `runSkillMe`; reenviar ou repetir na fixture; repetir o
   `rename` no store ou publicar o relatório da entrega da execução (produto); atribuir a perda a um
   código de erro sem evidência.
+
+Correção da CI 40443538957 no Windows (C1 e C32; registros acima preservados):
+
+- Onde a fronteira caiu agora: `.gitattributes` só para o bin, prova e documentação. Contratos em
+  `bcd984e`; diagnóstico de C32 em `485467c`; correção de C1 em `abae80a`. RED/GREEN em clones novos
+  com `core.autocrlf=true` e `false`, matriz M2, provas nos três ambientes e o `npm test` em
+  `.checks/issue-25-agent-launch.build.md`.
+- O que o proprietário decidiu: corrigir a CI do PR #28 e fazer o merge com tudo verde. Tetos: 8
+  Verifiers e 5 revisões formais usados; Verifier 9 e revisão 6 dependem de nova autorização.
+- O que foi abandonado: aceitar a mudança do link no C1, restaurar bytes, `.gitattributes` geral,
+  isolar o C1 num clone; aumentar o limite de C32, serializar os agentes ou repetir a espera.
