@@ -141,6 +141,54 @@ export const describeTiming = (t) =>
   `${t.ms} ms da 1ª à última operação de disco; ${t.operations} operações; flush ${t.syncs.join("+") || "nenhum"} = ${t.syncMs} ms; ` +
   `por operação ${t.byOperation.join(", ")} ms; mais lenta ${t.slowest}; falhas ${t.failed.join(", ") || "nenhuma"}; CPU do processo ${t.cpuMs} ms`;
 
+// Diagnóstico de produtores reais nas provas (consumidores: T8-C15/I25-C46 em
+// traces/concurrency.cli.test.mjs e I23-C10/I25-C47 em
+// observe/agents.e2e.test.mjs; linhas "Diagnóstico do T8-C15" e "Diagnóstico do
+// I23-C10" do Landing da #25). Nada aqui lança nem traz caminho, conteúdo, ID ou
+// chave: o que não pôde ser lido vira o código da falha.
+
+// O `code` E… da E/S ou o nome do erro, nunca a mensagem, que pode trazer caminho.
+export const failureCode = (error) => (typeof error?.code === "string" && /^E[A-Z]+$/.test(error.code) ? error.code : (error?.name ?? "erro"));
+
+// Uma inspeção que falha vira `{unavailable: <código>}`, em vez de um estado presumido.
+export function inspected(read) {
+  try {
+    return read();
+  } catch (error) {
+    return { unavailable: failureCode(error) };
+  }
+}
+
+// Comando `privacy` como o usuário o consulta: com o lock preso ou outro erro,
+// o código fechado dele.
+export function privacyBody(args) {
+  const result = runPrivacy(args);
+  return result.status === 0 ? { body: result.body } : { unavailable: result.body.error?.code ?? `status ${result.status}` };
+}
+
+export const shown = (value, describe) => (value.unavailable === undefined ? describe(value) : `indisponível [${value.unavailable}]`);
+
+// Operações de uma linha da pré-carga de tempos em ordem de início, cada uma
+// com o lugar dela em relação ao lock do store: `held` vale do `writeFile` do
+// `.lock` que deu certo até o `unlink` dele, inclusive; `hold` numera as
+// tomadas do processo (1, 2…); `commits` conta os `rename` de `state.json.tmp`
+// concluídos naquela tomada antes da operação. Cada consumidor diz a fase com
+// o que vale no caminho dele.
+export function diskTrace(ops) {
+  let held = false;
+  let hold = 0;
+  let commits = 0;
+  return [...ops]
+    .sort((x, y) => x[2] - y[2])
+    .map(([op, kind, , , code]) => {
+      const entry = { op, kind, code, held, hold: held ? hold : null, commits: held ? commits : 0 };
+      if (op === "writeFile" && kind === "lock" && code === undefined) [held, hold, commits] = [true, hold + 1, 0];
+      else if (op === "rename" && kind === "state.json.tmp" && code === undefined && held) commits += 1;
+      else if (op === "unlink" && kind === "lock") held = false;
+      return entry;
+    });
+}
+
 export const runHook = (agent, payload, options = {}) =>
   runInternal(["hook", "--agent", agent], { ...options, stdinText: options.stdinText ?? JSON.stringify(payload) });
 

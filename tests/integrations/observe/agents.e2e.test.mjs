@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { after, before, test } from "node:test";
 import { DELIVERY_DEADLINE_MS } from "../../../src/integrations/traces/delivery.mjs";
 import { PSEUDONYM, baseEnv, makeScratch, runIntegrations, runIntegrationsJson } from "../helpers/cli.mjs";
@@ -12,14 +13,23 @@ import { DELIVERED_AUTO, assertSameAsIngest, automaticOf, observeOk, prepareObse
 import {
   assertAbsentOnDisk,
   captureDir,
+  capturesDir,
+  describeTiming,
+  deliveryTiming,
+  diskTrace,
   exportOf,
   expectedPseudonym,
   filesUnder,
+  inspected,
+  privacyBody,
   privacyOk,
   runHermesIngest,
   runInternal,
   sameEnvelope,
+  shown,
   storeDir,
+  timedEnv,
+  timingLines,
 } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
@@ -179,28 +189,144 @@ test("I23-C7 Codex grava automaticamente com on: hook instalado grava a sessão 
   assert.deepEqual([skill.identification, skill.observedName, skill.observedNames], ["explicit_path", null, []], "nome de skill não inferido da leitura");
 });
 
+// O I23-C10 e as provas do diagnóstico dele (I25-C47, issue #25, AC8) passam
+// pela mesma rotina: cada etapa inicia os produtores dela juntos, cada um com a
+// pré-carga de tempos existente (só observa), e confere a entrega de cada um.
+// Na CI 40514323240 o "codex A 0" saiu com delivery_timeout sem operação nem
+// estado; a evidência os põe na mensagem quando uma entrega sai do esperado,
+// sem caminho, conteúdo, ID, chave ou ambiente. Diagnóstico, não correção: linha
+// "Diagnóstico do I23-C10" do Landing em .checks/issue-25-agent-launch.md.
+// O mesmo valor nativo em Claude e Codex são duas sessões (o agente entra no vínculo).
+const SESSION_A = "sessao-a-c10-ação";
+const SESSION_B = "sessao-b-c10";
+
+function c10Sessions(env) {
+  const hook = (label, agent, native, prefix, start) => ({
+    label,
+    agent,
+    native,
+    call: (i) => `${prefix}-${i}`,
+    step: (i) => ({ label: `${label} ${i}`, start: (extra) => start({ session_id: native, tool_use_id: `${prefix}-${i}` }, { ...env, ...extra }) }),
+  });
+  return [
+    hook("claude A", "claude", SESSION_A, "chamada-a", (ids, runEnv) => runClaude(claudePayload("pre_tool_bash", ids), runEnv)),
+    hook("claude B", "claude", SESSION_B, "chamada-b", (ids, runEnv) => runClaude(claudePayload("pre_tool_bash", ids), runEnv)),
+    hook("codex A", "codex", SESSION_A, "chamada-x", (ids, runEnv) => runCodex(codexHookPayload("pre_tool_bash", ids), runEnv)),
+  ];
+}
+
+// Inicia juntos os produtores da etapa, cada um com o próprio arquivo de tempos;
+// `injected[rótulo]` acrescenta ao ambiente de um deles uma injeção existente da
+// pré-carga (só nas provas do C47).
+let timingFiles = 0;
+async function runStep(step, times, injected = {}) {
+  return Promise.all(
+    step.map(({ label, start }) => {
+      const timing = path.join(times, `${(timingFiles += 1)}.ndjson`);
+      return start({ ...timedEnv(timing), ...injected[label] }).then((run) => ({ label, run, timing }));
+    }),
+  );
+}
+
+// Lugar de uma operação em relação ao lock. Na gravação automática uma tomada
+// pode renomear mais de um state.json.tmp (captura nova e commit), então aqui
+// não se diz "antes/depois do commit".
+const placeOf = ({ held, hold, kind }) => (held ? `sob o lock, ${hold}ª tomada` : kind === "lock" ? "tomada do lock" : "fora do lock");
+const isContention = ({ op, kind, code }) => op === "open" && kind === "lock" && code === "EEXIST";
+const isAbsence = ({ op, code }) => op === "lstat" && code === "ENOENT";
+
+// Da linha da pré-carga de um produtor: o resumo de sempre, com as falhas que
+// não são disputa do lock nem conferência de ausência, e a última operação
+// concluída — uma que nunca terminou não aparece na linha.
+function hookTiming(file) {
+  const lines = timingLines(file);
+  if (lines.length === 0) return { unavailable: "sem linha da pré-carga" };
+  const trace = diskTrace(lines.at(-1).ops);
+  const failures = trace.filter((e) => e.code !== undefined && !isContention(e) && !isAbsence(e)).map((e) => `${e.op} ${e.kind} ${e.code} (${placeOf(e)})`);
+  const last = trace.at(-1);
+  return {
+    lines: lines.length,
+    failures,
+    contention: trace.filter(isContention).length,
+    absences: trace.filter(isAbsence).length,
+    last: last === undefined ? "nenhuma" : `${last.op} ${last.kind}${last.code === undefined ? "" : ` ${last.code}`} (${placeOf(last)})`,
+    summary: describeTiming({ ...deliveryTiming(lines.at(-1)), failed: failures }),
+  };
+}
+
+// Da raiz, depois que a etapa terminou: as capturas automáticas pelo `privacy
+// list`, como o usuário as consulta, sem ID; os arquivos e o lock lidos direto.
+function rootEvidence(root) {
+  const captures = inspected(() => {
+    const listed = privacyBody(["list", "--root", root]);
+    if (listed.unavailable !== undefined) return listed;
+    const automatic = listed.body.captures.filter((capture) => capture.origin === "automatic");
+    return { rows: automatic.map((c) => `${c.state} accepted ${c.counters.accepted} persisted ${c.counters.persisted}`).sort() };
+  });
+  const files = inspected(() => {
+    let names;
+    try {
+      names = readdirSync(capturesDir(root));
+    } catch (error) {
+      if (error.code === "ENOENT") return { segments: 0, temporaries: 0 };
+      throw error;
+    }
+    const inside = names.filter((name) => /^[0-9a-f]{32}$/.test(name)).flatMap((name) => readdirSync(path.join(capturesDir(root), name)));
+    return { segments: inside.filter((name) => /^events-\d{6}\.ndjson$/.test(name)).length, temporaries: inside.filter((name) => name.endsWith(".skill-me-tmp")).length };
+  });
+  const lock = inspected(() => ({ present: readdirSync(storeDir(root)).includes(".lock") }));
+  return { captures, files, lock };
+}
+
+// Nunca lança: o que não pôde ser lido aparece como indisponível.
+function stepEvidence(root, produced) {
+  return {
+    producers: produced.map(({ label, run, timing }) => ({ label, status: run.status, delivery: run.report?.delivery ?? null, timing: inspected(() => hookTiming(timing)) })),
+    root: inspected(() => rootEvidence(root)),
+  };
+}
+
+function describeStep({ producers, root }) {
+  const lines = producers.flatMap(({ label, status, delivery, timing }) => [
+    `produtor ${label}: status ${status}; entrega ${delivery === null ? "sem relatório" : JSON.stringify(delivery)}`,
+    `  tempos: ${shown(timing, (t) => `${t.summary}; lock ocupado (EEXIST, repetido) ${t.contention}x; ausências conferidas (lstat ENOENT) ${t.absences}x; última concluída: ${t.last}${t.lines === 1 ? "" : `; ${t.lines} linhas da pré-carga`}`)}`,
+  ]);
+  const described = shown(root, ({ captures, files, lock }) =>
+    [
+      `capturas automáticas ${shown(captures, (c) => `${c.rows.length} [${c.rows.join("; ")}]`)}`,
+      `pasta das capturas ${shown(files, (f) => `${f.segments} segmento(s), ${f.temporaries} temporário(s)`)}`,
+      `lock ${shown(lock, (l) => (l.present ? "presente" : "ausente"))}`,
+    ].join("; "),
+  );
+  return [...lines, `raiz: ${described}`].join("\n");
+}
+
+// As asserções de sempre da etapa. A evidência só é calculada, e só entra na
+// mensagem, quando alguma entrega sai do esperado: a execução saudável não ganha
+// chamadas de CLI.
+function assertStepDelivered(root, produced, expected) {
+  const healthy = produced.every(({ run }) => isDeepStrictEqual(run.report?.delivery, expected));
+  const diagnosis = healthy ? null : describeStep(stepEvidence(root, produced));
+  for (const { label, run } of produced) assert.deepEqual(run.report?.delivery, expected, diagnosis === null ? label : `${label}\n${diagnosis}`);
+}
+
 test("I23-C10 sessões concorrentes ficam isoladas: sessões intercaladas e simultâneas têm captura e chave próprias, e o relatório de uma não traz a outra", async () => {
   const { root, env } = prepareObservation(scratch, "i23 c10");
   observeOk(["on"], env);
-  // O mesmo valor nativo em Claude e Codex são duas sessões (o agente entra no vínculo).
-  const A = "sessao-a-c10-ação";
-  const B = "sessao-b-c10";
-  const sessions = [
-    { label: "claude A", agent: "claude", native: A, run: (i) => runClaude(claudePayload("pre_tool_bash", { session_id: A, tool_use_id: `chamada-a-${i}` }), env), call: (i) => `chamada-a-${i}` },
-    { label: "claude B", agent: "claude", native: B, run: (i) => runClaude(claudePayload("pre_tool_bash", { session_id: B, tool_use_id: `chamada-b-${i}` }), env), call: (i) => `chamada-b-${i}` },
-    { label: "codex A", agent: "codex", native: A, run: (i) => runCodex(codexHookPayload("pre_tool_bash", { session_id: A, tool_use_id: `chamada-x-${i}` }), env), call: (i) => `chamada-x-${i}` },
-  ];
+  const A = SESSION_A;
+  const B = SESSION_B;
+  const sessions = c10Sessions(env);
+  const times = scratch("i23 c10 tempos");
   // Intercaladas, uma de cada vez; depois simultâneas, disputando o lock.
   for (let round = 0; round < 2; round++) {
-    for (const s of sessions) assert.deepEqual((await s.run(round)).report.delivery, DELIVERED_AUTO(1), `${s.label} ${round}`);
+    for (const s of sessions) assertStepDelivered(root, await runStep([s.step(round)], times), DELIVERED_AUTO(1));
   }
   for (let round = 2; round < 4; round++) {
-    const runs = await Promise.all(sessions.map((s) => s.run(round)));
-    for (const [index, run] of runs.entries()) assert.deepEqual(run.report.delivery, DELIVERED_AUTO(1), `${sessions[index].label} ${round}`);
+    assertStepDelivered(root, await runStep(sessions.map((s) => s.step(round)), times), DELIVERED_AUTO(1));
   }
   // Hermes: um processo com duas sessões intercaladas.
   const hermesLines = Array.from({ length: 10 }, (_, i) => [hermesRecord("pre_tool_call", { session_id: "hermes-h1", tool_call_id: `chamada-h1-${i}` }), hermesRecord("pre_tool_call", { session_id: "hermes-h2", tool_call_id: `chamada-h2-${i}` })]).flat();
-  assert.deepEqual((await runHermesIngest(hermesLines, { env })).report.delivery, DELIVERED_AUTO(20));
+  assertStepDelivered(root, await runStep([{ label: "hermes", start: (extra) => runHermesIngest(hermesLines, { env: { ...env, ...extra } }) }], times), DELIVERED_AUTO(20));
 
   const captures = automaticOf(root);
   assert.equal(captures.length, 5, "uma captura por sessão de cada agente");
@@ -247,6 +373,75 @@ test("I23-C10 sessões concorrentes ficam isoladas: sessões intercaladas e simu
     if (key === `claude ${A}`) continue;
     for (const r of records) assert.ok(!run.stdout.includes(r.envelope.ids.sessionId), `${key} no relatório de claude A`);
   }
+});
+
+// I25-C47 (issue #25, AC8): o diagnóstico do I23-C10 pela mesma rotina, numa
+// raiz observada nova, com uma injeção existente da pré-carga só no hook da
+// sessão Codex A na primeira entrega dela — o "codex A 0" da CI 40514323240. Na
+// prova antiga a mensagem era só o rótulo; aqui a asserção continua vermelha e
+// a evidência diz a operação, onde ela parou e o estado da raiz.
+async function codexFirstDelivery(label, injection) {
+  const { root, home, env } = prepareObservation(scratch, `i25 c47 ${label}`);
+  observeOk(["on"], env);
+  const codexA = c10Sessions(env).find((s) => s.label === "codex A");
+  const produced = await runStep([codexA.step(0)], scratch(`i25 c47 ${label} tempos`), { "codex A 0": injection });
+  const evidence = stepEvidence(root, produced);
+  let failure = null;
+  try {
+    assertStepDelivered(root, produced, DELIVERED_AUTO(1));
+  } catch (error) {
+    failure = error;
+  }
+  return { root, home, env, produced, evidence, failure };
+}
+
+// Falhou a asserção de sempre (`actual` e `expected` dela), e a mensagem começa
+// pelo rótulo e pela evidência inteira; o Node anexa o diff depois.
+function assertRedWithEvidence({ produced, evidence, failure }) {
+  assert.ok(failure instanceof assert.AssertionError, `a asserção do I23-C10 continua vermelha: ${failure}`);
+  assert.deepEqual([failure.actual, failure.expected], [produced[0].run.report.delivery, DELIVERED_AUTO(1)]);
+  assert.ok(failure.message.startsWith(`codex A 0\n${describeStep(evidence)}`), failure.message);
+}
+
+function assertNoLeak({ root, home, env }, text) {
+  const captures = existsSync(capturesDir(root)) ? readdirSync(capturesDir(root)).filter((name) => /^[0-9a-f]{32}$/.test(name)) : [];
+  const keys = captures.flatMap((id) => {
+    const key = readFileSync(path.join(captureDir(root, id), "key"));
+    return [key.toString("hex"), key.toString("base64"), key.toString("base64url")];
+  });
+  for (const value of [root, home, ...captures, ...keys, SESSION_A, "chamada-x-0", env.PATH, process.env.PATH].filter(Boolean)) {
+    assert.ok(!text.includes(value), "a evidência não traz caminho, ID, chave, sessão nativa nem ambiente");
+  }
+  assert.deepEqual(leaks(text), []);
+}
+
+test("I25-C47 diagnóstico do I23-C10: falha de E/S na gravação do hook mantém a asserção vermelha e mostra a operação, a tomada do lock e o estado da raiz, sem vazar dados", async () => {
+  const outcome = await codexFirstDelivery("eio", { SKILL_ME_TEST_TRACES_SEGMENT_EIO: "1" });
+  assertRedWithEvidence(outcome);
+  const { produced, evidence, failure } = outcome;
+  assert.deepEqual(produced[0].run.report.delivery, { automatic: true, code: "io_failure", entries: 1, committed: 0, persisted: 0, lost: 1, unrouted: 0 });
+  const [{ timing }] = evidence.producers;
+  assert.deepEqual([timing.failures, timing.contention, timing.absences], [["rename segmento.tmp EIO (sob o lock, 2ª tomada)"], 0, 1], "a injeção aconteceu, sem nova tentativa");
+  // A captura da sessão nasceu na mesma tomada, antes do segmento que falhou.
+  assert.deepEqual(evidence.root, { captures: { rows: ["active accepted 0 persisted 0"] }, files: { segments: 0, temporaries: 0 }, lock: { present: false } });
+  assert.ok(failure.message.includes("falhas rename segmento.tmp EIO (sob o lock, 2ª tomada)"), failure.message);
+  assert.ok(failure.message.includes("ausências conferidas (lstat ENOENT) 1x"), failure.message);
+  assert.ok(failure.message.includes("raiz: capturas automáticas 1 [active accepted 0 persisted 0]; pasta das capturas 0 segmento(s), 0 temporário(s); lock ausente"), failure.message);
+  assertNoLeak(outcome, failure.message);
+});
+
+test("I25-C47 diagnóstico do I23-C10: disco parado no hook (delivery_timeout, o sintoma da CI 40514323240) mostra a última operação concluída e a inspeção da raiz indisponível com o código", async () => {
+  const outcome = await codexFirstDelivery("parado", { SKILL_ME_TEST_TRACES_STALL_SEGMENT: "1" });
+  assertRedWithEvidence(outcome);
+  const { produced, evidence, failure } = outcome;
+  assert.deepEqual(produced[0].run.report.delivery, { automatic: true, code: "delivery_timeout", entries: 1, committed: 0, persisted: 0, lost: 1, unrouted: 0 });
+  const [{ timing }] = evidence.producers;
+  assert.deepEqual([timing.failures, timing.last], [[], "close key (sob o lock, 2ª tomada)"], "parou na criação do segmento, depois de ler a chave");
+  // O hook saiu no prazo com o lock tomado (limite do guia): a consulta sai com o código dele.
+  assert.deepEqual(evidence.root, { captures: { unavailable: "lock_present" }, files: { segments: 0, temporaries: 0 }, lock: { present: true } });
+  assert.ok(failure.message.includes("última concluída: close key (sob o lock, 2ª tomada)"), failure.message);
+  assert.ok(failure.message.includes("raiz: capturas automáticas indisponível [lock_present]; pasta das capturas 0 segmento(s), 0 temporário(s); lock presente"), failure.message);
+  assertNoLeak(outcome, failure.message);
 });
 
 test("I23-C14 falha de entrega não bloqueia agente: lock ocupado ou raiz ausente deixam hooks com 0 e saídas vazias, e status não promete captura", async () => {

@@ -14,7 +14,6 @@ import { CAPTURE_REPORT_ENV, appendDeliveryReport, deliveryReportFile, deliveryR
 import { REPO_ROOT, baseEnv, makeScratch, runIntegrations, runIntegrationsJson } from "../helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers, runClaudeHandler, runCodexHandler } from "../helpers/installed-hooks.mjs";
 import { MARKER, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks } from "../helpers/privacy-canaries.mjs";
-import { runPrivacy } from "../helpers/privacy-store.mjs";
 import {
   ISO_MS,
   TRACES_PROBE,
@@ -23,11 +22,15 @@ import {
   capturesDir,
   describeTiming,
   deliveryTiming,
+  diskTrace,
   exportOf,
   expectedPseudonym,
+  inspected,
+  privacyBody,
   privacyOk,
   runHermesIngest,
   runHook,
+  shown,
   startCapture,
   statusOf,
   storeDir,
@@ -122,41 +125,18 @@ async function runConcurrentProducers(label, injected = {}) {
   return { root, id, timing, startedAt, runs: Object.fromEntries(PRODUCERS.map((name, index) => [name, runs[index]])) };
 }
 
-// Cada inspeção que falha vira o código dela — o fechado do CLI, o `code` E… da
-// E/S ou o nome do erro, nunca a mensagem, que pode trazer caminho — em vez de
-// um estado presumido.
-function inspected(read) {
-  try {
-    return read();
-  } catch (error) {
-    return { unavailable: typeof error?.code === "string" && /^E[A-Z]+$/.test(error.code) ? error.code : (error?.name ?? "erro") };
-  }
-}
-
-function privacyBody(args) {
-  const result = runPrivacy(args);
-  return result.status === 0 ? { body: result.body } : { unavailable: result.body.error?.code ?? `status ${result.status}` };
-}
-
-// Operações com erro da linha da pré-carga, em ordem de início, com a fase:
-// sob o lock vai do `writeFile` do `.lock` que deu certo até o `unlink` dele;
-// o commit é o `rename` de `state.json.tmp` concluído (store.mjs). O `open`
-// do `.lock` com EEXIST é a disputa normal do lock, repetida pelo contrato da
-// entrega: só contada, senão esconderia a falha real.
+// Operações com erro da linha da pré-carga (`diskTrace`, helpers/traces.mjs),
+// com a fase. No caminho manual cada tomada do lock tem um só `rename` de
+// `state.json.tmp`, que é o commit (store.mjs). O `open` do `.lock` com EEXIST
+// é a disputa normal do lock, repetida pelo contrato da entrega: só contada,
+// senão esconderia a falha real.
 function failuresWithPhase(ops) {
-  let held = false;
-  let committed = false;
   let contention = 0;
   const failures = [];
-  for (const [op, kind, , , code] of [...ops].sort((x, y) => x[2] - y[2])) {
+  for (const { op, kind, code, held, commits } of diskTrace(ops)) {
+    if (code === undefined) continue;
     if (op === "open" && kind === "lock" && code === "EEXIST") contention += 1;
-    else if (code !== undefined) {
-      const phase = held ? (committed ? "depois do commit" : "antes do commit") : kind === "lock" ? "tomada do lock" : "fora do lock";
-      failures.push(`${op} ${kind} ${code} (${phase})`);
-    }
-    if (op === "writeFile" && kind === "lock" && code === undefined) [held, committed] = [true, false];
-    else if (op === "rename" && kind === "state.json.tmp" && code === undefined && held) committed = true;
-    else if (op === "unlink" && kind === "lock") held = false;
+    else failures.push(`${op} ${kind} ${code} (${held ? (commits > 0 ? "depois do commit" : "antes do commit") : kind === "lock" ? "tomada do lock" : "fora do lock"})`);
   }
   return { contention, failures };
 }
@@ -206,8 +186,6 @@ function inspectProducers(flow) {
   );
   return { producers, capture: inspected(() => inspectCapture(flow)) };
 }
-
-const shown = (value, describe) => (value.unavailable === undefined ? describe(value) : `indisponível [${value.unavailable}]`);
 
 function describeProducers({ producers, capture }) {
   const lines = PRODUCERS.flatMap((name) => {

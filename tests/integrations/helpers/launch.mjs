@@ -12,7 +12,7 @@ import { CODEX_GLOBAL_WINDOWS_TARGET, npmCmdShim } from "../../doctor/helpers/np
 import { REPO_ROOT, baseEnv, runIntegrations, runIntegrationsJson } from "./cli.mjs";
 import { FIXTURES_DIR } from "./fixtures.mjs";
 import { runObserve } from "./observe.mjs";
-import { capturesDir, storeDir } from "./traces.mjs";
+import { capturesDir, failureCode, storeDir } from "./traces.mjs";
 
 // Apoio das provas da issue #25: o `skill-me` como o usuário o chama, com
 // agentes de fixture no PATH e home, raiz e diretórios de configuração dos
@@ -167,9 +167,8 @@ export function launchClock(startMs) {
   };
 }
 
-// Código de uma leitura do diagnóstico que falhou: o `code` E… da E/S ou o nome
-// do erro, nunca a mensagem, que traz caminho.
-const failureCode = (error) => (typeof error?.code === "string" && /^E[A-Z]+$/.test(error.code) ? error.code : (error?.name ?? "erro"));
+// Leitura do diagnóstico que falhou: `indisponível [<código>]` (failureCode,
+// helpers/traces.mjs).
 const orUnavailable = (read) => {
   try {
     return read();

@@ -112,6 +112,9 @@ const FILE_KINDS = [
   [/^events-\d{6}\.ndjson$/, "segmento"],
   [/^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/, "segmento.tmp"],
   [/^state\.json\.[0-9a-f]{8}\.skill-me-tmp$/, "state.json.tmp"],
+  // Configuração da observação no home e estado dela no store (#23): o mesmo nome.
+  [/^observe\.json$/, "observe.json"],
+  [/^observe\.json\.[0-9a-f]{8}\.skill-me-tmp$/, "observe.json.tmp"],
 ];
 const fileKind = (file) => (typeof file === "string" ? (FILE_KINDS.find(([pattern]) => pattern.test(path.basename(file)))?.[1] ?? "pasta") : "fd");
 
