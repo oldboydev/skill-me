@@ -1,3 +1,260 @@
+# Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 16, adendo)
+
+**Verdict (R16)**: **PASS — 50/50 checks**, 9 ACs, HEAD `8f045c2`. Nenhum fail, skip, carry inválido ou alteração fora da fronteira.
+- **Fresco nesta rodada (verified at `8f045c2`)**: C50 inteiro (18 testes `C50 …`, inclusive (m) e (n)) e C49 (`governance-C49`), mais os outros 6 `governance-`. Os dois arquivos do `test:governance` rodaram numa invocação por ambiente, sem filtro, com `RUNNER_TEMP` **presente** e válido no processo do teste:
+  - A: 25 testes, 25 pass, 0 fail, 0 skip;
+  - B: 25/25/0/0;
+  - C: 25/25/0/0.
+
+  Os nomes são idênticos nos três TAP. Os 23 nomes da CI 40702252461 estão presentes, inclusive as duas provas que falharam lá (`C50 caminhos` e `C50 relatório`), agora verdes com a mesma precondição. Os 2 nomes novos são (m) e (n).
+- **Carregado da R14 (carried from `13bb1d4`, código `6a242a2`, relatório em `bedda5c`)**: C1–C47, a leitura estrutural do C48 e as camadas inalteradas de D. A prova Git está abaixo. **Não há D novo.** Não afirmo que os 1.023 testes de D estão inalterados: os 16 C50 de D rodaram sobre o script antigo (`cf29122`) e foram **substituídos** pelos 18 C50 frescos desta rodada.
+- **Gates remotos: pendentes e obrigatórios.** Nenhuma medição, job do Actions ou CI ocorreu aqui. A medição 40702384050 é dado histórico do orquestrador, sobre `41dcf5d`. Não é dado deste HEAD nem execução minha.
+
+**Profile**: light. Rodada 16, **escopada**. Sem fault injection, `Coverage`, `Test policy` ou fonte de UI (perfil). Sem mutantes nem sondas minhas. O RED, as 3 mutações e o GREEN do autor são **evidência do autor** (`build:1721-1739`), não execuções minhas.
+**Diff range**: `63621c691f132dc8d591414269d36cfa18fca594..8f045c2dde08a58ef2ff1c65223994e1b316a9f2`, a feature inteira: 100 commits, árvore `a3b3b630…`. Desde a R15 (`41dcf5d`), há 4 commits:
+- `efa56ea`: task e checklist;
+- `f133c55`: o script e a prova dele, o último código;
+- `38b336c`: build, proposta, handoff novo e checklist;
+- `8f045c2`: o override `25` da configuração.
+
+**Round**: **16** (light). Base: “Pode fazer quantas precisar” e o escopo [6467154706](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706), com o registro 16/10 em [6471545504](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6471545504), o 27º comentário do contexto. As 15 verificações e as 9 revisões formais ficam preservadas. A formal 10 é do orquestrador, depois deste relatório.
+**Verifier**: subagente novo e independente (Claude Opus 5.5). Não sou o autor nem um Verifier anterior, e não herdei sessão. Produto, testes, scripts, workflow, planos, configuração e estado ficaram só para leitura. Escrevi só este arquivo e logs/scripts em `.checks/code-review/issue-25/verifier-round16/`, uma pasta ignorada (`.gitignore:4`).
+
+Data: 28/10/2026, provas das 11:30 às 11:33 (-03). HEAD `8f045c2` do início ao fim. O `git status --porcelain=v1 -uall` estava vazio às 11:30:01 e às 11:36:07, antes de gravar este arquivo.
+
+## Fontes lidas
+
+| Fonte | Como |
+| --- | --- |
+| `AGENTS.md`, `CLAUDE.md`, `tlc-implement/references/verify.md` | inteiros; perfil `light` (`AGENTS.md:138`) |
+| `.tasks/issue-25-agent-launch.md` | inteiro (655 linhas): critérios 1–42, a exceção ao 40, os dois refinamentos do 42 (`:428-443`) e o registro da ordem remota (`:651-655`) |
+| `.checks/issue-25-agent-launch.md` | inteiro (915 linhas): Landing `:50-90`, inclusive a linha nova `:90` “Fonte do `RUNNER_TEMP` na medição”; C1–C50, inclusive o refinamento (m)–(n) em `:531-551`; Swept `:553-563`; Handoff `:878-915` |
+| proposta, handoff `ci40702252461-handoff.md` (59 linhas) | inteiros |
+| build `:1674-1787` | a seção nova. É **relato do autor**, não prova minha |
+| `context-ci28-verifier16-final.json` | 27 comentários e 9 ACs (`- [ ]`). Corpo e comentários 1–26 são **idênticos** ao contexto 15. O 27º registra as rodadas 16/10 (`verifier-round16/context16-ac9.txt`) |
+| relatório R15/R14 (`f468f6e`) | inteiro, antes de substituí-lo |
+| diff `41dcf5d..HEAD` | inteiro; script e prova lidos inteiros no HEAD |
+| log `ci40702252461-ubuntu.log` | as linhas de falha (`:179`, `:191`, `:218-248`) e o resumo `tests 23 / pass 21 / fail 2` (`:200-203`) |
+
+## Prova Git: só o C50 mudou de conteúdo executável (verified at `8f045c2`; `verifier-round16/blob-identity.txt`)
+
+- **Árvore inteira**: `git ls-tree -r` dá 317 caminhos em `13bb1d4` e 318 no HEAD.
+  - Mudaram 8 caminhos: build, proposta, checklist, `.verified.md`, task, `code-review.config.json`, `scripts/ci-lock-latency.mjs` (`cf29122` → `8c12894`) e `scripts/ci-lock-latency.test.mjs` (`a829110` → `75eeadd`).
+  - Entrou 1: o handoff `ci40702252461-handoff.md`.
+  - Os outros **309 caminhos têm o mesmo modo e o mesmo blob**: `src/`, `tests/`, `.github/`, `package.json`, `package-lock.json`, `.gitattributes`, `scripts/governance-ci.test.mjs` (`bfe5a0c`), `test-integrations.mjs`, os filtros de CI, o README e os guias.
+- **Executável diferente**: `git diff --stat 13bb1d4 HEAD -- src tests scripts .github package.json package-lock.json .gitattributes docs README.md` lista só o script (+7/−3) e a prova (+49). O último commit de código é `f133c55`.
+- **Core**: os 5 arquivos (`README.md`, `cli.mjs`, `review.mjs`, `review.test.mjs`, `schema.json`) têm o mesmo blob na base, em `13bb1d4` e no HEAD (`25e5284`, `c6a4abc`, `1bda8e4`, `216125c`, `b02001e`).
+- **Configuração** (`core-config.txt`): fora de `roundOverrides["25"]`, o documento é `deepStrictEqual` ao de `13bb1d4`.
+  - Perfis globais `light`/`ui`/`direct` com `maxRounds` 2; overrides 3:9, 4:10, 5:10, 6:3, 7:35, 8:3 e 23:4 intactos.
+  - O `25` é `{profile: "light", maxRounds: 10, approval}`. O `approval` cita 6471545504 e 6467154706 e diz “Preservar as 9 tentativas anteriores”.
+  - O `state.json` tem **9 tentativas**: 1–3 `changes_requested`, 4–7 `ready`, 8 `blocked` (`bedda5c`) e 9 `ready` (`41dcf5d`). O sha256 `3276a6b8…` é o mesmo antes e depois deste relatório. Não rodei `review:run`.
+- **Nenhum teste lê o que mudou fora do C50**:
+  - os testes que leem `.checks/` leem os builds das issues 5, 6 e 8, sem diff;
+  - as menções à #25 em `src/` e `tests/` são comentários;
+  - a suíte do motor usa configuração própria num repositório de fixture (`review.test.mjs:666-670`);
+  - **nenhum código fora do script lê `RUNNER_TEMP`** (`runner-temp-readers.txt`: 0 linhas em `src`, `tests`, `scripts`, `.github` e `package.json`). Então a ausência de `RUNNER_TEMP` nas execuções da R14 não afeta C1–C47.
+- **Evidência da R14 ligada ao commit** (`r14-carry-evidence.txt`): o `get-tar-commit-id` do tar da R14 é `13bb1d4f…`; o env de A registra `HEAD=13bb1d4…`. Os TAP de A/B/C dão `tests 151, pass 145, fail 0, skipped 6`, e o `D-summary` dá `tests 1023 pass 1003 fail 0 skipped 20`. Os sha256 dos logs estão no arquivo. Li os logs; não os reexecutei.
+
+## Correção contra o contrato refinado antes do código (verified at `8f045c2`)
+
+`efa56ea` (antes do código) acrescenta a linha `:90` do Landing, o C50 (m)–(n) e o refinamento do critério 42, só com acréscimos. `f133c55` toca só `scripts/ci-lock-latency.mjs` (`lat`) e `scripts/ci-lock-latency.test.mjs` (`t`).
+
+| Contrato (Landing `:90`, C50 (m)–(n), task `:440-443`) | Código no HEAD |
+| --- | --- |
+| `resolveDestinations` usa só a entrada recebida; sem a chave, `undefined` ou `""` → `RUNNER_TEMP ausente`, sem ler `process.env` | `lat:71`: `runnerTemp` sem padrão (os outros padrões, `tmpdir`, `platform`, `realpath` e `isDirectory`, iguais); `lat:74` `undefined \|\| ""` → `{indisponivel: "RUNNER_TEMP ausente"}` |
+| `measure` mantém `env = process.env` (a leitura do CLI); um `env` dado é o único ambiente | `lat:402` `env = process.env`; `lat:403` `runnerTemp: env.RUNNER_TEMP` |
+| CLI, prazos, quantidades e formato iguais | `lat:445` `measure()` sem argumentos; `PHASE` (`lat:21`) sem diff |
+| Filhos não leem a variável | `producerProcess`/`loadProcess` (`lat:181-216`) não leem `RUNNER_TEMP` |
+| Provas: `RUNNER_TEMP` do processo numa pasta própria, distinta do temporário da prova, e restaurado no `finally`; `TEMP`/`TMP` intactos | `t:102-111` `withProcessRunnerTemp` (restaura o valor anterior ou apaga, `:108-109`); só `RUNNER_TEMP` é tocado |
+
+Sem flag, camada ou opção de prova nova. O workflow não mudou (blob igual), e nenhum skip nem asserção antiga foi relaxado: `git diff 41dcf5d f133c55 -- scripts/ci-lock-latency.test.mjs` só acrescenta linhas.
+
+## Execuções — verified at `8f045c2`
+
+O comando é o do alias e o do C50: `node --test scripts/governance-ci.test.mjs scripts/ci-lock-latency.test.mjs`, uma invocação por ambiente, sem filtro, com reporters spec e TAP.
+- O `RUNNER_TEMP` foi posto **só no ambiente do processo filho**, no prefixo da linha de comando ou no `env -i`. O shell pai e o host continuaram sem ele, antes e depois.
+- A precondição foi conferida pelo node de cada ambiente, com o mesmo ambiente do filho (`*.env.txt`).
+- Scripts: `run-win.sh`, `b-clone-prepare.sh`, `wsl-prepare.sh`, `wsl-run.sh`, `wsl-cleanup.sh` e `matrix.mjs`, adaptados do método da R14 depois de lê-lo.
+
+| # | Ambiente | `RUNNER_TEMP` (precondição) | Resultado |
+| --- | --- | --- | --- |
+| A | Windows 11, checkout principal, Node **v24.22.1** (`C:\nvm4w\nodejs\node.exe`), npm 11.19.1, `npm_execpath` ausente. 11:30:12–11:31:00 | `verifier-round16\runner-temp-A`: presente, pasta real, não link, 0 entradas, fora do `%TEMP%`, distinto do `os.tmpdir()`, sem prefixo de prova; `TEMP`/`TMP` intactos | **25: 25 pass, 0 fail, 0 skip**, exit 0. Status vazio antes e depois; `RUNNER_TEMP` com 0 entradas depois |
+| B | Windows 11, Node **v24.13.0 oficial** (zip com sha256 `ca274269…` igual ao `SHASUMS256.txt`; `node.exe` igual ao do zip), npm **11.6.2** adjacente (primeiro `npm` do PATH), `npm_execpath` ausente. **Clone git novo** `--no-hardlinks --config core.autocrlf=true`, com HEAD e árvore esperados e `node_modules` copiado. 11:31:29–11:32:12 | `runner-temp-B`, com as mesmas condições | **25/25/0/0**, exit 0. No clone (`B-clone-prepare.txt`): `i/lf w/crlf` no script (452 CRLF), na prova (446), em `governance-ci.test.mjs` (359), no workflow (95) e no `package.json` (34). Status do clone vazio antes e depois |
+| C | WSL `Ubuntu`, `oldboydev` uid 1000. `git -c core.autocrlf=false archive HEAD`: 5.888.000 bytes, sha256 `87835d5d…`, `get-tar-commit-id` = `8f045c2…`. Árvore extraída `a3b3b630…` = `HEAD^{tree}`, antes e depois; 0 CR; `cli.mjs` 755. Node **v24.13.0** copiado byte a byte de `/usr/bin/nsolid` (sha256 `150946e4…`) num prefixo `bin = node npm npx`, **sem `sh`**; npm 11.6.2. `env -i`, com `HOME` do scratch, `LANG=C.UTF-8` e `PATH=<prefix>/bin:<tools>` sem `/usr/bin`. `tools` só com links para `sh` (dash), `git`, `python3`, `id`, `grep` e `mkfifo`. 11:33:06–11:33:10 | Variáveis do filho: só `HOME,LANG,PATH,RUNNER_TEMP`. `RUNNER_TEMP=<scratch>/runner-temp`: presente, pasta, 0 entradas, distinto de `/tmp` | **25/25/0/0**, exit 0. `~/.skill-me` e a autorização reais ausentes antes e depois; home do scratch vazio depois; `RUNNER_TEMP` com 0 entradas depois |
+
+**Nomes** (`matrix.txt`): 25 nomes únicos, iguais em A, B e C: 18 `C50 …` e 7 `governance-`, nenhum outro e nenhum com 0 execuções.
+- Os 23 nomes da CI 40702252461 estão todos aqui (“ausentes aqui: nenhum”).
+- Os 2 novos: `C50 fonte do RUNNER_TEMP: com a variável presente no processo, o planejamento sem valor e a medição com env {} não a herdam` (m) e `C50 fonte do RUNNER_TEMP pelo padrão do CLI: sem env, a medição lê o RUNNER_TEMP do processo e, distinto, roda A1/B/A2 nele` (n).
+
+**A precondição da CI foi reproduzida.** Na CI, com `RUNNER_TEMP` no processo, `C50 caminhos` saiu `RUNNER_TEMP ilegível [ENOENT]` (log `:218`) e `C50 relatório` saiu `A1/B/A2` (`:248`). Aqui, com `RUNNER_TEMP` presente em A, B e C:
+- `C50 caminhos` passou: `t:160` `plan(undefined)` = `RUNNER_TEMP ausente`;
+- `C50 relatório` passou: `t:395-396` `measure({env: {}})` dá uma fase `A`.
+
+**Durações** em ms (A / B / C):
+- (m): 2.757 / 2.225 / 88;
+- (n): 8.120 / 7.479 / 274;
+- `C50 relatório`: 11.307 / 10.728 / 379;
+- `C50 limpeza que falha depois dos dados`: 8.879 / 7.624 / 295;
+- `C50 teto`: 3.589 / 2.968 / 1.509.
+
+## C50 — citações renovadas para o arquivo testado (verified at `8f045c2`; `t` blob `75eeadd`, `lat` blob `8c12894`)
+
+| C50 | Asserção decisiva (valor literal) | Código |
+| --- | --- | --- |
+| (a) percentis e faixas | `t:127` `summarize([700,10,650,599.999,20,649.999,600])` = `{amostras: 7, p50: 600, p99: 700, max: 700, ">=600": 4, ">=650": 2}`; `t:128-132` `1…100` = `{100, 50, 99, 100, 0, 0}`; `t:133` 3 casas, contagem sobre o valor cru; `t:134` `BANDS_MS` `[600, 650]`; `t:138` `summarize([])` = `{amostras: 0, indisponivel: "sem amostras"}` (`t:68`); `t:141-143` fase só de erros `{2, 2, 2, 0}`, métricas indisponíveis, `es: {EIO: 2}` | `lat:37-48` |
+| (b) caminhos | `t:147-150` `C:\Temp` = `c:\temp\`, volumes distintos, `/tmp` = `/tmp/`, `/tmp` ≠ `/TMP`; `t:160-163` ausente (`undefined`), vazio, `ilegível [ENOENT]`, `não é pasta` → `não aplicável: <motivo>` e uma fase `A`; `t:164` mesmo destino; `t:165-173` `A1/B/A2`, `runner: {volume: "D:"}`, fases A1 padrão, B runner, A2 padrão; `t:174` `padrao: {volume: "C:"}`; `t:184` junção real → uma fase; `t:187` pasta distinta → `["A1","B","A2"]` | `lat:52-56`, `:71-95` |
+| (c) E/S | `t:206` `["EIO","lock_present","lock_present"]`; `t:207` sem tomada, liberação nem remoção; `t:209` `{3,3,3,0}`, `{lockPresent: 2, lockLost: 0, es: {EIO: 1}}` e indisponíveis; controle `t:214` | `lat:141-149`, `:329-333` |
+| (d) teto | `t:223` `timedOut` true; `t:227` `[true, {12, 0, 0, 12}, indisponível, indisponível]`; `t:228` carga `[1, 0]`; término parcial `t:239` `[true, {3, 2, 0, 1}]` e `t:240` `{amostras: 2, p50: 1.5, p99: 700, max: 700, ">=600": 1, ">=650": 1}` | `lat:257-260`, `:225-235` |
+| (e) só filhos próprios | `t:225` `process.kill(foreign.pid, 0) === true`; `t:224` filhos com `exit`; também `t:330` e `t:365` | `lat:263-285` |
+| (f) limpeza | `t:259` `fora da árvore própria`; `t:265`/`t:267` `sem o marcador desta execução`; `t:271` junção → `não é uma pasta real`; `t:273` `caminho relativo`; `t:274` `não é a pasta criada por esta execução`; `t:275` nada apagado; `t:277-278` a própria sai; `t:279` as recusadas continuam | `lat:368-393` |
+| (g) protocolo | `t:244` `{records: [ok(1)], invalid: 2}`; `t:247` `[{3, 1, 0, 2}, 3, 1]` | `lat:104-117`, `:319-326` |
+| (h) fronteira real | `t:377` `[false, {15, 15, 0, 0}, {0, 0, {}}, 0]`; `t:378-381` 15 amostras e `p50 ≤ p99 ≤ max` em tomada, liberação e nas 4 operações; `t:382` `[3, 3, {}]`; `t:383` `escritas >= 3`; `t:384` `{codigo: 0, sinal: null}` ×3 | `lat:219-220`, filhos reais |
+| (i) relatório e constantes | `t:392` `A1/B/A2`, 6 por fase; `t:393` `{removidas: 3, recusadas: [], falhas: []}`; `t:394` pastas vazias; `t:395-396` `env: {}` → `["não aplicável: RUNNER_TEMP ausente", {indisponivel: "RUNNER_TEMP ausente"}, ["A"]]`, **agora com `RUNNER_TEMP` no processo**; `t:397-403` sem destinos, `os.tmpdir()`, `PATH` (também escapado) nem nonce; `t:443` `PHASE` = `{3, 500, 3, 65_536, 120_000}`; `t:445` `[2, "", "uso: node scripts/ci-lock-latency.mjs\n"]` | `lat:21`, `:402-434`, `:436-452` |
+| (j) limpeza que falha | `t:288` `{ok: false, falha: code ?? "Error"}` para `EBUSY`/`EPERM`/`ENOTEMPTY`/sem código; `t:289` pasta e marcador ficam; `t:299-302` `[["A1","padrao",6,null],["B","runner",6,null],["A2","padrao",6,null]]`; `t:303` `{removidas: 2, recusadas: [], falhas: ["EBUSY"]}`; `t:304-307` só A1 ficou, com marcador; `t:308` runner vazio; `t:309-312` sem caminhos nem `injetada` | `lat:387-391`, `:426-431` |
+| (k) início parcial | `t:327` `[false, "EEXIST", ["carga","produtor"]]`; `t:328` fecharam; `t:329` `[false, false]`; `t:330` alheio vivo; `t:332-335` `[false, "EEXIST", {6, 0, 0, 6}, {amostras: 0, indisponivel: "sem amostras"}]` | `lat:286-305` |
+| (l) erro assíncrono | `t:358-361` `[false, "ENOENT", ["carga","produtor","produtor","produtor"]]`; `t:362` fecharam; `t:364` `[false, false, false]`; `t:365` alheio vivo; `t:367` `[false, "ENOENT", {6, 0, 0, 6}]` | `lat:276`, `:303-308` |
+| **(m)** sem ambiente implícito | `t:413` a variável está no processo; `t:414` `resolveDestinations({tmpdir, runnerTemp: undefined})` e `t:415` sem a chave = `absent` (`t:411`: `{comparacao: "não aplicável: RUNNER_TEMP ausente", runner: {indisponivel: "RUNNER_TEMP ausente"}, phases: [["A","padrao",standard]]}`); `t:417-420` `measure({env: {}})` = `["não aplicável: RUNNER_TEMP ausente", {indisponivel: "RUNNER_TEMP ausente"}, [["A","padrao",6]]]`; `t:421` nada no `RUNNER_TEMP` do processo | `lat:71`, `:74`, `:403` |
+| **(n)** leitura do CLI | `t:429` `measure({phase, tmpdir})`, sem `env`; `t:430-433` `["A1/B/A2", [["A1","padrao",6],["B","runner",6],["A2","padrao",6]]]`; `t:434` `{removidas: 3, recusadas: [], falhas: []}`; `t:435` as duas pastas vazias; `t:436-439` sem os caminhos | `lat:402-403`, `:445` |
+
+Achados de precisão no C50, não bloqueantes:
+- **(m) discrimina o defeito.** Durante (m), `process.env.RUNNER_TEMP` é a pasta que a prova criou. Com o padrão antigo, `t:414` e `t:417-420` dariam `A1/B/A2`, como no RED do autor (`build:1723-1728`).
+- **`t:421` não decide sozinha.** A limpeza esvaziaria a pasta de qualquer forma; quem decide é `t:417-420`.
+- **(n) não fixa em qual pasta a fase B rodou.** Ela prova que, sem `env`, `measure` lê um `RUNNER_TEMP` do processo, válido e distinto (`A1/B/A2` e B com destino `runner`). Não distingue a leitura no momento da chamada de uma cópia do ambiente feita no carregamento do módulo. Nos meus A/B/C, o `RUNNER_TEMP` de fora também era válido, e as duas pastas terminaram vazias.
+  - Para o CLI, as duas leituras são o mesmo ambiente do processo. O contrato não pede a distinção.
+  - Registro como precisão do teste, não como defeito.
+- **A restauração do `finally` foi lida (`t:102-111`), não observada.** Nenhum teste posterior do arquivo a afirma, e eu não acrescento sondas (LIGHT). Nos meus três ambientes, o shell pai continuou sem `RUNNER_TEMP`, e cada `RUNNER_TEMP` controlado terminou com 0 entradas.
+
+## C49 e C48 (C49 verified at `8f045c2`; C48 estrutural carried from `13bb1d4`)
+
+- **C49**: `governance-C49 …` passou em A, B e C. A prova tem o mesmo blob (`bfe5a0c`), e as citações são as da R14, relidas no HEAD:
+  - `gov:317-324`: as chaves exatas do job;
+  - `gov:325-329`: `"Diagnosticar lock Windows (manual)"`, `"github.event_name == 'workflow_dispatch'"`, `"windows-latest"`, `10` e `{contents: "read"}`;
+  - `gov:332-339`: os mesmos `uses` do `verify`, com `{"persist-credentials": false}` e `{"node-version": "24.13.0"}`, por igualdade exata;
+  - `gov:341`: `npm ci --ignore-scripts`; `gov:345`: `ci.needs` `["changes","verify"]`; `gov:348-350`: nenhum `continue-on-error`;
+  - `gov:355`: o alias com os dois arquivos; `gov:358`: `private === true`;
+  - `gov:294-299`: os jobs `["changes","ci","lock_diagnostics","verify"]`.
+- **C48**: `governance.yml` tem o mesmo blob de `13bb1d4`. A leitura estrutural da R14 continua válida (`verifier-round14/v14/C48-structural.txt`, sha256 `603dc3cd…`): o documento inteiro sem `lock_diagnostics` e sem `verify.timeout-minutes` é igual a `d0d5a7f` e à base. A parte executável (`governance-C1 C3`, `gov:240-291`) rodou **fresca** em A/B/C.
+- A expressão `${{ … }}` e o `if` do job manual não foram avaliados pelo GitHub aqui.
+
+## Checks — 50/50
+
+“CARRY14” quer dizer: executado pela R14 em `13bb1d4` (A/B/C 151/145/0/6; D com os 12 nativos), sobre blobs iguais aos do HEAD. As citações são as do corpo R14 abaixo, válidas no HEAD pelo blob. Reli no HEAD uma amostra (`carry-citation-sample.txt`), toda conforme: `cmd:48-49`, `cmd:105`, `prep:93-94`, `sess:67`, `store:168`, `end:120`, `end:320`, `rep:159`, `harn:88`, `conc:214-215`, `ag:310` e `docs:82`.
+
+| Check | Asserção decisiva (`file:line` no HEAD) | Fonte da prova | Result |
+| --- | --- | --- | --- |
+| C1 | `command.cli:48-49` `private === true`, `bin` = `{"skill-me": "src/integrations/launch/cli.mjs"}` | CARRY14 (A/B/C/D; B em clone `autocrlf=true`) | PASS |
+| C2 | `command.cli:96-98` `argv: LITERAL_ARGS` para os 3 agentes | CARRY14 | PASS |
+| C3 | `command.cli:105` `{0: 0, 7: 7}` | CARRY14 | PASS |
+| C4 | `command.cli:130-133` `{status: 127, [launcher_requires_shell], sentinel: false}` | CARRY14 | PASS |
+| C5 | `command.cli:228` `signals: ["SIGINT","SIGQUIT","SIGHUP"]`; `:244-245` `CTRL_C_EVENT` → `["SIGINT"]` | CARRY14 | PASS |
+| C6 | `command.cli:267` `signals: ["SIGTERM"]` | CARRY14 (C) | PASS |
+| C7 | `prepare.cli:93-94` `{status: 127, stdout: "", code: true, asked: false}` | CARRY14 | PASS |
+| C8 | `prepare.cli:122-126` texto exato até cada pergunta, árvores iguais | CARRY14 | PASS |
+| C9 | `prepare.cli:163-168` `observe.json` da #23 | CARRY14 | PASS |
+| C10 | `prepare.cli:189-191` `{exitCode: 3, …, started: false, root: false}` | CARRY14 | PASS |
+| C11 | `prepare.cli:200` `{exitCode: 2, [root_not_absolute], …}` | CARRY14 | PASS |
+| C12 | `prepare.cli:223` `status: 3`, linha `setup_required` | CARRY14 | PASS |
+| C13 | `prepare.cli:238` SHA-256 iguais, `started: 1` | CARRY14 | PASS |
+| C14 | `prepare.cli:250` `observe_on` 4 | CARRY14 | PASS |
+| C15 | `prepare.cli:408` `{status: 3, declined: true, trees: before}` | CARRY14 (C, pty) | PASS |
+| C16 | `session.e2e:67` `{origin: "launch", …, limits: {maxEvents: 500, maxBytes: 8388608}}` | CARRY14 | PASS |
+| C17 | `store.unit:79` `["launch", invocation, 1, "2026-10-26T10:00:00.000Z"]` | CARRY14 | PASS |
+| C18 | `session.e2e:111` `stderr: "skill-me: não foi possível abrir a execução [<código>]\n"` | CARRY14 | PASS |
+| C19 | `session.e2e:161` `[0, 0]` (nada em automática nem manual) | CARRY14 | PASS |
+| C20 | `session.e2e:190-192` `code: "binding_invalid"` | CARRY14 | PASS |
+| C21 | `session.e2e:208-211` bytes iguais | CARRY14 | PASS |
+| C22 | `session.e2e:230` `[1, "stopped", 500, 500, {}]` | CARRY14 | PASS |
+| C23 | `session.e2e:282` `["active", MAX_BYTES, {}, 1]` | CARRY14 | PASS |
+| C24 | `store.unit:168` `[opened.capture, "stopped", 1]` | CARRY14 | PASS |
+| C25 | `end.e2e:80-89` stderr exato do resumo | CARRY14 | PASS |
+| C26 | `end.e2e:101-109` `eventos gravados: 0.` e a dica | CARRY14 | PASS |
+| C27 | `end.e2e:120` `{launch: true, code: "launch_ended", …, lost: 1}` | CARRY14 | PASS |
+| C28 | `end.e2e:164-165` `persisted` 3 e `stopped`; regressão `end.e2e:194` `["EIO"]` | CARRY14 | PASS |
+| C29 | `command.cli:278` término pelo sinal | CARRY14 | PASS |
+| C30 | `command.cli:342` `captures: [[1, "stopped", 0]]` | CARRY14 | PASS |
+| C31 | `end.e2e:205-215` `[lock_present]`, `continua active`, `privacy stop` | CARRY14 | PASS |
+| C32 | `end.e2e:320` `"eventos intercalados: B terminou antes"`; `store.unit:715` `lock_present` | CARRY14 (9 testes) | PASS |
+| C33 | `end.e2e:460` `active`; `:493-494` `spawn sh ENOENT` | CARRY14 | PASS |
+| C34 | `report.cli:159` `[newInv, true]` | CARRY14 | PASS |
+| C35 | `report.cli:252-259` `not_configured` / `no_launch_capture`, `schemaVersion: 1` | CARRY14 | PASS |
+| C36 | `command.cli:350` `[0, SKILL_ME_HELP, ""]` | CARRY14 | PASS |
+| C37 | `docs.test:82` `deepEqual(observed, expected)` (os 9 limites) | CARRY14 | PASS |
+| C38 | `prepare.cli:355` `["done", 0]` | CARRY14 (A/B/D) | PASS |
+| C39 | `hermes-harness.unit:88` `["concluded", 0, 3]` | CARRY14 | PASS |
+| C40 | `hermes-harness.unit:196-225` `[5000, "timeout"]`; nativo `hermes-plugin.native:335` | CARRY14 (nativo em D) | PASS |
+| C41 | `store.unit:327-523`; `end.e2e:518` | CARRY14 (17) | PASS |
+| C42 | `command.cli:456` Windows `status: 130`; `:424` POSIX | CARRY14 | PASS |
+| C43 | `store.unit:598` `{code: "root_changed", opened: true, …, lockLeft: false}` | CARRY14 (12) | PASS |
+| C44 | `hermes-harness.unit:263-271` `[1000, "timeout"]` | CARRY14 (nativo em D) | PASS |
+| C45 | `agent.unit:132-146`; `command.cli:166-186` | CARRY14 | PASS |
+| C46 | `concurrency.cli:214-215` `{bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0}` | CARRY14 | PASS |
+| C47 | `agents.e2e:310` `deepEqual(run.report?.delivery, expected, …)` | CARRY14 | PASS |
+| C48 | estrutural: documento sem o job manual = `d0d5a7f`; `governance-C1 C3` (`gov:263-278`) | estrutural CARRY14 (workflow com o mesmo blob) + `governance-C1 C3` **fresco** em A/B/C | PASS |
+| **C49** | `gov:317-358` (ver acima) | **fresco** em A/B/C | **PASS** |
+| **C50** | (a)–(n), tabela acima; (m) `t:414-420`, (n) `t:430-434` | **fresco** em A/B/C, 18/18, com `RUNNER_TEMP` presente | **PASS** |
+
+**AC → checks**:
+- AC1–AC8: C1–C48, como na R14 (carry);
+- AC9: C49 e C50 frescos e C48 com a exceção. O AC9 do contexto 16 é idêntico ao do 15.
+
+## Swept `existing` (lido no HEAD; sem diff na feature)
+
+- **Idempotência**: `privacy/lifecycle.mjs:24` `stopped` + `stop` → `changed: false`.
+- **Sem reenvio**: `traces/delivery.mjs:57` (“encerra a tentativa sem reenviar”) e `:113` (“nunca é reenviada”).
+- **Falha de entrega não bloqueia**: `traces/delivery.mjs:146` (“a entrega nunca lança para a observação”).
+- **`privacy prune` existente**: `privacy/command.mjs:56-57`.
+
+Os dois arquivos citados acima (`lifecycle.mjs` e `delivery.mjs`) têm 0 diff desde `63621c6`.
+
+## Gates remotos — pendentes e obrigatórios (nenhum ocorreu aqui)
+
+1. A revisão formal 10 do orquestrador sobre este HEAD.
+2. Com PASS e `ready`, a publicação no PR #28.
+3. **Uma** execução manual do `lock_diagnostics` sobre o HEAD aprovado e publicado, com o registro dos resultados A1/B/A2 (ou da equivalência), dos erros e das amostras incompletas.
+4. Os **cinco checks regulares verdes** nesse HEAD e a reconferência das fontes.
+5. O merge humano, só com 3 e 4 cumpridos.
+
+O `ready` autoriza publicar, não declara a medição nem a CI e não libera o merge. A execução 40702384050 (sobre `41dcf5d`) é histórico: não demonstra a causa dos `lock_present`/`delivery_timeout` do Windows nem cobre este HEAD. O uso real continua no `Unresolved` 2.
+
+## Processo, limites e limpeza da R16
+
+**Executado.**
+- git só de leitura: `rev-parse`, `status`, `log`, `show`, `diff`, `ls-tree`, `merge-base --is-ancestor`, `check-ignore`, `get-tar-commit-id`.
+- `git archive -c core.autocrlf=false`.
+- `git clone --no-hardlinks --config core.autocrlf=true`, com a configuração só no clone.
+- `node -e` só de leitura (contexto, configuração e estado), `sha256sum` e `python -I` para contar bytes.
+- As três invocações A, B e C, uma vez cada, sem repetição. O WSL foi chamado com `wsl.exe -d Ubuntu -u oldboydev --exec bash --noprofile --norc` e `MSYS_NO_PATHCONV=1`.
+
+**Não executado.**
+- `npm test` (D), o alvo de 151, mutações, sondas e o CLI da medição.
+- Agentes reais, modelos, perfis, credenciais, banco, alterações de host, relógio, antivírus, Git global ou runtime.
+- Actions, CI, `review:run`, commit, push, PR ou merge.
+- O incidente da R5 (`ffc5937`) não é desfeito nem repetido. As auditorias externas anteriores não são minhas e não as li.
+
+**Limites.**
+- C1–C47 e as camadas de D são da R14, não desta rodada. O que vale é a identidade dos blobs, não uma execução em `8f045c2`.
+- Os skips da R14 continuam: os 7 do doctor, 6 do I4 e o do T8-C4 não foram executados em ambiente nenhum da R14.
+- macOS e o runner não foram executados.
+- A restauração do `RUNNER_TEMP` nas provas foi lida, não observada por asserção.
+- As causas históricas continuam desconhecidas.
+
+**Limpeza** (`cleanup.txt`, `C-wsl-cleanup.txt`):
+- o clone de B foi removido depois de conferir o caminho absoluto, o tipo (diretório, não link), o HEAD `8f045c2` e o status vazio;
+- `runner-temp-A`/`-B` foram removidas depois de conferir 0 entradas;
+- o scratch do WSL `/tmp/skillme-verifier-r16.pRQbOZ` foi removido pelo padrão absoluto (restam 0);
+- não sobrou nenhuma `skill-me lock latency *` nem `skill-me-lock-latency-*` no `%TEMP%` ou no `/tmp`;
+- o host continua sem `RUNNER_TEMP`;
+- nenhum processo ficou em segundo plano.
+
+Ficam em `verifier-round16/`: logs, TAP/spec, `matrix.txt`, o tar do HEAD e os meus scripts.
+
+**Integridade do histórico abaixo**: o texto depois da linha `---` final deste adendo é, byte a byte, o blob `f468f6e` (`.verified.md` de `41dcf5d`, igual no HEAD): o adendo R15 e o relatório R14.
+- Fica como histórico.
+- As seções C50 do corpo R14 (“Achados 2 e 3” e “AC9 — C50”, citações `t:` e `lat:` de `13bb1d4`) estão **substituídas** pela tabela C50 deste adendo: a prova é a fresca da R16, e as linhas citadas são as do arquivo atual.
+- Os números de D da R14 não são reivindicados como D deste HEAD.
+
+---
+
 # Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 15, adendo)
 
 **Verdict (R15)**: **PASS** da correção documental da ordem revisão → publicação → medição → CI → merge, em `68e96d8`. Não há contradição com a fonte aprovada, critério ou exigência removidos, alteração funcional nem carry inválido.
