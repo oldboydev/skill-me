@@ -1,4 +1,6 @@
-# Proposta concreta após a CI 40514323240 — aguarda decisão
+# Proposta concreta após a CI 40514323240 — aprovada em 28/10/2026
+
+O proprietário respondeu “Autorizar diagnóstico e orçamento Windows (recomendado)”. [Registro da aprovação](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6460177952). O AC8 foi acrescentado à issue antes do código. A proposta abaixo fica preservada; implementação e provas serão registradas pelo autor.
 
 Não implementada. Diagnóstico em `8868fe1645dedb6b7d4bf575570a86ce11ece64c`, preservando Verifier11 PASS e formal6 ready. A CI do HEAD d0d5a7f falhou no Windows: dois testes delivery_timeout e limite de dez minutos no pós-job. Ubuntu/macOS passaram. O diagnóstico não demonstrou defeito do produto; os controles de perda zero continuam corretos.
 

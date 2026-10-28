@@ -370,6 +370,28 @@ da abertura; o vermelho está certo, porque a precondição do controle não foi
 I23-C10 não mudou de E/S na #25. Nenhuma correção cabe nos contratos vinculantes. A decisão é do
 proprietário, com as propostas em `.checks/issue-25-agent-launch.ci40514323240-handoff.md`.
 
+### Diagnóstico do I23-C10 e orçamento do job Windows (AC8; autorização 6460177952; C47, C48)
+
+Em 28/10/2026 o proprietário aprovou a proposta `.checks/issue-25-agent-launch.ci40514323240-proposal.md`
+(`df2441f`): diagnóstico sanitizado do I23-C10 com a pré-carga existente e provas controladas, e 20
+minutos de orçamento total só para o job Windows da matriz `verify`. A causa dos `delivery_timeout` da
+CI 40514323240 continua desconhecida; nenhum dos dois itens a corrige.
+
+39. A prova I23-C10 mantém as sessões intercaladas (um hook de cada vez) e simultâneas (os três
+    hooks juntos), o ingest Hermes com duas sessões, as contagens exatas, as cinco capturas com
+    chaves próprias, o isolamento, os prazos e as asserções. Quando uma entrega não vem como
+    esperado, a mensagem começa pela da asserção original e traz, para cada produtor da etapa, o
+    relatório de entrega e as operações de disco da pré-carga de tempos existente (operação, tipo de
+    arquivo, código, a tomada do lock em que ocorreram e a última operação concluída) e, da raiz, as
+    capturas automáticas (estado e contadores, sem ID), os segmentos, os temporários e o lock — ou
+    a indisponibilidade de cada inspeção, com o código —, sem caminho, conteúdo, IDs, chaves ou
+    ambiente, e sem contagens inventadas. Provas controladas, com injeções existentes num hook pela
+    mesma rotina, mostram a mensagem de antes (só o rótulo) e a de agora, e que nada vaza.
+40. No workflow, só o `timeout-minutes` do job `verify` muda, para
+    `${{ matrix.os == 'windows-latest' && 20 || 10 }}`: 20 minutos no Windows, 10 no Ubuntu e no
+    macOS; os jobs `changes` e `ci` continuam com 5. Passos, runner, comandos, matriz, concorrência,
+    skips e os prazos de teste e de produto não mudam. A CI real valida a expressão.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
@@ -502,6 +524,7 @@ erDiagram
 | `package.json` `bin` | `npm link` no checkout | comando `skill-me` no prefixo npm | do npm | 1 |
 
 ## Sources
+- [Diagnóstico do I23-C10 e orçamento Windows, 28/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6460177952): o proprietário respondeu “Autorizar diagnóstico e orçamento Windows (recomendado)” à proposta `.checks/issue-25-agent-launch.ci40514323240-proposal.md` (`df2441f`), só nesta entrega: diagnóstico sanitizado do I23-C10 com a pré-carga existente e provas controladas, e orçamento total de 20 minutos só no job Windows da matriz `verify` (Ubuntu e macOS 10, demais jobs 5). Prazos de produto e de testes, concorrência, carga, contagens, asserções, skips e contratos ficam iguais; sem retry novo nem aceitação de perdas (critérios 39 e 40). A issue ganhou o AC8; contexto em `.checks/code-review/issue-25/context-ci28-verifier12-approved.json` (20 comentários, 8 ACs). As 11 verificações e as 6 revisões ficam preservadas; as próximas rodadas seguem “Pode fazer quantas precisar”, registradas uma a uma; depois de PASS e `ready`, publicar no PR #28, rodar a CI do novo HEAD e fazer o merge só com todos os checks verdes; nenhuma publicação do pacote.
 - [Uso da autorização para a 11ª verificação, 27/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6442514838): o proprietário autorizou “Pode fazer quantas precisar”. Após o FAIL10 preservado em `788d160` e a correção concreta do diagnóstico de C32 em `619c8e0` (registro `9e289f3`, alvo122 verde nos três ambientes e npm test1004/984pass/0fail/20skips), a próxima rodada necessária é a 11ª, exclusiva da #25 e com as dez anteriores preservadas. A sexta revisão formal já está autorizada e disponível; nenhum aumento formal ou de configuração. Contexto em `.checks/code-review/issue-25/context-ci28-verifier11-approved.json`. Não repetir execução inalterada para procurar verde; PASS e ready do conteúdo novo precedem push, e merge permanece autorizado somente com toda a CI verde. Pacote privado.
 - [Ajuste pontual do T8-C15 e 10ª verificação, 27/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6440482031): o proprietário respondeu “Autorizar ajuste pontual e 10ª verificação”, à proposta do comentário 6435260406 e de `.checks/issue-25-agent-launch.t8c15-handoff.md` (`a718865`). Inclui nesta entrega o diagnóstico pontual do teste antigo T8-C15 e a correção mínima de defeito confirmado dentro dos contratos atuais, preservando os 80 eventos, os produtores sobrepostos, as asserções, os prazos, o teto 8 e o histórico; sem nova tentativa de E/S, aceitação de perdas ou mudança de política (critério 38). Autoriza uma 10ª verificação independente depois das provas do autor, só para a #25; as nove anteriores ficam, inclusive o FAIL da 9ª em `4e66de2`. A 6ª revisão formal continua autorizada e não consumida; o teto formal continua 6, com 5 consumidas. Merge do PR #28 só depois de PASS, `ready` e toda a CI verde; nenhuma publicação. A issue ganhou o AC7; contexto em `.checks/code-review/issue-25/context-ci28-verifier10-approved.json` (18 comentários, 7 ACs).
 - [Exceção para a 9ª verificação e a 6ª revisão, 27/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6434588924): o proprietário respondeu “Autorizar a 9ª verificação e a 6ª revisão”, somente para a #25 e com histórico preservado (handoff em [6433972110](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6433972110)). Tetos: 9 verificações independentes e 6 tentativas formais no total (`roundOverrides["25"]`, perfil light, `maxRounds` 6). As oito verificações e as cinco revisões anteriores ficam no histórico; o PASS da 8ª e o `ready` da 5ª cobrem o conteúdo anterior, e o Verifier 9 e a revisão formal 6 são as únicas rodadas novas. Depois do PASS e do `ready` do conteúdo novo, atualizar o PR #28 e fazer o merge com toda a CI verde segue autorizado; o pacote continua privado e sem publicação. Contexto em `.checks/code-review/issue-25/context-ci28-verifier9-approved.json` (16 comentários, 6 ACs).
