@@ -6,6 +6,8 @@ Estado: não implementada. A CI40636157287 do PR28 terminou vermelha no Windows:
 
 ## Objetivo e limite desta decisão
 
+Após as provas do autor em `3843867` e os registros `059e518`, o orquestrador registrou as próximas rodadas necessárias sob a autorização humana “Pode fazer quantas precisar”: [13ª verificação independente e 8ª revisão Codex](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467998235). As doze verificações e sete revisões anteriores ficam preservadas. Só o override formal25 passa de sete para oito; este registro não declara PASS ou ready das novas rodadas.
+
 Obter uma comparação finita da latência do lock no runner Windows, entre a pasta temporária padrão e a pasta temporária fornecida pelo runner. Esta decisão autoriza a medição e sua validação; qualquer mitigação posterior depende do resultado e de proposta concreta. Produto, provas funcionais existentes, prazos de750/650ms, contagens, perdas, retries, carga da suíte e orçamentos regulares20/10/5 continuam vinculantes. O merge continua exigindo todos os checks regulares verdes.
 
 ## Como executar antes do merge

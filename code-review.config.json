@@ -53,8 +53,8 @@
     },
     "25": {
       "profile": "light",
-      "maxRounds": 7,
-      "approval": "Proprietário autorizou nesta conversa “Pode fazer quantas precisar” para as rodadas necessárias à issue #25 e aprovou em 28/10/2026 o diagnóstico I23-C10 e orçamento Windows. A próxima revisão concreta é a 7ª, após as mudanças e provas em a8dabb0/52b22cd, preservando as 6 tentativas anteriores; registro específico em https://github.com/oldboydev/skill-me/issues/25#issuecomment-6460630184 e escopo em https://github.com/oldboydev/skill-me/issues/25#issuecomment-6460177952. Override exclusivo da #25/perfil light; globais e outras issues intactos. Parar no primeiro ready válido; push e atualização do PR #28 depois de PASS/ready, merge com toda a CI verde já autorizado. Sem publicação do pacote."
+      "maxRounds": 8,
+      "approval": "Proprietário autorizou “Pode fazer quantas precisar” para as rodadas necessárias da #25 e em 28/10/2026 aprovou a medição comparativa mantendo testes e prazos e mandou seguir até CI verde/merge. Próxima revisão concreta: 8ª, depois do código3843867 e provas/documentação059e518, preservando as 7 tentativas anteriores; registro específico https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467998235 e escopo https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706. Override exclusivo25/light; globais, outras issues e core intactos. Parar no primeiro ready válido; publicar só com PASS/ready, merge com checks regulares verdes e medição registrada. Sem publicação do pacote."
     }
   }
 }
