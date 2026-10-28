@@ -232,11 +232,12 @@ test("I25-C46 diagnóstico do formatter legado: o hook Codex instalado parado so
   const { inProcess, startedAt, firstOpMs, lastEndMs, endMs } = timing.process;
   assert.ok(!inProcess && [startedAt, firstOpMs, lastEndMs, endMs].every((value) => typeof value === "number"), failure.message);
   assert.ok(timing.loop.samples > 0 && timing.loop.maxMs < ATTEMPT_MS, `o laço continuou livre: ${failure.message}`);
-  for (const piece of ["operações concluídas", "pendentes na saída: open segmento.tmp (sob o lock, 2ª tomada) há ", "processo: iniciado ", "última conclusão aos ", "saída aos "]) {
-    assert.ok(failure.message.includes(piece), `${piece}: ${failure.message}`);
-  }
+  // Na mensagem de sempre, antes da evidência comum.
   const at = failure.message.indexOf("\nevidência dos produtores deste teste (1):\n");
   assert.ok(at > 0 && failure.stack.includes(failure.message), failure.message);
+  for (const piece of ["operações concluídas", "pendentes na saída: open segmento.tmp (sob o lock, 2ª tomada) há ", "processo: iniciado ", "última conclusão aos ", "saída aos "]) {
+    assert.ok(failure.message.slice(0, at).includes(piece), `${piece}: ${failure.message}`);
+  }
   const evidence = failure.message.slice(at + 1);
   assert.ok(evidence.startsWith(`evidência dos produtores deste teste (1):\nprodutor 1 hook codex instalado: status 0, sinal nenhum; entrega ${JSON.stringify(LOST_BY_TIMEOUT(1))}\n`), evidence);
   assert.ok(evidence.includes("raiz 1 (produtores 1): lock presente, de produtor 1 hook codex instalado; capturas indisponível [lock_present]"), evidence);
