@@ -1255,3 +1255,21 @@ Gates de `60bbda8`: correção da harness nos gates B e C (registros acima prese
     editado durante ele.
   - Logs novos em `builder-ci93-shared/final2/`, sem sobrescrever os de `60bbda8`. Nenhum gate repetido
     sem mudança para obter verde.
+- **Gates definidos depois do último código (`d317202`) e antes de rodar**:
+  - **Lista**: 39 arquivos de prova (`final2/gate-files.txt`, sha256 `f8706add…7986`) — as 38 de antes e
+    `hermes-harness.unit.test.mjs`, que passa a importar um apoio mudado (`hermes-runtime.mjs`);
+    `failure-matrix.cli`, `hermes-plugin.native` e `skill-tree-hash.cli` já estavam.
+  - **A**: o checkout principal, Node 24.22.1, `npm_execpath` ausente.
+  - **B**: um clone git novo, `core.autocrlf=true` só no clone, Node 24.13.0 oficial, npm 11.6.2,
+    `npm_execpath` ausente.
+  - **C**: WSL uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, `env -i`, `HOME`, `RUNNER_TEMP` e
+    `TMPDIR` dentro do scratch, PATH sem `/usr/bin` e sem agentes.
+  - **Comum a A, B e C**: concorrência 4, uma invocação sem filtro, `RUNNER_TEMP` presente e válido, e o
+    temporário isolado numa pasta criada pela execução:
+    - A e B: `sm-gate-<rótulo>-…` no temporário do sistema, só no `TEMP`/`TMP` do processo do gate;
+    - C: o `TMPDIR` dentro do scratch.
+
+    A limpeza remove só essa pasta, conferida pelo caminho exato e pelo tipo.
+  - **D**: um único `npm test` completo, Windows 24.22.1, teto 8, 12 nativos, com o mesmo isolamento,
+    orçamento de 2 h na ferramenta e nada rastreado editado durante ele.
+  - **Comparação**: os nomes e os motivos dos skips de cada ambiente.
