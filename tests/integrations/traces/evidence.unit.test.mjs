@@ -264,6 +264,40 @@ test("I25-C46 evidência comum: com o arquivo do registro, os 3 processos da ár
   assert.ok(!failure.message.includes(root) && !failure.message.includes("0011223344556677"), "sem caminho nem nonce");
 });
 
+// O C46 (m) como escrito (F1 da verificação 19): o pendente e o pid do lock na
+// 3ª linha. Com eles só na 1ª, como acima, uma montagem que desse sempre o
+// processo 1 ao dono do lock passaria; por isso os esperados são literais.
+test("I25-C46 evidência comum: com o pendente e o pid do lock na 3ª das 3 linhas do arquivo do registro, o lock aponta o processo 3 de 3 e só ele tem o pendente; com o arquivo do teste, só a linha da saída do produtor", async () => {
+  const root = storeWithLock("i25 c46 árvore 3ª raiz", JSON.stringify({ lockVersion: 1, pid: 3003, nonce: "8899aabbccddeeff" }));
+  const bound = { SKILL_ME_CAPTURE_ROOT: root, SKILL_ME_CAPTURE_ID: "0".repeat(32) };
+  const shared = path.join(scratch("i25 c46 árvore 3ª tempos"), "compartilhado.ndjson");
+  let own;
+  const failure = await rejection(recordingProducers(async () => {
+    const wrapper = recordedProducer("wrapper codex", baseEnv(bound));
+    own = wrapper.env.SKILL_ME_TEST_TRACES_TIMING;
+    // O processo parado na criação do lock é o último a sair.
+    writeFileSync(own, [treeLine(1001), treeLine(2002), treeLine(3003, [["open", "lock", 5, 640]])].map((l) => JSON.stringify(l) + "\n").join(""));
+    wrapper.settle({ status: 17, signal: null, report: { delivery: { bound: true, code: "lock_present" } } });
+    writeFileSync(shared, [treeLine(4004), treeLine(5005)].map((l) => JSON.stringify(l) + "\n").join(""));
+    const hook = recordedProducer("hook claude", baseEnv({ ...bound, SKILL_ME_TEST_TRACES_TIMING: shared }));
+    hook.settle({ status: 0, signal: null, report: null });
+    throw new Error("falhou");
+  }));
+  const lines = failure.message.split("\n");
+  assert.deepEqual(
+    lines.filter((line) => /^ {2}(processo \d de \d|tempos):/.test(line)).map((line) => line.slice(0, line.indexOf(":") + 1)),
+    ["  processo 1 de 3:", "  processo 2 de 3:", "  processo 3 de 3:", "  tempos:"],
+    failure.message,
+  );
+  const [first, second, third] = ["  processo 1 de 3:", "  processo 2 de 3:", "  processo 3 de 3:"].map((header) => lines.find((line) => line.startsWith(header)));
+  assert.ok(third.includes("pendentes na saída: open lock (tomada do lock) há 640 ms"), failure.message);
+  for (const line of [first, second]) assert.ok(line.includes("pendentes na saída: nenhuma"), failure.message);
+  assert.ok(!lines.some((line) => /^ {2}processo \d de 3:.*linhas da pré-carga/.test(line)), "cada processo da árvore é uma linha, não uma contagem");
+  assert.ok(lines.find((line) => line.startsWith("  tempos:")).includes("; 2 linhas da pré-carga"), failure.message);
+  assert.ok(failure.message.includes("raiz 1 (produtores 1, 2): lock presente, de produtor 1 wrapper codex, processo 3 de 3;"), failure.message);
+  for (const value of [root, shared, own, "8899aabbccddeeff"]) assert.ok(!failure.message.includes(value), "sem caminho nem nonce");
+});
+
 test("I25-C46 evidência comum: um lock que não se lê como o JSON de um produtor sai com o código e o tamanho, sem o conteúdo", async () => {
   for (const [label, lock, expected] of [
     ["vazio", "", "lock presente, ilegível [SyntaxError; 0 bytes]"],
