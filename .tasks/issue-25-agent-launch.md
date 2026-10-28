@@ -347,6 +347,20 @@ o proprietário autorizou o diagnóstico pontual nesta entrega (AC7, ver `Source
     da causa. A instrumentação não é a correção da causa; uma correção só segue se a causa for
     demonstrada e couber nos contratos atuais.
 
+    Refinamento do critério 38 (CI 40728221657 e execução manual 40728249484 no Windows: T8-C12,
+    T8-C13 e T8-C2, provas antigas da #8; descoberta necessária do mesmo trabalho de CI, sem critério
+    novo). Os quatro produtores instrumentados antes passaram, e as falhas vieram de outros. Por isso a
+    evidência passa à fronteira comum das provas, sem mudar produtores, asserções, prazos nem
+    concorrência:
+    - o formatter comum mostra o que a pré-carga já grava — as operações em curso na saída, o início,
+      a saída e o laço de eventos —, sem confundir as concluídas com o total e sem zero para dado
+      ausente;
+    - nos arquivos de prova com produtores vermelhos nas CIs do PR, todo produtor iniciado pelos apoios
+      leva a pré-carga, e, quando um teste falha, o mesmo erro sai com a evidência de todos os
+      produtores do teste e das raízes deles (lock, capturas e pasta).
+
+    Não traz caminho, conteúdo, chave nem ambiente. É evidência, não a causa nem a correção dela.
+
 ### Regressão da execução completa instrumentada: primeira criação concorrente do store (C32; critério 25 sem mudança)
 
 Na execução completa instrumentada em `710076e` (Windows, Node 24.22.1, teto de 8 arquivos), o T8-C15 e
@@ -406,6 +420,11 @@ CI 40514323240 continua desconhecida; nenhum dos dois itens a corrige.
     a indisponibilidade de cada inspeção, com o código —, sem caminho, conteúdo, IDs, chaves ou
     ambiente, e sem contagens inventadas. Provas controladas, com injeções existentes num hook pela
     mesma rotina, mostram a mensagem de antes (só o rótulo) e a de agora, e que nada vaza.
+
+    Refinamento do critério 39 (CI 40728221657 no Windows: I23-C4; sem critério novo). O mesmo registro
+    comum do critério 38 cobre os produtores do I23-C4: o hook da rota automática, cuja raiz vem do
+    home temporário da prova, e os produtores em processo, medidos pela injeção pública de `io`, com o
+    laço e a CPU do processo da prova. Asserções, prazos e passos não mudam.
 40. No workflow, só o `timeout-minutes` do job `verify` muda, para
     `${{ matrix.os == 'windows-latest' && 20 || 10 }}`: 20 minutos no Windows, 10 no Ubuntu e no
     macOS; os jobs `changes` e `ci` continuam com 5. Passos, runner, comandos, matriz, concorrência,
