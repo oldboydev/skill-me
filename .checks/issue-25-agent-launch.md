@@ -1292,3 +1292,11 @@ Gates de `60bbda8`: correção da harness nos gates B e C (registros acima prese
   - A causa do T8-C4 continua desconhecida (classe histórica do lock deixado), e a correção da evidência não
     a resolve.
   - Os gates finais rodam no código novo, com a lista recalculada e a mesma forma.
+- **Gates finais definidos depois do último código (`909b591`) e antes de rodar**:
+  - **Lista**: recalculada sobre `909b591`, os mesmos 39 arquivos, com o mesmo sha256 (`f8706add…7986`).
+  - **Forma**: a mesma de A, B, C e D acima, com o temporário isolado por execução.
+  - **Logs**: em `builder-ci93-shared/final2/g909/`, sem sobrescrever os de `c0d61d7`.
+  - **RED**: as três correções têm RED com o código anterior e o controle novo:
+    - C40, com o `cpSync`/`rmSync` no 24.13.0;
+    - (l), com o `Date.now()`;
+    - (m)–(n), com os apoios de `d317202`.
