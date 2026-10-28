@@ -1,3 +1,152 @@
+# Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 15, adendo)
+
+**Verdict (R15)**: **PASS** da correção documental da ordem revisão → publicação → medição → CI → merge, em `68e96d8`. Não há contradição com a fonte aprovada, critério ou exigência removidos, alteração funcional nem carry inválido.
+- **Escopo**: `bedda5c..68e96d8` mudou só prosa (task, checklist e proposta, só com acréscimos) e o override `25` da configuração (`maxRounds` 8 → 9 e o texto `approval`). `src/`, `tests/`, `scripts/` (inclusive o core), `.github/`, `package.json` e `.gitattributes` têm 0 diff desde `13bb1d4`. O último commit de código continua `6a242a2`.
+- **Provas executáveis: CARRY da R14, não suíte nova.** Os 50 checks e os gates A/B/C/D foram executados pela R14 em `13bb1d4` (relatório em `bedda5c`, preservado abaixo). Não executei nenhum teste nesta rodada e não afirmo ter testado `68e96d8`. O carry vale porque o conteúdo executável é byte a byte o mesmo (prova Git abaixo).
+- **Gates remotos: pendentes e obrigatórios.** Nenhuma medição, job do Actions ou CI ocorreu. São condições de merge, não foram dispensados e não são dados como ocorridos aqui.
+
+**Checks**: **50/50, carried from `13bb1d4`** (R14), sem nenhum resultado alterado:
+- A, B e C: 151 testes cada, 145 pass, 0 fail, 6 skip, com nomes idênticos;
+- D (`npm test`): 1.023 testes, 1.003 pass, 0 fail, 20 skip, exit 0, com os 12 nativos do Hermes;
+- os 16 C50 (4 novos), `governance-C1 C3` e `governance-C49` verdes em A/B/C/D; I23-C4 ×7 e T8-C11 verdes em D.
+
+**Profile**: light. Rodada 15 **escopada e documental**. Sem fault injection, `Coverage` ou `Test policy` (perfil) e sem fonte de UI. Nenhuma execução de produto, teste, agente, host, modelo ou WSL, nem auditoria de metadados.
+**Diff range**: `63621c691f132dc8d591414269d36cfa18fca594..68e96d89c95a8c43ba6779b9b125f4ed6a21f068`, a feature inteira: 95 commits, árvore `6f624ed3…`. Desde a R14, `13bb1d4..68e96d8` tem dois commits: `bedda5c` (o relatório da R14) e `68e96d8` (a correção documental).
+**Round**: **15** (light, escopada). Base: a autorização humana “Pode fazer quantas precisar” e a ordem medição → CI verde → merge ([issuecomment-6467154706](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706)), com o registro específico 15/9 em [issuecomment-6470507482](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6470507482) (26º comentário). Ficam preservadas as 14 verificações e as 8 revisões formais. A revisão formal 9 é do orquestrador, depois deste relatório.
+**Verifier**: subagente novo e independente (Claude Opus 5.5). Não sou o autor nem o Verifier 14, e não herdei sessão. Produto, testes, scripts, workflow, planos, checklist, configuração e estado ficaram só para leitura. Escrevi apenas este adendo, no começo do arquivo, e logs em `.checks/code-review/issue-25/verifier-round15/`, pasta ignorada. O relatório da R14 segue abaixo **byte a byte igual** ao blob `a203fbf6…` de `bedda5c`.
+
+Data: 28/10/2026. HEAD `68e96d8` do início ao fim. O `git status --porcelain=v1 -uall` estava vazio às 10:46:56 (-03), antes de gravar este arquivo.
+
+## R15 — o que mudou desde a R14 (verified at `68e96d8`)
+
+| Commit | Arquivo | +/− | Conteúdo |
+| --- | --- | --- | --- |
+| `bedda5c` | `.checks/issue-25-agent-launch.verified.md` | +317/−160 | relatório da R14 (o corpo abaixo) |
+| `68e96d8` | `.checks/issue-25-agent-launch.ci-runner-measure-proposal.md` | +6/−0 | “Handoff da sequência de revisão e medição” (`:5-7`) |
+| `68e96d8` | `.checks/issue-25-agent-launch.md` | +6/−0 | o mesmo handoff (`:5-7`), antes de `Sources` |
+| `68e96d8` | `.tasks/issue-25-agent-launch.md` | +7/−0 | “Registro da ordem das provas remotas”, no fim (`:646-650`) |
+| `68e96d8` | `code-review.config.json` | +2/−2 | só `roundOverrides["25"]` (`:54-58`): `maxRounds` 8 → 9 e `approval` |
+
+## Prova Git: o conteúdo executável é o que a R14 executou (verified at `68e96d8`)
+
+Logs: `verifier-round15/full-tree-compare.txt`, `blob-identity.txt` e `core-blobs.txt`.
+- **Árvore inteira**: `git ls-tree -r` de `13bb1d4` e de `HEAD` tem 317 caminhos em cada um. Só os 5 da tabela acima diferem; os outros 312 têm o mesmo modo e o mesmo blob.
+- **Arquivos não documentais da feature** (`63621c6..HEAD`, fora de `.checks/` e `.tasks/`): 47. Entre `13bb1d4` e `HEAD`, 46 têm o mesmo blob:
+  - `src/` (12) e `tests/` (24);
+  - `scripts/ci-lock-latency.mjs`, `ci-lock-latency.test.mjs` e `governance-ci.test.mjs`;
+  - `.github/workflows/governance.yml`, `package.json` e `.gitattributes`;
+  - o README e os três guias.
+
+  Só `code-review.config.json` difere (`e199744` → `8bd0031`).
+- **Core** (`scripts/code-review/README.md`, `cli.mjs`, `review.mjs`, `review.test.mjs` e `schema.json`): o mesmo blob na base, em `13bb1d4` e no HEAD (`25e5284`, `c6a4abc`, `1bda8e4`, `216125c`, `b02001e`). 0 diff na feature.
+- **Último código**: `git log -1 -- src tests scripts .github package.json .gitattributes` = `6a242a2`. `6a242a2..13bb1d4` só toca o build, a proposta e o checklist.
+- **Nenhum teste lê os arquivos que mudaram**:
+  - `docs.test.mjs:16-19` lê o README e os três guias. `governance-ci.test.mjs:242`, `:313` e `:353` leem o workflow e o `package.json`. Todos têm o mesmo blob.
+  - A suíte do motor monta um repositório temporário com configuração própria (`review.test.mjs:84-94`). `review.mjs:474` lê a configuração do `cwd` desse repositório, e a do checkout não entra.
+  - As menções a `.checks/issue-25-agent-launch.md` em `src/` e `tests/` são comentários.
+- **Evidência da R14 ligada ao commit**: o `get-tar-commit-id` de `verifier-round14/v14/head-13bb1d4-lf.tar` é `13bb1d4f44d2…`. `matrix.txt`, `D-summary.txt` e os logs de A, B, C e D existem; os sha256 estão em `verifier-round15/r14-carry-evidence.txt`. Li esses logs e não os reexecutei.
+
+**Limite do carry.** O `verify.md` manda rodar as provas no HEAD novo, porque verde é propriedade de um commit. Aqui segui a instrução do desenvolvedor e o `AGENTS.md:76-78`: documentação pura e encaminhamento sem comportamento novo não exigem testes artificiais. O argumento é a identidade do conteúdo executável, não uma execução em `68e96d8`. O estado do host e dos runtimes depois das 10:21 não foi medido de novo.
+
+## Ordem contra a fonte aprovada (verified at `68e96d8`)
+
+Fontes vinculantes:
+- a proposta aprovada em `b2638db`. As regras não mudaram depois: `b2638db..bedda5c` só mudou o título e acrescentou o registro da aprovação, o das rodadas e o estado da implementação;
+- a aprovação [6467154706](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706): “Publicar somente após PASS/ready do novo HEAD. O merge do PR28 com CI toda verde continua explicitamente autorizado”.
+
+| Exigência aprovada | Onde foi aprovada | Texto novo | Resultado |
+| --- | --- | --- | --- |
+| Publicar só depois de PASS e `ready` | proposta `b2638db:41` (no HEAD, `:51`); 6467154706 | issue, “Condições obrigatórias para o merge”: “Após PASS da verificação independente, ready da revisão local e publicação do HEAD aprovado”; task `:648`; `approval` da configuração | igual |
+| Uma só execução manual, sobre o HEAD aprovado e publicado | proposta `b2638db:19` e `:42` (no HEAD, `:29` e `:52`) | issue: “executar uma vez a medição manual do workflow existente nessa branch” | igual |
+| Registrar a execução e os resultados | frase 6 do AC9 anterior; proposta, passos 1 e 5 | issue: “registrar a execução, os resultados A1/B/A2 (ou equivalência dos destinos), erros e amostras incompletas” | mantido e mais específico |
+| Merge só com os checks regulares verdes no HEAD aprovado; o diagnóstico não os substitui | proposta `b2638db:44` e `:29` (no HEAD, `:54` e `:29`); 6467154706 | issue: “Só fazer o merge do PR #28 com essa medição registrada e todos os cinco checks regulares verdes no HEAD aprovado”; AC9: “não uma dispensa da CI” | mantido |
+| `ready` não é merge | `AGENTS.md:97-98` (merge humano) | issue: “Ready permite publicar…; não declara que a medição ou a CI já ocorreram e não autoriza merge enquanto estiverem pendentes” | explícito |
+
+Também conferi dois pontos:
+- O checklist já dizia que a medição é a do job manual, depois de PASS, `ready` e publicação: C50 (`:499-500`) e Handoff (`:818-820`).
+- Nenhum texto novo afirma medição, job ou CI realizados. A proposta e o checklist dizem “Nenhuma medição remota ocorreu neste registro” (`:7` em cada um), e a task diz “Nenhuma execução remota foi feita até este registro” (`:650`).
+
+## Exigências preservadas (verified at `68e96d8`; log `verifier-round15/ac9-preservation.txt`)
+
+- **Issue** (`context-ci28-verifier15-final.json`, 26 comentários). Conferi só por leitura, com `gh issue view 25`, que a issue publicada é igual: título, corpo e os 26 comentários (`verifier-round15/issue25-live.json`).
+  - **Inalterado**: os 9 ACs continuam; AC1–AC8 e os comentários 1–25 são idênticos ao contexto da R14, assim como o corpo fora do AC9 e da seção nova.
+  - **AC9**: as frases 1–5 continuam literais. Só a 6ª (“A execução manual e os resultados são registrados, e o merge exige os checks regulares verdes no HEAD aprovado.”) saiu do critério de revisão. Ela foi para a seção “Condições obrigatórias para o merge”, que acrescenta “uma vez”, A1/B/A2 ou a equivalência, os erros, as incompletas, “todos os cinco” e a reconferência das fontes.
+  - **Termos presentes no AC9**:
+    - o job: `workflow_dispatch`, 10 minutos e os cinco checks regulares;
+    - o script: `createStoreIo/holdLockFile`, `RUNNER_TEMP` e A1/B/A2;
+    - a carga: 3 produtores de 500 ciclos e 3 cargas de 64 KiB com flush, sob teto de 120 s;
+    - os resultados: previstas/concluídas/incompletas, erros por código, p50/p99/máximo e ≥ 600/650 ms. Erro, ausência de dados ou término parcial nunca viram zero; os valores são exatos;
+    - o que não muda: 750/650 ms, contagens, perdas/retry, carga da suíte e 20/10/5.
+  - **Seção de merge**: “Os testes, prazos, contagens, carga, retry e perdas permanecem vinculantes”.
+- **Task, checklist e proposta**: só acréscimos (`git diff --numstat bedda5c HEAD`: 7/0, 6/0 e 6/0). Ficam iguais:
+  - os critérios 1–42, a exceção datada ao critério 40 e o refinamento do 42;
+  - o Landing, C1–C50, Swept e Handoff;
+  - as constantes do script (`PHASE`, sem diff).
+- **Configuração**: fora de `roundOverrides["25"]`, o documento é igual ao de `13bb1d4` (comparação JSON).
+  - Ficam iguais os perfis globais `light`/`ui`/`direct`, com `maxRounds` 2, e os overrides 3:9, 4:10, 5:10, 6:3, 7:35, 8:3 e 23:4.
+  - O `25` é `{profile: "light", maxRounds: 9, approval}`. O motor admite essa forma (`review.mjs:490-502`): chaves exatas, o mesmo perfil, `approval` com texto, 9 > 2 e 9 ≤ 35.
+  - Com 8 tentativas no estado, resta exatamente a formal 9 (`review.mjs:693`).
+  - O `approval` repete as condições: publicar só com PASS/ready; merge só depois da medição registrada e dos cinco checks regulares verdes no HEAD aprovado; sem publicação do pacote.
+
+## Histórico preservado (lido; nada alterado)
+
+- **`state.json` da #25**: 8 tentativas (1–3 `changes_requested`, 4–7 `ready`, 8 `blocked`). Li só o `report` e o `snapshot` da 8ª:
+  - HEAD `bedda5c`, `maxRounds` 8, `status: blocked`, `verification: insufficient`;
+  - AC1–AC8 `met` e AC9 `unverified`;
+  - um achado P2 bloqueante, sobre `.verified.md:405` da R14: a medição remota ainda não feita. Nenhum defeito de código.
+
+  O sha256 do estado, antes de gravar, está em `verifier-round15/pre-write-state.txt`.
+- **14 verificações**: FAIL9 (`4e66de2`), FAIL10 (`788d160`), PASS11 (`d0d5a7f`), PASS12 (`9244eea`), PASS13 (`0e0325f`) e PASS14 (`bedda5c`, abaixo). O incidente da R5 continua em `ffc5937`. Não editei `verifier-round1/` a `verifier-round14/`.
+- **CIs vermelhas**: 40514323240 e 40636157287 continuam registradas, com as causas desconhecidas.
+
+## Gates remotos pendentes — nenhum ocorreu
+
+1. A revisão formal 9, do orquestrador, depois deste relatório.
+2. Com PASS e `ready`, a publicação do HEAD aprovado no PR #28.
+3. Uma execução manual (`workflow_dispatch`) do job `lock_diagnostics` sobre esse HEAD, com o registro da execução, de A1/B/A2 ou da equivalência dos destinos, dos erros e das amostras incompletas.
+4. Os cinco checks regulares verdes nesse HEAD e a reconferência das fontes.
+5. O merge humano, só com 3 e 4 cumpridos.
+
+O `ready`, se vier, autoriza publicar para obter 3 e 4. Não autoriza merge com gate pendente. O uso real continua no `Unresolved` 2 (`blocks go-live`).
+
+## Observações (não bloqueantes; nada corrigido)
+
+- **N1 — referência de linha desatualizada.** `.tasks/issue-25-agent-launch.md:648` cita “(proposta, linhas23 e45–46)”. Essa numeração vale para a proposta de `bedda5c` e para o 26º comentário, publicado às 13:38:13Z, antes do commit das 13:40:36Z.
+  - O próprio `68e96d8` inseriu 6 linhas no topo da proposta. No HEAD, as linhas citadas são `:29` e `:51-52`; em `b2638db`, são `:19` e `:41-42`.
+  - Hoje, `:23` é `runs-on: windows-latest`, `:45` é vazia e `:46` é o título “Critérios propostos antes do código”.
+  - O conteúdo citado existe e sustenta a afirmação, sem contradição. Sugestão: fixar a referência num commit ou atualizar os números.
+- **N2 — resumo dos handoffs.** Os handoffs novos (checklist `:7` e proposta `:7`) dizem “provas locais e `ready` autorizam publicar”, sem nomear o PASS. A issue (seção de merge), a proposta (`:51`), a task (`:648`) e a configuração exigem PASS e `ready`. O texto vinculante prevalece, sem afrouxamento.
+
+## Processo da R15
+
+**Executado.**
+- git só de leitura: `rev-parse`, `status`, `log`, `show`, `diff` (`--stat`, `--numstat` e `--name-status`), `ls-tree -r`, `cat-file`, `merge-base --is-ancestor`, `check-ignore` e `get-tar-commit-id` no tar da R14.
+- `node -e` só de leitura (contexto, configuração e `state.json`) e `sha256sum`.
+- `gh issue view 25 --json title,body,comments`: leitura de rede, sem publicar nada.
+
+**Não executado.**
+- Nenhum teste, gate, alvo, `npm`, agente, WSL, auditoria de metadados, mutação, sonda ou medição.
+- Nenhum `review:run`, Actions, CI, commit, push, PR ou merge.
+- Nenhuma alteração em produto, testes, scripts, workflow, planos, checklist, configuração ou estado.
+
+**Logs** em `verifier-round15/`: `blob-identity.txt`, `full-tree-compare.txt`, `core-blobs.txt`, `ac9-preservation.txt`, `r14-carry-evidence.txt`, `pre-write-state.txt`, `issue25-live.json`, `addendum-r15.md` (este adendo) e `post-write-check.txt`.
+
+## Limitações da R15
+
+- Nenhuma prova foi executada em `68e96d8`. O PASS dos 50 checks é da R14, em `13bb1d4`. A R15 só prova que o conteúdo executável é o mesmo e que nenhum teste lê o que mudou.
+- As limitações da R14 continuam (seção “Falhas, limitações e o que não está provado”, abaixo):
+  - os 7 skips do doctor, os 6 do I4 e o do T8-C4 não foram reexecutados;
+  - macOS e o runner não foram executados;
+  - o GitHub não avaliou a expressão `${{ … }}` nem o `if` do job manual;
+  - as causas dos `lock_present` e dos `delivery_timeout` continuam desconhecidas.
+- Fonte remota: só a issue foi lida no GitHub. Nenhum PR, check ou execução do Actions foi consultado.
+
+---
+
+## Relatório da rodada 14 — preservado como histórico (carried from `13bb1d4`; relatório em `bedda5c`)
+
+Segue, sem nenhuma alteração, o relatório da R14 (blob `a203fbf6…`). As citações `file:line` dele valem para `13bb1d4`. Nos arquivos de código e de teste continuam válidas no HEAD, porque os blobs são os mesmos. As linhas citadas do checklist e da proposta estão 6 linhas abaixo no HEAD, por causa dos acréscimos no topo em `68e96d8`; as da task não mudaram.
+
 # Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25
 
 **Verdict**: **PASS**. Os 50 checks (C1–C50, 9 ACs) têm prova verde em todos os ambientes aplicáveis; o C48 tem prova estrutural autorizada. Os quatro gates passaram no HEAD `13bb1d4`, cada um numa única execução:
