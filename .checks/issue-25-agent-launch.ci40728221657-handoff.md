@@ -170,3 +170,11 @@ chamado de causa confirmada da parada.
   - Não são o `/tmp` do WSL nem o perfil, e a auditoria metadata-only do root não os cobre.
   - Não foram lidos, limpos nem restaurados.
   - As raízes por gate são outra coisa: foram conferidas e removidas por caminho e `ino`.
+- **Prova** (registro `0954d3e`, código `2473632`, só o arquivo de teste, +34/−0):
+  - GREEN 9/9;
+  - numa cópia própria, sem mutação, 9/9;
+  - com um único mutante do apoio, que dá sempre `processo 1 de n` ao dono do lock, 8/1: o caso da 1ª passou e o
+    novo falhou na asserção de `processo 3 de 3`.
+- **Identidade**: fora de `.checks`/`.tasks`, só esse arquivo mudou desde `5ee0e0f`; 42 dos 43 da lista do R19
+  ficam como carry do Verifier 19.
+- **Gates**: A/B/C só nesse arquivo e um D completo, definidos antes de rodar.

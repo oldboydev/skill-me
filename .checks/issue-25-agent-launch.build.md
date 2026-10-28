@@ -2524,3 +2524,34 @@ controle da 1ª linha. Um caso novo cobre a 3ª linha, com valores literais. A r
   gates e para o `/tmp` do WSL. Não diz nada sobre esses dois auxiliares.
 - Ficam como estão a limpeza de 1.257 pastas no Windows e 107 no WSL (por prefixo, tipo, dono e janela, sem
   prova de proveniência) e o incidente da R5 (`ffc5937`).
+
+**Prova** (`2473632`, só `tests/integrations/traces/evidence.unit.test.mjs`, +34/−0). O caso novo `I25-C46 evidência
+comum: com o pendente e o pid do lock na 3ª das 3 linhas…` fica depois do caso da 1ª linha, que não muda. Ele usa
+`treeLine` e `storeWithLock` do arquivo e o contrato público dos apoios. O registro tem as linhas 1001, 2002 e 3003
+(com o pendente `open lock` de 640 ms), o lock tem o `pid` 3003, e o arquivo do teste é compartilhado, com 2 linhas.
+Os esperados são literais: cabeçalhos `processo 1/2/3 de 3` e `tempos` uma vez cada, em ordem; o pendente só no
+`processo 3 de 3`; `pendentes na saída: nenhuma` nos processos 1 e 2; `; 2 linhas da pré-carga`; `lock presente, de
+produtor 1 wrapper codex, processo 3 de 3`; nada da raiz, dos arquivos de tempos nem do nonce.
+
+**GREEN** (`builder-r19-proof-fix/green-2473632.*`, Windows 24.22.1, pasta isolada): 9 testes, 9 pass.
+
+**Prova discriminante** (cópia própria do `git archive` de `2473632`, `copy-*`, `mutation.txt`):
+- sem mutação: 9/9;
+- com o único mutante do apoio (`processo ${k + 1} de` → `processo 1 de` no rótulo do dono do lock): 8 pass e 1
+  fail. O caso da 1ª linha passou. O novo falhou em `:297`, a asserção de `processo 3 de 3`, com a mensagem `…
+  processo 1 de 3`.
+
+A cópia foi removida pelo caminho exato. O checkout não foi mutado. Não há RED do produto.
+
+**Raiz deixada por um erro do meu script** (`green-pre-commit`): a remoção rodou com o `TEMP` do gate, e a guarda
+recusou. A raiz foi removida em seguida pelo registro (caminho, nome, pasta não link, `ino`; 0 entradas), e o script
+foi corrigido.
+
+**Identidade** (`blob-identity.txt`): em `5ee0e0f..2473632`, fora de `.checks`/`.tasks`, só o arquivo de teste mudou.
+`src`, apoios, fixtures, `scripts`, `.github`, `docs`, configuração e `package*` têm a mesma árvore, e 42 dos 43
+arquivos da lista do R19 têm o mesmo blob.
+
+**Gates** (`plan.txt`, definidos antes de rodar):
+- A/B/C: só `evidence.unit.test.mjs`, inteiro, uma invocação por ambiente, concorrência 4, orçamento de 1 h cada.
+  Os outros 42 são carry explícito do Verifier 19.
+- D: um `npm test` completo, com orçamento de 2 h.

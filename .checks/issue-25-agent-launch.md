@@ -1682,3 +1682,46 @@ Prova da 3ª linha do C46 (m) — novo autor Claude, handoff do coordenador depo
   - **Preservados como estão**: a limpeza de 1.257 pastas no Windows e 107 no WSL (por prefixo, tipo, dono e
     janela de mtime, sem prova de proveniência nem auditoria de propriedade) e o incidente da R5 (`ffc5937`).
     Nada aqui afirma impacto zero.
+- **Onde a fronteira caiu**: registro em `0954d3e`; código em `2473632`. Só
+  `tests/integrations/traces/evidence.unit.test.mjs` mudou, com 34 linhas acrescentadas e nenhuma removida: o
+  caso novo, depois do caso da 1ª linha. O caso da 1ª linha não mudou em nome, entrada nem asserções.
+- **GREEN** (`builder-r19-proof-fix/green-2473632.*`; Windows 24.22.1, checkout, pasta temporária isolada): o
+  arquivo inteiro deu 9 testes, 9 pass. Passaram os dois casos de (m) e os outros 7 do arquivo.
+- **Prova discriminante** (`copy-*`, `mutation.txt`, `mutate-owner.mjs`):
+  - Cópia descartável própria: `git archive` de `2473632` (sha256 `e3cb3ece…f75f`) extraído em
+    `builder-r19-proof-fix/copy/`.
+  - **Controle saudável na cópia**: 9 testes, 9 pass.
+  - **Um único mutante** no `helpers/traces.mjs` da cópia: o rótulo do dono possível do lock passa de
+    `processo ${k + 1} de ${tree.length}` a `processo 1 de ${tree.length}`. O cabeçalho das linhas da árvore não
+    muda. O sha256 do arquivo passa de `eb2dd806…` a `efa3fa12…`.
+  - **Com o mutante**: 9 testes, 8 pass, 1 fail.
+    - O caso da 1ª linha **passou** (aceita a montagem errada).
+    - O caso novo **falhou** em `evidence.unit.test.mjs:297`, a asserção `includes("raiz 1 (produtores 1, 2):
+      lock presente, de produtor 1 wrapper codex, processo 3 de 3;")`. A mensagem trouxe `… processo 1 de 3`.
+    - As asserções de ordem, dos pendentes e de `tempos`, que vêm antes dela, passaram. A de ausência de
+      caminho e nonce (`:298`) vem depois e não chegou a rodar.
+  - A cópia foi removida pelo caminho exato, depois de conferir pasta, não link e sem `.git`
+    (`copy-cleanup.txt`).
+  - Nada foi mutado no checkout, e não houve `stash`: o `git status` ficou vazio.
+  - Não houve RED do produto, porque não há defeito de produto: o formatter correto passa os dois casos.
+- **Raiz temporária deixada por um erro do meu script**: na 1ª execução do GREEN (`green-pre-commit`, antes do
+  commit do código), a remoção rodou com o `TEMP` do gate, e a raiz pareceu não ser filha do temporário. A guarda
+  recusou, e a raiz ficou. Logo depois, numa invocação com o `TEMP` original, ela foi removida pelo registro:
+  caminho, nome, pasta não link e `ino` conferidos, 0 entradas. O script foi corrigido antes das outras execuções.
+- **Identidade dos blobs** (`builder-r19-proof-fix/blob-identity.txt`, `5ee0e0f` × `2473632`):
+  - fora de `.checks` e `.tasks`, só `tests/integrations/traces/evidence.unit.test.mjs` mudou (`26b8410` →
+    `6ccbf48`);
+  - têm a mesma árvore `src` (`51f0c98`), `tests/integrations/helpers` (`7931703`), `tests/integrations/fixtures`
+    (`6591970`), `scripts` (`05923f9`, com o core), `.github` (`d9ee0d8`), `docs`, `tests/doctor`,
+    `code-review.config.json`, `package.json`, `package-lock.json`, `.gitattributes` e `.gitignore`;
+  - dos 43 arquivos da lista do R19 (`gate-files-r19.txt`, sha256 `e26c5163…74d9`), 42 têm o mesmo blob.
+- **Gates definidos depois do último código (`2473632`) e antes de rodar** (`builder-r19-proof-fix/plan.txt`):
+  - **Lista A/B/C**: `gate-files-2473632.txt` (sha256 `7d64e892…e83b`), um arquivo,
+    `tests/integrations/traces/evidence.unit.test.mjs`, inteiro e sem filtro. Esperado: 9 testes, sem skip.
+  - **Carry**: os outros 42 arquivos são carry explícito do Verifier 19 em `5ee0e0f`, condicionado à identidade
+    acima. Não foram reexecutados em A/B/C, e não se alega rerun deles.
+  - **Forma**: a do R19, com os scripts `run-target.sh`, `make-clone-B.sh`, `remove-clone-B.sh`, `wsl-run.sh`,
+    `run-npm-test.sh` e `isolated-root.mjs` (prefixo `sm-b19p-`), um clone novo e raízes novas.
+  - **Orçamentos na chamada, definidos antes**: 1 h para cada um de A, B e C; 2 h para o D.
+  - **D**: esperado 1.055 testes (1.054 + 1).
+  - Os gates rodam no HEAD deste registro, que só acrescenta docs a `2473632`.
