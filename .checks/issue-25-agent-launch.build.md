@@ -1670,3 +1670,117 @@ Limites:
   `ciclos` e `interrompidaPorErro`.
 - **Pendentes, com o orquestrador**: o Verifier 14 independente, a formal 8, a publicação, a
   execução manual com o registro dos resultados e a CI regular verde para o merge.
+
+## CI 40702252461 (Ubuntu): fonte do `RUNNER_TEMP` na medição (C50 (m)–(n))
+
+Estado de partida: HEAD `41dcf5d`, publicado pelo orquestrador. Antes dele vieram a formal 8
+`blocked` (`bedda5c`), o R15 documental PASS (com as provas executadas da R14 em `13bb1d4`) e a
+formal 9 `ready` (9 ACs, `sufficient`, sem achado). Esse histórico não foi alterado aqui.
+
+- **A falha**: CI 40702252461 do PR #28, Ubuntu 22.04, job 122865010604; log integral do
+  orquestrador em `.checks/code-review/issue-25/ci40702252461-ubuntu.log`.
+  - `npm run test:governance`: 23 testes, 21 pass, 2 fail;
+  - `C50 caminhos` (`ci-lock-latency.test.mjs:147`): `RUNNER_TEMP ilegível [ENOENT]` no lugar de
+    `RUNNER_TEMP ausente`;
+  - `C50 relatório` (`:383`): `A1/B/A2` e `{volume: undefined}` no lugar de uma fase `A`;
+  - o `fail-fast` cancelou Windows e macOS. Pelo relato do orquestrador, a execução manual
+    40702384050 também rodou a matriz regular, e o C50 falhou do mesmo jeito no Ubuntu.
+- **Causa demonstrada**: `resolveDestinations` tinha o padrão `runnerTemp = process.env.RUNNER_TEMP`,
+  e a desestruturação aplica o padrão também a um `undefined` dado. No runner o processo tem
+  `RUNNER_TEMP`, então as duas provas, que davam `undefined` (`plan(undefined)`) ou `env: {}`,
+  recebiam o valor do runner. A falha é determinística. Os alvos locais rodaram sem `RUNNER_TEMP` e
+  não exercitaram esse caso: no Windows desta máquina a variável não existe, e no WSL o ambiente é
+  `env -i`.
+- **Medição real** (dados do orquestrador, não executados aqui): execução manual 40702384050, job
+  122865354493, sobre `41dcf5d`; arquivos `.checks/code-review/issue-25/measurement40702384050.json`
+  e `.log`.
+  - **Fases e ciclos**: A1 no `C:`, B no `D:`, A2 no `C:`; 4.500 de 4.500 ciclos; zero erros,
+    incompletos, linhas inválidas e falhas de limpeza; nenhuma amostra ≥ 600 ou ≥ 650 ms.
+  - **Tomada, p99/máximo em ms**: A1 5,622/33,979; B 1,740/16,559; A2 5,853/14,672.
+  - **Liberação, p99/máximo em ms**: A1 4,695/16,127; B 2,321/14,721; A2 6,268/19,204.
+  - **Cargas**: as 3 terminaram, com 164, 223 e 127 escritas.
+  - **Limite**: os números não demonstram a causa das falhas históricas nem justificam mudar
+    `TEMP`, antivírus ou prazos.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `efa56ea` | Antes do código: linha “Fonte do `RUNNER_TEMP` na medição” do Landing, refinamento do C50 com (m)–(n), refinamento do critério 42 e Handoff |
+| `f133c55` | `resolveDestinations` sem o padrão `process.env.RUNNER_TEMP`, e os comentários dele e de `measure`; as provas `C50 fonte do RUNNER_TEMP: …` e `C50 fonte do RUNNER_TEMP pelo padrão do CLI: …`, com o apoio `withProcessRunnerTemp` |
+
+Logs em `.checks/code-review/issue-25/builder-ci40702252461/` (pasta ignorada). Os caminhos do
+`RUNNER_TEMP` ficam só ali.
+
+- **Consumidores conferidos antes da mudança**:
+  - `resolveDestinations` só é chamado por `measure` (`runnerTemp: env.RUNNER_TEMP`) e pelas
+    provas, que sempre passam `runnerTemp`;
+  - o script só é importado pela própria prova, o workflow roda o CLI, e `governance-ci.test.mjs` só
+    confere o texto do comando e do alias;
+  - o CLI chama `measure()` sem argumentos, ou seja `env = process.env` e `runnerTemp:
+    env.RUNNER_TEMP`. O padrão removido nunca agia nesse caminho, então a saída do CLI é a mesma
+    antes e depois da correção.
+- **RED**: os testes novos sobre o script de `41dcf5d` (blob `cf29122e`, o mesmo de `6a242a2`), em
+  Windows 24.22.1, com os dois arquivos do `test:governance` (`red-*-runner-temp-win-24.22.1.*`).
+  - **Sem `RUNNER_TEMP` no ambiente**: 25 testes, 24 pass, 1 fail. Só (m) falha, em `runnerTemp
+    undefined é ausente`: o `RUNNER_TEMP` que a prova pôs no processo deu `A1/B/A2`. As duas provas
+    antigas passam, e por isso A/B/C não pegaram o caso.
+  - **Com um `RUNNER_TEMP` próprio e válido no ambiente**: 25, 22 pass, 3 fail. É a reprodução
+    local da CI: `C50 caminhos` sai com `RUNNER_TEMP ilegível [ENOENT]`, `C50 relatório` com
+    `['A1/B/A2', {volume: 'C:'}, ['A1', 'B', 'A2']]`, e (m) falha também.
+  - **(n) passou nas duas**: o CLI já lia o `RUNNER_TEMP`.
+- **GREEN** (`green-*-runner-temp-win-24.22.1.*`): 25/25, sem e com `RUNNER_TEMP` no ambiente; o
+  `RUNNER_TEMP` próprio ficou vazio.
+- **Mutações** (cópia descartável; os 4 testes de caminhos, relatório e fonte;
+  `mutation-*-win-24.22.1.spec.txt`), todas detectadas:
+  - o padrão `process.env.RUNNER_TEMP` de volta: (m) falha em `runnerTemp undefined é ausente`;
+  - `measure` com `env = {}` por padrão: (n) falha, porque o CLI deixaria de ler o `RUNNER_TEMP`;
+  - a alternativa rejeitada, `process.env` só sem a chave `runnerTemp` (o `undefined` dado
+    respeitado): (m) falha em `sem a chave runnerTemp é ausente`. A primeira versão dessa mutação
+    restaurava o padrão da desestruturação e caía na primeira asserção; foi refeita para modelar a
+    alternativa.
+
+| `node --test scripts/governance-ci.test.mjs scripts/ci-lock-latency.test.mjs` (o alias `test:governance`, sem filtro), uma invocação por ambiente em `f133c55`, com `RUNNER_TEMP` presente, pasta real, distinta do `os.tmpdir()` e dos temporários das provas | Resultado |
+| --- | --- |
+| A — Windows, Node 24.22.1, npm 11.19.1, checkout principal, `npm_execpath` ausente, `RUNNER_TEMP` numa pasta própria do `%TEMP%`, 11:18:37–11:19:19 | 25 testes: 25 pass, 0 fail, 0 skip; `git status` vazio antes e depois; `RUNNER_TEMP` vazio antes e depois |
+| B — Windows, Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, clone git novo com `core.autocrlf=true` (só no `.git/config` do clone; os dois arquivos de prova, o script, o workflow e `package.json` em `w/crlf`), o mesmo `RUNNER_TEMP`, 11:19:42–11:20:27 | 25: 25/0/0; status do clone vazio antes e depois; clone removido depois de conferir caminho, tipo e HEAD |
+| C — WSL Ubuntu `oldboydev` uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, npm 11.6.2, `env -i`, `HOME` do scratch, PATH só com o prefixo e `tools` (`sh`, `git`, `python3`, `id`, `grep`, `mkfifo`), sem `/usr/bin`, e `RUNNER_TEMP` explícito numa pasta do scratch, distinta do `/tmp`; `git -c core.autocrlf=false archive f133c55` (5.877.760 bytes, sha256 `2083f660…de62543`, `get-tar-commit-id` = `f133c55e…`, árvore extraída `19401d0b…` = `HEAD^{tree}`, 0 CR), 11:20:57–11:21:02 | 25: 25/0/0; `RUNNER_TEMP` vazio depois; `~/.skill-me` e a autorização ausentes antes e depois; scratch removido |
+
+Os 25 nomes são os mesmos nos três TAP:
+- os 23 da CI (16 C50 e 7 de governança), todos presentes, sem nenhuma linha removida das asserções
+  desde `41dcf5d`;
+- as 2 provas novas.
+
+Em cada ambiente passaram os 18 C50 e os 7 de governança, sem nenhum skip.
+
+**O que não foi rodado de novo, e por quê** (`final/blob-identity.txt`):
+- **O que mudou** entre `13bb1d4` (a R14, executada sobre o código `6a242a2`) e `f133c55`: só
+  `scripts/ci-lock-latency.mjs`, `scripts/ci-lock-latency.test.mjs` e `code-review.config.json`. A
+  configuração é do orquestrador (`68e96d8`), e nenhum teste a lê: `review.test.mjs` grava a
+  própria num repositório de fixture.
+- **Mesmos blobs**: `src/`, `tests/`, `.github/`, `scripts/code-review/`, `package.json`,
+  `.gitattributes`, `governance-ci.test.mjs`, `test-integrations.mjs`, `ci-change-filter.mjs` e
+  `ci-result.mjs`. O script só é importado pela própria prova.
+- **O que fica carregado**: não rodei o `npm test` nem o alvo de 151. C1–C49 e as camadas sem
+  mudança ficam com as provas executadas da R14 em `13bb1d4`, carregadas e não reexecutadas: A/B/C
+  com 151/145/0/6 e D com 1.023/1.003/0/20, com os 12 nativos.
+- **O que é novo**: o C50 novo está provado nos A/B/C frescos acima; não há D novo. A CI regular roda
+  tudo, sem corte nem prorrogação.
+
+Limpeza:
+- os dois `RUNNER_TEMP` próprios do `%TEMP%` (o do RED/GREEN e o de A/B) estavam vazios e foram
+  removidos depois de conferir o caminho absoluto e o prefixo;
+- não ficou nenhuma `skill-me lock latency *` nem `skill-me-lock-latency-*`;
+- as 9 entradas novas do `%TEMP%` fora da linha de base são de outras sessões (UUIDs e
+  `playwright_*`) e ficaram;
+- as cópias das mutações foram removidas.
+
+Limites:
+- **Medição no runner**: a medição sobre o código novo é do orquestrador; os números acima são de
+  `41dcf5d`. A saída do CLI é a mesma antes e depois, pela leitura do caminho, mas isso não substitui
+  a nova execução que o orquestrador decidiu fazer.
+- **Causa e CI**: nada aqui demonstra a causa dos `lock_present` e `delivery_timeout` históricos,
+  nem que a CI ficará verde.
+- **`RUNNER_TEMP` das provas**: em (m) e (n) ele é posto no `process.env` do próprio processo da
+  prova e restaurado no `finally`. Os filhos iniciados nesse intervalo o herdam, sem efeito, porque
+  não o leem.
+- **Pendentes, com o orquestrador**: as rodadas 16/10, a publicação, a nova medição única no HEAD
+  revisto e a CI regular verde para o merge.

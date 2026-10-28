@@ -894,3 +894,22 @@ CI 40702252461 do PR #28: fonte do `RUNNER_TEMP` na medição (registros acima p
   refinamento do C50 com (m)–(n) e do critério 42 da task, este Handoff) vem antes do código. Provas,
   comandos e resultados ficam em `.checks/issue-25-agent-launch.build.md` e no handoff pontual
   `.checks/issue-25-agent-launch.ci40702252461-handoff.md`.
+- Onde a fronteira caiu agora:
+  - **Commits**: registro em `efa56ea`; código em `f133c55`, só em `scripts/ci-lock-latency.mjs`
+    (`resolveDestinations` sem padrão do `process.env`) e na prova dele.
+  - **RED** no script de `41dcf5d`: sem `RUNNER_TEMP` no ambiente, 24/25, só (m) falha; com ele,
+    22/25, as duas da CI e (m) falham.
+  - **GREEN e mutações**: 25/25 sem e com `RUNNER_TEMP`; as 3 mutações foram detectadas.
+  - **A/B/C**: os dois arquivos do `test:governance` deram 25/25/0/0 em cada ambiente, com
+    `RUNNER_TEMP` presente e válido.
+  - **Carregado da R14** (`13bb1d4`): fora dos dois arquivos, os blobs não mudaram. C1–C49 ficam com
+    as provas dela, A/B/C 151/145/0/6 e D 1.023/1.003/0/20 com os 12 nativos, sem reexecução e sem D
+    novo.
+  - A medição no runner sobre o código novo e a CI verde continuam com o orquestrador, e a causa
+    histórica continua desconhecida.
+- O que foi abandonado:
+  - limpar o `RUNNER_TEMP` no workflow, no job ou nas provas;
+  - pular ou relaxar as asserções;
+  - ler o `process.env` só quando falta a chave;
+  - tirar o padrão `process.env` de `measure`;
+  - parâmetro ou opção de prova novos.
