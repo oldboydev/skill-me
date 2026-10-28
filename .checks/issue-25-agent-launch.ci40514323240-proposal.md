@@ -18,6 +18,8 @@ A prova I23-C10 mantém as sessões intercaladas e simultâneas, as contagens ex
 
 ## Limites
 
+Rodadas necessárias registradas em 28/10/2026 sob a autorização humana “Pode fazer quantas precisar”: [12ª verificação independente e 7ª revisão Codex](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6460630184), após as provas do autor em `a8dabb0` (código `52b22cd`). As onze verificações e seis revisões anteriores permanecem no histórico. Somente o override formal da issue #25 passa de seis para sete; os perfis globais, outras issues e core permanecem iguais. Esta inscrição não declara PASS nem ready das rodadas novas.
+
 O orçamento maior do job evita cancelamento do conjunto pelo limite total; não corrige delivery_timeout e não garante a próxima CI verde. A instrumentação dá evidência para eventual nova ocorrência; não demonstra a causa original. Qualquer mudança de prazo de produto/prova, retry, aceitação de perdas ou carga continua fora desta proposta.
 
 A decisão é necessária porque o plano aprovado preserva workflow/limite do job e o diagnóstico I23-C10 ainda não faz parte dos critérios. Não é pedido de autorização para novas rodadas, já autorizado pelo proprietário.
