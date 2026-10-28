@@ -22,6 +22,8 @@ import {
   expectedPseudonym,
   filesUnder,
   privacyOk,
+  recordProducersInEachTest,
+  recordingProducers,
   runHermesIngest,
   runHook,
   sameEnvelope,
@@ -33,6 +35,10 @@ import {
 } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 import { probeOf, runWrapper, writeScenario } from "../helpers/wrapper.mjs";
+
+// Evidência comum dos produtores quando um teste falha (issue #25, linha
+// "Evidência comum dos produtores e formatter legado" do Landing): helpers/traces.mjs.
+recordProducersInEachTest();
 
 // Provas S1 da issue #8 (.checks/issue-8-traces.md, C1–C8): processos reais
 // dos produtores (hooks instalados, ingest Hermes, wrapper com Codex falso),
@@ -92,6 +98,7 @@ function deliveryClock(label) {
   let processes = 0;
   let slowest = null;
   return {
+    file,
     env: timedEnv(file),
     // Tempo da entrega do hook que acabou de sair: a linha dele precisa existir.
     last(name) {
@@ -163,34 +170,81 @@ test("T8-C1 Claude live capture: hook instalado e vinculado grava um registro v1
   for (const file of filesUnder(storeDir(root))) assert.ok(!CANARY_PATTERN.test(readFileSync(file, "latin1")), path.basename(file));
 });
 
-test("T8-C2 Codex hook live capture: linha instalada em hooks.json grava um registro por evento suportado e sai 0", async (t) => {
-  const root = scratch("t8 c2 raiz");
+// Um caso do T8-C2: o hook Codex instalado entrega e grava um registro. `extra`
+// só acrescenta ao ambiente do hook no controle do diagnóstico (I25-C46).
+async function codexHookCase({ root, id, clock, env }, index, { name, payload }, extra = {}) {
+  const run = await runCodexHandler(codex.handlers[payload.hook_event_name].handler, payload, { env: { ...env, ...extra }, cwd: codex.cwd });
+  assert.equal(run.status, 0, `${name}: ${run.stderr}`);
+  assert.equal(run.stdout, "", name);
+  assert.ok(run.report, `${name}: relatório`);
+  assert.deepEqual(run.report.delivery, DELIVERED(1), `${name}: ${clock.last(name)}`);
+  const { records } = exportOf(root, id);
+  assert.equal(records.length, index + 1, name);
+  const record = records.at(-1);
+  assert.equal(record.recordVersion, 1);
+  assert.deepEqual(record.envelope.source, CODEX_HOOK_SOURCE, name);
+  assert.equal(record.envelope.signal, "native_hook", name);
+  sameEnvelope(record.envelope, run.report.events[0], name);
+  assertCapturePseudonyms(root, id, record.envelope, payload, CODEX_HOOK_IDS, name);
+  assert.equal(record.content, null, name);
+}
+
+function codexHookCapture(label) {
+  const root = scratch(`${label} raiz`);
   const id = startCapture(root);
-  const clock = deliveryClock("t8 c2");
-  const env = boundEnv(root, id, { ...codex.extra, ...clock.env });
+  const clock = deliveryClock(label);
+  return { root, id, clock, env: boundEnv(root, id, { ...codex.extra, ...clock.env }) };
+}
+
+test("T8-C2 Codex hook live capture: linha instalada em hooks.json grava um registro por evento suportado e sai 0", async (t) => {
+  const capture = codexHookCapture("t8 c2");
+  const { root, id, clock } = capture;
   const cases = loadFixture("codex-hooks.json").cases.filter((c) => c.valid);
   assert.ok(cases.length >= 8);
-  for (const [index, { name, payload }] of cases.entries()) {
-    const run = await runCodexHandler(codex.handlers[payload.hook_event_name].handler, payload, { env, cwd: codex.cwd });
-    assert.equal(run.status, 0, `${name}: ${run.stderr}`);
-    assert.equal(run.stdout, "", name);
-    assert.ok(run.report, `${name}: relatório`);
-    assert.deepEqual(run.report.delivery, DELIVERED(1), `${name}: ${clock.last(name)}`);
-    const { records } = exportOf(root, id);
-    assert.equal(records.length, index + 1, name);
-    const record = records.at(-1);
-    assert.equal(record.recordVersion, 1);
-    assert.deepEqual(record.envelope.source, CODEX_HOOK_SOURCE, name);
-    assert.equal(record.envelope.signal, "native_hook", name);
-    sameEnvelope(record.envelope, run.report.events[0], name);
-    assertCapturePseudonyms(root, id, record.envelope, payload, CODEX_HOOK_IDS, name);
-    assert.equal(record.content, null, name);
-  }
+  for (const [index, testCase] of cases.entries()) await codexHookCase(capture, index, testCase);
   clock.report(t);
   assert.equal(statusOf(root, id).counters.persisted, cases.length);
   const payloads = cases.map((c) => c.payload);
   assertAbsentOnDisk(root, [...nativeIdValues(payloads, CODEX_HOOK_IDS), ...payloads.flatMap((p) => [p.cwd, p.transcript_path].filter(Boolean))], "C2");
   for (const file of filesUnder(storeDir(root))) assert.ok(!CANARY_PATTERN.test(readFileSync(file, "latin1")), path.basename(file));
+});
+
+// I25-C46 (issue #25, AC7; linha "Evidência comum dos produtores e formatter
+// legado" do Landing): na CI 40728249484 o T8-C2 saiu com `delivery_timeout` e a
+// mensagem do formatter legado, que só contava as operações concluídas. Pela
+// rotina do T8-C2, com o disco parado sob o lock só no hook do 1º caso, a
+// asserção continua vermelha, a mensagem de sempre traz os pendentes, o processo
+// e o laço que a pré-carga grava, e o mesmo erro sai com a evidência comum. A
+// operação parada é conhecida pela injeção; numa falha real é evidência.
+test("I25-C46 diagnóstico do formatter legado: o hook Codex instalado parado sob o lock mantém o T8-C2 vermelho, e a mensagem de sempre traz os pendentes, o processo e o laço que a pré-carga grava", async () => {
+  const capture = codexHookCapture("i25 c46 formatter");
+  const [first] = loadFixture("codex-hooks.json").cases.filter((c) => c.valid);
+  const failure = await recordingProducers(() => codexHookCase(capture, 0, first, { SKILL_ME_TEST_TRACES_STALL_SEGMENT: "1" })).then(
+    () => null,
+    (error) => error,
+  );
+  assert.ok(failure instanceof assert.AssertionError, `a asserção do T8-C2 continua vermelha: ${failure}`);
+  assert.deepEqual([failure.actual, failure.expected], [LOST_BY_TIMEOUT(1), DELIVERED(1)]);
+  const timing = { name: first.name, ...deliveryTiming(timingLines(capture.clock.file).at(-1)) };
+  assert.ok(failure.message.startsWith(`${first.name}: ${describeTiming(timing)}`), failure.message);
+  assert.deepEqual(timing.pending.map((p) => p.name), ["open segmento.tmp (sob o lock, 2ª tomada)"], failure.message);
+  assert.ok(timing.operations > 0 && timing.pending[0].ageMs > 0, failure.message);
+  const { inProcess, startedAt, firstOpMs, lastEndMs, endMs } = timing.process;
+  assert.ok(!inProcess && [startedAt, firstOpMs, lastEndMs, endMs].every((value) => typeof value === "number"), failure.message);
+  assert.ok(timing.loop.samples > 0 && timing.loop.maxMs < ATTEMPT_MS, `o laço continuou livre: ${failure.message}`);
+  for (const piece of ["operações concluídas", "pendentes na saída: open segmento.tmp (sob o lock, 2ª tomada) há ", "processo: iniciado ", "última conclusão aos ", "saída aos "]) {
+    assert.ok(failure.message.includes(piece), `${piece}: ${failure.message}`);
+  }
+  const at = failure.message.indexOf("\nevidência dos produtores deste teste (1):\n");
+  assert.ok(at > 0 && failure.stack.includes(failure.message), failure.message);
+  const evidence = failure.message.slice(at + 1);
+  assert.ok(evidence.startsWith(`evidência dos produtores deste teste (1):\nprodutor 1 hook codex instalado: status 0, sinal nenhum; entrega ${JSON.stringify(LOST_BY_TIMEOUT(1))}\n`), evidence);
+  assert.ok(evidence.includes("raiz 1 (produtores 1): lock presente, de produtor 1 hook codex instalado; capturas indisponível [lock_present]"), evidence);
+  const key = readFileSync(path.join(captureDir(capture.root, capture.id), "key"));
+  for (const value of [capture.root, capture.id, codex.cwd, key.toString("hex"), key.toString("base64"), key.toString("base64url"), process.env.PATH].filter(Boolean)) {
+    assert.ok(!failure.message.includes(value), "a evidência não traz caminho, ID, chave nem ambiente");
+  }
+  assert.deepEqual(leaks(failure.message), []);
 });
 
 // O T8-C3 e as provas do diagnóstico das entregas de um produtor (I25-C46,

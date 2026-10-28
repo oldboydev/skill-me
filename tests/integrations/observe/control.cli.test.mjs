@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { after, test } from "node:test";
@@ -26,9 +27,13 @@ import {
   runNpmScript,
   runObserve,
 } from "../helpers/observe.mjs";
-import { ISO_MS, captureDir, exportOf, filesUnder, privacyOk, runHermesIngest, runHook, startCapture, statusOf, storeDir } from "../helpers/traces.mjs";
+import { ISO_MS, captureDir, exportOf, filesUnder, inProcessProducer, privacyOk, recordingProducers, recordProducersInEachTest, runHermesIngest, runHook, startCapture, statusOf, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
+
+// Evidência comum dos produtores quando um teste falha (issue #25, linha
+// "Evidência comum dos produtores e formatter legado" do Landing): helpers/traces.mjs.
+recordProducersInEachTest();
 
 // Provas S1 da issue #23 (.checks/issue-23-observacao-on-off.md, C1–C5):
 // configuração única, `npm run on/off/status` em processos separados, como o
@@ -526,6 +531,19 @@ function homesWithRoots(label) {
   return { base, home, foreignHome, original, foreign, moved: path.join(base, "pasta da configuração movida") };
 }
 
+// Um produtor em processo que leu a configuração antes da troca abre na geração
+// ligada e grava uma chamada. Ele entra na evidência comum dos produtores pela
+// injeção pública de `io` (`inProcessProducer`, helpers/traces.mjs); `base` só
+// muda no controle do diagnóstico (I25-C47).
+async function openedInProcess(root, toolUseId, base) {
+  const producer = inProcessProducer("claude em processo", root, (io) => createAutomaticDelivery({ config: { root, rootReal: root }, agent: "claude", io }), base === undefined ? {} : { base });
+  await producer.open();
+  const first = claudePayload("pre_tool_bash", { tool_use_id: toolUseId });
+  producer.submit(claudeHookDraft(first), first);
+  await producer.settle();
+  return { producer, opened: producer.report() };
+}
+
 test("I23-C4 off encerra e é idempotente: pasta da configuração trocada depois da leitura do on, antes ou depois de ligar a raiz — o off seguinte a desliga pelo registro e o produtor aberto não grava mais", async () => {
   const rows = [
     { when: "junção antes de ligar", realFolder: false, effect: false },
@@ -553,13 +571,7 @@ test("I23-C4 off encerra e é idempotente: pasta da configuração trocada depoi
     const afterOn = { original: stateOf(original), foreign: stateOf(foreign), authorization: authorizationOf(home) };
     const ligada = readObserveState(original);
 
-    // Um produtor que leu a configuração antes da troca abre na geração ligada e grava.
-    const producer = createAutomaticDelivery({ config: { root: original, rootReal: original }, agent: "claude" });
-    await producer.open();
-    const first = claudePayload("pre_tool_bash", { tool_use_id: "chamada-antes-do-off" });
-    producer.submit(claudeHookDraft(first), first);
-    await producer.settle();
-    const opened = producer.report();
+    const { producer, opened } = await openedInProcess(original, "chamada-antes-do-off");
     const captures = automaticOf(original).map((capture) => capture.id);
 
     const off = await runObserveCommand({ argv: ["off"], home });
@@ -827,14 +839,8 @@ test("I23-C4 off encerra e é idempotente: off que entra com o on em voo e a pas
     const paused = row.pause(original);
     const inFlight = runObserveCommand({ argv: ["on"], home, io: paused.io });
     await paused.reached;
-    // Um produtor que leu a configuração antes da troca abre na geração ligada e grava.
     const ligada = readObserveState(original);
-    const producer = createAutomaticDelivery({ config: { root: original, rootReal: original }, agent: "claude" });
-    await producer.open();
-    const first = claudePayload("pre_tool_bash", { tool_use_id: "chamada-com-o-on-em-voo" });
-    producer.submit(claudeHookDraft(first), first);
-    await producer.settle();
-    const opened = producer.report();
+    const { producer, opened } = await openedInProcess(original, "chamada-com-o-on-em-voo");
     const captures = automaticOf(original).map((capture) => capture.id);
 
     swap();
@@ -870,6 +876,27 @@ test("I23-C4 off encerra e é idempotente: off que entra com o on em voo e a pas
   }
   assert.deepEqual(observed, expected);
 });
+
+// Início de cada linha do conflito: as duas raízes configuradas e, com
+// `startOn`, a raiz original ligada e um hook automático que grava nela. `hook`
+// só acrescenta ao ambiente desse hook no controle do diagnóstico (I25-C47).
+async function conflictStart(label, startOn, hook = {}) {
+  const names = homesWithRoots(label);
+  const { base, home, foreignHome, original, foreign } = names;
+  const next = path.join(base, "raiz nova ação");
+  mkdirSync(next);
+  const project = scratch(`${label} projeto`);
+  const env = homeEnv(home);
+  for (const [owner, root] of [[home, original], [foreignHome, foreign]]) {
+    assert.equal((await runObserveCommand({ argv: ["setup", "--root", root], home: owner })).exitCode, 0);
+  }
+  const bytes = { original: readFileSync(configFile(home)), alheia: readFileSync(configFile(foreignHome)) };
+  if (startOn) {
+    assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
+    assert.deepEqual((await runHook("claude", claudePayload("pre_tool_bash"), { env: { ...env, ...hook }, cwd: project })).report.delivery, DELIVERED_AUTO(1));
+  }
+  return { names, next, project, env, bytes };
+}
 
 // Raiz registrada on enquanto a configuração aponta outra raiz ou sumiu, e
 // registro ilegível (linha "Conflito com o registro"): status não responde pela
@@ -961,20 +988,8 @@ test("I23-C4 off encerra e é idempotente: com a raiz registrada on e a pasta da
   const observed = [];
   const expected = [];
   for (const [index, row] of rows.entries()) {
-    const names = homesWithRoots(`i23 c4 conflito ${index}`);
-    const { base, home, foreignHome, original, foreign } = names;
-    const next = path.join(base, "raiz nova ação");
-    mkdirSync(next);
-    const project = scratch(`i23 c4 conflito ${index} projeto`);
-    const env = homeEnv(home);
-    for (const [owner, root] of [[home, original], [foreignHome, foreign]]) {
-      assert.equal((await runObserveCommand({ argv: ["setup", "--root", root], home: owner })).exitCode, 0);
-    }
-    const bytes = { original: readFileSync(configFile(home)), alheia: readFileSync(configFile(foreignHome)) };
-    if (row.startOn) {
-      assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
-      assert.deepEqual((await runHook("claude", claudePayload("pre_tool_bash"), { env, cwd: project })).report.delivery, DELIVERED_AUTO(1));
-    }
+    const { names, next, project, env, bytes } = await conflictStart(`i23 c4 conflito ${index}`, row.startOn);
+    const { home, original, foreign } = names;
     const captures = existsSync(storeDir(original)) ? automaticOf(original).map((capture) => capture.id) : [];
     await row.replace(names);
     const configNow = () => {
@@ -1009,6 +1024,86 @@ test("I23-C4 off encerra e é idempotente: com a raiz registrada on e a pasta da
     expected.push({ label: row.when, records: row.expect({ captures }), refusedOn: refusedOn.map(({ before }) => before), foreign: {}, controlLock: false });
   }
   assert.deepEqual(observed, expected);
+});
+
+// I25-C47 (issue #25, AC8; linha "Evidência comum dos produtores e formatter
+// legado" do Landing): na CI 40728221657 o hook automático da rotina acima saiu
+// com `delivery_timeout` sem dado nenhum, e na CI 40636157287 o produtor em
+// processo deixou o lock sem que o log dissesse onde. Pelas mesmas rotinas, com o
+// disco parado sob o lock só nesse produtor, a asserção continua vermelha e o
+// mesmo erro sai com a evidência comum. A operação parada é conhecida pela
+// injeção; numa falha real os mesmos campos são evidência, não a causa.
+const LOST_AUTO = { automatic: true, code: "delivery_timeout", entries: 1, committed: 0, persisted: 0, lost: 1, unrouted: 0 };
+const isSegmentTemp = (file) => path.basename(file).startsWith("events-") && path.basename(file).endsWith(".skill-me-tmp");
+
+// O mesmo erro da asserção (tipo e valores) e, na mensagem, a original seguida
+// da evidência; devolve a evidência.
+function evidenceAfterOriginal(failure, reproduce) {
+  assert.ok(failure instanceof assert.AssertionError, `a asserção continua vermelha: ${failure}`);
+  let original;
+  try {
+    reproduce();
+  } catch (error) {
+    original = error.message;
+  }
+  assert.ok(failure.message.startsWith(`${original}\nevidência dos produtores deste teste (`), failure.message);
+  assert.ok(failure.stack.includes(failure.message), "o stack traz a mensagem com a evidência");
+  return failure.message.slice(original.length + 1);
+}
+
+// Nenhuma pasta criada pelo controle (`scratches` desde `since`), nem o
+// temporário, o PATH, IDs de captura, chaves ou canários.
+function assertNoPathOrId(text, since) {
+  const created = scratches.slice(since);
+  for (const value of [tmpdir(), "skill-me i4 ", ...created, ...created.map((dir) => path.basename(dir)), process.env.PATH].filter(Boolean)) {
+    assert.ok(!text.includes(value), "a evidência não traz caminho nem ambiente");
+  }
+  assert.ok(!/[0-9a-f]{32}/.test(text), "a evidência não traz ID de captura nem chave");
+  assert.deepEqual(leaks(text), []);
+}
+
+test("I25-C47 diagnóstico do I23-C4: hook automático parado sob o lock mantém a asserção vermelha e o mesmo erro traz a operação em curso, a raiz lida do home da prova e o lock do hook", async () => {
+  const since = scratches.length;
+  const failure = await recordingProducers(() => conflictStart("i25 c47 conflito parado", true, { SKILL_ME_TEST_TRACES_STALL_SEGMENT: "1" })).then(
+    () => null,
+    (error) => error,
+  );
+  assert.deepEqual([failure?.actual, failure?.expected, failure?.operator], [LOST_AUTO, DELIVERED_AUTO(1), "deepStrictEqual"], String(failure));
+  const evidence = evidenceAfterOriginal(failure, () => assert.deepEqual(LOST_AUTO, DELIVERED_AUTO(1)));
+  assert.ok(evidence.startsWith(`evidência dos produtores deste teste (1):\nprodutor 1 hook claude: status 0, sinal nenhum; entrega ${JSON.stringify(LOST_AUTO)}\n`), evidence);
+  assert.ok(evidence.includes("pendentes na saída: open segmento.tmp (sob o lock, 2ª tomada) há "), evidence);
+  // A conferência de ausência da captura nova não é falha.
+  assert.ok(evidence.includes("falhas nenhuma;") && evidence.includes("ausências conferidas (lstat ENOENT) 1x"), evidence);
+  assert.ok(evidence.includes("raiz 1 (produtores 1): lock presente, de produtor 1 hook claude; capturas indisponível [lock_present]"), evidence);
+  assertNoPathOrId(failure.message, since);
+});
+
+test("I25-C47 diagnóstico do I23-C4: produtor em processo com o io parado mantém a asserção vermelha e o mesmo erro traz a operação em curso, o laço do processo da prova e o lock do produtor", async () => {
+  const since = scratches.length;
+  const { home, original } = homesWithRoots("i25 c47 em processo");
+  assert.equal((await runObserveCommand({ argv: ["setup", "--root", original], home })).exitCode, 0);
+  assert.equal((await runObserveCommand({ argv: ["on"], home })).exitCode, 0);
+  // Injeção pública de io: a criação do temporário do segmento nunca termina.
+  const base = createStoreIo();
+  const stalled = { ...base, writeExclusive: (file, ...rest) => (isSegmentTemp(file) ? new Promise(() => {}) : base.writeExclusive(file, ...rest)) };
+  let opened = null;
+  const failure = await recordingProducers(async () => {
+    ({ opened } = await openedInProcess(original, "chamada-parada", stalled));
+    assert.deepEqual(opened, DELIVERED_AUTO(1));
+  }).then(
+    () => null,
+    (error) => error,
+  );
+  assert.deepEqual(opened, LOST_AUTO);
+  assert.deepEqual([failure?.actual, failure?.expected], [LOST_AUTO, DELIVERED_AUTO(1)], String(failure));
+  const evidence = evidenceAfterOriginal(failure, () => assert.deepEqual(LOST_AUTO, DELIVERED_AUTO(1)));
+  assert.ok(evidence.startsWith(`evidência dos produtores deste teste (1):\nprodutor 1 claude em processo (em processo): entrega ${JSON.stringify(LOST_AUTO)}\n`), evidence);
+  assert.ok(evidence.includes("pendentes no instantâneo: writeExclusive segmento.tmp (sob o lock, 2ª tomada) há "), evidence);
+  assert.ok(evidence.includes("falhas nenhuma;") && evidence.includes("ausências conferidas (lstat ENOENT) 1x"), evidence);
+  assert.ok(evidence.includes("processo: o da prova (produtor em processo), 1ª operação aos "), evidence);
+  assert.match(evidence, /laço de eventos do processo da prova desde a criação do produtor: atraso máximo [\d.]+ ms, p99 [\d.]+ ms \(\d+ amostras\)/);
+  assert.ok(evidence.includes("raiz 1 (produtores 1): lock presente, de produtor 1 claude em processo; capturas indisponível [lock_present]"), evidence);
+  assertNoPathOrId(failure.message, since);
 });
 
 test("I23-C3 on persiste e é idempotente: outro processo vê on com conteúdo sanitizado; repetir on mantém geração e não cria captura", async () => {

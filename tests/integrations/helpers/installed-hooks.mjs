@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { INTEGRATIONS_CLI, parseReport } from "./cli.mjs";
+import { recordedProducer } from "./producer-runs.mjs";
 
 function ownGroups(groups, isOwn) {
   return (Array.isArray(groups) ? groups : []).filter((group) => (group.hooks ?? []).some(isOwn));
@@ -60,9 +61,10 @@ function collect(child, { stdinText, keepStdinOpenMs, extraFd, destroyChannel })
 // form"): com `args`, `command` é iniciado diretamente, sem shell. O payload
 // vai no stdin; o relatório de fixture sai pelo fd 3 (Node → Node direto).
 export function runClaudeHandler(handler, payload, { env, cwd, stdinText, keepStdinOpenMs, reportFd = 3, destroyChannel } = {}) {
+  const recorded = recordedProducer("hook claude instalado", env);
   const child = spawn(handler.command, handler.args, {
     cwd,
-    env: reportFd === null ? env : { ...env, SKILL_ME_OBSERVER_REPORT_FD: String(reportFd) },
+    env: reportFd === null ? recorded.env : { ...recorded.env, SKILL_ME_OBSERVER_REPORT_FD: String(reportFd) },
     stdio: ["pipe", "pipe", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -71,14 +73,15 @@ export function runClaudeHandler(handler, payload, { env, cwd, stdinText, keepSt
     keepStdinOpenMs,
     extraFd: true,
     destroyChannel,
-  }).then((result) => ({ ...result, report: parseReport(reportFd === 2 ? result.stderr : result.fd3) }));
+  }).then((result) => recorded.settle({ ...result, report: parseReport(reportFd === 2 ? result.stderr : result.fd3) }));
 }
 
 // Codex 0.162.1 (hooks/src/engine/command_runner.rs:384-437): Windows
 // `cmd.exe /C "<linha>"` com a linha crua entre aspas; POSIX `$SHELL -lc
 // <linha>`. O fd 3 não atravessa o cmd.exe, então o relatório sai pelo fd 2.
 export function runCodexHandler(handler, payload, { env, cwd, stdinText, keepStdinOpenMs, reportFd = 2, destroyChannel } = {}) {
-  const childEnv = reportFd === null ? env : { ...env, SKILL_ME_OBSERVER_REPORT_FD: String(reportFd) };
+  const recorded = recordedProducer("hook codex instalado", env);
+  const childEnv = reportFd === null ? recorded.env : { ...recorded.env, SKILL_ME_OBSERVER_REPORT_FD: String(reportFd) };
   const child =
     process.platform === "win32"
       ? spawn(env.ComSpec ?? env.COMSPEC ?? "cmd.exe", ["/C", `"${handler.command}"`], {
@@ -98,5 +101,5 @@ export function runCodexHandler(handler, payload, { env, cwd, stdinText, keepStd
     keepStdinOpenMs,
     extraFd: true,
     destroyChannel,
-  }).then((result) => ({ ...result, report: parseReport(reportFd === 3 ? result.fd3 : result.stderr) }));
+  }).then((result) => recorded.settle({ ...result, report: parseReport(reportFd === 3 ? result.fd3 : result.stderr) }));
 }

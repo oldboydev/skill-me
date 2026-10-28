@@ -14,6 +14,7 @@ import {
   explainedUnless,
   exportOf,
   privacyOk,
+  recordProducersInEachTest,
   runHermesIngest,
   runHook,
   startCapture,
@@ -23,6 +24,10 @@ import {
 } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
+
+// Evidência comum dos produtores quando um teste falha (issue #25, linha
+// "Evidência comum dos produtores e formatter legado" do Landing): helpers/traces.mjs.
+recordProducersInEachTest();
 
 // Provas S2 da issue #8 (C9–C11 e C14): `list`, `export` e ciclo de vida pelo
 // CLI real, sobre capturas alimentadas pelos produtores vinculados.

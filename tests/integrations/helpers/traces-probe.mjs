@@ -42,13 +42,16 @@
 // tentativa abandonada no prazo), `exitMs` e os inícios vêm do relógio
 // monotônico do processo, `startedAt` (`performance.timeOrigin`) só serve para
 // correlacionar processos, e `loop` é o atraso do laço de eventos medido pelo
-// `monitorEventLoopDelay`: laço livre com a operação parada aponta o disco;
-// laço parado, o processo (issue #25, linha "Diagnóstico das entregas de um
-// produtor nas provas T8" do Landing).
+// `monitorEventLoopDelay`: laço livre com a operação parada é compatível com uma
+// espera de E/S ou do sistema; laço parado, com o processo parado ou sem CPU —
+// evidências, não a causa (issue #25, linhas "Diagnóstico das entregas de um
+// produtor nas provas T8" e "Evidência comum dos produtores e formatter legado"
+// do Landing). Os tipos de arquivo vêm de helpers/trace-kinds.mjs.
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import { fileKind } from "./trace-kinds.mjs";
 
 const require = createRequire(import.meta.url);
 const fsp = require("node:fs/promises");
@@ -131,19 +134,6 @@ if (blockAt > 0) {
 }
 
 const timingFile = env.SKILL_ME_TEST_TRACES_TIMING;
-const FILE_KINDS = [
-  [/^\.lock$/, "lock"],
-  [/^store\.json$/, "store.json"],
-  [/^state\.json$/, "state.json"],
-  [/^key$/, "key"],
-  [/^events-\d{6}\.ndjson$/, "segmento"],
-  [/^events-\d{6}\.ndjson\.[0-9a-f]{8}\.skill-me-tmp$/, "segmento.tmp"],
-  [/^state\.json\.[0-9a-f]{8}\.skill-me-tmp$/, "state.json.tmp"],
-  // Configuração da observação no home e estado dela no store (#23): o mesmo nome.
-  [/^observe\.json$/, "observe.json"],
-  [/^observe\.json\.[0-9a-f]{8}\.skill-me-tmp$/, "observe.json.tmp"],
-];
-const fileKind = (file) => (typeof file === "string" ? (FILE_KINDS.find(([pattern]) => pattern.test(path.basename(file)))?.[1] ?? "pasta") : "fd");
 
 const tenth = (ms) => Math.round(ms * 10) / 10;
 

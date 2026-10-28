@@ -23,6 +23,7 @@ import {
   inspected,
   privacyBody,
   privacyOk,
+  recordProducersInEachTest,
   runHermesIngest,
   runInternal,
   sameEnvelope,
@@ -32,6 +33,10 @@ import {
   timingLines,
 } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
+
+// Evidência comum dos produtores quando um teste falha (issue #25, linha
+// "Evidência comum dos produtores e formatter legado" do Landing): helpers/traces.mjs.
+recordProducersInEachTest();
 
 // Provas S2 da issue #23 (C6, C7, C10, C14): hooks Claude e Codex pela linha
 // que o instalador grava, iniciados como o agente os inicia, com a observação

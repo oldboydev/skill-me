@@ -16,12 +16,17 @@ import {
   describeDeliveryEvidence,
   explainedUnless,
   exportOf,
+  recordProducersInEachTest,
   runHermesIngest,
   runHook,
   startCapture,
   storeDir,
   timedEnv,
 } from "../helpers/traces.mjs";
+
+// Evidência comum dos produtores quando um teste falha (issue #25, linha
+// "Evidência comum dos produtores e formatter legado" do Landing): helpers/traces.mjs.
+recordProducersInEachTest();
 
 // Prova C18 da issue #8: a releitura entrega a um consumidor analítico falso
 // só os registros v1 sanitizados, na ordem gravada, com origem e contadores, e

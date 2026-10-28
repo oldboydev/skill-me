@@ -28,6 +28,7 @@ import {
   inspected,
   privacyBody,
   privacyOk,
+  recordProducersInEachTest,
   runHermesIngest,
   runHook,
   shown,
@@ -40,6 +41,10 @@ import {
 } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
+
+// Evidência comum dos produtores quando um teste falha (issue #25, linha
+// "Evidência comum dos produtores e formatter legado" do Landing): helpers/traces.mjs.
+recordProducersInEachTest();
 
 // Provas S3 da issue #8 (C15–C16): produtores reais concorrentes na mesma
 // captura e falhas de entrega (lock ocupado, E/S, confirmação perdida, disco
