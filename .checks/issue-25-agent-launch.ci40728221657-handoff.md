@@ -136,3 +136,19 @@ antes). O D fica **incompleto, interrompido para diagnóstico**: não é PASS ne
 “D vermelho” acima, leia D interrompido. O candidato, na harness do I4-C16c, é o `end` do stdout perdido
 quando o EOF chega antes do `exit`. Ele é reproduzido e corrigido na continuação seguinte, sem ser
 chamado de causa confirmada da parada.
+
+### Consumidor lento do I4-C16c (continuação do mesmo autor)
+
+- **D de `dc0db9b`**: incompleto, interrompido pelo coordenador; não é PASS nem falha do produto.
+- **Harness**: o consumidor lento do I4-C16c passa a esperar o `exit` e o fim do stdout em qualquer
+  ordem. Registro antes do código em `fc5155b`, harness em `68f84c4` e gates em `0ae940a`. Produto,
+  carga, prazos e asserções não mudaram.
+- **Provas**:
+  - RED determinístico com a lógica anterior extraída sem mudança: pendente depois do `exit`;
+  - GREEN; 2 mutações detectadas;
+  - uma observação descartável mostrou que o `end` perdido deixa o processo do arquivo parado, com o
+    mesmo relatório do D quando terminado de fora.
+- **Gates em `0ae940a`**: A 365/353/0/12, B 365/353/0/12, C 365/345/0/20 e D com exit 0,
+  1.054/1.034/0/20, com os nativos do Hermes.
+- A ordem dos eventos no D interrompido não está demonstrada, e as causas históricas continuam
+  desconhecidas. Próximos passos com o coordenador: Verifier 19, formal 12, CI e merge.

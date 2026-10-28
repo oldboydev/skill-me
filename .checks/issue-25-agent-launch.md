@@ -1553,3 +1553,33 @@ Consumidor lento do I4-C16c — mesma sessão de autor, continuação (registros
   - **Forma**: a de `dc0db9b`, com os scripts `run-target4.sh`, `make-clone-B4.sh`, `wsl-run4.sh`,
     `run-npm-test4.sh` e `isolated-temp.mjs` em `builder-stdout-eof/`, um clone novo e roots novas.
   - **Orçamentos na chamada, definidos antes**: 1 h para cada um de A, B e C; 2 h para o D.
+- **Resultado dos gates em `0ae940a`** (código de `68f84c4`, produto de `322bcad`; logs em `builder-stdout-eof/`):
+  - **A**: 365 testes, 353 pass, 0 fail, 12 skip.
+  - **B**: 365 testes, 353 pass, 0 fail, 12 skip.
+  - **C**: 365 testes, 345 pass, 0 fail, 20 skip.
+  - Em A, B e C passaram os 2 controles novos, o I4-C16c, as 8 provas de prazo e o T8-C16 original (3
+    criações exatas). Os 359 nomes de topo são os mesmos nos três (os de `dc0db9b` mais os 2 controles,
+    nenhum ausente), e os skips são os de `dc0db9b` em nomes e motivos.
+  - **D**: o `npm test` completo terminou sozinho com **exit 0** (19:01:27–19:12:10). Resultado: 1.054
+    testes, 1.034 pass, 0 fail, 20 skip — governança 25/25, motor 16/16, doctor 417 (410/0/7) e
+    integrações 596 (583/0/13).
+    - Passaram as 11 nativas do Hermes com runtime, a observação Hermes do I4-C35 (sem o diagnóstico
+      de não executada), o I23-C8 pelo Python do sistema, o I4-C16c, o I4-C17, as 10 provas novas
+      desta continuação e da anterior e os 9 T8-C16.
+    - Os 20 skips são os do D de `cd4afc2`.
+  - Depois de cada gate, `git status` vazio e nenhum processo `node` do repositório vivo.
+- **Temporário**: as pastas isoladas do RED, do GREEN, de A, B e D foram removidas pelo caminho e pelo `ino`
+  registrados; a do C, pelo caminho, uid 1000 e inode; o clone do B, pelo caminho exato. Nada do perfil
+  WSL nem do `/tmp` global foi lido. A observação descartável e as mutações não criaram temporário.
+- **O que isso prova e o que não prova**:
+  - O RED reproduz de forma determinística o `end` perdido com o EOF antes do `exit`; a observação mostra
+    que isso deixa o arquivo parado. A harness corrigida espera as duas ordens.
+  - Não demonstra a ordem dos eventos no D interrompido de `dc0db9b`: a causa daquela parada continua não
+    demonstrada.
+  - As causas históricas da CI 93, do I23 e do T8-C4 continuam desconhecidas; a medição sintética
+    4.500/4.500 não substitui o pipeline.
+- **O que foi abandonado**: esperar o `close`; ler em fluxo desde o início; timeout, `--test-force-exit`
+  ou menos linhas; controles sobre uma cópia corrigida da lógica; utilitário de streams novo; repetir o D
+  de `dc0db9b` sem mudança.
+- **Pendentes, com o coordenador**: o Verifier 19, a formal 12, a publicação, a CI nova e o merge, já
+  autorizados. Nada aqui afirma PASS do Verifier, `ready` nem CI verde.

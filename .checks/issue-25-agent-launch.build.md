@@ -2457,3 +2457,38 @@ descartável, mostra que essa ordem deixa o arquivo parado. **Não** mostra que 
 
 **Lista dos gates** (`gate-files-68f84c4.txt`): a mesma de `dc0db9b`, 43 arquivos, sha256 `e26c5163…74d9`.
 Esperado: 365 testes.
+
+**Gates em `0ae940a`** (código de `68f84c4`; definidos e registrados antes de rodar; uma execução de cada,
+sem filtro, concorrência 4 em A/B/C; orçamentos na chamada: 1 h em A, B e C e 2 h no D; logs em
+`builder-stdout-eof/`):
+
+| Gate | Ambiente | Início–fim | Testes | Pass | Fail | Skip |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | checkout principal, Windows, Node 24.22.1, npm 11.19.1, `npm_execpath` ausente | 18:37:27–18:49:17 | 365 | 353 | 0 | 12 |
+| B | clone git novo (`core.autocrlf=true` no `.git/config` dele), Node 24.13.0 oficial, npm 11.6.2 ao lado, `npm_execpath` ausente | 18:49:40–18:59:40 | 365 | 353 | 0 | 12 |
+| C | WSL `Ubuntu`, uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, `env -i`, `HOME`/`RUNNER_TEMP`/`TMPDIR` no scratch, PATH sem `/usr/bin` | 18:59:57–19:01:13 | 365 | 345 | 0 | 20 |
+| D | `npm test` completo, Windows, Node 24.22.1, teto 8, nativos do Hermes | 19:01:27–19:12:10 | 1.054 | 1.034 | 0 | 20 |
+
+- **A/B/C**: a lista `gate-files-68f84c4.txt` (43 arquivos, sha256 `e26c5163…74d9`). No B, ela foi
+  recalculada dentro do clone, lendo a lista anterior pelo caminho do checkout principal: mesmo sha256.
+- `RUNNER_TEMP` presente e válido. Temporário na pasta criada e registrada pela execução. `git status`
+  vazio antes e depois.
+- O C extraiu a árvore `4b135e4b…` do `git archive` de `0ae940a`, sem CR.
+- Os 359 nomes de topo são iguais em A, B e C: os de `dc0db9b` mais os 2 controles, nenhum ausente. Os
+  skips são os de `dc0db9b` em nomes e motivos.
+- **D**: exit 0, sem interrupção. Governança 25/25, motor 16/16, doctor 417 (410/0/7), integrações 596
+  (583/0/13; 467 s).
+  - Passaram as 11 nativas do Hermes com runtime (I4-C18 a C23, C37, C44b, I25-C40 e os dois I23-C8
+    com runtime), a observação Hermes do I4-C35 e o I23-C8 pelo Python do sistema.
+  - Passaram também o I4-C16c (1.987 ms), o I4-C17, os 2 controles novos, as 8 provas de prazo e os 9
+    T8-C16.
+  - Os 20 skips são os do D de `cd4afc2`. Depois, nenhum processo `node` do repositório ficou vivo.
+- As pastas isoladas foram removidas pelo caminho e `ino` registrados (A 110, B 1.031 e D 128 entradas
+  deixadas pelos testes); a do C, pelo caminho, uid e inode; o clone do B, pelo caminho exato.
+
+**O que fica demonstrado e o que não**: o `end` perdido com o EOF antes do `exit` está reproduzido de forma
+determinística e corrigido; a observação mostra que, sem a correção, ele deixa o arquivo parado. A ordem
+dos eventos no D interrompido de `dc0db9b` não está demonstrada. As causas históricas da CI 93, do I23 e do
+T8-C4 continuam desconhecidas.
+
+Pendentes, com o coordenador: o Verifier 19, a formal 12, a publicação, a CI nova e o merge.
