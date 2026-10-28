@@ -1391,3 +1391,41 @@ alvo A e 15,7 s no `npm test`, com cargas diferentes, então o custo não foi me
 operação que nunca termina não aparece na linha da pré-carga: a evidência diz a última concluída. Os
 20 minutos do job evitam o cancelamento pelo limite total e não garantem a próxima CI verde. Nenhum
 CI, push, Verifier ou revisão rodou aqui: o Verifier 12 e a formal 7 são do orquestrador.
+
+## CI 40636157287 (Windows): I23-C4 e T8-C11 com `lock_present`, diagnóstico sem correção
+
+Estado de partida: HEAD `9244eea`. O Verifier 12 deu PASS 48/48 (relatório em `9244eea`) e a formal 7
+`ready` 8/8, ambos preservados. O orquestrador publicou a branch e atualizou o PR #28. Na CI nova,
+Ubuntu e macOS passaram; o Windows (Node 24.13.0, npm 11.6.2) terminou em `failure` dentro do
+orçamento de 20 min: integrações com 567 testes, 541 pass, **2 fail**, 24 skip, em 473.250,7 ms.
+Passaram nela o I23-C10, os C47, o T8-C15 e os C46. Log preservado pelo orquestrador:
+`.checks/code-review/issue-25/ci40636157287-windows.tail.txt`. O diagnóstico completo, com as propostas
+para decisão, está em `.checks/issue-25-agent-launch.ci40636157287-handoff.md`; os logs, em
+`.checks/code-review/issue-25/builder-ci40636157287/` (pasta ignorada).
+
+- **I23-C4** (`observe/control.cli.test.mjs:838`): o `privacy list` de `automaticOf` encontrou o lock
+  (`4 !== 0`) logo depois do produtor em processo. **T8-C11** (`traces/query.cli.test.mjs:194`, fase
+  `active`): o `privacy export` encontrou o lock depois dos quatro produtores reais. As duas provas são
+  antigas, sem diff na feature, e não conferem o relatório de entrega dos produtores.
+- **Quem segurava o lock**: pelo código e pelas pausas da prova (`pausedAt`), só os produtores, em
+  três vias que o contrato admite: tentativa abandonada no prazo com o lock, liberação que falha, e
+  falha ao gravar os bytes do lock depois de criá-lo (esta só por leitura, código da #5).
+- **Base × HEAD** (`ops-compare.mjs`): as operações do hook vinculado (89, 2 flushes, tomadas de 28 e
+  39) e do hook automático na 1ª entrega (103, 5 flushes, tomadas de 19 e 53) são idênticas em `63621c6`
+  e `9244eea`.
+- **Controles de sintoma** (`symptom-controls.mjs`, cópia descartável do HEAD, um produtor alterado):
+  - os controles saudáveis passam;
+  - a tentativa parada além do prazo e a liberação que falha reproduzem a mensagem exata da CI nas
+    duas provas (`:194` e `:838`).
+- **Não se sabe**: qual via e qual produtor; por que as operações de lock param ou falham no runner;
+  a taxa.
+
+Nenhum produto, prova, workflow ou configuração mudou, e nenhuma CI, gate, Verifier ou revisão foi
+executado. A decisão pedida ao proprietário, no handoff, tem quatro opções:
+- A (recomendada): medir a latência do lock no runner Windows com e sem a mitigação, num job só de
+  `workflow_dispatch`, com a regra de decisão declarada antes;
+- B: adotar a mitigação no `verify` Windows;
+- C: nova tentativa limitada na liberação do lock (contrato; reverte a C43);
+- D: integrações do Windows informativas para o merge (política).
+
+Prazos, retry, perdas, carga, paralelismo, teto 8 e os orçamentos 20/10/5 continuam sem mudança.

@@ -689,3 +689,17 @@ Diagnóstico do I23-C10 e orçamento do job Windows, aprovados (registros acima 
 - O que foi abandonado: copiar `failuresWithPhase`/`inspected` para o arquivo do I23; reaproveitar a
   fase “antes/depois do commit” no caminho automático; listar o `lstat ENOENT` como falha; calcular a
   evidência em toda etapa; teste que só repete a expressão do workflow.
+
+CI 40636157287 no Windows (registros acima preservados):
+
+- Onde a fronteira caiu agora: só diagnóstico, sem código. O I23-C4 e o T8-C11, provas antigas sem
+  diff na feature, falharam com `lock_present` num leitor logo depois dos produtores. O lock só podia
+  ser de um produtor, por vias que o contrato admite. As operações desses produtores são idênticas na
+  base e no HEAD, e as vias reproduzem as mensagens exatas da CI. A causa e a via de cada falha não são
+  conhecidas. Nenhum check, critério, prazo, workflow ou produto mudou. Detalhes em
+  `.checks/issue-25-agent-launch.ci40636157287-handoff.md` e no build.
+- O que o proprietário precisa decidir: uma das opções A–D do handoff (medir antes de mudar o runner,
+  mitigação no runner Windows, contrato da liberação do lock ou política de merge). Verifier 12 PASS e
+  formal 7 `ready` ficam preservados; Verifier 13 ou formal 8 só depois de código, se houver.
+- O que foi abandonado: rodar a CI ou o gate de novo até ficar verde; instrumentar mais provas uma a
+  uma; atribuir a parada a antivírus, relógio, disco ou hardware sem prova.
