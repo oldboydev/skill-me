@@ -1536,3 +1536,20 @@ Consumidor lento do I4-C16c — mesma sessão de autor, continuação (registros
     de 2 h na chamada, definido antes; nada rastreado é editado durante ele.
   - Logs em `.checks/code-review/issue-25/builder-stdout-eof/`. Se algo travar de novo: registrar e
     investigar, sem timeout relaxado nem repetição sem mudança.
+- **Onde a fronteira caiu**: registro em `fc5155b`; harness em `68f84c4` (só
+  `tests/integrations/codex-run.cli.test.mjs`: a função privada `readStdoutSlowly`, usada pelo I4-C16c real,
+  e os dois controles C46 (q)). Produto sem mudança desde `322bcad`.
+  - **RED** (a função com a lógica de `a2ec111` extraída sem mudança — corpo de 13 linhas idêntico fora a
+    indentação —, Windows 24.22.1, pasta temporária isolada): 4 testes, 3 pass, 1 fail. EOF antes do
+    `exit`: `o exit depois do EOF resolve`, `false !== true`, e o arquivo terminou sem travar. O `exit`
+    antes do EOF, o I4-C16 e o I4-C16c passaram.
+  - **GREEN** (`68f84c4`): alvo 4/4; o arquivo inteiro deu 11 testes, 10 pass e 1 skip (I4-C15, POSIX).
+  - **Mutações**, cada uma detectada: resolver só no `end` → `pendente sem o exit`; resolver só no `exit`
+    → `pendente sem o EOF`.
+- **Gates definidos depois do último código (`68f84c4`) e antes de rodar**:
+  - **Lista**: os mesmos 43 arquivos de `dc0db9b` (`builder-stdout-eof/gate-files-68f84c4.txt`, sha256
+    `e26c5163…74d9`, recalculada no HEAD). Só o `codex-run.cli`, que já está na lista, mudou; o esperado
+    é 365 testes (363 mais os 2 controles).
+  - **Forma**: a de `dc0db9b`, com os scripts `run-target4.sh`, `make-clone-B4.sh`, `wsl-run4.sh`,
+    `run-npm-test4.sh` e `isolated-temp.mjs` em `builder-stdout-eof/`, um clone novo e roots novas.
+  - **Orçamentos na chamada, definidos antes**: 1 h para cada um de A, B e C; 2 h para o D.

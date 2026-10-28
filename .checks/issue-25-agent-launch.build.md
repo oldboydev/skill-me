@@ -2424,3 +2424,36 @@ filho falso (`EventEmitter`) e um `PassThrough` real, recebeu o EOF antes do `ex
   subteste. O runner do Node 24.22.1 não cancela um teste pendente sem handles; o processo fica.
 - Nenhum processo da sonda ficou vivo.
 - Isso é compatível com o D, mas não demonstra que, naquela execução, o EOF chegou antes do `exit`.
+
+**Harness corrigida** (`68f84c4`, só `tests/integrations/codex-run.cli.test.mjs`). A lógica do consumidor
+lento vai para a função privada `readStdoutSlowly(child)`, usada pelo I4-C16c real (mesmo `spawn`, mesmas
+3.000 linhas de 200 `z`, 50 ms, status 17, tamanho e Buffer exatos). A função:
+- observa o `end` desde o início;
+- no `exit`, limpa o intervalo e registra o `data` antes do `resume`;
+- resolve `{status, stdout}` quando houver o `exit` e o `end`, em qualquer ordem.
+
+Dois controles `I25-C46 consumidor lento do I4-C16c: …` usam a mesma função com um filho falso
+(`EventEmitter`) e um `PassThrough` real. A pendência e a resolução são conferidas depois de voltas de
+`setImmediate`. Um `finally` emite o `exit` que faltar (o que limpa o intervalo), destrói o stream e remove
+os listeners. A espera do `end` no primeiro controle tem `AbortSignal.timeout(5_000)`, só para a
+pré-condição do controle novo; nenhuma espera, prazo ou tolerância existente mudou.
+
+**RED** (`builder-stdout-eof/red-*`, a função com o corpo de `a2ec111` sem mudança —
+`red-extraction-check.txt`; a versão usada está em `codex-run.cli.extracted-previous.mjs`, e
+`red-vs-commit.diff` mostra que ela difere do commit só no comentário e no corpo da função). Windows
+24.22.1, `--test-name-pattern="I4-C16|I25-C46 consumidor lento"`, pasta temporária isolada: 4 testes, 3
+pass, 1 fail. EOF antes do `exit`: `AssertionError: o exit depois do EOF resolve`, `false !== true`; o
+arquivo terminou normalmente (exit 1), sem travar.
+
+**GREEN** (`green-*`): o alvo deu 4/4; o arquivo inteiro, 11 testes (10 pass, 1 skip, o I4-C15 do POSIX).
+
+**Mutações** (`mutate-eof.mjs`, `mutation-E*.spec.txt`; o arquivo foi restaurado e conferido pelo sha256):
+- E2, resolver no `end` sem o `exit`: `pendente sem o exit`;
+- E3, resolver no `exit` sem o `end`: `pendente sem o EOF`.
+
+O RED reproduz de forma determinística a lógica anterior na ordem EOF antes do `exit`. Com a observação
+descartável, mostra que essa ordem deixa o arquivo parado. **Não** mostra que essa foi a ordem no D de
+`dc0db9b`; a causa daquela parada continua não demonstrada.
+
+**Lista dos gates** (`gate-files-68f84c4.txt`): a mesma de `dc0db9b`, 43 arquivos, sha256 `e26c5163…74d9`.
+Esperado: 365 testes.
