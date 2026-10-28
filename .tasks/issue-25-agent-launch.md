@@ -328,6 +328,22 @@ o proprietário autorizou o diagnóstico pontual nesta entrega (AC7, ver `Source
     for demonstrada e couber nos contratos atuais (sem nova tentativa de E/S, aceitação de perdas,
     redução de concorrência ou mudança de prazos); senão, o caso concreto volta ao proprietário.
 
+    Refinamento do critério 38 (CI 40709943742 e execução manual 40710014746 no Windows: T8-C3,
+    T8-C8, T8-C14 e T8-C18, provas antigas da #8; descoberta necessária do mesmo trabalho de CI, sem
+    critério novo). As quatro provas mantêm produtores, asserções e prazos. Quando a entrega de um
+    produtor, ou o `privacy stop` do T8-C18, não vem como esperado, a mensagem traz por produtor:
+    - o relatório de entrega;
+    - as operações de disco com erro e as que ainda estavam em curso na saída, com a tomada do lock
+      em que ocorreram e há quanto tempo;
+    - a última operação concluída;
+    - quando o processo começou e saiu;
+    - o maior atraso do laço de eventos.
+
+    Da captura, a mensagem traz o estado e os contadores, segmentos e temporários, e se o lock está
+    presente e de qual produtor. Não traz caminho, conteúdo, chave nem ambiente. A instrumentação
+    não é a correção da causa; uma correção só segue se a causa for demonstrada e couber nos
+    contratos atuais.
+
 ### Regressão da execução completa instrumentada: primeira criação concorrente do store (C32; critério 25 sem mudança)
 
 Na execução completa instrumentada em `710076e` (Windows, Node 24.22.1, teto de 8 arquivos), o T8-C15 e
