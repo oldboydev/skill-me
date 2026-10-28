@@ -127,3 +127,12 @@ Nada aqui afirma CI verde, `ready` nem causa corrigida.
   mudado, e a causa é desconhecida. Não foi repetido nem corrigido.
 - A causa histórica dos `delivery_timeout` no Windows continua desconhecida. Nada aqui afirma PASS,
   `ready` nem CI verde.
+
+### Retificação do D desta continuação (aditiva)
+
+O D de `dc0db9b` não terminou sozinho. O coordenador interrompeu só o processo parado do
+`codex-run.cli.test.mjs` (PID 149528, 18:21:49; `builder-t8c16-terminal/coordinator-D-stall.json`, escrito
+antes). O D fica **incompleto, interrompido para diagnóstico**: não é PASS nem falha do produto. Onde se lê
+“D vermelho” acima, leia D interrompido. O candidato, na harness do I4-C16c, é o `end` do stdout perdido
+quando o EOF chega antes do `exit`. Ele é reproduzido e corrigido na continuação seguinte, sem ser
+chamado de causa confirmada da parada.

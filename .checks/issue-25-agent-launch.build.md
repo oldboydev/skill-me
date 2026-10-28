@@ -2401,3 +2401,26 @@ Pendentes, com o coordenador:
 - o D vermelho (`codex-run.cli`, causa desconhecida, fora deste escopo);
 - o Verifier 19 e a formal 12;
 - a publicação e a CI nova.
+
+## Retificação do D de `dc0db9b` e consumidor lento do I4-C16c (C46 (q))
+
+**Retificação aditiva da seção anterior** (texto e logs preservados): o D de `dc0db9b` não terminou sozinho.
+- O coordenador interrompeu só o processo do `codex-run.cli.test.mjs` (PID 149528, pai 101844, criado às
+  17:47:34, sem filhos, 0,30 s de CPU), às 18:21:49, depois de conferir o nome, o pai, a criação, a
+  ausência de filhos e a cadeia até o Bash desta sessão, com o stdout no `D-npm-test.log`. O registro
+  (`builder-t8c16-terminal/coordinator-D-stall.json`) foi escrito antes do término.
+- O `EXIT=1`, o `'test failed'` em `:1:1` e as integrações 593/579/1/13 são efeito desse término. O D está
+  **incompleto, interrompido pelo coordenador para diagnóstico**: não é PASS nem prova de defeito do
+  produto.
+- “Saiu com exit 1”, “a falha é o arquivo inteiro” e “D vermelho”, acima, devem ser lidos assim.
+- A/B/C de `dc0db9b` continuam provas daquele HEAD.
+
+**Observação antes do código** (`builder-stdout-eof/pending-probe.test.mjs` e `pending-probe-24.22.1.txt`;
+descartável, não é prova). Num arquivo próprio, a lógica anterior do I4-C16c (copiada só ali), com um
+filho falso (`EventEmitter`) e um `PassThrough` real, recebeu o EOF antes do `exit`.
+- O `exit` saiu aos 76 ms e o processo do arquivo ficou parado até o `timeout 120` terminar o
+  `node --test`.
+- O relatório foi o do D: `✖ pending-probe.test.mjs (120081 ms)`, `'test failed'` em `:1:1`, sem
+  subteste. O runner do Node 24.22.1 não cancela um teste pendente sem handles; o processo fica.
+- Nenhum processo da sonda ficou vivo.
+- Isso é compatível com o D, mas não demonstra que, naquela execução, o EOF chegou antes do `exit`.

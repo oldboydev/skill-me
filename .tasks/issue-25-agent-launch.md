@@ -383,6 +383,12 @@ o proprietário autorizou o diagnóstico pontual nesta entrega (AC7, ver `Source
     exatamente 3 criações. O defeito existe também na `main` (`63621c6`); isso não dispensa a
     correção nesta entrega.
 
+    Refinamento do critério 38 (gate D em `dc0db9b`, interrompido pelo coordenador:
+    `codex-run.cli.test.mjs` parado depois do I4-C16; prova antiga da #4 usada na regressão da #25;
+    sem critério novo). O consumidor lento do I4-C16c resolve quando houver o `exit` do wrapper e o
+    fim do stdout, em qualquer ordem, com os bytes e o status exatos. Carga, intervalo, wrapper,
+    fixture, asserções e produto não mudam. A correção da prova não demonstra a causa da parada do D.
+
 ### Regressão da execução completa instrumentada: primeira criação concorrente do store (C32; critério 25 sem mudança)
 
 Na execução completa instrumentada em `710076e` (Windows, Node 24.22.1, teto de 8 arquivos), o T8-C15 e
