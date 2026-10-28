@@ -425,6 +425,18 @@ provado pelo C49.
     pastas, e o supervisor só encerra os filhos que criou. As provas ficam em
     `scripts/ci-lock-latency.test.mjs`, dentro de `npm run test:governance`.
 
+    Refinamento do critério 42 (verificação 13 em `631e281`, achados 2 e 3 do relatório em
+    `0e0325f`; correção necessária da ferramenta aprovada, sem critério novo):
+    - **Limpeza**: uma falha ao remover a pasta própria de uma fase não derruba a medição. A guarda
+      continua estrita. A falha sai na limpeza com o código, sem caminho. A pasta nunca é dada como
+      removida. As fases medidas e as seguintes ficam no relatório.
+    - **Supervisão**: qualquer erro do supervisor encerra só os filhos que ele criou e espera o
+      fechamento de cada um, como no teto. Isso vale para um erro no início de uma fase, depois de
+      filhos já iniciados, e para o erro assíncrono de um filho. A fase sai com o que já foi
+      escrito, os incompletos e o código do erro, e a medição segue.
+
+    Prazos, quantidades, carga e as demais regras deste critério não mudam.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
