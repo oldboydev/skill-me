@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { after, test } from "node:test";
 import { makeScratch } from "./helpers/cli.mjs";
 import { FIXTURES_DIR } from "./helpers/fixtures.mjs";
-import { locateSystemPython } from "./helpers/hermes-runtime.mjs";
+import { FIXTURE_PLUGINS, installFixturePlugin, locateSystemPython, removeFixturePlugin } from "./helpers/hermes-runtime.mjs";
+import { snapshotTree } from "./helpers/tree.mjs";
 
 // Provas C39 e C40 da issue #25 (S6, autorização 6419121665): a espera da
 // harness nativa do Hermes termina pela entrega, não por 300 ms de contadores
@@ -302,4 +304,26 @@ test("I25-C44 harness real: a leitura transitória da falha não encerra a esper
   assert.ok(result.settle.waitedMs >= 600, `esperou ${result.settle.waitedMs} ms`);
   const none = realHarness("i25 c44 sem destino", [[0, stats({ enqueued: 0, active: false })]]);
   assert.deepEqual([none.result.settle?.state, none.result.stats.enqueued, none.result.stats.deliveryFailed], ["inactive", 0, 0]);
+});
+
+// I25-C40 (refinamento do gate B em 60bbda8; linha "Preparação da fixture do
+// plugin Hermes no Node 24.13.0" do Landing): a preparação das provas nativas e
+// do I4-C35 instala o plugin de fixture versionado no HERMES_HOME temporário. No
+// Windows com o Node 24.13.0 e "ação" no caminho, o `cpSync` antigo deixava o
+// destino vazio sem lançar, e o Hermes não conhecia a ferramenta. Roda sem o
+// Hermes; só discrimina no Windows com o 24.13.0 (lá a preparação antiga falha).
+test("I25-C40 fixture do plugin: num HERMES_HOME com ação, a ferramenta de fixture chega com os bytes exatos da fonte, e a remoção dela não esconde um plugin ausente", async () => {
+  const base = makeScratch("i25 c40 fixture ação");
+  const home = path.join(base, "hermes home ação");
+  mkdirSync(home);
+  const source = snapshotTree(path.join(FIXTURE_PLUGINS, "skillme-fixture-tool"), { withMtime: false });
+  assert.deepEqual(Object.keys(source), ["__init__.py", "plugin.yaml"], "a fonte versionada");
+  await installFixturePlugin(home, "skillme-fixture-tool");
+  const copied = path.join(home, "plugins", "skillme-fixture-tool");
+  // Nomes, tipo arquivo regular, bytes e sha256 de cada arquivo; nenhum link.
+  assert.deepEqual(snapshotTree(copied, { withMtime: false }), source);
+  await removeFixturePlugin(home, "skillme-fixture-tool");
+  assert.ok(!existsSync(copied), "o plugin saiu");
+  await assert.rejects(removeFixturePlugin(home, "skillme-fixture-tool"), { code: "ENOENT" });
+  await rm(base, { recursive: true });
 });

@@ -49,10 +49,13 @@ function collect(child, { stdinText, keepStdinOpenMs, extraFd, destroyChannel })
     child.stdin.on("error", () => {});
     if (stdinText !== undefined) child.stdin.write(stdinText);
     if (keepStdinOpenMs === undefined) child.stdin.end();
-    const started = Date.now();
+    // Duração pelo relógio monotônico: no WSL o relógio civil recua ~1,8 s a cada
+    // ~30 s, e o `Date.now()` dava 53–1.499 ms a chamadas de ~2.060 ms (gate C em
+    // 60bbda8; linha "Duração monotônica no apoio dos hooks instalados" do Landing).
+    const started = performance.now();
     child.on("close", (status, signal) => {
       child.stdin.destroy();
-      resolve({ status, signal, stdout, stderr, fd3, elapsedMs: Date.now() - started });
+      resolve({ status, signal, stdout, stderr, fd3, elapsedMs: Math.round(performance.now() - started) });
     });
   });
 }
