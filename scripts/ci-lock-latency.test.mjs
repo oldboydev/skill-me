@@ -97,6 +97,19 @@ async function withFailingRemoval(fails, code, run) {
   }
 }
 
+// Põe o RUNNER_TEMP do processo da prova só durante `run` e, no `finally`, o
+// devolve ao valor anterior ou à ausência. TEMP e TMP não mudam.
+async function withProcessRunnerTemp(value, run) {
+  const before = process.env.RUNNER_TEMP;
+  process.env.RUNNER_TEMP = value;
+  try {
+    return await run();
+  } finally {
+    if (before === undefined) delete process.env.RUNNER_TEMP;
+    else process.env.RUNNER_TEMP = before;
+  }
+}
+
 // Um processo alheio ao supervisor, iniciado pela prova, que tem de continuar vivo.
 const foreignProcess = () => {
   const foreign = registered(spawn(process.execPath, ["-e", forever], { stdio: "ignore", windowsHide: true }));
@@ -387,6 +400,42 @@ test("C50 relatório: A1/B/A2 com o RUNNER_TEMP distinto, uma fase sem ele, e ne
       assert.ok(!text.includes(value) && !text.includes(JSON.stringify(value).slice(1, -1)), "nenhum caminho nem variável de ambiente");
     }
     assert.doesNotMatch(text, /[0-9a-f]{16}/, "nenhum nonce");
+  }
+});
+
+test("C50 fonte do RUNNER_TEMP: com a variável presente no processo, o planejamento sem valor e a medição com env {} não a herdam", async () => {
+  const small = { producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 60_000 };
+  const standard = scratch("fonte padrao");
+  const processRunner = scratch("fonte runner do processo");
+  const shape = (p) => ({ comparacao: p.comparacao, runner: p.destinos.runner, phases: p.phases.map(({ fase, destino, dir }) => [fase, destino, dir]) });
+  const absent = { comparacao: "não aplicável: RUNNER_TEMP ausente", runner: { indisponivel: "RUNNER_TEMP ausente" }, phases: [["A", "padrao", standard]] };
+  await withProcessRunnerTemp(processRunner, async () => {
+    assert.equal(process.env.RUNNER_TEMP, processRunner, "a variável está presente no processo");
+    assert.deepEqual(shape(resolveDestinations({ tmpdir: standard, runnerTemp: undefined })), absent, "runnerTemp undefined é ausente");
+    assert.deepEqual(shape(resolveDestinations({ tmpdir: standard })), absent, "sem a chave runnerTemp é ausente");
+    const report = await measure({ phase: small, env: {}, tmpdir: standard });
+    assert.deepEqual(
+      [report.comparacao, report.destinos.runner, report.fases.map((f) => [f.fase, f.destino, f.ciclos?.concluidos])],
+      ["não aplicável: RUNNER_TEMP ausente", { indisponivel: "RUNNER_TEMP ausente" }, [["A", "padrao", 6]]],
+    );
+    assert.deepEqual(readdirSync(processRunner), [], "nada no RUNNER_TEMP do processo");
+  });
+});
+
+test("C50 fonte do RUNNER_TEMP pelo padrão do CLI: sem env, a medição lê o RUNNER_TEMP do processo e, distinto, roda A1/B/A2 nele", async () => {
+  const small = { producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 60_000 };
+  const standard = scratch("cli padrao");
+  const processRunner = scratch("cli runner do processo");
+  const report = await withProcessRunnerTemp(processRunner, () => measure({ phase: small, tmpdir: standard }));
+  assert.deepEqual(
+    [report.comparacao, report.fases.map((f) => [f.fase, f.destino, f.ciclos?.concluidos])],
+    ["A1/B/A2", [["A1", "padrao", 6], ["B", "runner", 6], ["A2", "padrao", 6]]],
+  );
+  assert.deepEqual(report.limpeza, { removidas: 3, recusadas: [], falhas: [] });
+  assert.deepEqual([readdirSync(standard), readdirSync(processRunner)], [[], []], "as pastas da medição saíram");
+  const text = JSON.stringify(report);
+  for (const value of [standard, processRunner]) {
+    assert.ok(!text.includes(value) && !text.includes(JSON.stringify(value).slice(1, -1)), "nenhum caminho");
   }
 });
 

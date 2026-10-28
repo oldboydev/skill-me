@@ -65,8 +65,10 @@ const volumeOf = (real, platform) => {
 
 // Destinos e fases. O temporário padrão precisa existir; o RUNNER_TEMP ausente,
 // ilegível, que não é pasta ou que é o mesmo destino fica indisponível, e então
-// há uma só fase, sem comparação.
-export function resolveDestinations({ tmpdir = os.tmpdir(), runnerTemp = process.env.RUNNER_TEMP, platform = process.platform, realpath = realpathSync.native, isDirectory = (dir) => statSync(dir).isDirectory() } = {}) {
+// há uma só fase, sem comparação. `runnerTemp` vem só de quem chama (o `env` de
+// measure), sem padrão do process.env: num runner com RUNNER_TEMP, um padrão
+// trocaria o `undefined` dado pelo valor do processo (CI 40702252461).
+export function resolveDestinations({ tmpdir = os.tmpdir(), runnerTemp, platform = process.platform, realpath = realpathSync.native, isDirectory = (dir) => statSync(dir).isDirectory() } = {}) {
   const standard = realpath(tmpdir);
   let runner;
   if (runnerTemp === undefined || runnerTemp === "") runner = { indisponivel: "RUNNER_TEMP ausente" };
@@ -394,7 +396,9 @@ export function removeOwnDir(dir, { created, destination, nonce, platform = proc
 // valores pequenos pela mesma função. Uma fase que não pôde ter a pasta própria
 // fica indisponível com o motivo (e, com um erro interno, `fase interrompida`);
 // a falha ao remover a pasta vai para `limpeza.falhas`. As outras seguem: o
-// resultado de uma não se perde pela falha de outra.
+// resultado de uma não se perde pela falha de outra. `env` é o único ambiente
+// lido: o padrão process.env é a leitura do CLI, e um `env` dado sem
+// RUNNER_TEMP (inclusive `{}`) é RUNNER_TEMP ausente.
 export async function measure({ phase = PHASE, env = process.env, tmpdir = os.tmpdir(), platform = process.platform, spawnChild = spawnWorker } = {}) {
   const plan = resolveDestinations({ tmpdir, runnerTemp: env.RUNNER_TEMP, platform });
   const nonce = randomBytes(8).toString("hex");
