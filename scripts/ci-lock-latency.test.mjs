@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -28,8 +29,29 @@ import {
 // poucos ciclos; a medição completa (500 ciclos por produtor, 120 s) é a do job
 // manual no runner. Filhos de fixture são `node -e`; nenhum agente é iniciado.
 
+// Encerra os processos que a prova iniciou e que ainda rodam, e espera o close de
+// cada um. Um spawn que falhou já tem `exitCode` e fica de fora.
+const release = (children) =>
+  Promise.all(
+    children.map((child) => {
+      if (child.exitCode !== null || child.signalCode !== null) return undefined;
+      const closed = new Promise((resolve) => child.once("close", resolve));
+      child.kill();
+      return closed;
+    }),
+  );
+
+// Os processos das provas de interrupção ficam aqui, para o `after` não deixar
+// nenhum vivo também quando uma delas falha antes do próprio `finally`.
+const spawnedByTests = new Set();
+const registered = (child) => {
+  spawnedByTests.add(child);
+  return child;
+};
+
 const scratches = [];
-after(() => {
+after(async () => {
+  await release([...spawnedByTests]);
   for (const dir of scratches) rmSync(dir, { recursive: true, force: true });
 });
 const scratch = (label) => {
@@ -42,7 +64,51 @@ const ok = (ciclo) => ({ ciclo, tomada: 1.5, liberacao: 0.5, criacao: 0.2, escri
 const lines = (records) => records.map((record) => `${JSON.stringify(record)}\n`).join("");
 const fixture = (code) => (role) => spawn(process.execPath, ["-e", code], { stdio: [role === "carga" ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true });
 const forever = "setInterval(() => {}, 1000);";
+const readyForever = `process.stdout.write(${JSON.stringify('{"pronto":true}\n')}); ${forever}`;
 const UNAVAILABLE = { amostras: 0, indisponivel: "sem amostras" };
+
+const alive = (pid) => {
+  try {
+    return process.kill(pid, 0);
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    throw error;
+  }
+};
+
+// Troca o rmSync de node:fs só durante `run` (a mesma via da instrumentação do
+// produtor no script): para as pastas escolhidas, lança `code` com o caminho na
+// mensagem, como um erro real; sem `code`, um Error simples. As outras remoções
+// seguem pelo rmSync real. Nenhum erro do host é necessário.
+const fsCjs = createRequire(import.meta.url)("node:fs");
+async function withFailingRemoval(fails, code, run) {
+  const real = fsCjs.rmSync;
+  fsCjs.rmSync = function failingRmSync(target, options) {
+    if (!fails(target)) return real.call(this, target, options);
+    const error = new Error(`${code ?? "falha"}: remoção recusada (injetada), rmdir '${target}'`);
+    throw code === undefined ? error : Object.assign(error, { code, syscall: "rmdir", path: target });
+  };
+  syncBuiltinESMExports();
+  try {
+    return await run();
+  } finally {
+    fsCjs.rmSync = real;
+    syncBuiltinESMExports();
+  }
+}
+
+// Um processo alheio ao supervisor, iniciado pela prova, que tem de continuar vivo.
+const foreignProcess = () => {
+  const foreign = registered(spawn(process.execPath, ["-e", forever], { stdio: "ignore", windowsHide: true }));
+  const closed = new Promise((resolve) => foreign.on("close", resolve));
+  return {
+    pid: foreign.pid,
+    async stop() {
+      foreign.kill();
+      await closed;
+    },
+  };
+};
 
 test("C50 percentis e faixas: valores exatos por posição mais próxima, inclusive imediatamente abaixo de 600 e de 650", () => {
   assert.deepEqual(summarize([700, 10, 650, 599.999, 20, 649.999, 600]), { amostras: 7, p50: 600, p99: 700, max: 700, ">=600": 4, ">=650": 2 });
@@ -200,6 +266,98 @@ test("C50 limpeza: só remove a pasta criada por esta execução no destino, com
   assert.ok(existsSync(unmarked) && existsSync(otherNonce) && existsSync(outside), "as recusadas continuam");
 });
 
+test("C50 limpeza que falha: EBUSY, EPERM, ENOTEMPTY ou um erro sem código na remoção da pasta própria dão a falha com o código, sem caminho nem mensagem, e a pasta não é dada como removida", async () => {
+  const destination = scratch("limpeza falha");
+  const nonce = "0123456789abcdef";
+  for (const code of ["EBUSY", "EPERM", "ENOTEMPTY", undefined]) {
+    const dir = createOwnDir(destination, "A", nonce);
+    const outcome = await withFailingRemoval((target) => target === dir, code, () => removeOwnDir(dir, { created: dir, destination, nonce }));
+    assert.deepEqual(outcome, { ok: false, falha: code ?? "Error" });
+    assert.deepEqual(readdirSync(dir), [".skill-me-lock-latency"], "a pasta e o marcador continuam");
+  }
+});
+
+test("C50 limpeza que falha depois dos dados: a remoção da pasta de A1 lança EBUSY, e o relatório mantém A1, B e A2 com os dados e registra a falha", async () => {
+  const small = { producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 60_000 };
+  const standard = scratch("limpeza falha padrao");
+  const runner = scratch("limpeza falha runner");
+  const phaseA1 = (target) => path.dirname(target) === standard && path.basename(target).startsWith("skill-me-lock-latency-A1-");
+  const report = await withFailingRemoval(phaseA1, "EBUSY", () => measure({ phase: small, env: { RUNNER_TEMP: runner }, tmpdir: standard }));
+  assert.deepEqual(
+    [report.comparacao, report.fases.map((f) => [f.fase, f.destino, f.ciclos?.concluidos, f.interrompidaPorErro])],
+    ["A1/B/A2", [["A1", "padrao", 6, null], ["B", "runner", 6, null], ["A2", "padrao", 6, null]]],
+  );
+  assert.deepEqual(report.limpeza, { removidas: 2, recusadas: [], falhas: ["EBUSY"] });
+  const left = readdirSync(standard);
+  assert.equal(left.length, 1, "só a pasta de A1 ficou no destino padrão");
+  assert.match(left[0], /^skill-me-lock-latency-A1-/);
+  assert.ok(existsSync(path.join(standard, left[0], ".skill-me-lock-latency")), "a pasta de A1 continua, com o marcador");
+  assert.deepEqual(readdirSync(runner), [], "a pasta de B saiu");
+  const text = JSON.stringify(report);
+  for (const value of [standard, runner, "injetada"]) {
+    assert.ok(!text.includes(value) && !text.includes(JSON.stringify(value).slice(1, -1)), "nenhum caminho nem mensagem");
+  }
+});
+
+test("C50 início parcial: a pasta do 2º produtor não pode ser criada depois de a carga e o 1º produtor iniciarem; o supervisor encerra e espera só os seus filhos, e a fase sai com os incompletos e o código", async () => {
+  const dir = scratch("inicio parcial");
+  writeFileSync(path.join(dir, "produtor-2"), "");
+  const started = [];
+  const foreign = foreignProcess();
+  try {
+    const spawnChild = (role) => {
+      const child = registered(fixture(role === "carga" ? readyForever : forever)(role));
+      started.push(child);
+      return child;
+    };
+    const result = await runPhase({ dir, producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 30_000, spawnChild });
+    assert.deepEqual([result.timedOut, result.interruptedBy, result.children.map((child) => child.role)], [false, "EEXIST", ["carga", "produtor"]]);
+    assert.ok(result.children.every((child) => child.exit !== null), "os filhos registrados fecharam");
+    assert.deepEqual(started.map((child) => alive(child.pid)), [false, false], "os processos dos filhos já não existem");
+    assert.equal(alive(foreign.pid), true, "o processo alheio não foi encerrado");
+    const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 3, cycles: 2, result });
+    assert.deepEqual(
+      [phase.encerradaPeloTeto, phase.interrompidaPorErro, phase.ciclos, phase.tomada],
+      [false, "EEXIST", { previstos: 6, concluidos: 0, comErro: 0, incompletos: 6 }, UNAVAILABLE],
+    );
+  } finally {
+    await release(started);
+    await foreign.stop();
+  }
+});
+
+test("C50 erro assíncrono: o 2º produtor não inicia (ENOENT assíncrono); o processo não cai, o supervisor encerra e espera só os seus filhos, e a fase sai com os incompletos e o código", async () => {
+  const dir = scratch("erro assincrono");
+  const missing = path.join(dir, "nao-existe");
+  const started = [];
+  const foreign = foreignProcess();
+  try {
+    const spawnChild = (role, ownDir) => {
+      const child = registered(
+        role === "produtor" && path.basename(ownDir) === "produtor-2"
+          ? spawn(missing, [], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
+          : fixture(role === "carga" ? readyForever : forever)(role),
+      );
+      started.push(child);
+      return child;
+    };
+    const result = await runPhase({ dir, producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 30_000, spawnChild });
+    assert.deepEqual(
+      [result.timedOut, result.interruptedBy, result.children.map((child) => child.role)],
+      [false, "ENOENT", ["carga", "produtor", "produtor", "produtor"]],
+    );
+    assert.ok(result.children.every((child) => child.exit !== null), "os filhos registrados fecharam");
+    const ran = started.filter((child) => child.pid !== undefined);
+    assert.deepEqual(ran.map((child) => alive(child.pid)), [false, false, false], "os processos dos filhos já não existem");
+    assert.equal(alive(foreign.pid), true, "o processo alheio não foi encerrado");
+    const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 3, cycles: 2, result });
+    assert.deepEqual([phase.encerradaPeloTeto, phase.interrompidaPorErro, phase.ciclos], [false, "ENOENT", { previstos: 6, concluidos: 0, comErro: 0, incompletos: 6 }]);
+  } finally {
+    await release(started);
+    await foreign.stop();
+  }
+});
+
 test("C50 fronteira real: uma fase com os filhos reais do script (3 produtores de 5 ciclos, 3 cargas de 64 KiB com flush) termina sem teto e sem erro", async () => {
   const result = await runPhase({ dir: scratch("real"), producers: 3, cycles: 5, loaders: 3, loadBytes: 64 * 1024, limitMs: 60_000 });
   const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 3, cycles: 5, result });
@@ -219,7 +377,7 @@ test("C50 relatório: A1/B/A2 com o RUNNER_TEMP distinto, uma fase sem ele, e ne
   const runner = scratch("relatorio runner");
   const both = await measure({ phase: small, env: { RUNNER_TEMP: runner }, tmpdir: standard });
   assert.deepEqual([both.comparacao, both.fases.map((f) => [f.fase, f.destino, f.ciclos.concluidos])], ["A1/B/A2", [["A1", "padrao", 6], ["B", "runner", 6], ["A2", "padrao", 6]]]);
-  assert.deepEqual(both.limpeza, { removidas: 3, recusadas: [] });
+  assert.deepEqual(both.limpeza, { removidas: 3, recusadas: [], falhas: [] });
   assert.deepEqual([readdirSync(standard), readdirSync(runner)], [[], []], "as pastas da medição saíram");
   const alone = await measure({ phase: small, env: {}, tmpdir: standard });
   assert.deepEqual([alone.comparacao, alone.destinos.runner, alone.fases.map((f) => f.fase)], ["não aplicável: RUNNER_TEMP ausente", { indisponivel: "RUNNER_TEMP ausente" }, ["A"]]);

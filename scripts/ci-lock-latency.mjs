@@ -22,7 +22,8 @@ export const PHASE = Object.freeze({ producers: 3, cycles: 500, loaders: 3, load
 export const BANDS_MS = Object.freeze([600, 650]);
 const DIR_PREFIX = "skill-me-lock-latency-";
 const MARKER = ".skill-me-lock-latency";
-// Depois do kill() no teto, quanto esperar o close antes de insistir com SIGKILL.
+// Depois do kill() (no teto ou num erro), quanto esperar o close antes de
+// insistir com SIGKILL.
 const KILL_GRACE_MS = 5_000;
 const OPERATIONS = ["criacao", "escrita", "fechamento", "remocao"];
 
@@ -216,24 +217,52 @@ async function loadProcess(dir, bytes) {
 export const spawnWorker = (role, dir, value) =>
   spawn(process.execPath, [SCRIPT, "--papel", role, dir, String(value)], { stdio: [role === "carga" ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true });
 
+// Encerra os filhos registrados que ainda não fecharam e espera o close de
+// todos; se o close não vier na folga depois do kill(), insiste com SIGKILL,
+// ainda só neles.
+async function stopOwnChildren(children) {
+  const running = children.filter((entry) => !entry.closed);
+  if (running.length > 0) {
+    for (const entry of running) entry.child.kill();
+    let grace;
+    await Promise.race([Promise.all(running.map((entry) => entry.done)), new Promise((resolve) => (grace = setTimeout(resolve, KILL_GRACE_MS)))]);
+    clearTimeout(grace);
+    for (const entry of running.filter((item) => !item.closed)) entry.child.kill("SIGKILL");
+  }
+  await Promise.all(children.map((entry) => entry.done));
+}
+
 // Supervisor de uma fase. Inicia as cargas e espera cada uma ficar pronta, para
 // a carga correr durante a medição; inicia os produtores; com todos fechados,
-// fecha o stdin das cargas. No teto, encerra só os filhos que ele mesmo criou e
-// espera o close de cada um. Nunca lista nem encerra outros processos.
+// fecha o stdin das cargas. O teto, um erro ao iniciar um filho (com outros já
+// iniciados) e o 'error' de um filho interrompem a fase pelo mesmo caminho:
+// nenhum filho novo, e os que ele criou e ainda não fecharam são encerrados e
+// esperados. Nunca lista nem encerra outros processos. Esses erros não saem
+// daqui: a fase volta com o que os filhos escreveram e o código do primeiro.
 export async function runPhase({ dir, producers, cycles, loaders, loadBytes, limitMs, spawnChild = spawnWorker, clock = () => performance.now() }) {
   const start = clock();
   const children = [];
+  let timedOut = false;
+  let interruptedBy = null;
+  let wake;
+  const halt = new Promise((resolve) => (wake = resolve));
+  const interrupt = (error) => {
+    interruptedBy ??= codeOf(error);
+    wake();
+  };
+  const halted = () => timedOut || interruptedBy !== null;
+  const until = (promises) => Promise.race([Promise.all(promises), halt]);
+  const timer = setTimeout(() => {
+    timedOut = true;
+    wake();
+  }, limitMs);
+  // Registra o filho e ouve 'error' e 'close' antes de tocar no stdio: um spawn
+  // que falha emite 'error' e depois 'close', sem 'exit', e pode vir sem stdio.
   const track = (role, child) => {
     const entry = { role, child, text: "", closed: false, exit: null };
+    children.push(entry);
     let markReady;
     entry.ready = new Promise((resolve) => (markReady = resolve));
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      entry.text += chunk;
-      if (entry.text.includes('{"pronto":true}\n')) markReady();
-    });
-    child.stderr.resume();
-    child.stdin?.on("error", () => {});
     entry.done = new Promise((resolve) =>
       child.on("close", (code, signal) => {
         entry.closed = true;
@@ -242,50 +271,44 @@ export async function runPhase({ dir, producers, cycles, loaders, loadBytes, lim
         resolve();
       }),
     );
-    children.push(entry);
+    child.on("error", interrupt);
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => {
+      entry.text += chunk;
+      if (entry.text.includes('{"pronto":true}\n')) markReady();
+    });
+    child.stderr?.resume();
+    child.stdin?.on("error", () => {});
     return entry;
   };
-  let timedOut = false;
-  let timer;
-  const deadline = new Promise((resolve) => {
-    timer = setTimeout(() => {
-      timedOut = true;
-      resolve();
-    }, limitMs);
-  });
-  const until = (promises) => Promise.race([Promise.all(promises), deadline]);
-
-  const loads = Array.from({ length: loaders }, (_, k) => {
-    const own = path.join(dir, `carga-${k + 1}`);
+  const launch = (role, k, value) => {
+    const own = path.join(dir, `${role}-${k}`);
     mkdirSync(own);
-    return track("carga", spawnChild("carga", own, loadBytes));
-  });
-  await until(loads.map((load) => load.ready));
-  if (!timedOut) {
-    const runs = Array.from({ length: producers }, (_, k) => {
-      const own = path.join(dir, `produtor-${k + 1}`);
-      mkdirSync(own);
-      return track("produtor", spawnChild("produtor", own, cycles));
-    });
-    await until(runs.map((run) => run.done));
-  }
-  if (!timedOut) {
-    for (const load of loads) load.child.stdin?.end();
-    await until(loads.map((load) => load.done));
+    return track(role, spawnChild(role, own, value));
+  };
+
+  try {
+    const loads = Array.from({ length: loaders }, (_, k) => launch("carga", k + 1, loadBytes));
+    await until(loads.map((load) => load.ready));
+    if (!halted()) {
+      const runs = Array.from({ length: producers }, (_, k) => launch("produtor", k + 1, cycles));
+      await until(runs.map((run) => run.done));
+    }
+    if (!halted()) {
+      for (const load of loads) load.child.stdin?.end();
+      await until(loads.map((load) => load.done));
+    }
+  } catch (error) {
+    interrupt(error);
   }
   clearTimeout(timer);
-  if (timedOut) {
-    const running = children.filter((entry) => !entry.closed);
-    for (const entry of running) entry.child.kill();
-    await Promise.race([Promise.all(running.map((entry) => entry.done)), new Promise((resolve) => setTimeout(resolve, KILL_GRACE_MS))]);
-    for (const entry of running.filter((item) => !item.closed)) entry.child.kill("SIGKILL");
-  }
-  await Promise.all(children.map((entry) => entry.done));
-  return { durationMs: clock() - start, timedOut, children: children.map(({ role, text, exit }) => ({ role, text, exit })) };
+  await stopOwnChildren(children);
+  return { durationMs: clock() - start, timedOut, interruptedBy, children: children.map(({ role, text, exit }) => ({ role, text, exit })) };
 }
 
 // Uma fase em números. `incompletos` são os ciclos previstos que não terminaram
-// (teto ou filho que parou); `comErro`, os que terminaram com erro.
+// (teto, interrupção por erro ou filho que parou); `comErro`, os que terminaram
+// com erro.
 export function aggregatePhase({ fase, destino, producers, cycles, result }) {
   const producerOut = result.children.filter((child) => child.role === "produtor").map((child) => ({ ...parseLines(child.text), exit: child.exit }));
   const loadOut = result.children.filter((child) => child.role === "carga").map((child) => ({ ...parseLines(child.text), exit: child.exit }));
@@ -315,6 +338,7 @@ export function aggregatePhase({ fase, destino, producers, cycles, result }) {
     destino,
     duracaoMs: rounded(result.durationMs),
     encerradaPeloTeto: result.timedOut,
+    interrompidaPorErro: result.interruptedBy ?? null,
     ciclos: { previstos, concluidos: done.length, comErro: done.length - clean.length, incompletos: previstos - done.length },
     erros,
     tomada: summarize(clean.map((record) => record.tomada)),
@@ -335,7 +359,10 @@ export function createOwnDir(destination, fase, nonce) {
 
 // Remove a pasta da fase só se ela for a desta execução: absoluta, a mesma que
 // foi criada, filha direta do destino, sem link e com o marcador e o nonce. Senão
-// recusa, sem tocar em nada; o motivo não leva o caminho.
+// recusa, sem tocar em nada; o motivo não leva o caminho. Passada a guarda, a
+// remoção é de melhor esforço e sem nova tentativa: se falha (EBUSY, EPERM ou
+// ENOTEMPTY no Windows), a pasta pode ter ficado inteira ou em parte, nunca conta
+// como removida, e só o código sai.
 export function removeOwnDir(dir, { created, destination, nonce, platform = process.platform }) {
   const refuse = (motivo) => ({ ok: false, motivo });
   if (!path.isAbsolute(dir)) return refuse("caminho relativo");
@@ -355,14 +382,19 @@ export function removeOwnDir(dir, { created, destination, nonce, platform = proc
     return refuse("sem o marcador desta execução");
   }
   if (marker !== nonce) return refuse("sem o marcador desta execução");
-  rmSync(dir, { recursive: true });
+  try {
+    rmSync(dir, { recursive: true });
+  } catch (error) {
+    return { ok: false, falha: codeOf(error) };
+  }
   return { ok: true };
 }
 
 // A medição inteira. O CLI usa só as constantes de PHASE; as provas passam
 // valores pequenos pela mesma função. Uma fase que não pôde ter a pasta própria
-// ou que falhou no supervisor fica indisponível com o motivo, e as outras
-// seguem: o resultado de uma não se perde pela falha de outra.
+// fica indisponível com o motivo (e, com um erro interno, `fase interrompida`);
+// a falha ao remover a pasta vai para `limpeza.falhas`. As outras seguem: o
+// resultado de uma não se perde pela falha de outra.
 export async function measure({ phase = PHASE, env = process.env, tmpdir = os.tmpdir(), platform = process.platform, spawnChild = spawnWorker } = {}) {
   const plan = resolveDestinations({ tmpdir, runnerTemp: env.RUNNER_TEMP, platform });
   const nonce = randomBytes(8).toString("hex");
@@ -372,7 +404,7 @@ export async function measure({ phase = PHASE, env = process.env, tmpdir = os.tm
     destinos: plan.destinos,
     parametros: { produtores: phase.producers, ciclosPorProdutor: phase.cycles, carga: phase.loaders, bytesPorEscrita: phase.loadBytes, tetoMs: phase.limitMs, faixasMs: [...BANDS_MS] },
     fases: [],
-    limpeza: { removidas: 0, recusadas: [] },
+    limpeza: { removidas: 0, recusadas: [], falhas: [] },
   };
   for (const step of plan.phases) {
     let dir;
@@ -390,6 +422,7 @@ export async function measure({ phase = PHASE, env = process.env, tmpdir = os.tm
     } finally {
       const outcome = removeOwnDir(dir, { created: dir, destination: step.dir, nonce, platform });
       if (outcome.ok) report.limpeza.removidas += 1;
+      else if (outcome.falha !== undefined) report.limpeza.falhas.push(outcome.falha);
       else report.limpeza.recusadas.push(outcome.motivo);
     }
   }
