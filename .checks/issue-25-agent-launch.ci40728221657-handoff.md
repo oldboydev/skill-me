@@ -103,3 +103,27 @@ Nada aqui afirma CI verde, `ready` nem causa corrigida.
 - **Limpeza**: por caminho exato. A limpeza anterior (1.257 + 107 pastas, por janela) não teve auditoria de
   propriedade. Cinco pastas sem prova de proveniência ficaram, listadas no build.
 - A causa histórica dos `delivery_timeout` no Windows continua desconhecida.
+
+## Continuação: abandono terminal no prazo da entrega (nova sessão de autor)
+
+- **Escopo**: só os defeitos de prazo/abandono de `untilDeadline`, decididos pelo coordenador; não é
+  manutenção geral da #8. Registro antes do código em `9b39d7e`; código em `322bcad`; registro dos gates
+  em `dc0db9b`.
+- **Defeito 1, demonstrado** (o T8-C16 do B final, `4 !== 3`): depois de uma recusa concluída do lock, o
+  timer abandonava a repetição com o motivo `lock_present`, e o laço iniciava outra tentativa enquanto o
+  relógio ainda estava aquém do prazo.
+- **Defeito 2, candidato confirmado antes da correção**: o lock obtido com o relógio já no prazo, antes de
+  o callback do timer rodar, era aceito e a entrada era gravada e confirmada.
+- **Correção**: o `onLock` recusa o lock com o prazo esgotado, e a tentativa abandonada encerra a entrega
+  com o motivo do prazo — nunca `io_failure` nem uma nova tentativa. Prazos, store e códigos iguais.
+- **Provas**:
+  - RED com o produto de `a6a829e`: `3 !== 2` e `{ok: true}` no unit; `4 !== 3` e o commit 1/1/1/0 no
+    store;
+  - GREEN; 3 mutações detectadas;
+  - a sonda do autor anterior sobre o código novo deu 0/400 com 4 criações (observação).
+- **Gates**: A 363/351/0/12, B 363/351/0/12, C 363/343/0/20.
+- **D vermelho e preservado**: exit 1. O arquivo `codex-run.cli.test.mjs` parou depois do I4-C16 por
+  ~34 min e falhou inteiro, sem resultado do I4-C16c e do I4-C17. Esse caminho não carrega o produto
+  mudado, e a causa é desconhecida. Não foi repetido nem corrigido.
+- A causa histórica dos `delivery_timeout` no Windows continua desconhecida. Nada aqui afirma PASS,
+  `ready` nem CI verde.

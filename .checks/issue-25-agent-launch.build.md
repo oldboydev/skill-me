@@ -2296,7 +2296,7 @@ prazo, com a abandonada pendente.
 **Defeito 2, candidato confirmado**: o `onLock` só olhava `abandoned`. Com o lock obtido com o relógio no
 prazo, antes de o callback do timer rodar, a operação gravava e a entrega contava a confirmação.
 
-**Correção** (`src/integrations/traces/delivery.mjs`, só `untilDeadline`, +12/−1 linhas com o comentário):
+**Correção** (`src/integrations/traces/delivery.mjs`, só `untilDeadline`, +11/−1 linhas com o comentário):
 - o `onLock` marca a tentativa abandonada e lança quando `deadlineAt - clock() <= 0`;
 - o timer só marca `abandoned`;
 - depois da corrida, uma tentativa abandonada retorna `{ok: false, code: locked ? "delivery_timeout" : code}`,
@@ -2345,3 +2345,59 @@ observação, não gate): 0 de 400 com 4 criações no 24.13.0 e no 24.22.1, tod
 - a prova nova `traces/delivery.unit`.
 
 Nenhum dos 39 saiu da lista.
+
+**Gates em `dc0db9b`** (código de `322bcad`; definidos e registrados antes de rodar; uma execução de cada,
+sem filtro, concorrência 4 em A/B/C; logs em `builder-t8c16-terminal/`):
+
+| Gate | Ambiente | Início–fim | Testes | Pass | Fail | Skip |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | checkout principal, Windows, Node 24.22.1, npm 11.19.1, `npm_execpath` ausente | 17:25:02–17:33:42 | 363 | 351 | 0 | 12 |
+| B | clone git novo (`core.autocrlf=true` no `.git/config` dele), Node 24.13.0 oficial, npm 11.6.2 ao lado, `npm_execpath` ausente | 17:34:06–17:44:02 | 363 | 351 | 0 | 12 |
+| C | WSL `Ubuntu`, uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, `env -i`, `HOME`/`RUNNER_TEMP`/`TMPDIR` no scratch, PATH sem `/usr/bin` | 17:44:29–17:45:54 | 363 | 343 | 0 | 20 |
+
+- Em todos: a lista de 43 arquivos (sha256 `e26c5163…74d9`, recalculada também no clone do B), `RUNNER_TEMP`
+  presente e válido, o temporário dos testes na pasta criada e registrada pela execução, `git status`
+  vazio antes e depois. O C extraiu a árvore `693c9385…` do `git archive` de `dc0db9b`, sem CR.
+- Os 8 `I25-C46 prazo da entrega` e o T8-C16 original passaram nos três.
+- **Nomes e skips** (`*.names`, `*.skips`): os 357 nomes de topo são os mesmos em A, B e C — os de
+  `cd4afc2` mais 18: as 8 provas novas e os 10 testes de `launch/agent.unit` (I25-C4 ×2, C16, C42 ×2, C45),
+  `launch/docs` (I25-C37 ×3) e `privacy/no-network` (I5-C31); nenhum ausente. Os skips de A, B e C são os
+  de `cd4afc2` em nomes e motivos (C: as 11 nativas do Hermes sem runtime, 8 só do Windows e 1 do macOS).
+- Primeira conferência da lista dentro do clone: falso negativo (`lista no clone igual: 1`), porque usou o
+  caminho da lista anterior dentro do clone, onde `.checks/code-review` não existe; refeita com o caminho
+  certo, mesmo sha256 (`B-clone.txt`).
+
+**D, `npm test` completo** (`dc0db9b`, Windows, Node 24.22.1, npm 11.19.1, teto 8, `npm_execpath` ausente,
+`RUNNER_TEMP` presente, temporário na pasta isolada `sm-gate-D3-…`, orçamento de 7.200.000 ms na
+ferramenta antes do início; esperei o término real): **exit 1**, das 17:46:08 às 18:21:49.
+- Governança 25/25; motor 16/16; doctor 417 (410/0/7); integrações 593 (579 pass, **1 fail**, 13 skip).
+- A falha é o arquivo `tests/integrations/codex-run.cli.test.mjs` inteiro: `'test failed'` em `:1:1`,
+  2.054.779 ms, sem subteste vermelho. Os I4-C10 a C16 dele passaram (o C15 é skip do Windows); o I4-C16c
+  (consumidor lento: o teste lê o stdout pausado a cada 50 ms e espera o `exit` e o `end` do wrapper) e o
+  I4-C17 não deram resultado. A integração toda durou 2.054.842 ms, contra 572.332 ms no D de `cd4afc2`:
+  o resto da suíte esperou esse arquivo.
+- O caminho não alcança o produto mudado: no I4-C16c o `baseEnv` não tem par e põe `HOME` num caminho
+  inexistente, e o agente `codex-exec` está fora de `AUTOMATIC_AGENTS`; `captureDeliveryFor` devolve `null`
+  sem carregar `traces/delivery.mjs`. O arquivo passou em A, B e C neste código (I4-C16c em 1.000, 899 e
+  628 ms) e no D de `cd4afc2` (750 ms).
+- Depois do D, nenhum processo `node` com o caminho do repositório ficou vivo.
+- Passaram as 11 nativas do Hermes (I4-C18 a C23, C37, C44b, I25-C40 e os dois I23-C8 com runtime), a
+  observação Hermes do I4-C35 (sem o diagnóstico de não executada), o I23-C8 pelo Python do sistema e as 8
+  provas novas. Os 20 skips são os do D de `cd4afc2` em nomes e motivos.
+- **Causa da falha do D: desconhecida.** Não repeti o D nem investiguei o `codex-run.cli`: está fora dos
+  defeitos de prazo/abandono autorizados nesta sessão. Fica preservada para o coordenador.
+
+**Temporário**: as pastas isoladas do RED, da sonda, de A, B e D foram removidas pelo caminho e `ino`
+registrados (110, 1.031 e 135 entradas deixadas pelos testes em A, B e D); a do C, pelo caminho, uid 1000 e
+inode. O clone do B e a cópia do RED, pelo caminho exato. Nada do perfil WSL nem do `/tmp` global foi lido.
+Exceção: as duas primeiras execuções do subconjunto de `concurrency.cli` no checkout (`red-store-*`,
+`green-store-*`) usaram o temporário do sistema, sem a pasta isolada; os scratches delas saem pelo `after()`
+do arquivo, e não listei o temporário global para conferir.
+
+**Causa histórica dos `delivery_timeout`/`lock_present` do Windows**: continua desconhecida. Esta correção
+fecha o T8-C16 (a tentativa repetida depois do abandono) e o lock tardio, não aquela causa.
+
+Pendentes, com o coordenador:
+- o D vermelho (`codex-run.cli`, causa desconhecida, fora deste escopo);
+- o Verifier 19 e a formal 12;
+- a publicação e a CI nova.

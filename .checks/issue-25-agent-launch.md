@@ -1447,3 +1447,36 @@ Abandono terminal no prazo da entrega — nova sessão de autor (registros acima
   - **Nativos do Hermes**: “12” são os 11 casos com o runtime do Hermes em `hermes-plugin.native` (os de
     `skip: SKIP`) mais a observação Hermes do I4-C35 (`skill-tree-hash.cli`); o caso pelo Python do
     sistema, sem runtime, não conta como nativo.
+- **Resultado dos gates em `dc0db9b`** (código de `322bcad`; logs em `builder-t8c16-terminal/`):
+  - **A**: 363 testes, 351 pass, 0 fail, 12 skip.
+  - **B**: 363 testes, 351 pass, 0 fail, 12 skip; o T8-C16 original passou com 3 criações.
+  - **C**: 363 testes, 343 pass, 0 fail, 20 skip.
+  - Os 8 `I25-C46 prazo da entrega` passaram nos três. Os 357 nomes de topo são os mesmos em A, B e C —
+    os de `cd4afc2` mais 18 (as 8 provas novas e os 10 testes dos três arquivos acrescentados), nenhum
+    ausente —, e os skips são os de `cd4afc2` em nomes e motivos.
+  - **D, vermelho e preservado**: o `npm test` saiu com **exit 1** depois de 35 min (17:46–18:21):
+    governança 25/25, motor 16/16, doctor 417 (410/0/7), integrações 593 (579/**1**/13). A falha é o arquivo
+    `tests/integrations/codex-run.cli.test.mjs` inteiro (`'test failed'` em `:1:1`, 2.054.779 ms): o último
+    teste concluído dele foi o I4-C16; o I4-C16c (consumidor lento) e o I4-C17 não deram resultado. O
+    resto da suíte, inclusive as 11 nativas do Hermes, a observação Hermes do I4-C35, o caso do Python do
+    sistema e as 8 provas novas, passou; os 20 skips são os do D de `cd4afc2`.
+    - O caminho não alcança o produto mudado: no I4-C16c o wrapper é `codex-exec`, sem par no ambiente e
+      com `HOME` inexistente, e `captureDeliveryFor` devolve `null` sem carregar `traces/delivery.mjs`.
+      O mesmo arquivo passou em A, B e C neste código (I4-C16c em 1.000, 899 e 628 ms) e no D de
+      `cd4afc2` (750 ms). Nenhum processo da execução ficou vivo.
+    - **Causa: desconhecida.** Não foi repetido nem corrigido: está fora dos defeitos de prazo/abandono
+      autorizados, e o log só mostra que o arquivo parou depois do I4-C16.
+- **Temporário**: cada pasta isolada (RED, sonda, A, B, D) foi criada e registrada pela execução e removida
+  pelo caminho e `ino` registrados; a do C foi o `TMPDIR` dentro do scratch, removido pelo caminho, pasta,
+  uid 1000 e inode. O clone do B e a cópia do RED foram removidos pelo caminho exato. Nada do perfil WSL nem
+  do `/tmp` global foi lido. Exceção: as duas primeiras execuções do subconjunto de `concurrency.cli` no
+  checkout (`red-store-*` e `green-store-*`) usaram o temporário do sistema, sem a pasta isolada; os
+  scratches delas são removidos pelo `after()` do próprio arquivo, e não listei o temporário global para
+  conferir. As do unit não criam temporário.
+- **O que foi abandonado**: arredondar ou adiantar o timer; tolerância ou folga no prazo; aceitar 4 ou `>= 3`
+  criações; teto de tentativas ou espera nova; mapear o abandono para `io_failure`; decidir o prazo no store;
+  patch global de timers ou relógio; repetir o D ou investigar o `codex-run.cli` fora do escopo autorizado.
+- **Pendentes, com o coordenador**: o D vermelho (`codex-run.cli`, causa desconhecida, fora deste
+  escopo), o Verifier 19, a formal 12, a publicação e a CI nova. A causa histórica dos `delivery_timeout`
+  e `lock_present` do Windows continua desconhecida: a correção do T8-C16 não a resolve. Nada aqui afirma
+  PASS, `ready` nem CI verde.
