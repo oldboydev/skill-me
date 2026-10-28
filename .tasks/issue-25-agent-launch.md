@@ -437,6 +437,11 @@ provado pelo C49.
 
     Prazos, quantidades, carga e as demais regras deste critério não mudam.
 
+    Refinamento do critério 42 (CI 40702252461 do PR #28, Ubuntu, `C50 caminhos` e `C50 relatório`;
+    correção necessária da ferramenta aprovada, sem critério novo): o `RUNNER_TEMP` vem só do
+    ambiente da medição, que é o do processo no CLI e o dado nas provas. Ausente nesse ambiente, a
+    medição tem uma fase e diz que ele está ausente, mesmo que o processo tenha a variável.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
