@@ -223,3 +223,59 @@ test("I25-C47 evidência comum: o io medido do produtor em processo traz as conc
     assert.ok(idle.message.includes(piece), `${piece}: ${idle.message}`);
   }
 });
+
+// I25-C46 (m)–(n) (gate B em c0d61d7: o T8-C4 saiu com um lock ilegível e a
+// evidência mostrou só a linha do wrapper, de 3): linhas sintéticas no arquivo
+// da pré-carga, na ordem de saída dos processos.
+const treeLine = (pid, pending = []) => ({ ops: [["realpath", "pasta", 1, 1]], cpuMs: 1, pending, exitMs: 10, startedAt: STARTED_AT, pid, loop: { samples: 0, maxMs: null, p99Ms: null } });
+
+function storeWithLock(label, lock) {
+  const root = scratch(label);
+  mkdirSync(path.join(root, "skill-me-privacy"));
+  writeFileSync(path.join(root, "skill-me-privacy", ".lock"), lock);
+  return root;
+}
+
+test("I25-C46 evidência comum: com o arquivo do registro, os 3 processos da árvore do produtor aparecem e o pid do lock aponta o processo; com o arquivo do teste, só a linha da saída do produtor", async () => {
+  const root = storeWithLock("i25 c46 árvore raiz", JSON.stringify({ lockVersion: 1, pid: 3003, nonce: "0011223344556677" }));
+  const bound = { SKILL_ME_CAPTURE_ROOT: root, SKILL_ME_CAPTURE_ID: "0".repeat(32) };
+  const shared = path.join(scratch("i25 c46 árvore tempos"), "compartilhado.ndjson");
+  const failure = await rejection(recordingProducers(async () => {
+    const wrapper = recordedProducer("wrapper codex", baseEnv(bound));
+    // O hook filho sai primeiro, parado na criação do lock; depois o Codex falso e o wrapper.
+    writeFileSync(wrapper.env.SKILL_ME_TEST_TRACES_TIMING, [treeLine(3003, [["open", "lock", 5, 640]]), treeLine(2002), treeLine(1001)].map((l) => JSON.stringify(l) + "\n").join(""));
+    wrapper.settle({ status: 17, signal: null, report: { delivery: { bound: true, code: "lock_present" } } });
+    writeFileSync(shared, [treeLine(4004), treeLine(5005)].map((l) => JSON.stringify(l) + "\n").join(""));
+    const hook = recordedProducer("hook claude", baseEnv({ ...bound, SKILL_ME_TEST_TRACES_TIMING: shared }));
+    hook.settle({ status: 0, signal: null, report: null });
+    throw new Error("falhou");
+  }));
+  const lines = failure.message.split("\n");
+  assert.deepEqual(
+    lines.filter((line) => /^ {2}(processo \d de \d|tempos):/.test(line)).map((line) => line.slice(0, line.indexOf(":") + 1)),
+    ["  processo 1 de 3:", "  processo 2 de 3:", "  processo 3 de 3:", "  tempos:"],
+    failure.message,
+  );
+  assert.ok(lines.find((line) => line.startsWith("  processo 1 de 3:")).includes("pendentes na saída: open lock (tomada do lock) há 640 ms"), failure.message);
+  assert.ok(!lines.some((line) => /^ {2}processo \d de 3:.*linhas da pré-carga/.test(line)), "cada processo da árvore é uma linha, não uma contagem");
+  // O arquivo do teste continua contado na linha da saída do produtor.
+  assert.ok(lines.find((line) => line.startsWith("  tempos:")).includes("; 2 linhas da pré-carga"), failure.message);
+  assert.ok(failure.message.includes("raiz 1 (produtores 1, 2): lock presente, de produtor 1 wrapper codex, processo 1 de 3;"), failure.message);
+  assert.ok(!failure.message.includes(root) && !failure.message.includes("0011223344556677"), "sem caminho nem nonce");
+});
+
+test("I25-C46 evidência comum: um lock que não se lê como o JSON de um produtor sai com o código e o tamanho, sem o conteúdo", async () => {
+  for (const [label, lock, expected] of [
+    ["vazio", "", "lock presente, ilegível [SyntaxError; 0 bytes]"],
+    ["sem pid", '{"lockVersion":1}', "lock presente, ilegível [sem pid; 17 bytes]"],
+    ["texto", "lock alheio\n", "lock presente, ilegível [SyntaxError; 12 bytes]"],
+  ]) {
+    const root = storeWithLock(`i25 c46 lock ${label}`, lock);
+    const failure = await rejection(recordingProducers(async () => {
+      recordedProducer("hook claude", baseEnv({ SKILL_ME_CAPTURE_ROOT: root, SKILL_ME_CAPTURE_ID: "0".repeat(32) })).settle({ status: 0, signal: null, report: null });
+      throw new Error("falhou");
+    }));
+    assert.ok(failure.message.includes(`raiz 1 (produtores 1): ${expected};`), `${label}: ${failure.message}`);
+    if (lock.trim() !== "") assert.ok(!failure.message.includes(lock.trim()), `${label}: sem o conteúdo do lock`);
+  }
+});

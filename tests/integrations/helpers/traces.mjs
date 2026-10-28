@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { afterEach, beforeEach } from "node:test";
@@ -311,15 +311,21 @@ export const describeProducerTrace = (t) =>
 // O lock da raiz lido direto. O dono é todo processo registrado (`owners`:
 // rótulo e `pid`) cujo `pid` coincide com o gravado no `.lock` — coincidência,
 // não prova de quem deixou o arquivo; o nonce do lock não é lido para a saída.
+// Um lock que não se lê como o JSON de um produtor sai com o código e o
+// tamanho — 0 bytes é o lock criado e não gravado —, nunca com o conteúdo.
 function lockEvidence(root, owners) {
   return inspected(() => {
     if (!readdirSync(storeDir(root)).includes(".lock")) return { present: false };
-    const pid = inspected(() => JSON.parse(readFileSync(path.join(storeDir(root), ".lock"), "utf8")).pid);
-    if (typeof pid !== "number") return { present: true, owner: `ilegível [${pid.unavailable ?? "sem pid"}]` };
+    const file = path.join(storeDir(root), ".lock");
+    const pid = inspected(() => JSON.parse(readFileSync(file, "utf8")).pid);
+    if (typeof pid !== "number") return { present: true, unreadable: pid?.unavailable ?? "sem pid", bytes: inspected(() => statSync(file).size) };
     const by = owners.filter((owner) => owner.pid === pid).map((owner) => owner.label);
     return { present: true, owner: by.length > 0 ? by.join(", ") : "outro processo" };
   });
 }
+
+const describeLock = (l) =>
+  !l.present ? "ausente" : l.owner !== undefined ? `presente, de ${l.owner}` : `presente, ilegível [${l.unreadable}; ${typeof l.bytes === "number" ? `${l.bytes} bytes` : `tamanho indisponível [${l.bytes.unavailable}]`}]`;
 
 // Da captura, depois que os produtores saíram: o status pelo CLI, como o
 // usuário o consulta (com o lock preso, sai com o código dele); a pasta e o lock
@@ -361,7 +367,7 @@ export function describeDeliveryEvidence({ producers, capture }) {
     [
       `status ${shown(status, (s) => `${s.state}, accepted ${s.accepted}, persisted ${s.persisted}`)}`,
       `pasta ${shown(files, (f) => `${f.segments} segmento(s), ${f.temporaries} temporário(s)`)}`,
-      `lock ${shown(lock, (l) => (l.present ? `presente, de ${l.owner}` : "ausente"))}`,
+      `lock ${shown(lock, describeLock)}`,
     ].join("; "),
   );
   return [...lines, `captura: ${described}`].join("\n");
@@ -535,19 +541,42 @@ const traceOf = (producer) =>
       ? { unavailable: "ambiente herdado, sem pré-carga" }
       : producerTrace(producer.timing, { line: producer.line, commits: false });
 
+// Com o arquivo do registro (um por produtor), cada linha é um processo da
+// árvore dele, na ordem de saída: o wrapper, o Codex falso e o hook que este
+// inicia (gate B em c0d61d7: só a linha do wrapper saía). Com o arquivo do
+// teste, as outras linhas são de outros produtores e ficam de fora.
+function treeOf(producer) {
+  if (producer.inProcess || producer.timing === null || !producer.own) return null;
+  const lines = timingLines(producer.timing);
+  return lines.length > 1 ? lines.map((line) => inspected(() => lineTrace(line, { lines: 1, ...NEUTRAL }))) : null;
+}
+
 function describeRecording({ producers, processes }) {
   if (producers.length === 0) return "evidência dos produtores deste teste: nenhum produtor registrado";
-  const traced = producers.map((producer) => ({ producer, trace: inspected(() => traceOf(producer)), report: inspected(() => ({ value: producer.inProcess ? producer.report() : (producer.run?.report?.delivery ?? null) })) }));
+  const traced = producers.map((producer) => ({
+    producer,
+    trace: inspected(() => traceOf(producer)),
+    tree: inspected(() => treeOf(producer)),
+    report: inspected(() => ({ value: producer.inProcess ? producer.report() : (producer.run?.report?.delivery ?? null) })),
+  }));
   const owners = [
-    ...traced.filter(({ trace }) => typeof trace.pid === "number").map(({ producer, trace }) => ({ pid: trace.pid, label: `produtor ${producer.index} ${producer.label}` })),
+    ...traced.flatMap(({ producer, trace, tree }) =>
+      Array.isArray(tree)
+        ? tree.flatMap((t, k) => (typeof t.pid === "number" ? [{ pid: t.pid, label: `produtor ${producer.index} ${producer.label}, processo ${k + 1} de ${tree.length}` }] : []))
+        : typeof trace.pid === "number"
+          ? [{ pid: trace.pid, label: `produtor ${producer.index} ${producer.label}` }]
+          : [],
+    ),
     ...processes,
   ];
   const lines = [`evidência dos produtores deste teste (${producers.length}):`];
-  for (const { producer, trace, report } of traced) {
+  for (const { producer, trace, tree, report } of traced) {
     const outcome = producer.inProcess ? "" : producer.run === null ? "ainda em curso; " : `status ${producer.run.status}, sinal ${producer.run.signal ?? "nenhum"}; `;
     const delivery = shown(report, ({ value }) => (value === null || value === undefined ? "sem relatório" : JSON.stringify(value)));
     lines.push(`produtor ${producer.index} ${producer.label}${producer.inProcess ? " (em processo)" : ""}: ${outcome}entrega ${delivery}`);
-    lines.push(`  tempos: ${shown(trace, describeProducerTrace)}`);
+    if (Array.isArray(tree)) tree.forEach((t, k) => lines.push(`  processo ${k + 1} de ${tree.length}: ${shown(t, describeProducerTrace)}`));
+    else lines.push(`  tempos: ${shown(trace, describeProducerTrace)}`);
+    if (tree?.unavailable !== undefined) lines.push(`  processos da árvore: indisponível [${tree.unavailable}]`);
   }
   const roots = new Map();
   const unavailable = [];
@@ -560,7 +589,7 @@ function describeRecording({ producers, processes }) {
     lines.push(
       `raiz ${index + 1} (produtores ${members.join(", ")}): ` +
         [
-          `lock ${shown(lock, (l) => (l.present ? `presente, de ${l.owner}` : "ausente"))}`,
+          `lock ${shown(lock, describeLock)}`,
           `capturas ${shown(captures, (c) => `${c.rows.length} [${c.rows.join("; ")}]`)}`,
           `pasta das capturas ${shown(files, (f) => `${f.segments} segmento(s), ${f.temporaries} temporário(s)`)}`,
         ].join("; "),

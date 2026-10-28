@@ -41,6 +41,9 @@ export function recordedProducer(label, env) {
   current.producers.push(entry);
   if (env === undefined) return { env, settle: (run) => ((entry.run = run), run) };
   const own = env.SKILL_ME_TEST_TRACES_TIMING === undefined;
+  // Arquivo do registro: um por produtor, com uma linha por processo da árvore
+  // dele (o wrapper, o Codex falso e o hook que este inicia herdam a pré-carga).
+  entry.own = own;
   entry.timing = own ? path.join((current.dir ??= makeScratch("traces produtores")), `${entry.index}.ndjson`) : env.SKILL_ME_TEST_TRACES_TIMING;
   const probe = `--import=${TRACES_PROBE}`;
   const options = env.NODE_OPTIONS === undefined || env.NODE_OPTIONS === "" ? probe : env.NODE_OPTIONS.includes(probe) ? env.NODE_OPTIONS : `${env.NODE_OPTIONS} ${probe}`;
