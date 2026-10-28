@@ -74,3 +74,32 @@ workflow, core e configuração não mudam.
   próprio.
 
 Nada aqui afirma CI verde, `ready` nem causa corrigida.
+
+## Continuação: correções da harness dos gates B e C (mesma sessão de autor)
+
+- **Preservado**: os gates de `60bbda8` (A 333/321/0/12, B 333/314/7/12, C 333/312/1/20) e o ciclo de
+  `c0d61d7` (A 343/331/0/12, B 343/330/1/12 com o T8-C4). C e D não rodaram em `c0d61d7`.
+- **B**, causa demonstrada: no Windows, com o Node 24.13.0 e “ação” no caminho:
+  - o `cpSync` grava a cópia num irmão `aÃ§Ã£o` e deixa o destino pedido ausente;
+  - o `rmSync` não remove.
+
+  Nenhum dos dois lança. A preparação da fixture Hermes passa ao `cp`/`rm` de `node:fs/promises`, o
+  substituto já documentado no repositório, sem `force`, nas duas provas demonstradas. Controle C40 com
+  bytes exatos.
+- **C**, causa demonstrada pela comparação das mesmas chamadas: o relógio civil do WSL recua ~1,8 s a cada
+  ~30 s, e 28 de 349 chamadas mediram 53–1.499 ms contra ~2.060 ms monotônicos. O `collect` passa ao
+  `performance.now()`; a faixa 1.900/6.000 e o prazo de 2.000 ms não mudam. Controle (l).
+- **Evidência**: o B de `c0d61d7` mostrou que só 1 das 3 linhas da pré-carga de um produtor saía. Agora
+  saem os processos da árvore, e o lock ilegível vem com o tamanho. Controles (m)–(n).
+- **Gates finais em `cd4afc2`**, com o temporário isolado por execução:
+  - A: 345 testes, 333 pass, 0 fail, 12 skip;
+  - B: 345 testes, 332 pass, **1 fail**, 12 skip;
+  - C: 345 testes, 325 pass, 0 fail, 20 skip;
+  - D: exit 0, 1.044/1.024/0/20.
+- **A falha do B final** é o T8-C16, pré-existente na main. O timer do prazo de `untilDeadline` dispara até
+  ~1 ms antes do `performance.now()`, e uma 4ª tentativa começa e é abandonada sem gravar. Foi reproduzido
+  em 13 de 400 rodadas no 24.13.0 e em 15 de 400 no 24.22.1. Não foi corrigido nem repetido; decisão do
+  coordenador.
+- **Limpeza**: por caminho exato. A limpeza anterior (1.257 + 107 pastas, por janela) não teve auditoria de
+  propriedade. Cinco pastas sem prova de proveniência ficaram, listadas no build.
+- A causa histórica dos `delivery_timeout` no Windows continua desconhecida.

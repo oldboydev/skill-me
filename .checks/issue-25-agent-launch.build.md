@@ -2133,3 +2133,139 @@ Limites:
   nos arquivos deles; consolidar mudaria provas que passaram.
 - **Pendentes, com o orquestrador**: Verifier 19, formal 12, publicação e a próxima CI. Nada aqui afirma CI
   verde, `ready` nem causa corrigida.
+
+## Gates de `60bbda8`: correção da harness nos gates B e C (C40 (a)–(b), C46 (l))
+
+Continuação do mesmo lote e da mesma sessão de autor, depois do D de `60bbda8`. Os resultados de
+`60bbda8` ficam como foram: A 333/321/0/12, B 333/314/7/12 e C 333/312/1/20. B e C não foram aprovados, e
+a primeira tentativa de C, com o caminho convertido pelo MSYS, não executou nenhum teste.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `0eaae31` | Antes do código: Sources, linhas “Preparação da fixture do plugin Hermes no Node 24.13.0” e “Duração monotônica no apoio dos hooks instalados” do Landing, C40 (a)–(b), C46 (l), tasks 32 e 38, Handoff com as retificações |
+| `d317202` | `installFixturePlugin`/`removeFixturePlugin` em `hermes-runtime.mjs` e o uso nas duas provas demonstradas; `collect` por `performance.now()`; os controles I25-C40 e I25-C46 (l) |
+| `c0d61d7` | Gates definidos depois do último código: lista de 39 arquivos, ambientes e isolamento do temporário |
+
+Pasta de trabalho: `builder-ci93-shared/final2/`, `probes/` e `clock/` (ignoradas).
+
+- **B — causa demonstrada** (`probes/fs-unicode-win.txt`, com a fixture real):
+  - No Windows, com o Node 24.13.0 e “ação” no destino, o `cpSync` recursivo não lança e o destino pedido
+    fica ausente. A cópia vai para um irmão com o nome convertido pela página de código ANSI: o RED abaixo
+    deixou `skill-me i4 i25 c40 fixture aÃ§Ã£o aÃ§Ã£o-D8YJUv`, com o mesmo sufixo aleatório do scratch do
+    teste e os dois arquivos da fixture.
+  - O `rmSync` recursivo, com ou sem `force`, não lança e deixa a pasta com o conteúdo.
+  - O `cp` e o `rm` de `node:fs/promises` copiam e removem com os sha256 da fonte.
+  - No 24.22.1, ou com caminho ASCII, as quatro operações funcionam.
+  - O I4-C35 isolado falha igual em `93bd1e9` com o 24.13.0 (`final/diag-B/`).
+  - O repositório já documentava o defeito e o substituto (`concurrency.cli.test.mjs:54`,
+    nodejs/node#56049).
+- **C — comparação das mesmas chamadas** (`clock/wsl-clock-compare.jsonl` e `wsl-clock-summary.txt`; WSL
+  uid 1000, Node 24.13.0 copiado, `env -i`, `HOME` e `TMPDIR` no scratch, 15:32–15:43):
+  - 349 chamadas do caso de stdin aberto do I4-C36, pelo `runClaudeHandler` real, medidas também em volta
+    de cada chamada pelos dois relógios;
+  - o relógio civil recuou 50 vezes, em 25 pares de cerca de −0,8 s e −1,0 s, a cada ~30 s (−44,4 s ao
+    todo);
+  - as 28 chamadas que atravessaram um recuo deram `elapsedMs` de 53 a 1.499 ms contra 2.053 a 2.090 ms
+    monotônicos, todas com `stdinTimeout` 1; nas outras 321, a diferença foi ≤ 3 ms.
+
+  O hook mede o prazo por `setTimeout` (monotônico); a falha do gate C (`claude timeout: 209 ms`) é a
+  medida civil do apoio.
+- **RED** (cópias descartáveis de `d317202` com só o código antigo, `final2/red2-patch.mjs`):
+  - **(l)**, com o `Date.now()` no `collect`, Windows 24.22.1: `claude timeout: 378 ms` (falha);
+  - **C40**, com o `cpSync`/`rmSync` na preparação:
+    - no 24.13.0: `ENOENT: … scandir …\plugins\skillme-fixture-tool` (falha);
+    - no 24.22.1: passa, o que confirma que o controle só discrimina no Windows com o 24.13.0.
+- **GREEN antes dos gates**:
+  - o controle do C40 passa no 24.13.0 e no 24.22.1;
+  - o I4-C36 e o (l) passam no 24.22.1;
+  - as nativas do Hermes, o I4-C35 e a harness (22 testes) passam no 24.13.0 e no 24.22.1
+    (`final2/green-B-set-*.spec.txt`).
+- **Limpeza com proveniência**: os scratches do RED B (o pedido, pelo caminho exato da saída do teste, e o
+  irmão `aÃ§Ã£o`, pelo sufixo e pelo conteúdo) foram removidos (`red2-b-cleanup.txt`,
+  `red2-b-mojibake-cleanup.txt`).
+  - Cinco pastas da `hermes-harness.unit` (`i25 c39 harness`, `i25 c40 falha`, `i25 c40 travado`,
+    `i25 c44 harness`, `i25 c44 sem destino`) apareceram no temporário às 18:47 UTC, durante o meu run
+    diagnóstico com o 24.13.0, cujo `after` usa `rmSync`.
+  - Só a janela e os rótulos as ligam a ele, sem prova de proveniência; por isso ficaram, listadas em
+    `final2/temp-new-since-cleanup.txt`.
+- **Retificações do registro anterior** (no Handoff do checklist):
+  - a inferência pela duração do teste (2.358 ms) não era conclusiva sozinha;
+  - a limpeza de 1.257 + 107 pastas foi por prefixo, tipo, dono e janela, sem auditoria de propriedade e
+    sem os nomes removidos no Windows.
+
+**Primeiro ciclo de gates, em `c0d61d7`** (código de `d317202`; 39 arquivos; logs em `final2/`):
+- **A**: 343 testes, 331 pass, 0 fail, 12 skip, exit 0.
+- **B**: 343 testes, 330 pass, **1 fail**, 12 skip, exit 1 — preservado.
+  - **A falha**: T8-C4 `com hook do filho` (`live-capture.cli.test.mjs:414`), com o wrapper em
+    `lock_present` 16/7/6/9.
+  - **O que a evidência comum trouxe** (primeira falha real com ela): 53 disputas do lock, nenhuma
+    operação pendente na saída do wrapper, 15,2 s de processo, laço com até 503,6 ms, e o lock deixado
+    ilegível (`SyntaxError`).
+  - **A lacuna**: só a linha do wrapper, de 3 (wrapper, Codex falso e o hook filho).
+  - **Por eliminação**: o wrapper saiu sem pendente, e o Codex falso não toca o store. O hook filho é o
+    candidato, mas a linha dele não saiu, e por isso não é demonstrado. A causa continua desconhecida
+    (classe histórica do lock deixado por uma tentativa abandonada).
+- **C e D não rodaram nesse código**: a lacuna foi corrigida antes. Linha “Processos da árvore de um
+  produtor e lock ilegível na evidência comum” do Landing, C46 (m)–(n), registro `2b3a114`.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `2b3a114` | Antes do código: a lacuna da evidência mostrada pelo B de `c0d61d7` (Landing, C46 (m)–(n), Handoff) |
+| `909b591` | Com o arquivo do registro, cada linha da pré-carga sai como `processo k de n`, e o `pid` dela entra nos donos do lock; o lock ilegível sai com o código e o tamanho; corrigido também o `pid` ausente num JSON de lock (`pid?.unavailable`); controles (m)–(n) |
+| `cd4afc2` | Gates finais definidos sobre `909b591`: a mesma lista de 39 (sha256 `f8706add…7986`), logs em `final2/g909/` |
+
+- **RED (m)–(n)**: com os apoios de `d317202` e os controles novos, (m) e (n) falham e os outros 4 da prova
+  passam (`final2/red-mn-win-24.22.1.spec.txt`).
+
+| Gates finais em `cd4afc2` (código de `909b591`): 39 arquivos, `--test-concurrency=4`, uma invocação sem filtro por ambiente, `RUNNER_TEMP` presente e válido, temporário isolado por execução | Resultado |
+| --- | --- |
+| A — Windows, Node 24.22.1, npm 11.19.1, checkout principal, `npm_execpath` ausente; `TEMP`/`TMP` do processo em `sm-gate-A2-…`, 16:19:47–16:28:20 | 345 testes: 333 pass, 0 fail, 12 skip; exit 0; `git status` vazio antes e depois; a pasta isolada (108 entradas deixadas pelos testes) removida pelo caminho exato |
+| B — clone git novo de `cd4afc2`, `core.autocrlf=true` só no clone, Node 24.13.0 oficial, npm 11.6.2, `npm_execpath` ausente; `TEMP`/`TMP` em `sm-gate-B2-…`, 16:28:49–16:36:15 | 345: 332 pass, **1 fail**, 12 skip; exit 1; status do clone vazio antes e depois; a pasta isolada (1.008 entradas, as do `rmSync` do 24.13.0) removida; o clone removido depois de conferir caminho, tipo e HEAD |
+| C — WSL uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, npm 11.6.2, `env -i`, `HOME`, `RUNNER_TEMP` e `TMPDIR` dentro do scratch, PATH sem `/usr/bin`; `git archive cd4afc2` (sha256 `51717807…c28a`, árvore `89f696b3…` = `HEAD^{tree}`, 0 CR), 16:37:55–16:39:16 | 345: 325 pass, 0 fail, 20 skip; exit 0; `/tmp` com 381 `skill-me` antes e depois; as 108 entradas dos testes ficaram no `TMPDIR` do scratch, removido com ele |
+
+- **Nomes e skips**:
+  - Os 339 nomes do TAP são os mesmos nos três.
+  - Os 12 skips de A e B são idênticos em nomes e motivos, e iguais aos do A de `60bbda8`.
+  - Os 20 do C: as 11 nativas do Hermes (sem o runtime no `HOME` do scratch), as de Windows e a de macOS.
+  - Em cada ambiente passaram os 23 I25-C46/C47 (9 de antes e 14 novos), o I4-C36, o I4-C35 e os I25-C40.
+  - No B passaram as 11 nativas do Hermes, que falharam em `60bbda8`.
+- **A falha do B final, preservada**: T8-C16 `tentativa cortada no prazo antes de obter o lock…`
+  (`concurrency.cli.test.mjs:908`), `a repetição estava em curso no prazo`, `4 !== 3`.
+  - É um teste em processo, com `io` roteirizado e sem produtor registrado. Passou em todos os outros
+    gates desta rodada.
+  - **Reprodução** (`final2/t8c16-probe.mjs`, o mesmo cenário pela entrega real do produto, 4 em
+    paralelo × 100):
+    - no Node 24.13.0, 13 de 400 rodadas tiveram uma 4ª criação do lock; no 24.22.1, 15 de 400;
+    - todas saíram `lock_present`;
+    - a 4ª criação começa 0,67 a 1,58 ms depois do prazo pelo `performance.now()`.
+  - **O que isso mostra**: o timer do prazo de `untilDeadline` (`src/integrations/traces/delivery.mjs`,
+    `fd07b89`, anterior à base `63621c6`) dispara até ~1 ms antes de o relógio da entrega chegar ao
+    prazo. O laço ainda vê tempo restante e inicia mais uma tentativa. Ela é abandonada, e o lock
+    obtido depois é devolvido sem gravar: o resultado do contrato (`lock_present`, nada gravado) se
+    mantém, e só a contagem exata de criações da prova muda.
+  - **Classificação**: pré-existente na main, sem relação com esta entrega e sem violar o contrato
+    documentado. Não foi corrigido: mudar o produto ou a asserção está fora destes contratos. Fica com o
+    coordenador e o proprietário.
+
+**`npm test` completo final em `cd4afc2`**: Windows, Node 24.22.1, npm 11.19.1, `npm_execpath` ausente,
+`RUNNER_TEMP` presente, `TEMP`/`TMP` do processo em `sm-gate-D2-…`, runner padrão com 8 arquivos e os
+nativos do Hermes. Uma vez, das 16:39:26 às 16:50:21, com orçamento de 2 h na ferramenta antes do início, e
+esperei o término real (`final2/g909/npm-test.*`). **Exit 0**: 1.044 testes, 1.024 pass, 0 fail, 20 skip;
+nenhum `✖`; `git status` vazio antes e depois. A pasta isolada (128 entradas) foi removida.
+- **Por suíte**: governança 25/25; motor 16/16; doctor 417 (410/0/7); integrações 586 (573/0/13), +4 provas
+  novas.
+- **Skips**: os mesmos 20 de plataforma do D de `60bbda8`.
+
+**Limpeza**: as pastas isoladas dos gates e as cópias e os clones desta rodada foram removidos pelo caminho
+exato. O temporário do sistema não ganhou nenhuma entrada durante os gates finais nem as sondas
+(`final2/temp-gates-compare.txt`).
+
+**Causa histórica dos `delivery_timeout`/`lock_present` no Windows**: continua desconhecida. Estas
+correções são da harness dos gates (preparação da fixture e medida de duração) e da evidência comum, e não
+a resolvem.
+
+Pendentes, com o coordenador:
+- o Verifier 19 e a formal 12;
+- a publicação e a CI nova;
+- o T8-C16 (corrida de ~1 ms entre o timer e o `performance.now()` no `untilDeadline`, pré-existente);
+- as cinco pastas não atribuídas no temporário.

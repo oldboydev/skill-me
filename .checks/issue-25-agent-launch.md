@@ -1300,3 +1300,51 @@ Gates de `60bbda8`: correção da harness nos gates B e C (registros acima prese
     - C40, com o `cpSync`/`rmSync` no 24.13.0;
     - (l), com o `Date.now()`;
     - (m)–(n), com os apoios de `d317202`.
+- **Onde a fronteira caiu agora**:
+  - **Commits**:
+    - registros em `0eaae31`, `c0d61d7`, `2b3a114` e `cd4afc2`;
+    - código em `d317202` (fixture Hermes por `cp`/`rm` de `node:fs/promises`; `collect` por
+      `performance.now()`; controles C40 e (l)) e `909b591` (processos da árvore do produtor e lock
+      ilegível na evidência; controles (m)–(n)).
+
+    Só provas e apoios de prova; `src/` sem mudança desde `f734441`.
+  - **RED**:
+    - C40, no 24.13.0: `ENOENT`, o destino ausente. A cópia foi parar num irmão `aÃ§Ã£o`, com o mesmo
+      sufixo; removido com prova;
+    - (l): `claude timeout: 378 ms`;
+    - (m) e (n): falham com os apoios de `d317202`.
+  - **Comparação dos relógios no WSL**: 28 de 349 chamadas com `elapsedMs` civil de 53 a 1.499 ms contra
+    ~2.060 ms monotônicos.
+  - **Gates finais em `cd4afc2`** (temporário isolado):
+    - A: 345 testes, 333 pass, 0 fail, 12 skip;
+    - B: 345 testes, 332 pass, **1 fail**, 12 skip;
+    - C: 345 testes, 325 pass, 0 fail, 20 skip;
+    - D: o `npm test` completo saiu com exit 0, 1.044/1.024/0/20.
+
+    As 11 nativas do Hermes e o I4-C35 passaram no B, e o I4-C36 passou no C.
+  - **A falha do B final, preservada**: T8-C16 (`4 !== 3` criações do lock).
+    - **Reprodução**: 13 em 400 rodadas no 24.13.0 e 15 em 400 no 24.22.1. O timer do prazo de
+      `untilDeadline` dispara até ~1 ms antes do `performance.now()` alcançar o prazo, e o laço inicia
+      mais uma tentativa, que é abandonada e não grava.
+    - **Origem**: pré-existente na main (`fd07b89`, anterior à base); o contrato se mantém.
+    - Não foi corrigido nem repetido; fica com o coordenador.
+  - **Ciclo de `c0d61d7`, preservado**: A 343/331/0/12 e B 343/330/1/12 (T8-C4). Desse B veio a correção
+    da evidência; C e D não rodaram nesse código.
+  - **Temporário**: os gates finais e as sondas não deixaram entradas no temporário do sistema. Ficam,
+    sem prova de proveniência, cinco pastas da `hermes-harness.unit` de um run diagnóstico meu com o
+    24.13.0, listadas no build.
+  - **Causa histórica dos `delivery_timeout`/`lock_present` no Windows**: continua desconhecida.
+- **O que foi abandonado**:
+  - trocar todos os `cpSync`/`rmSync` das provas;
+  - `force` na remoção;
+  - atualizar o Node;
+  - tirar “ação”;
+  - afrouxar a faixa do I4-C36;
+  - mexer no relógio;
+  - patch global do `Date`;
+  - mostrar só a linha da saída do produtor;
+  - ler o conteúdo do lock;
+  - corrigir aqui o T8-C16 (produto ou asserção, fora destes contratos);
+  - repetir gates para obter verde.
+- **Pendentes, com o coordenador**: o Verifier 19, a formal 12, a publicação, a CI nova, o T8-C16 e as
+  cinco pastas não atribuídas. Nada aqui afirma PASS, `ready` nem CI verde.
