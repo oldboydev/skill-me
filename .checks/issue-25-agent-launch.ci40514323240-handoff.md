@@ -118,3 +118,17 @@ teto, mudar o workflow ou o limite do job, ou instrumentar uma prova antiga da #
   Windows, Node 24.22.1. Discrimina as duas localizações pela presença do lock.
 - Nenhuma suíte, alvo ou CI foi executado: não houve código novo. Nenhum agente real, modelo ou
   rede.
+
+## Depois da decisão (28/10/2026)
+
+O proprietário aprovou a proposta `.checks/issue-25-agent-launch.ci40514323240-proposal.md` (`df2441f`;
+[comentário 6460177952](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6460177952)): a
+opção (b) do item 1, instrumentar o I23-C10, e a (a) do item 2, 20 minutos só no job Windows da
+matriz `verify`.
+- **Registro antes do código**: `25f5948` (task 39–40, C47–C48, Landing).
+- **Código**: `52b22cd` (diagnóstico do I23-C10 com as provas I25-C47 e o `timeout-minutes`).
+- **Provas e resultados**: na seção “Diagnóstico do I23-C10 e orçamento do job Windows” do build.
+  Alvo de 128 testes com 122/0/6 nos três ambientes e `npm test` completo com exit 0.
+
+A causa dos dois `delivery_timeout` continua desconhecida. Pendentes, com o orquestrador: o
+Verifier 12, a revisão formal 7, a publicação do HEAD validado no PR #28 e a CI dele.

@@ -1310,3 +1310,84 @@ proprietário, no handoff: como tratar paradas além do prazo nas provas com pro
 recomendação é instrumentar o I23-C10 com a pré-carga existente e decidir sobre a CI com as
 asserções intactas) e o que fazer com o limite de 10 min do job Windows. Prazos, retry, perdas,
 carga, paralelismo, teto 8 e o limite do job continuam sem mudança.
+
+## Diagnóstico do I23-C10 e orçamento do job Windows (AC8, autorização 6460177952; S11, C47–C48)
+
+O proprietário aprovou “Autorizar diagnóstico e orçamento Windows (recomendado)”
+([comentário 6460177952](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6460177952)),
+exatamente a proposta `.checks/issue-25-agent-launch.ci40514323240-proposal.md` (`df2441f`), com o AC8
+na issue antes do código. A CI 40514323240 em `d0d5a7f` continua registrada como vermelha (seção
+anterior), e o Verifier 11 PASS e a formal 6 `ready` ficam no histórico. A causa dos dois
+`delivery_timeout` continua **desconhecida**: nada aqui a corrige.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `25f5948` | Task 39–40 e Sources, Landing “Diagnóstico do I23-C10” e “Orçamento do job Windows”, S11/C47–C48, Handoff e a marcação de aprovação da proposta feita pelo orquestrador, antes do código |
+| `52b22cd` | Rotina em etapas e evidência do I23-C10 e as duas provas I25-C47 (`observe/agents.e2e.test.mjs`); apoio comum em `helpers/traces.mjs`; `observe.json` nomeado na pré-carga; `failureCode` importado em `helpers/launch.mjs`; o `timeout-minutes` do job `verify` |
+
+Logs em `.checks/code-review/issue-25/builder-ci40514323240-approved/` (pasta ignorada).
+
+- **Sequência do hook automático** (`auto-ops-sequence.mjs`, hook Codex na primeira entrega de uma
+  sessão, com a pré-carga de tempos e só o comando interno com fixture): leitura da configuração no
+  home fora do lock; 1ª tomada do lock (`openObservation`); 2ª tomada (`appendAutomatic`): leitura do
+  estado da observação, um `lstat` com `ENOENT` (a captura nova ainda não existe), pasta, chave,
+  `state.json.tmp` renomeado, `observe.json.tmp` renomeado, chave lida, segmento, `state.json.tmp`
+  renomeado de novo (o commit) e a liberação. Daí as escolhas da evidência: o `lstat ENOENT` é
+  contado como ausência conferida, o lugar é a tomada do lock (a fase “antes/depois do commit” do T8
+  seria falsa com dois `rename` de `state.json.tmp` na mesma tomada), e o `observe.json`, que saía
+  como `pasta`, passa a ter nome.
+- **O que mudou**: as asserções do I23-C10 são as mesmas; só a mensagem ganha a evidência, e só
+  numa etapa com alguma entrega fora do esperado. Fora a mensagem, a única diferença é o
+  `run.report?.delivery` na asserção: sem relatório, a falha vira `AssertionError` com a evidência,
+  em vez de `TypeError`, e continua vermelha. `failureCode`, `inspected`, `privacyBody`, `shown` e
+  `diskTrace` foram para `helpers/traces.mjs`, com dois consumidores. O T8-C15/C46 formata a fase
+  sobre `diskTrace`, com a mesma saída; os quatro passaram de novo (`green-c46-win-24.22.1.spec.txt`).
+- **RED** (o I23-C10 de `25f5948`, numa cópia descartável, com só o hook “codex A” da rodada 0
+  carregando a pré-carga e a injeção, por `red-patch.mjs`): com `SEGMENT_EIO=1`, a mensagem foi só
+  `codex A 0` e o diff `io_failure` 1/0/0/1; com `STALL_SEGMENT=1`, só `codex A 0` e
+  `delivery_timeout` 1/0/0/1 — a mesma mensagem da CI 40514323240, sem operação nem estado
+  (`red-old-*-win-24.22.1.spec.txt`).
+- **GREEN** (`green-c47-win-24.22.1.spec.txt`): o I23-C10 e os dois C47 passaram na primeira
+  execução, 3/3. Mensagens reais, obtidas numa cópia em que o texto esperado de um `includes` de cada
+  controle foi trocado, para a prova falhar e imprimi-las (`sample-messages-win-24.22.1.spec.txt`):
+  - falha de E/S: `codex A 0`, `produtor codex A 0: status 0; entrega
+    {"automatic":true,"code":"io_failure",…}`, `tempos: … falhas rename segmento.tmp EIO (sob o lock,
+    2ª tomada); … lock ocupado (EEXIST, repetido) 0x; ausências conferidas (lstat ENOENT) 1x; última
+    concluída: unlink lock (sob o lock, 2ª tomada)` e `raiz: capturas automáticas 1 [active accepted 0
+    persisted 0]; pasta das capturas 0 segmento(s), 0 temporário(s); lock ausente`;
+  - disco parado: `… code":"delivery_timeout" …`, `falhas nenhuma`, `última concluída: close key (sob
+    o lock, 2ª tomada)` e `raiz: capturas automáticas indisponível [lock_present]; pasta das capturas 0
+    segmento(s), 0 temporário(s); lock presente`.
+- **Mutações** (cópia descartável, `mutation-*-win-24.22.1.spec.txt`): sem a última operação
+  concluída → o controle de disco parado falha; o CLI que falha virando “zero capturas” → o mesmo
+  controle falha; o `lstat ENOENT` contado como falha → os dois controles falham.
+- **Orçamento do job** (C48; `workflow-values.txt`): `git diff` com uma linha (`timeout-minutes: 10`
+  → `${{ matrix.os == 'windows-latest' && 20 || 10 }}`); pelo YAML lido com o `yaml` do repositório,
+  `changes` e `ci` com 5 e `verify` com 20 no `windows-latest` e 10 no `ubuntu-22.04` e no
+  `macos-14`; o resto do workflow é idêntico ao de `d0d5a7f`; `governance-C1 C3` passou. Nenhum teste
+  novo repete o texto da expressão; a CI real a valida.
+
+| Alvo em `52b22cd`: `launch/*.test.mjs`, `hermes-harness.unit.test.mjs`, `traces/concurrency.cli.test.mjs` e `observe/agents.e2e.test.mjs` inteiro, `--test-concurrency=4` | Resultado |
+| --- | --- |
+| A — Windows, Node 24.22.1, Python 3.12.10, checkout principal, 01:04:14–01:07:03 | 128 testes: 122 pass, 0 fail, 6 skip; `git status` vazio antes e depois; I23-C10 15,1 s, C47 3,7 e 4,4 s |
+| B — Windows, Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, clone novo com `core.autocrlf=true` (`package.json` `w/crlf`, `cli.mjs` `w/lf attr/text eol=lf`), 01:07:19–01:10:02 | 128: 122 pass, 0 fail, 6 skip; `git status` do clone vazio antes e depois; clone removido; 403 scratches do 24.13.0 removidos, 0 recusas; I23-C10 13,2 s |
+| C — WSL Ubuntu uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, npm 11.6.2, `env -i`, `HOME` do scratch, PATH sem `/usr/bin`, `git -c core.autocrlf=false archive 52b22cd` (5.703.680 bytes, sha256 `e5d12769…8c64f6c3`, árvore extraída `e18ff990…` = `HEAD^{tree}`, `cli.mjs` 755), 01:10:31–01:11:37 | 128: 122 pass, 0 fail, 6 skip; `~/.skill-me` e a autorização ausentes antes e depois; I23-C10 1,2 s |
+
+Os 128 nomes são os mesmos nos três TAP: os 122 de antes e os 6 de `observe/agents.e2e`. Em cada
+ambiente passaram os 4 I23 do arquivo, os 2 C47, o T8-C15, os 3 C46 e os 9 C32. Skips, todos de
+plataforma, os mesmos de antes; o arquivo `observe/agents.e2e` não tem skip.
+
+**`npm test` completo em `52b22cd`** (Windows, Node 24.22.1, runner padrão com 8 arquivos, 12 nativos do
+Hermes; 01:12:09–01:22:29; `builder-ci40514323240-approved/final/npm-test.*`): **exit 0**. 1.006 testes:
+986 pass, 0 fail, 20 skip — governança 6/6; motor 16/16; doctor 417 (410/0/7); integrações 567
+(554/0/13). Passaram os 12 nativos, o I23-C10 (15,7 s), os dois C47, o T8-C15 e os três C46; `git
+status` vazio antes e depois. Removidas do `%TEMP%` 127 pastas de testes de outras issues da janela,
+com 0 recusas; outras 38 entradas novas não são desta execução e ficaram.
+
+Limites: a causa dos dois `delivery_timeout` da CI 40514323240 continua desconhecida, e o I23-C10
+instrumentado só a mostra numa nova ocorrência. A pré-carga custa um pouco em cada processo; sem ela,
+o I23-C10 levou 6,9, 13,4 e 14,1 s nos três `npm test` anteriores desta máquina, e com ela 15,1 s no
+alvo A e 15,7 s no `npm test`, com cargas diferentes, então o custo não foi medido à parte. Uma
+operação que nunca termina não aparece na linha da pré-carga: a evidência diz a última concluída. Os
+20 minutos do job evitam o cancelamento pelo limite total e não garantem a próxima CI verde. Nenhum
+CI, push, Verifier ou revisão rodou aqui: o Verifier 12 e a formal 7 são do orquestrador.

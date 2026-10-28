@@ -22,3 +22,7 @@ O orçamento maior do job evita cancelamento do conjunto pelo limite total; não
 
 A decisão é necessária porque o plano aprovado preserva workflow/limite do job e o diagnóstico I23-C10 ainda não faz parte dos critérios. Não é pedido de autorização para novas rodadas, já autorizado pelo proprietário.
 
+
+## Estado da implementação
+
+Registro antes do código em `25f5948` (task 39–40, Landing, S11 com C47–C48); diagnóstico do I23-C10, provas I25-C47 e o `timeout-minutes` do job `verify` em `52b22cd`. Provas, comandos e resultados na seção “Diagnóstico do I23-C10 e orçamento do job Windows” de `.checks/issue-25-agent-launch.build.md`: RED com a mensagem antiga (só `codex A 0`), GREEN, mutações, alvo de 128 testes com 122/0/6 em Windows 24.22.1, Windows 24.13.0 (clone com `core.autocrlf=true`) e WSL isolado, e `npm test` completo com exit 0 (1.006 testes, 986 pass, 0 fail, 20 skip). A causa dos `delivery_timeout` continua desconhecida. Verifier 12, formal 7, push e a CI do novo HEAD ficam com o orquestrador.

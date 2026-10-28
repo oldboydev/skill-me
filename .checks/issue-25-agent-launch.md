@@ -682,3 +682,10 @@ Diagnóstico do I23-C10 e orçamento do job Windows, aprovados (registros acima 
 - Onde a fronteira caiu: o registro (task 39–40, Landing, S11/C47–C48, este Handoff e a proposta
   aprovada) vem antes do código; provas, comandos e resultados ficam em
   `.checks/issue-25-agent-launch.build.md`.
+- Onde a fronteira caiu agora: registro em `25f5948`; código em `52b22cd`, só provas, apoios de prova
+  e o `timeout-minutes` do job `verify`; produto sem mudança desde `f734441`. Alvo de 128 testes
+  (122/0/6) nos três ambientes e `npm test` com exit 0 em `52b22cd`. A causa dos `delivery_timeout`
+  continua desconhecida.
+- O que foi abandonado: copiar `failuresWithPhase`/`inspected` para o arquivo do I23; reaproveitar a
+  fase “antes/depois do commit” no caminho automático; listar o `lstat ENOENT` como falha; calcular a
+  evidência em toda etapa; teste que só repete a expressão do workflow.
