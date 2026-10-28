@@ -1834,13 +1834,19 @@ Logs em `.checks/code-review/issue-25/builder-ci767/` (pasta ignorada).
     (`createCaptureDelivery`). O ingest abre antes de ler o stdin, com o prazo da abertura contado da
     chamada (`delivery.mjs:180`, `ingest-command.mjs:13`); o hook abre depois de ler, e o prazo de
     650 ms conta da leitura.
-  - **Os produtores que falharam**: dois ingests (T8-C3 e T8-C8), um hook (T8-C14), e um lock deixado
-    no T8-C18, de dono desconhecido.
+  - **Os produtores que falharam**: dois ingests (T8-C3 e T8-C8) e um hook (T8-C14), todos com
+    `delivery_timeout` no relatório. No T8-C18, o `privacy stop` saiu com `lock_present`, sem
+    relatório de entrega anterior nem indicação de quem tinha o lock.
   - **Nas CIs anteriores**: o C46 teve dois ingests parados na criação do lock da abertura (CI
-    40514323240); o I23-C10, um hook automático; o I23-C4 e o T8-C11, lock deixado (CI 40636157287).
-  - **A classe é uma só**: a primeira tentativa não terminou em 650 ms. Quando ela já tinha o lock, o
-    `process.exit(0)` do CLI (`cli.mjs:24`) encerra a tentativa abandonada e o lock fica, como o
-    contrato prevê (`docs/traces.md`).
+    40514323240); o I23-C10, um hook automático; o I23-C4 e o T8-C11, `lock_present` (CI 40636157287).
+  - **Mecanismos compatíveis com o código e o contrato**, não demonstrados nestas falhas:
+    - Pelo código, `delivery_timeout` é a tentativa que não terminou até o prazo de 650 ms da
+      entrada.
+    - Um lock deixado por uma tentativa abandonada é um caminho previsto: o `process.exit(0)` do CLI
+      (`cli.mjs:24`) encerra o que estava em curso, e `docs/traces.md` descreve o lock que fica.
+      Ele explicaria o `lock_present` do T8-C18, assim como as outras vias que o contrato admite.
+    - Os logs não mostram qual operação ou tomada, nem qual produtor tinha o lock.
+    - O tipo de sintoma é o das CIs anteriores, o que não prova causa comum.
 - **Caminho mapeado** (`map-producers-win-24.22.1.txt`):
   - **Ingest Hermes de 9**: 81 operações, 24 fora do lock, 27 na 1ª tomada (abertura: estado e chave)
     e 30 na 2ª (segmento e `state.json` por temporário com flush; commit pelo `rename` de
@@ -1857,11 +1863,12 @@ Logs em `.checks/code-review/issue-25/builder-ci767/` (pasta ignorada).
   - **T8-C3**: falhou com só o diff `delivery_timeout` 9/0/0/9;
   - **T8-C18**: falhou com só `stop: {"…","error":{"code":"lock_present"}}` e `4 !== 0`.
 
-  São as mensagens das CIs, sem operação, tomada, estado do laço nem dono do lock. Reproduzir a
+  São as mensagens das CIs, sem operação, tomada, estado do laço nem indicação de quem tinha o lock. Reproduzir a
   mensagem não mostra a causa da CI.
 - **GREEN** (`green-first-win-24.22.1.spec.txt`; os três arquivos tocados): 18 testes, 17 pass, 1 skip
   (T8-C4 POSIX). As quatro provas novas passaram na primeira execução, com os valores registrados.
-- **Mensagens reais** (`sample-messages-win-24.22.1.txt`, pelos apoios versionados):
+- **Mensagens dos controles** (`sample-messages-win-24.22.1.txt`, pelos apoios versionados, com as
+  injeções da pré-carga; não são falhas da CI):
   - **(d) disco parado sob o lock**: `pendentes na saída: open segmento.tmp (sob o lock, 2ª tomada) há
     654 ms`; laço com atraso máximo de 18,3 ms (43 amostras); `lock presente, de ingest hermes`.
   - **(e) criação do lock parada**: `pendentes na saída: open lock (tomada do lock) há 659 ms`; laço
@@ -1869,7 +1876,9 @@ Logs em `.checks/code-review/issue-25/builder-ci767/` (pasta ignorada).
   - **(f) laço parado**: `mais lenta open lock 901 ms`; laço com atraso máximo de 901,8 ms; CPU do
     processo 922 ms.
 
-  Os três casos se distinguem pela operação, pela tomada, pela idade, pelo laço e pela CPU.
+  Nos controles, os três casos injetados se distinguem pela operação, pela tomada, pela idade, pelo
+  laço e pela CPU. Numa falha real, esses campos são evidências compatíveis com um tipo de espera, e
+  não identificam o recurso nem a causa.
 - **Mutações** (cópia descartável; as 4 provas saudáveis e os 4 controles;
   `mutation-*-win-24.22.1.spec.txt`). Todas foram detectadas, as provas saudáveis passaram em cada
   uma, e as cópias foram removidas:
@@ -1922,18 +1931,36 @@ pelo mtime na janela e por não ser link. Nenhuma entrada `skill-me` nova ficou;
 sessões. A cópia do RED, as cópias das mutações e o clone de B foram removidos, todos com o caminho
 absoluto e o tipo conferidos antes.
 
-**Causa**: continua **desconhecida**. Nenhum defeito do produto ou das provas foi demonstrado:
-- as quatro falhas estão vermelhas com razão (uma entrada perdida no prazo, e o lock que fica pelo
-  contrato);
-- o código do caminho não mudou na feature;
-- a medição isolada não teve operação lenta.
+**Causa**: continua **desconhecida**. Não há defeito do produto ou das provas demonstrado, o que não
+equivale a afirmar que não há defeito.
+- As quatro falhas são vermelhas pelo que as asserções medem: uma entrada não confirmada no prazo, ou
+  o `stop` recusado com `lock_present`. Os logs não mostram o mecanismo.
+- O código do caminho não mudou na feature.
+- A medição sintética isolada do orquestrador não teve operação ≥ 600 ms, com máximos de até cerca de
+  140 ms. Ela não nomeia recurso nem causa.
 
 Não há correção. O que muda é a observabilidade da próxima CI. Se um desses produtores falhar, a
-mensagem dirá:
+mensagem trará:
 - qual operação estava em curso, em que tomada e há quanto tempo;
-- se o laço estava livre (disco ou sistema) ou parado (CPU ou processo);
-- quando o processo começou, para correlacionar falhas de arquivos diferentes na mesma janela;
-- de quem é o lock que ficou.
+- o atraso do laço e a CPU do processo. Com a operação em curso e o laço livre, isso é compatível com
+  uma espera de E/S ou do sistema, sem identificar disco, antivírus ou outro recurso. Com o laço
+  atrasado tanto quanto a operação, é compatível com o processo parado ou sem CPU. É evidência, não
+  prova do recurso;
+- quando o processo começou, para comparar no tempo falhas de arquivos diferentes; uma coincidência
+  não prova causa comum;
+- se o `pid` gravado no lock coincide com o `pid` registrado de algum produtor. Isso não prova sozinho
+  quem deixou o arquivo, porque o `pid` pode ser reutilizado.
+
+Retificação documental antes do Verifier 17 (sem mudança de código, prova ou valor):
+- **O que foi corrigido**: as primeiras versões deste texto, do handoff pontual e dos adendos do
+  checklist e da task davam como fato, para as quatro falhas, a tentativa que não termina e o lock
+  deixado pelo `process.exit`, e liam o `pid` como dono do lock e o laço livre como disco. Agora
+  constam como mecanismos compatíveis e evidências.
+- **Texto que fica como está em `51679df`**: os comentários `traces-probe.mjs:45` (“laço livre com a
+  operação parada aponta o disco; laço parado, o processo”) e `traces.mjs:244` (“O dono do lock é o
+  produtor cujo `pid`…”), e o nome do controle em `replay.unit.test.mjs:143` (“mostra quem deixou o
+  lock”). Nos controles o produtor que deixa o lock é conhecido pela injeção; fora deles, essa
+  leitura vale com as ressalvas acima.
 
 Limites:
 - **Laço de eventos**: o histograma não vê um bloqueio antes do primeiro tique dele, logo na carga do
@@ -1941,8 +1968,9 @@ Limites:
 - **Operações cobertas**: os pendentes e os tempos cobrem só as operações de `node:fs/promises` que a
   pré-carga envolve; E/S síncrona ou outra fila do libuv ficam fora.
 - **`startedAt`**: é do relógio de parede e serve só para correlacionar.
-- **Dono do lock**: vem pelo `pid`, que o sistema pode reutilizar; com dois produtores de mesmo `pid`
-  a evidência lista os dois.
+- **Lock e `pid`**: o rótulo na linha do lock só diz que o `pid` gravado nele coincide com o `pid`
+  registrado pela pré-carga daquele produtor. O sistema pode reutilizar `pid`s; com dois produtores
+  de mesmo `pid`, a evidência lista os dois. Não prova sozinho quem deixou o arquivo.
 - **Custo da pré-carga**: cada operação ganha uma entrada num `Set` e dois `performance.now()`, e o
   histograma soma um timer de 10 ms ao processo. Nas quatro provas os produtores passam a carregar a
   pré-carga por `NODE_OPTIONS`; o custo não foi medido à parte.

@@ -340,9 +340,12 @@ o proprietário autorizou o diagnóstico pontual nesta entrega (AC7, ver `Source
     - o maior atraso do laço de eventos.
 
     Da captura, a mensagem traz o estado e os contadores, segmentos e temporários, e se o lock está
-    presente e de qual produtor. Não traz caminho, conteúdo, chave nem ambiente. A instrumentação
-    não é a correção da causa; uma correção só segue se a causa for demonstrada e couber nos
-    contratos atuais.
+    presente e se o `pid` gravado nele coincide com o de algum produtor. A coincidência não prova
+    sozinha quem deixou o arquivo. Não traz caminho, conteúdo, chave nem ambiente.
+
+    Esses dados são evidências compatíveis com um tipo de espera, não a identificação do recurso nem
+    da causa. A instrumentação não é a correção da causa; uma correção só segue se a causa for
+    demonstrada e couber nos contratos atuais.
 
 ### Regressão da execução completa instrumentada: primeira criação concorrente do store (C32; critério 25 sem mudança)
 

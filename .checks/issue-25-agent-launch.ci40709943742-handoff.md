@@ -19,16 +19,28 @@ quantidades, ordem, concorrência, workflow, core e configuração não mudam.
 
 ## O que se sabe e o que não
 
-- **Uma classe só**: os quatro produtores usam a captura manual. A 1ª tomada do lock é a abertura e a
-  2ª grava o lote. A primeira tentativa não terminou em 650 ms. Quando ela já tinha o lock, o
-  `process.exit(0)` do CLI a encerrou e o lock ficou, como o contrato prevê. É a mesma classe das CIs
-  40514323240 e 40636157287.
-- **Medição do orquestrador** (job 122892425130): nenhuma operação ≥ 600 ms isolada. Isso não dá a
-  causa.
-- **Não se sabe**: qual operação parou, em que tomada, se o laço de eventos estava livre ou parado, nem
-  quem deixou o lock no T8-C18. As provas rodavam os produtores sem a pré-carga de tempos, e a
+- **O que os logs mostram**:
+  - T8-C3, T8-C8 e T8-C14: só os relatórios de entrega, com `delivery_timeout`;
+  - T8-C18: só o `privacy stop` com `lock_present`, sem nenhum relatório de entrega anterior, porque a
+    prova só confere o status dos produtores.
+
+  Os logs não dizem qual operação ou tomada do lock estava em curso, nem quem deixou o lock.
+- **Mecanismos compatíveis** com o código e o contrato, não demonstrados nestas falhas:
+  - Os quatro produtores usam a captura manual: a 1ª tomada do lock é a abertura e a 2ª grava o lote.
+  - Pelo código, `delivery_timeout` é a tentativa que não terminou até o prazo de 650 ms da entrada.
+  - Um lock deixado por uma tentativa abandonada é um caminho previsto pelo contrato: o
+    `process.exit(0)` do CLI encerra o que estava em curso, e `docs/traces.md` descreve o lock que fica.
+    No T8-C18 isso explicaria o `lock_present`, mas o log não mostra qual produtor nem qual tentativa.
+    Outras vias que o contrato admite (por exemplo, uma liberação que falha) também são compatíveis.
+  - Os sintomas são do mesmo tipo dos das CIs 40514323240 e 40636157287, o que não prova uma causa
+    comum.
+- **Medição do orquestrador** (job 122892425130): nenhuma operação ≥ 600 ms numa carga sintética
+  isolada. Ela não dá a causa nem aponta um recurso.
+- **Não se sabe**: qual operação parou, em que tomada, se o laço de eventos estava livre ou parado,
+  nem quem deixou o lock no T8-C18. As provas rodavam os produtores sem a pré-carga de tempos, e a
   pré-carga só registrava as operações concluídas.
-- **Causa**: desconhecida. Nenhum defeito foi demonstrado e nenhuma correção foi feita.
+- **Causa**: desconhecida. Não há defeito demonstrado, o que não equivale a afirmar que não há
+  defeito. Nenhuma correção foi feita.
 
 ## O que muda para a próxima CI (código `51679df`; registro antes do código em `4d3b1d9`)
 
@@ -43,15 +55,23 @@ quantidades, ordem, concorrência, workflow, core e configuração não mudam.
   - a última concluída;
   - o processo e o laço.
 
-  Da captura, traz o status, os segmentos e temporários, e o lock com o dono pelo `pid`. Nunca traz
-  caminho, ID, chave, conteúdo nem ambiente.
-- **Como ler** (mensagens reais em `builder-ci767/sample-messages-win-24.22.1.txt`):
-  - operação em curso com o laço livre aponta o disco ou o sistema, e a tomada diz se foi a abertura
-    ou a gravação;
-  - laço com atraso igual ou maior que a operação, e CPU parecida, aponta o processo parado ou sem
-    CPU;
-  - o `iniciado <ISO>` deixa correlacionar falhas de arquivos diferentes na mesma janela;
-  - `lock presente, de <produtor>` diz quem deixou o lock.
+  Da captura, traz o status, os segmentos e temporários, e se o lock está presente. Quando o `pid`
+  gravado no lock coincide com o `pid` registrado pela pré-carga de um produtor, traz o rótulo desse
+  produtor. Nunca traz caminho, ID, chave, conteúdo nem ambiente.
+- **Como ler** (mensagens dos controles em `builder-ci767/sample-messages-win-24.22.1.txt`; são
+  evidências a interpretar, não diagnósticos prontos):
+  - **Operação em curso com o laço livre**: é compatível com uma espera de E/S ou do sistema, e a
+    tomada diz se ela estava na abertura ou na gravação. Isso não identifica disco, antivírus nem
+    outro recurso específico, e não é causa.
+  - **Atraso do laço igual ou maior que a operação, com CPU parecida**: é evidência compatível com o
+    processo parado ou sem CPU. A correlação não prova qual recurso faltou.
+  - **`iniciado <ISO>`**: permite comparar no tempo falhas de arquivos diferentes; uma coincidência
+    não prova causa comum.
+  - **`lock presente, de <produtor>`**: quer dizer só que o `pid` gravado no lock coincide com o
+    `pid` registrado daquele produtor. Não prova sozinho que ele deixou o arquivo, porque o sistema
+    pode reutilizar `pid`s.
+  - **Limite**: a medição sintética do orquestrador (máximos de até cerca de 140 ms, nenhum ≥ 600 ms)
+    não nomeia recurso nem causa e não serve de referência para atribuir a próxima falha.
 
 ## Provas (detalhes no build, seção “CI 40709943742 e execução manual 40710014746”)
 
