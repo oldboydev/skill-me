@@ -1530,3 +1530,143 @@ Limites:
 - O job manual roda também a matriz regular, e não substitui nenhum check.
 - Pendentes, com o orquestrador: o Verifier 13, a formal 8, a publicação, a execução manual (com o
   registro dos resultados) e a CI regular verde para o merge.
+
+## Achados 2 e 3 da verificação 13 na ferramenta de medição (C50 (j)–(l))
+
+Estado de partida: HEAD `0e0325f`. A verificação 13 deu PASS 50/50 em `631e281`:
+- A, B e C com 147 testes, 141 pass, 0 fail e 6 skip;
+- D com 1.019 testes, 999 pass, 0 fail e 20 skip, com os 12 nativos.
+
+O relatório está em `0e0325f`; não foi alterado aqui. Ele traz dois achados concretos na ferramenta
+(`.checks/issue-25-agent-launch.verified.md:294-295`):
+- (2) a limpeza que lança (`rmSync` sem `try` no `finally` de `measure`) perde a medição inteira;
+- (3) um erro no início da fase, depois de filhos iniciados, só tinha encerramento no ramo do teto, e
+  o `'error'` assíncrono de um filho não tinha ouvinte.
+
+O orquestrador pediu a correção antes de usar a ferramenta na CI, como correção necessária da
+ferramenta aprovada (autorização 6467154706), sem escopo novo. **A medição no runner ainda não foi
+feita**, e a causa dos `lock_present` e dos `delivery_timeout` continua desconhecida.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `7198fef` | Antes do código: linha “Limpeza e supervisão em toda saída da medição” do Landing; refinamento do C50 com (j)–(l); refinamento do critério 42 da task; Handoff |
+| `6a242a2` | `scripts/ci-lock-latency.mjs`: em `removeOwnDir`, remoção de melhor esforço depois da guarda, com `limpeza.falhas`; em `runPhase`, um só encerramento para o teto, o erro no início e o `'error'` de um filho, com `interrompidaPorErro`. `scripts/ci-lock-latency.test.mjs`: 4 provas novas, a forma de `limpeza` no relatório e o encerramento, no `after`, dos processos das provas de interrupção |
+
+Logs em `.checks/code-review/issue-25/builder-r13-fix/` (pasta ignorada). Não mudaram:
+- o workflow, os jobs, `package.json`, `src/` e as provas funcionais;
+- os prazos, as quantidades (3 × 500 ciclos, 3 cargas de 64 KiB, 120 s, folga de 5 s), a carga e os
+  retries;
+- o core e a configuração.
+
+- **Sondas antes do registro** (`probe-node-behavior.mjs` e `probe-absolute-missing.mjs`, Windows
+  24.22.1 e WSL 24.13.0):
+  - um spawn que falha emite `'error'` e depois `'close'`, sem `'exit'`, com o stdio criado; o
+    código do `close` é -4058 no Windows e -2 no Linux;
+  - o `rmSync` trocado por `syncBuiltinESMExports` alcança o import nomeado de outro módulo;
+  - pelo nome procurado no PATH do WSL, o código foi `EACCES`, e não `ENOENT`. Por isso a prova
+    inicia um caminho absoluto inexistente, que dá `ENOENT` nos dois sistemas.
+- **Correção**:
+  - **Limpeza**: a guarda de `removeOwnDir` não mudou. Passada ela, o `rmSync` fica num `try`, e
+    a falha devolve `{ok: false, falha: <código>}`, sem nova tentativa. `measure` a põe em
+    `limpeza.falhas` e segue para a fase seguinte.
+  - **Supervisão**: em `runPhase`, `track` registra o filho e ouve `'close'` e `'error'` antes do
+    stdio. O primeiro erro, síncrono no início ou `'error'` de filho, acorda as esperas como o
+    teto. `stopOwnChildren` encerra os registrados que não fecharam (`kill()`, folga de 5 s,
+    `SIGKILL`) e espera o `close` de todos. `runPhase` devolve `interruptedBy`, que
+    `aggregatePhase` publica como `interrompidaPorErro`.
+- **RED** (`red-win-24.22.1.spec.txt`): as provas novas rodaram sobre o script de `3843867`, sem
+  mudança, no checkout. Só nesta execução usei `--test-timeout=90000`, para limitar o caso que
+  podia ficar pendurado no código anterior. Resultado: 16 testes, 11 pass, 5 fail.
+  - **limpeza que falha**: `removeOwnDir` lançou o `EBUSY` injetado, com o caminho na mensagem;
+  - **limpeza que falha depois dos dados**: `measure` rejeitou com `EBUSY` e perdeu as três fases,
+    o sintoma do achado 2;
+  - **início parcial**: `runPhase` rejeitou com o `EEXIST` do `mkdir` de `produtor-2`; a carga e o
+    1º produtor ficaram vivos e foram encerrados pela limpeza da prova;
+  - **erro assíncrono**: o `'error'` do spawn, sem ouvinte, virou exceção não tratada
+    (`spawn … ENOENT`), atribuída ao teste pelo `node:test`;
+  - **relatório**: falhou só pela forma nova (sem `falhas: []`), não pelo defeito.
+
+  As outras 11 passaram, entre elas o teto, o término parcial e a fronteira real. O arquivo terminou
+  com exit 1 em 45 s, depois de o `after` esperar o `close` de cada processo registrado pelas provas.
+- **GREEN** (`green-win-24.22.1.spec.txt`): 16/16. O início parcial levou 1,8 s e o erro
+  assíncrono 2,4 s, antes do teto de 30 s da prova.
+- **Mutações** (cópia descartável; só as 4 provas novas, `--test-timeout=120000`;
+  `mutation-*-win-24.22.1.spec.txt`). Todas foram detectadas, e as cópias foram removidas:
+  - sem o ouvinte de `'error'`: o erro assíncrono falha;
+  - `'error'` ouvido sem interromper: o erro assíncrono falha no teto (30,6 s, `timedOut: true`);
+  - erro do início relançado depois de encerrar os filhos: o início parcial falha;
+  - falha da remoção contada como removida: as duas provas de limpeza falham;
+  - falha posta entre as recusas: a limpeza depois dos dados falha;
+  - falha com a mensagem do erro: as duas provas de limpeza falham.
+- **Controle local do CLI real** (`final/cli-local-control-win-24.22.1.json`): as constantes
+  vinculantes, com o `RUNNER_TEMP` apontado só no ambiente desse processo para um scratch próprio.
+  - **Resultado**: A1, B e A2 com 1.500 ciclos concluídos cada, 0 erros, `encerradaPeloTeto:
+    false` e `interrompidaPorErro: null`; cargas com 3.486 a 6.374 escritas; `limpeza
+    {removidas: 3, recusadas: [], falhas: []}`; cerca de 3,5 s por fase; o scratch ficou vazio
+    depois.
+  - **Limite**: os dois destinos estão no volume `C:`. É controle de formato, não a medição do
+    runner.
+
+| Alvo em `6a242a2`: os mesmos 13 arquivos (`launch/*.test.mjs`, `hermes-harness.unit.test.mjs`, `traces/concurrency.cli.test.mjs`, `observe/agents.e2e.test.mjs`, `scripts/governance-ci.test.mjs`, `scripts/ci-lock-latency.test.mjs`), `--test-concurrency=4`, uma invocação por ambiente | Resultado |
+| --- | --- |
+| A — Windows, Node 24.22.1, npm 11.19.1, Python 3.12.10, checkout principal, `npm_execpath` ausente, 09:37:14–09:40:00 | 151 testes: 145 pass, 0 fail, 6 skip; `git status` vazio antes e depois |
+| B — Windows, Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, clone git novo com `core.autocrlf=true` (só em `.git/config` do clone; workflow, `package.json`, o script e a prova em `w/crlf`; `cli.mjs` `w/lf attr/text eol=lf`), 09:40:14–09:42:56 | 151: 145 pass, 0 fail, 6 skip; `git status` do clone vazio antes e depois; clone removido depois de conferir caminho, tipo e HEAD; 403 scratches da janela A–B removidos, 0 recusas |
+| C — WSL Ubuntu `oldboydev` uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, npm 11.6.2, `env -i`, `HOME` do scratch, PATH só com o prefixo e `tools` (`sh`, `git`, `python3`, `id`, `grep`, `mkfifo`), sem `/usr/bin`; `git -c core.autocrlf=false archive 6a242a2` (5.826.560 bytes, sha256 `41e36d2d…3da2ea1`, `get-tar-commit-id` = `6a242a25…`, árvore extraída `804aa716…` = `HEAD^{tree}`, `cli.mjs` 755), 09:43:32–09:44:38 | 151: 145 pass, 0 fail, 6 skip; `~/.skill-me` e a autorização ausentes antes e depois; scratch removido |
+
+Os 151 nomes são os mesmos nos três TAP: os 147 de antes e as 4 provas novas. Em cada ambiente
+passaram os 16 C50 e os 7 testes de governança, sem nenhum `not ok`.
+
+Skips, todos de plataforma, com o motivo impresso pelo teste, e cada um rodou no outro sistema:
+- **A e B (6)**:
+  - `I25-C45` (vazio do PATH como diretório atual é semântica do POSIX);
+  - `I25-C5`, `I25-C6` e `I25-C42` (sinais POSIX);
+  - `I25-C33` (o npm do Windows usa o `ComSpec`);
+  - `I25-C15` (pseudoterminal só no POSIX).
+- **C (6)**:
+  - `I25-C4`, `I25-C5` e `I25-C42` (PATHEXT, `.cmd` e console do Windows);
+  - `I25-C45` (controle do PATH do Windows);
+  - `I25-C8` (LOCALAPPDATA);
+  - `I25-C38` (console do Windows).
+
+**`npm test` completo em `6a242a2`**: Windows, Node 24.22.1, npm 11.19.1, `npm_execpath` ausente, runner
+padrão com 8 arquivos (32 núcleos) e os 12 nativos do Hermes. Rodou uma vez, sem repetir, das 09:45:19 às
+09:55:45, com orçamento de 2 h definido na ferramenta antes do início, e esperei o término real
+(`builder-r13-fix/final/npm-test.*`). **Exit 0**: 1.023 testes, 1.003 pass, 0 fail e 20 skip; nenhum `✖` no
+log; `git status` vazio antes e depois.
+- **Por suíte**: governança 23/23 (os 7 de governança e os 16 C50); motor 16/16; doctor 417 (410/0/7);
+  integrações 567 (554/0/13).
+- **Passaram**: os 12 nativos (`I4-C18` a `I4-C23`, `I4-C37`, o `I25-C40` nativo, `I23-C8` ×3 e `I4-C44b`); o
+  I23-C4 (7); o T8-C11; o I23-C10; o T8-C15.
+- **Skips, todos de plataforma**:
+  - os 7 do doctor, marcados `{skip: process.platform === "win32"}` em provas só do POSIX, sem texto de
+    motivo no relatório: `agent-resolution-formal5-2` (arquivo regular real no PATH), `agent-resolution-C2`
+    (realpath e symlink reais), dois `fifo-config-formal8-4` e três `fs-adapter-formal8-4` (FIFO);
+  - os 13 das integrações, com o motivo impresso: `I4-C15` e `T8-C4` (`posix-signals`), `I4-C25b`
+    (`posix-modes`), `I4-C25j`, `I4-C25k` e `I4-C25l` (`posix-acl`), `I4-C25m` (`macos-acl`) e os 6 I25 só do
+    POSIX de A.
+
+  Desses, só os 6 I25 rodaram em outro ambiente desta rodada (no C). Os 7 do doctor e os 7 I4/T8 não
+  rodaram em nenhum ambiente desta rodada.
+
+Limpeza do `%TEMP%`: removidas 127 pastas de testes de outras issues criadas na janela do D, com 0 recusas.
+A conferência foi pela linha de base, pelos prefixos `skill-me i4 ` e `skill-me i5 `, pelo mtime na janela e
+por não ser link. Uma entrada nova fora desses prefixos ficou, e nenhuma `skill-me-lock-latency-*` restou.
+
+Limites:
+- **Runner**: a medição no runner não foi feita, e nada aqui mede o runner, dá taxa ou demonstra
+  causa.
+- **Falha da remoção**: é injetada pela troca do `rmSync` na prova; nenhum `EBUSY` real do host foi
+  produzido. Uma remoção que apaga parte da pasta e depois falha não foi simulada; o contrato é o
+  mesmo (código em `falhas`, pasta não contada), mas o conteúdo que resta nesse caso não é afirmado.
+- **Processos**:
+  - um filho que não fecha nem depois do `SIGKILL` mantém `runPhase` esperando, como antes, até o
+    limite de 10 min do job;
+  - se um `kill()` falhar com `'error'` depois do teto, a fase sai com `encerradaPeloTeto: true` e
+    esse código em `interrompidaPorErro`, porque vale o primeiro erro.
+- **RED**: o `--test-timeout` do RED e das mutações é só da linha de comando; a prova versionada não
+  tem prazo novo.
+- **Carga numa fase interrompida**: `carga.escritas` continua sendo a soma do que as cargas
+  relataram (a nota 5 da R13, informativa, sem mudança). Deve ser lida com `carga.terminaram`,
+  `ciclos` e `interrompidaPorErro`.
+- **Pendentes, com o orquestrador**: o Verifier 14 independente, a formal 8, a publicação, a
+  execução manual com o registro dos resultados e a CI regular verde para o merge.

@@ -836,3 +836,13 @@ Achados 2 e 3 da verificação 13 na ferramenta de medição (registros acima pr
 - Onde a fronteira caiu: o registro (linha “Limpeza e supervisão em toda saída da medição” do
   Landing, refinamento do C50 com (j)–(l) e do critério 42 da task, este Handoff) vem antes do código.
   Provas, comandos e resultados ficam em `.checks/issue-25-agent-launch.build.md`.
+- Onde a fronteira caiu agora: registro em `7198fef`; código em `6a242a2`, só em
+  `scripts/ci-lock-latency.mjs` e na prova dele. RED no script de `3843867` com 5 de 16 falhas: as 4
+  provas novas, pelo defeito, e o relatório, só pela forma nova de `limpeza`. GREEN com 16/16 e as 6
+  mutações detectadas. O alvo de 151 testes deu 145/0/6 nos três ambientes, e o `npm test` saiu com
+  exit 0 em `6a242a2` (1.023 testes, 1.003 pass, 0 fail, 20 skip). A medição no runner ainda não foi
+  feita, e a causa continua desconhecida.
+- O que foi abandonado: nova tentativa ou `force` na remoção; contar a falha como recusa; encerrar a
+  medição na falha da limpeza; seguir a fase depois do erro de um filho; relançar o erro de
+  `runPhase`; ouvinte global de `uncaughtException`; erro na saída de cada processo; opção de prova
+  no script para injetar a falha (a prova troca o `rmSync` de `node:fs`).
