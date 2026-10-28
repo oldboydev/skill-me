@@ -370,6 +370,19 @@ o proprietário autorizou o diagnóstico pontual nesta entrega (AC7, ver `Source
 
     Não traz caminho, conteúdo, chave nem ambiente. É evidência, não a causa nem a correção dela.
 
+    Refinamento do critério 38 (gate B final em `cd4afc2`, Windows, Node 24.13.0: T8-C16 “tentativa
+    cortada no prazo antes de obter o lock…”, `concurrency.cli.test.mjs:922`, `4 !== 3` criações do
+    lock; prova antiga da #8; defeito de produto do mesmo contrato, sem critério novo). A regra já
+    está decidida (`docs/traces.md`, “Falhas de entrega” e a tabela de códigos): só a recusa
+    concluída do lock é repetida até o prazo; uma tentativa abandonada no prazo é a última da
+    entrada; o lock obtido com o prazo esgotado não autoriza gravar. A entrega passa a cumpri-la
+    também quando o timer do prazo dispara um pouco antes de o relógio da entrega chegar a ele
+    (defeito demonstrado) e, só se a prova discriminante o reproduzir, quando o lock chega com o
+    prazo já esgotado antes de o timer rodar (candidato). Os prazos de 750/650 ms, a espera de 10 ms
+    entre tentativas, os códigos, as contagens e o store não mudam; o T8-C16 continua exigindo
+    exatamente 3 criações. O defeito existe também na `main` (`63621c6`); isso não dispensa a
+    correção nesta entrega.
+
 ### Regressão da execução completa instrumentada: primeira criação concorrente do store (C32; critério 25 sem mudança)
 
 Na execução completa instrumentada em `710076e` (Windows, Node 24.22.1, teto de 8 arquivos), o T8-C15 e
