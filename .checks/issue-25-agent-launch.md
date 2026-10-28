@@ -785,3 +785,11 @@ Medição comparativa do lock na CI Windows, aprovada (registros acima preservad
 - Onde a fronteira caiu: o registro (task 41–42 com a exceção datada ao critério 40, Landing com o job,
   o script e a exceção ao C48, S12 com C49–C50, este Handoff e a proposta aprovada) vem antes do
   código; provas, comandos e resultados ficam em `.checks/issue-25-agent-launch.build.md`.
+- Onde a fronteira caiu agora: registro em `0362aec` e ajuste do Landing antes das provas em
+  `39278dd`; código em `3843867`, só no workflow (job manual), em `scripts/` e no alias
+  `test:governance`. Produto sem mudança desde `f734441`. Alvo de 147 testes (141/0/6) nos três
+  ambientes e `npm test` com exit 0 em `3843867`. A medição no runner ainda não foi feita, e a causa
+  continua desconhecida.
+- O que foi abandonado: workflow manual novo; copiar o lock ou importar apoios de prova; mudar
+  `TEMP`/`TMP`; um só produtor ou um lock compartilhado; percentil interpolado; zeros para falta de
+  dados; encerrar processos por nome ou pid; opção de CLI para as provas; cache no job manual.

@@ -53,3 +53,7 @@ A carga é sintética, não a suíte completa. As três fases não medem taxa hi
 
 A autorização atual permite o diagnóstico do I23-C10 e apenas os orçamentos regulares20/10/5 do workflow. Um job e uma ferramenta de medição novos ampliam esse escopo. Nenhuma mudança foi implementada com base apenas neste documento.
 
+
+## Estado da implementação
+
+Registro antes do código em `0362aec` (critérios 41–42 com a exceção datada ao critério 40, Landing com o job, o script e a exceção ao C48, S12 com C49–C50) e ajuste do Landing antes das provas em `39278dd`; job `lock_diagnostics`, `scripts/ci-lock-latency.mjs`, as provas `governance-C49` e C50 e o alias `test:governance` em `3843867`. Provas, comandos e resultados na seção “Medição comparativa do lock na CI Windows” de `.checks/issue-25-agent-launch.build.md`: controles e mutações, conferência do C48 com a exceção, alvo de 147 testes com 141/0/6 em Windows 24.22.1, Windows 24.13.0 (clone com `core.autocrlf=true`) e WSL isolado, e `npm test` completo com exit 0 (1.019 testes, 999 pass, 0 fail, 20 skip). A medição no runner ainda não foi feita: o job manual é acionado pelo orquestrador depois de PASS, `ready` e publicação, e a causa continua desconhecida.

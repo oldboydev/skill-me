@@ -1429,3 +1429,104 @@ executado. A decisão pedida ao proprietário, no handoff, tem quatro opções:
 - D: integrações do Windows informativas para o merge (política).
 
 Prazos, retry, perdas, carga, paralelismo, teto 8 e os orçamentos 20/10/5 continuam sem mudança.
+
+## Medição comparativa do lock na CI Windows (AC9, autorização 6467154706; S12, C49–C50)
+
+O proprietário aprovou “Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI
+ficar toda verde para fazer o merge do PR #28.”
+([comentário 6467154706](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706)),
+exatamente a proposta `.checks/issue-25-agent-launch.ci-runner-measure-proposal.md` (`b2638db`), com o
+AC9 na issue antes do código. Continuam preservados:
+- o Verifier 12 PASS e a formal 7 `ready`;
+- as CIs 40514323240 e 40636157287, vermelhas;
+- os diagnósticos `8868fe1` e `d2d54cf`.
+
+A causa dos `lock_present` e dos `delivery_timeout` continua desconhecida. **A medição no runner ainda
+não foi feita**: ela é a do job manual, acionado pelo orquestrador depois de PASS, `ready` e
+publicação.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `0362aec` | Critérios 41–42 e a exceção datada ao critério 40 na task; linhas do Landing com o job, o script e as escolhas de formato, a exceção ao C48, S12 com C49–C50 e o Handoff; a marcação de aprovação da proposta feita pelo orquestrador; antes do código |
+| `39278dd` | Ajuste do Landing antes das provas: uma fase sem pasta própria ou que falhou no supervisor fica indisponível, e as outras seguem |
+| `3843867` | `scripts/ci-lock-latency.mjs` e `scripts/ci-lock-latency.test.mjs`; o job `lock_diagnostics` em `.github/workflows/governance.yml`; `governance-C49` e a expectativa do conjunto de jobs em `scripts/governance-ci.test.mjs`; o alias `test:governance` no `package.json` |
+
+Logs em `.checks/code-review/issue-25/builder-ci-lock-latency/` (pasta ignorada). `src/`, as provas
+funcionais existentes, o core de revisão e a configuração não mudaram.
+
+- **Ferramenta nova, sem RED funcional**: não havia comportamento anterior a reproduzir. A
+  discriminação vem de controles e mutações.
+  - **Primeira execução** (`first-win-24.22.1.spec.txt`): os 12 C50 passaram.
+  - **Um defeito encontrado relendo a prova**: o caso “caminho relativo” usava
+    `path.relative(process.cwd(), …)`, que no Windows devolve um caminho absoluto quando o cwd está
+    em outro volume, como no runner. A prova passou a usar um caminho relativo literal antes do
+    commit.
+- **Mutações do script** (cópia descartável, `mutation-*-win-24.22.1.spec.txt`), todas detectadas:
+  - percentil pelo piso da posição: falham os percentis e o término parcial;
+  - zeros sem amostras: falham “sem amostras”, E/S e teto;
+  - faixa estrita (`>` no lugar de `>=`): falham percentis e faixas;
+  - destinos sensíveis a maiúsculas no Windows: falha caminhos;
+  - limpeza sem conferir o marcador: falha limpeza;
+  - `lock_present` contado como E/S: falha E/S;
+  - incompletos zerados: falham teto, término parcial e protocolo.
+- **Mutações do workflow** (`mutation-workflow-*.spec.txt`), todas detectadas pelo `governance-C49`:
+  - sem o `if`;
+  - teto de 20 min;
+  - `cache: npm` no `setup-node`;
+  - `lock_diagnostics` em `ci.needs`, também detectado pela asserção antiga do C1/C3;
+  - `continue-on-error`.
+
+  Com o workflow original, a cópia passou.
+- **C48 com a exceção** (`workflow-regular.txt`, `workflow-regular.mjs`):
+  - o topo do workflow e os jobs `changes`, `verify` e `ci` são idênticos aos de `d0d5a7f`, fora o
+    `timeout-minutes` do `verify`;
+  - os jobs são `changes`, `verify`, `ci` e `lock_diagnostics`, com tetos 5, a expressão 20/10, 5 e
+    10;
+  - o diff do workflow só acrescenta 19 linhas.
+- **Controle local do CLI real** (`cli-local-control-win-24.22.1.json`): as constantes vinculantes, com
+  o `RUNNER_TEMP` apontado só no ambiente desse processo para um scratch próprio.
+  - **Resultado**: A1/B/A2, cada fase com 1.500 ciclos previstos e concluídos, 0 incompletos, sem
+    erro; cargas com 1.200 a 1.340 escritas; limpeza 3/0; cerca de 2 s no total; a pasta do scratch
+    vazia depois.
+  - **Limite**: aqui os dois destinos ficam no mesmo volume `C:`, então isto é controle de formato e
+    de ponta a ponta. Não é a medição do runner e não diz nada sobre ele.
+
+| Alvo em `3843867`: os 128 de antes (`launch/*.test.mjs`, `hermes-harness.unit.test.mjs`, `traces/concurrency.cli.test.mjs`, `observe/agents.e2e.test.mjs`) mais `scripts/governance-ci.test.mjs` e `scripts/ci-lock-latency.test.mjs`, `--test-concurrency=4` | Resultado |
+| --- | --- |
+| A — Windows, Node 24.22.1, Python 3.12.10, checkout principal, 08:13:23–08:16:03 | 147 testes: 141 pass, 0 fail, 6 skip; `git status` vazio antes e depois |
+| B — Windows, Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, clone novo com `core.autocrlf=true` (workflow, `package.json` e o script novo em `w/crlf`; `cli.mjs` `w/lf attr/text eol=lf`), 08:16:30–08:19:11 | 147: 141 pass, 0 fail, 6 skip; `git status` do clone vazio antes e depois; clone removido; 405 scratches do 24.13.0 removidos, 0 recusas |
+| C — WSL Ubuntu uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, npm 11.6.2, `env -i`, `HOME` do scratch, PATH sem `/usr/bin`, `git -c core.autocrlf=false archive 3843867` (5.795.840 bytes, sha256 `11817e0a…7f3f66`, árvore extraída `621ce915…` = `HEAD^{tree}`, `cli.mjs` 755), 08:19:46–08:20:52 | 147: 141 pass, 0 fail, 6 skip; `~/.skill-me` e a autorização ausentes antes e depois |
+
+Os 147 nomes são os mesmos nos três TAP. Em cada ambiente passaram:
+- os 12 C50 e os 7 testes de governança, entre eles o `governance-C49`;
+- os 114 I25, os 4 I23 e os 10 T8.
+
+As provas novas não têm skip. Os 6 skips de A e B são os I25 só do POSIX, e os 6 de C são os I25 só
+do Windows; cada um rodou no outro sistema.
+
+**`npm test` completo em `3843867`** (Windows, Node 24.22.1, runner padrão com 8 arquivos, 12 nativos do
+Hermes; 08:21:13–08:32:05; `builder-ci-lock-latency/final/npm-test.*`): **exit 0**. 1.019 testes: 999
+pass, 0 fail, 20 skip.
+- **Por suíte**: governança 19/19 (os 7 de governança e os 12 C50); motor 16/16; doctor 417
+  (410/0/7); integrações 567 (554/0/13).
+- **Passaram**: os 12 nativos, o I23-C4 (as 7 provas dele) e o T8-C11.
+- **Skips, todos de plataforma**:
+  - os 7 do doctor (`agent-resolution-formal5-2`, `agent-resolution-C2`, dois `fifo-config-formal8-4`
+    e três `fs-adapter-formal8-4`), marcados `skip` no Windows, sem texto de motivo;
+  - os 13 das integrações: `I4-C15` e `T8-C4` (`posix-signals`), `I4-C25b` (`posix-modes`), `I4-C25j`,
+    `I4-C25k` e `I4-C25l` (`posix-acl`), `I4-C25m` (`macos-acl`) e os 6 I25 só do POSIX.
+
+  Desses, só os 6 I25 rodaram em outro ambiente (no C). Os do doctor e os I4/T8 não rodaram em
+  nenhum ambiente desta rodada.
+
+Removidas do `%TEMP%` 127 pastas de testes de outras issues da janela, com 0 recusas; as 8 entradas sem
+prefixo `skill-me` ficaram.
+
+Limites:
+- A medição no runner não foi feita. Nada aqui mede o runner, dá taxa ou demonstra causa.
+- A instrumentação do produtor custa um pouco por operação, igual em todas as fases.
+- A carga é sintética, não a suíte.
+- As faixas de 600 e 650 ms não são prazos.
+- O job manual roda também a matriz regular, e não substitui nenhum check.
+- Pendentes, com o orquestrador: o Verifier 13, a formal 8, a publicação, a execução manual (com o
+  registro dos resultados) e a CI regular verde para o merge.
