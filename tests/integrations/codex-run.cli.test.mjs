@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { CODEX_GLOBAL_WINDOWS_TARGET, npmCmdShim } from "../doctor/helpers/npm-shims.mjs";
@@ -236,6 +238,40 @@ test("I4-C16 stdout repassado byte a byte e de forma incremental; JSONL consumid
   assert.equal(run.report.counters.partialTrailingLine, 1);
 });
 
+// Consumidor lento do stdout de um filho, usado pelo I4-C16c e pelos controles
+// I25-C46 dele. Resolve quando houver o `exit` e o fim do stdout, em qualquer
+// ordem: com o stream pausado, o `end` sai na leitura do intervalo que esvazia
+// o buffer depois do EOF — que pode vir antes do `exit` — e não se repete.
+// Observado só dentro do `exit`, ele se perdia e o arquivo ficava parado
+// (linha "Consumidor lento do I4-C16c" do Landing da #25).
+function readStdoutSlowly(child) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let exit = null;
+    let ended = false;
+    const settle = () => {
+      if (exit !== null && ended) resolve({ status: exit.status, stdout: Buffer.concat(chunks) });
+    };
+    child.stdout.pause();
+    child.stdout.on("end", () => {
+      ended = true;
+      settle();
+    });
+    // Lê aos poucos: 50 ms entre leituras, muito abaixo da vazão do filho.
+    const timer = setInterval(() => {
+      let chunk;
+      while ((chunk = child.stdout.read()) !== null) chunks.push(chunk);
+    }, 50);
+    child.on("exit", (status) => {
+      clearInterval(timer);
+      exit = { status };
+      child.stdout.on("data", (chunk) => chunks.push(chunk));
+      child.stdout.resume();
+      settle();
+    });
+  });
+}
+
 // Prova extra (além do checklist): consumidor de stdout lento, distinto do
 // canal de relatório sem leitura de C38 — o wrapper espera o repasse nativo
 // terminar, não perde bytes e sai com o código do filho.
@@ -244,29 +280,73 @@ test("I4-C16c consumidor lento recebe todo o stdout nativo antes da saída", asy
   const line = '{"type":"item.completed","item":{"id":"item_{i}","type":"agent_message","text":"' + "z".repeat(200) + '"}}';
   const scenario = writeScenario(dir, "slow", [{ repeat: { count: 3000, line } }]);
   const expected = Buffer.from(Array.from({ length: 3000 }, (_, i) => line.replaceAll("{i}", String(i)) + "\n").join(""));
-  const result = await new Promise((resolve) => {
-    const child = spawn(process.execPath, [INTEGRATIONS_CLI, "run", "--agent", "codex", "--codex-entry", FAKE_CODEX, "--", "p"], {
-      cwd: dir,
-      env: baseEnv({ FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_EXIT: "17" }),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const chunks = [];
-    child.stdout.pause();
-    // Lê aos poucos: 50 ms entre leituras, muito abaixo da vazão do filho.
-    const timer = setInterval(() => {
-      let chunk;
-      while ((chunk = child.stdout.read()) !== null) chunks.push(chunk);
-    }, 50);
-    child.on("exit", (status) => {
-      clearInterval(timer);
-      child.stdout.resume();
-      child.stdout.on("data", (chunk) => chunks.push(chunk));
-      child.stdout.on("end", () => resolve({ status, stdout: Buffer.concat(chunks) }));
-    });
+  const child = spawn(process.execPath, [INTEGRATIONS_CLI, "run", "--agent", "codex", "--codex-entry", FAKE_CODEX, "--", "p"], {
+    cwd: dir,
+    env: baseEnv({ FAKE_CODEX_SCENARIO: scenario, FAKE_CODEX_EXIT: "17" }),
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  const result = await readStdoutSlowly(child);
   assert.equal(result.status, 17);
   assert.equal(result.stdout.length, expected.length);
   assert.deepEqual(result.stdout, expected);
+});
+
+// Controles do consumidor lento (issue #25, refinamento do C46 (q); linha
+// "Consumidor lento do I4-C16c" do Landing): a mesma função, com um filho falso
+// e um PassThrough real como stdout, nas duas ordens possíveis do fim do
+// stdout e do `exit`. Pendência e resolução são conferidas depois de voltas
+// do laço; o filho falso é encerrado e o stream destruído também numa falha.
+const loopTurns = async (turns = 5) => {
+  for (let i = 0; i < turns; i += 1) await new Promise((resolve) => setImmediate(resolve));
+};
+
+async function withFakeChild(check) {
+  const child = Object.assign(new EventEmitter(), { stdout: new PassThrough() });
+  let exited = false;
+  const exit = (status) => {
+    exited = true;
+    child.emit("exit", status, null);
+  };
+  const state = { settled: false, value: undefined };
+  readStdoutSlowly(child).then((value) => Object.assign(state, { settled: true, value }));
+  try {
+    await check({ child, exit, state });
+  } finally {
+    // Sem o `exit`, o intervalo de leitura continuaria vivo.
+    if (!exited) child.emit("exit", null, null);
+    child.stdout.destroy();
+    child.removeAllListeners();
+  }
+}
+
+test("I25-C46 consumidor lento do I4-C16c: com o EOF antes do exit, fica pendente até o exit e então resolve com o status e os bytes exatos", async () => {
+  await withFakeChild(async ({ child, exit, state }) => {
+    const bytes = Buffer.from("linha 1\nlinha 2\n");
+    child.stdout.end(bytes);
+    // O `end` de um stream pausado só sai depois que a leitura do intervalo esvazia o buffer.
+    await once(child.stdout, "end", { signal: AbortSignal.timeout(5_000) });
+    await loopTurns();
+    assert.equal(state.settled, false, "pendente sem o exit");
+    exit(17);
+    await loopTurns();
+    assert.equal(state.settled, true, "o exit depois do EOF resolve");
+    assert.deepEqual(state.value, { status: 17, stdout: bytes });
+  });
+});
+
+test("I25-C46 consumidor lento do I4-C16c: com o exit antes do EOF, fica pendente até o EOF e então resolve com o status e todos os bytes em ordem", async () => {
+  await withFakeChild(async ({ child, exit, state }) => {
+    const before = Buffer.from("antes do exit\n");
+    const after = Buffer.from("depois do exit\n");
+    child.stdout.write(before);
+    exit(17);
+    await loopTurns();
+    assert.equal(state.settled, false, "pendente sem o EOF");
+    child.stdout.end(after);
+    await loopTurns();
+    assert.equal(state.settled, true, "o EOF depois do exit resolve");
+    assert.deepEqual(state.value, { status: 17, stdout: Buffer.concat([before, after]) });
+  });
 });
 
 test("I4-C17 stderr do filho fica separado e raciocínio nunca entra no debugger", async () => {
