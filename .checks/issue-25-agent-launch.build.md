@@ -2269,3 +2269,79 @@ Pendentes, com o coordenador:
 - a publicação e a CI nova;
 - o T8-C16 (corrida de ~1 ms entre o timer e o `performance.now()` no `untilDeadline`, pré-existente);
 - as cinco pastas não atribuídas no temporário.
+
+## T8-C16 do gate B final: abandono terminal no prazo da entrega (C46 (o)–(p))
+
+Nova sessão de autor (28/10/2026), a pedido do coordenador, dentro do critério 38 (AC7) e das autorizações
+6467154706 e 6442514838. Registro antes do código em `9b39d7e`; código em `322bcad`. Os registros acima,
+inclusive a classificação do T8-C16 pelo autor anterior, ficam como estavam.
+
+**Falha de partida, preservada**: gate B final em `cd4afc2` (clone, Windows, Node 24.13.0), 345/332/1/12.
+`concurrency.cli.test.mjs:908`, `a repetição estava em curso no prazo`, `4 !== 3` (`final2/g909/B-win-24.13.0.*`).
+
+**Sonda do autor anterior** (`final2/t8c16-probe.mjs`, `final2/t8c16-probe-*.jsonl`), recontada por mim
+dos `.jsonl`: 400 rodadas no 24.13.0, 387 com 3 criações e 13 com 4; 400 no 24.22.1, 385 e 15; todas
+`lock_present`. A 4ª criação começou 0,672 a 1,584 ms depois de uma marca externa (`readAt` da sonda, antes
+do `submit`), e a 3ª, 621,982 a 635,737 ms antes dela. A marca não é o `readAt` interno da entrega: os
+números não provam o instante exato do prazo interno. O fato decisivo é a 3ª ainda pendente e uma 4ª.
+
+**Origem**: o autor anterior apontou `fd07b89`. Pelo `git log -L` de `untilDeadline`, o laço que repete
+qualquer `lock_present` vem de `d1a5570` (#8), o `abandoned`/`onLock` de `edd9d69` (#8), e `fd07b89` (#23)
+exportou a função com o `codeOfError`. Os três estão na `main` (`63621c6`).
+
+**Defeito 1, demonstrado**: o timer marca `abandoned` e resolvia com o motivo anterior; depois de uma recusa
+concluída esse motivo é `lock_present`, e o laço iniciava outra tentativa se `clock()` ainda estava aquém do
+prazo, com a abandonada pendente.
+
+**Defeito 2, candidato confirmado**: o `onLock` só olhava `abandoned`. Com o lock obtido com o relógio no
+prazo, antes de o callback do timer rodar, a operação gravava e a entrega contava a confirmação.
+
+**Correção** (`src/integrations/traces/delivery.mjs`, só `untilDeadline`, +12/−1 linhas com o comentário):
+- o `onLock` marca a tentativa abandonada e lança quando `deadlineAt - clock() <= 0`;
+- o timer só marca `abandoned`;
+- depois da corrida, uma tentativa abandonada retorna `{ok: false, code: locked ? "delivery_timeout" : code}`,
+  antes da repetição do `lock_present` concluído.
+
+Prazos 750/650, `LOCK_RETRY_MS`, store, lock, códigos, contagens e consumidores não mudam.
+
+**Provas** (`322bcad`):
+- `tests/integrations/traces/delivery.unit.test.mjs`, 5 testes `I25-C46 prazo da entrega: …`, pela tabela
+  do C46 (o), com o `untilDeadline` exportado, relógio injetado e timer real; mais uma linha além da
+  tabela: recusa concluída e depois lock antes do prazo com a operação pendente → `delivery_timeout`.
+- `tests/integrations/traces/concurrency.cli.test.mjs`, 3 testes `I25-C46 prazo da entrega: …`, pela
+  fronteira real do store (`createCaptureDelivery` com o `io` roteirizado do arquivo e o `clock`
+  injetado): o defeito 1; o defeito 2 nos quatro casos (sem e com recusa anterior × no prazo e prazo + 1);
+  o controle válido no prazo − 0,001.
+
+**RED** (`builder-t8c16-terminal/red-final-*`): as provas de `322bcad` numa cópia descartável (`git archive
+322bcad`, provas iguais sem CR) com o `delivery.mjs` de `a6a829e` (sha256 `2f7e230a…`), Windows 24.22.1,
+`TEMP`/`TMP` numa pasta isolada registrada e removida pelo caminho e `ino`:
+- unit: 5 testes, 3 pass, 2 fail — `3 !== 2`; `{ok: true, value: 'gravado'}` contra `delivery_timeout`;
+- store (`--test-name-pattern="T8-C16 |I25-C46 prazo"`): 12 testes, 10 pass, 2 fail — `4 !== 3`;
+  `{bound: true, code: null, entries: 1, committed: 1, persisted: 1, lost: 0}` contra `delivery_timeout`
+  1/0/0/1.
+
+Uma primeira execução das mesmas provas, antes da linha extra do unit, deu o mesmo RED no checkout
+(`red-unit-*`, `red-store-*`).
+
+**GREEN** (`green-unit2-*`, `green-store-*`): unit 5/5; store 12/12, inclusive o T8-C16 original com 3
+criações exatas.
+
+**Mutações** do unit (`mutate.mjs`, `mutation-M*-unit.spec.txt`), cada uma detectada:
+- M1, sem o prazo pelo relógio no `onLock`: 1 fail, `{ok: true, value: 'gravado'}`;
+- M2, sem o abandono terminal: 2 fail, `3 !== 2` e `io_failure` no lugar de `delivery_timeout`;
+- M3, abandono terminal que ignora o lock: 1 fail, `lock_present` no lugar de `delivery_timeout`.
+
+O arquivo corrigido foi restaurado e conferido pelo sha256 antes do commit.
+
+**Sonda do autor anterior sobre `322bcad`** (inalterada, 4 processos × 100 rodadas, `probe-*.jsonl`;
+observação, não gate): 0 de 400 com 4 criações no 24.13.0 e no 24.22.1, todas `lock_present`.
+
+**Lista dos gates** (`affected-files3.mjs`, `gate-files-322bcad.txt`, sha256 `e26c5163…74d9`, motivos em
+`gate-files-322bcad.reasons.txt`): 43 de 67 arquivos de prova:
+- os 39 de `909b591`;
+- `launch/agent.unit` e `launch/docs`, que importam o produto pela cadeia;
+- `privacy/no-network`, que inicia `hook --agent`;
+- a prova nova `traces/delivery.unit`.
+
+Nenhum dos 39 saiu da lista.

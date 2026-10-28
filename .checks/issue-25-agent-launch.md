@@ -1423,3 +1423,27 @@ Abandono terminal no prazo da entrega — nova sessão de autor (registros acima
     ferramenta antes do início, código commitado e nada rastreado editado durante ele.
   - Logs novos em `.checks/code-review/issue-25/builder-t8c16-terminal/`; nenhum gate repetido sem
     mudança para obter verde.
+- **Onde a fronteira caiu**: registro em `9b39d7e`; código em `322bcad` (`untilDeadline` e as provas
+  C46 (o)–(p)). Os dois defeitos foram reproduzidos antes da correção; o candidato 2 se confirmou.
+  - **RED** (as provas de `322bcad` numa cópia descartável com o `delivery.mjs` de `a6a829e`, Windows
+    24.22.1): unit 5 testes, 3 pass, 2 fail — defeito 1 `3 !== 2` chamadas; defeito 2 `{ok: true, value:
+    "gravado"}` com o lock obtido no prazo. Store 12 testes, 10 pass, 2 fail — defeito 1 `4 !== 3`
+    criações; defeito 2 `{code: null, committed: 1, persisted: 1, lost: 0}`, o evento gravado com o lock
+    obtido no prazo. Os 7 T8-C16 antigos e o controle válido passaram.
+  - **GREEN** (`322bcad`): unit 5/5; store 12/12, com o T8-C16 original em 3 criações exatas.
+  - **Mutações** do unit, cada uma detectada: sem o prazo pelo relógio no `onLock` → `{ok: true}`; sem o
+    abandono terminal → `3 !== 2` e `io_failure` no lugar de `delivery_timeout`; abandono terminal que
+    ignora o lock obtido → `lock_present` no lugar de `delivery_timeout`.
+  - **Sonda do autor anterior**, inalterada, sobre `322bcad` (observação, não gate): 0 de 400 rodadas com
+    4 criações no 24.13.0 e no 24.22.1, todas `lock_present` (antes: 13/400 e 15/400).
+- **Gates definidos depois do último código (`322bcad`) e antes de rodar**:
+  - **Lista**: 43 arquivos de prova (`builder-t8c16-terminal/gate-files-322bcad.txt`, sha256
+    `e26c5163…74d9`) — os 39 de `909b591`, `launch/agent.unit` e `launch/docs` (importam o produto),
+    `privacy/no-network` (inicia `hook`) e a prova nova `traces/delivery.unit`. Os outros 24 não importam o
+    produto nem iniciam produtor.
+  - **Forma**: a registrada acima; scripts `run-target3.sh`, `make-clone-B3.sh`, `wsl-run3.sh`,
+    `run-npm-test3.sh` e `isolated-temp.mjs` na pasta dos logs. O C não lê o perfil WSL nem o `/tmp`
+    global; a pasta temporária de cada gate é a registrada na criação.
+  - **Nativos do Hermes**: “12” são os 11 casos com o runtime do Hermes em `hermes-plugin.native` (os de
+    `skip: SKIP`) mais a observação Hermes do I4-C35 (`skill-tree-hash.cli`); o caso pelo Python do
+    sistema, sem runtime, não conta como nativo.
