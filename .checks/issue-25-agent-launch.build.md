@@ -2492,3 +2492,35 @@ dos eventos no D interrompido de `dc0db9b` não está demonstrada. As causas his
 T8-C4 continuam desconhecidas.
 
 Pendentes, com o coordenador: o Verifier 19, a formal 12, a publicação, a CI nova e o merge.
+
+## F1 da verificação 19: prova da 3ª linha da árvore no C46 (m)
+
+Novo autor (Claude), handoff do coordenador. O FAIL 19 (`5ee0e0f`, relatório em `67a459b`) e os registros
+acima ficam como estão.
+
+**Falha concreta** (R19, F1). O literal do C46 (m) põe o pendente e o `pid` do lock na 3ª linha, com o dono
+`processo 3 de 3`. A prova (`evidence.unit.test.mjs:240`, `:246`, `:259`, `:263`) os põe na 1ª e afirma
+`processo 1 de 3`. Os gates da R19 passaram (A 365/353/0/12, B 365/353/0/12, C 365/345/0/20, D
+1.054/1.034/0/20). É lacuna de prova, não defeito de produto demonstrado.
+
+**Decisão do coordenador**: fortalecer a prova sem trocar o literal. O caso atual fica intacto, como
+controle da 1ª linha. Um caso novo cobre a 3ª linha, com valores literais. A retificação documental (3ª →
+1ª) foi abandonada: com o `pid` na 1ª, uma montagem que desse sempre `processo 1 de n` passaria.
+
+**Fronteira**: só `tests/integrations/traces/evidence.unit.test.mjs`. Leitura estimada de ~35k tokens, mais
+~25k para os gates. Registro, provas e gates: Handoff do checklist, bloco “Prova da 3ª linha do C46 (m)”.
+
+**Proveniência de dois auxiliares do autor anterior** (`coordinator-r19-observations.json`; registro aditivo):
+- Depois do D de `0ae940a`, a comparação dos skips gravou `/tmp/d4.skips` e `/tmp/d-old.skips` pelo Git Bash.
+  Lá, `/tmp` é o temporário do usuário Windows (`AppData/Local/Temp`).
+- O conteúdo, pelo comando, são nomes de testes e motivos de skip.
+- Não houve inventário anterior nem criação exclusiva desses dois nomes. Não é possível provar que eram novos
+  nem que nenhum conteúdo anterior foi substituído. Não há evidência concreta de arquivo alheio sobrescrito.
+- São auxiliares pós-gate, distintos das raízes de cada gate, que foram conferidas e removidas por caminho e
+  `ino`. Não são o `/tmp` do WSL nem o perfil, e a auditoria metadata-only do perfil, feita pelo root, não os
+  cobre.
+- Não foram lidos, limpos nem restaurados, nem o temporário global.
+- A frase “Nada do perfil WSL nem do `/tmp` global foi lido”, na seção do T8-C16 acima, vale para a leitura nos
+  gates e para o `/tmp` do WSL. Não diz nada sobre esses dois auxiliares.
+- Ficam como estão a limpeza de 1.257 pastas no Windows e 107 no WSL (por prefixo, tipo, dono e janela, sem
+  prova de proveniência) e o incidente da R5 (`ffc5937`).

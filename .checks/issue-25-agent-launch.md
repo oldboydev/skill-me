@@ -8,6 +8,8 @@ A formal8 foi `blocked` em `bedda5c` pela evidência remota ainda pendente do AC
 
 Sources:
 
+- Continuação do coordenador para um novo autor (28/10/2026), depois do FAIL da verificação 19 (HEAD verificado `5ee0e0f`, relatório preservado em `67a459b`; gates frescos A 365/353/0/12, B 365/353/0/12, C 365/345/0/20 e D 1.054/1.034/0/20, sem teste vermelho). O único achado é o F1 do C46 (m): o literal fixa o pendente e o `pid` do lock na 3ª linha e `processo 3 de 3`; a prova versionada os põe na 1ª e afirma `processo 1 de 3` (`evidence.unit.test.mjs:246`, `:259`, `:263`). Decisão do coordenador: fortalecer a prova sem trocar o literal, mantendo o caso da 1ª linha e acrescentando o da 3ª. A retificação documental (3ª → 1ª) foi abandonada porque uma montagem que desse sempre `processo 1 de n` ao dono do lock passaria hoje. Só `tests/integrations/traces/evidence.unit.test.mjs` muda. Registrar também, de forma aditiva, a nota de proveniência `.checks/code-review/issue-25/coordinator-r19-observations.json`: dois auxiliares da comparação de skips gravados pelo Git Bash em `/tmp` depois do D de `0ae940a`. Mesmas autorizações 6467154706 (“Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”) e 6442514838 (“Pode fazer quantas precisar”). Linha “Prova da 3ª linha da árvore no C46 (m)” do Landing.
+
 - Continuação do coordenador para o mesmo autor (28/10/2026), depois do D de `dc0db9b`. O coordenador interrompeu só o processo de teste parado (PID 149528, às 18:21:49), registrado antes em `builder-t8c16-terminal/coordinator-D-stall.json`; por isso o D 593/579/1/13 está incompleto, não é PASS nem defeito do produto. Pedidos: corrigir de forma aditiva a atribuição de `a2ec111`; reproduzir por RED determinístico e então corrigir só a harness do I4-C16c (candidato: EOF do stdout antes do `exit`), sem mudar produto, carga, prazos ou critérios; rodar de novo os gates finais. Mesma autorização 6467154706 (“Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”). Linha “Consumidor lento do I4-C16c” do Landing.
 
 - Continuação do coordenador para uma nova sessão de autor (28/10/2026), depois dos gates finais de `cd4afc2` (registro `a6a829e`): corrigir só a tentativa repetida depois de abandonada pelo prazo, demonstrada pelo T8-C16 do gate B final (`concurrency.cli.test.mjs:922`, `4 !== 3`; logs `builder-ci93-shared/final2/g909/B-win-24.13.0.*`; sonda do autor anterior `final2/t8c16-probe.mjs`), e reproduzir antes de corrigir o candidato do lock obtido com o prazo esgotado antes de o timer rodar. A regra já está decidida pelo coordenador e pelo contrato (`docs/traces.md`): uma tentativa abandonada não é repetida; o lock obtido depois do prazo não autoriza gravar; só a recusa real/concluída do lock é repetível. Dentro do critério 38 (AC7) e das autorizações 6467154706 (“Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”) e 6442514838 (“Pode fazer quantas precisar”); não é autorização para manutenção geral da #8. Linha “Abandono terminal no prazo da entrega” do Landing.
@@ -104,6 +106,7 @@ execução ao lado da observação automática e reusa a rotina de sucessão de 
 | Processos da árvore de um produtor e lock ilegível na evidência comum (gate B em `c0d61d7`, preservado: 343/330/1/12 — T8-C4 `com hook do filho`, `live-capture.cli.test.mjs:414`; refinamento do C46, sem check novo) | **O que se viu**: a evidência comum da primeira falha real trouxe o wrapper com `lock_present` (16 entradas, 7 confirmadas, 9 perdidas), 53 disputas do lock, nenhuma operação pendente na saída, 15,2 s de processo e o laço com até 503,6 ms, e da raiz `lock presente, de ilegível [SyntaxError]`. O arquivo da pré-carga do produtor tinha **3 linhas** (o wrapper, o Codex falso e o hook que o Codex falso inicia, todos com a pré-carga herdada), e só a do wrapper foi mostrada. O wrapper saiu sem pendente, e o Codex falso não toca o store: por eliminação, o hook filho é o candidato a ter deixado o lock, mas a linha dele não saiu. **Causa da falha**: desconhecida; é a classe histórica do lock deixado por uma tentativa abandonada (`docs/traces.md`), não demonstrada aqui. A lacuna é da evidência. **Forma**: quando o arquivo da pré-carga é do registro (um por produtor), a evidência mostra cada linha dele, `processo <k> de <n>`, com o resumo, a última concluída, os pendentes, o processo e o laço, e o `pid` de cada linha entra nos donos possíveis do lock (`produtor <i> <rótulo>, processo <k> de <n>`). Com o arquivo do teste (uma linha por processo de vários produtores), só a linha da saída do produtor, como antes. O lock que não se lê como JSON sai `presente, ilegível [<código>; <n> bytes]`; só o tamanho, nunca o conteúdo. | Mostrar só a linha da saída: escondeu o processo que mais provavelmente deixou o lock. Mostrar todas as linhas de um arquivo do teste compartilhado: repetiria em cada produtor as linhas dos outros. Ler o conteúdo do lock ilegível: traria dados do arquivo; o tamanho distingue o lock criado e não gravado (0 bytes) do gravado pela metade. Repetir o gate para ver o T8-C4 passar: proibido. |
 | Abandono terminal no prazo da entrega (gate B final em `cd4afc2`, preservado: 345/332/1/12 — T8-C16 `tentativa cortada no prazo antes de obter o lock…`, `concurrency.cli.test.mjs:922`, `4 !== 3`; critério 38, AC7; decisão do coordenador de 28/10/2026) | **Regra** (decidida; `docs/traces.md`, “Falhas de entrega” e tabela de códigos): só a recusa concluída do lock — o `lock_present` que a própria operação devolve — é repetida até o prazo; a tentativa abandonada no prazo é a última da entrada; o lock obtido com o prazo esgotado não autoriza gravar. **Defeito 1** (demonstrado): em `untilDeadline` (`src/integrations/traces/delivery.mjs`; lógica de `d1a5570`/`edd9d69` da #8, exportada à #23 em `fd07b89`, todos na `main`) o timer marca `abandoned` e resolve com o motivo anterior; depois de uma recusa esse motivo é `lock_present`, e o laço, que olha só `outcome.code`, inicia outra tentativa se `clock()` ainda está aquém do prazo, com a abandonada pendente. Sonda do autor anterior: 13/400 rodadas no 24.13.0 e 15/400 no 24.22.1 com 4 criações, todas `lock_present`. **Defeito 2** (candidato, corrigido só se a prova discriminante o reproduzir): `onLock` só testa `abandoned`; o lock que chega com `deadlineAt - clock() <= 0` antes de o callback do timer rodar (laço atrasado) seria aceito e a operação gravaria. **Forma** (só dentro de `untilDeadline`; assinatura, forma do retorno, códigos, `LOCK_RETRY_MS`, timer, prazos e consumidores iguais): (1) `onLock` lança — dentro do store, que devolve o próprio lock sem mutação (`withLock`/`holdLockFile`) — quando a tentativa já foi abandonada ou quando `deadlineAt - clock() <= 0`, e no segundo caso também a marca abandonada; (2) depois da corrida, a tentativa abandonada encerra a entrega com `{ok: false, code: locked ? "delivery_timeout" : <motivo anterior>}` — `delivery_timeout` sem recusa anterior, `lock_present` depois de uma —, nunca com o `io_failure` da rejeição interna; (3) só então vale a repetição do `lock_present` concluído. O commit que obteve o lock antes do prazo continua podendo terminar depois, com a confirmação incerta (`delivery_timeout`). | Arredondar ou adiantar o timer, somar tolerância ao prazo ou comparar o relógio com folga: esconde a corrida sem tornar o abandono terminal. Aceitar `>= 3` ou 4 criações no T8-C16: enfraquece a prova. Repetir depois do abandono cancelando a anterior: o store não cancela, e seriam duas operações em voo. Teto de tentativas, espera extra ou retry novo: política nova. Mapear o abandono interno para `io_failure`: nenhuma E/S falhou, e contradiz a tabela de códigos. Decidir o prazo no store ou criar API: o `onLock` já é o ponto de decisão da entrega, e API só para teste é proibida. Proibir o commit já sob lock antes do prazo de terminar: muda o contrato da confirmação incerta. Patch global de timers, relógio ou `fs` nas provas: o `clock` e o `io` injetáveis de `createCaptureDelivery` já permitem a prova. |
 | Consumidor lento do I4-C16c (gate D em `dc0db9b`: `codex-run.cli.test.mjs` parado depois do I4-C16 e interrompido pelo coordenador às 18:21:49, PID 149528, `builder-t8c16-terminal/coordinator-D-stall.json`; refinamento do critério 38, sem check novo) | **O que se sabe**: o processo do arquivo ficou ~34 min sem filhos e com 0,30 s de CPU; o último teste concluído foi o I4-C16; o I4-C16c e o I4-C17 não deram resultado. O `'test failed'` do arquivo é efeito do término externo. **Candidato** (leitura da fonte; reproduzido antes da correção): o I4-C16c pausa o stdout do wrapper, lê a cada 50 ms e só registra o `end` dentro do `exit`. Com o stream pausado, o `end` sai na leitura que esvazia o buffer depois do EOF, o que pode ocorrer antes do `exit`; o evento não se repete e a promessa fica pendente, sem filho. Numa observação descartável (`builder-stdout-eof/pending-probe.test.mjs`, Node 24.22.1), um teste pendente assim deixou o processo do arquivo parado até o término externo, com o mesmo relatório do D. É compatível com o D, mas não demonstra a ordem dos eventos naquela execução. **Forma** (só a prova; produto, wrapper, fixture e asserções iguais): a lógica do consumidor vai para uma função privada no mesmo arquivo, usada pelo I4-C16c real e pelos controles. Ela pausa o stdout e observa o `end` desde o início; lê a cada 50 ms até o `exit`; no `exit`, limpa o intervalo e registra o `data` antes do `resume`; e resolve `{status, stdout}` quando houver o `exit` e o `end`, em qualquer ordem. O I4-C16c continua com 3.000 linhas de 200 `z`, o intervalo de 50 ms, o Codex falso versionado, o wrapper real, o status 17 e o tamanho e o Buffer exatos. | Esperar o `close` do filho: muda o que o caso afirma e continua dependendo da ordem dos eventos. Ler em fluxo desde o início: elimina o consumidor lento que o caso existe para provar. Timeout, `--test-force-exit` ou menos linhas: escondem a corrida ou reduzem a carga. Controles sobre uma cópia corrigida da lógica: provariam uma lógica que o I4-C16c não usa. Utilitário ou biblioteca de streams novos: dependência sem necessidade. |
+| Prova da 3ª linha da árvore no C46 (m) (F1 da verificação 19 em `5ee0e0f`, relatório em `67a459b`: o literal pede o pendente e o `pid` do lock na 3ª linha e `processo 3 de 3`, e a prova afirmava a 1ª; refinamento do C46, sem check novo) | **Só a prova** (`tests/integrations/traces/evidence.unit.test.mjs`). O produto, o apoio `helpers/traces.mjs` e o literal do (m) não mudam. **Caso atual** (`I25-C46 evidência comum: com o arquivo do registro, os 3 processos…`): mesmo nome, entrada e asserções. O hook filho sai primeiro, com o pendente e o `pid` 3003 na 1ª linha, e o dono é `processo 1 de 3`. Fica como **controle da 1ª linha**. **Caso novo**, de nome próprio `I25-C46 evidência comum: …`, selecionado pelo mesmo `--test-name-pattern` do Proof. Usa os apoios privados do arquivo (`treeLine`, `storeWithLock`) e o contrato público (`recordingProducers`, `recordedProducer`, `settle`). O arquivo do registro tem 3 linhas, `pid` 1001, 2002 e 3003, nessa ordem de saída. O pendente `open lock` de 640 ms e o `pid` do lock ficam só na 3ª. O arquivo do teste é compartilhado e separado, com 2 linhas. Asserções com valores literais: os cabeçalhos são exatamente `processo 1 de 3`, `processo 2 de 3`, `processo 3 de 3` e `tempos`, uma vez cada e nessa ordem. `open lock (tomada do lock) há 640 ms` aparece no `processo 3 de 3`, e `pendentes na saída: nenhuma` nos processos 1 e 2. `tempos` traz `; 2 linhas da pré-carga`. A raiz sai `raiz 1 (produtores 1, 2): lock presente, de produtor 1 wrapper codex, processo 3 de 3;`. A mensagem não tem a raiz, os arquivos de tempos nem o nonce. | Retificar o literal para `1ª`/`processo 1 de 3` (template documental do root, abandonado): uma montagem que desse sempre `processo 1 de n` ao dono do lock passaria. Mover a entrada do caso atual para a 3ª linha: perderia o controle da 1ª, que é a ordem de saída que motivou o (m) (hook filho primeiro). Calcular o esperado pela posição do `pid` (o mesmo índice do apoio): reproduziria a lógica e passaria junto com ela. Função ou módulo de apoio novo para os dois casos: abstração sem consumidor fora deste arquivo. |
 
 - Nada mais nesta mudança é difícil de reverter: a divisão em módulos de `src/integrations/launch/` segue as convenções do repositório e é refatorável.
 
@@ -609,6 +612,26 @@ Os controles usam a mesma função privada que o I4-C16c usa, com um filho falso
   exatos.
 
 Proof: `node --test --test-name-pattern="I4-C16|I25-C46 consumidor lento" tests/integrations/codex-run.cli.test.mjs`
+
+Refinamento (F1 da verificação 19 em `5ee0e0f`, relatório em `67a459b`; linha “Prova da 3ª linha da árvore no C46
+(m)” do Landing), antes do código. (a)–(q) e o literal de (m) não mudam. É ampliação da cobertura do mesmo
+contrato, não critério novo.
+- **Controle da 1ª linha**: o caso atual de (m) fica com o mesmo nome, entrada e asserções (pendente e `pid` do
+  lock na 1ª, `processo 1 de 3`).
+- **Caso novo**, que prova o (m) como escrito. O arquivo do registro tem 3 linhas, e o pendente e o `pid` do
+  lock ficam só na 3ª:
+  - as 3 linhas saem uma vez cada, na ordem do arquivo, como `processo 1 de 3` a `processo 3 de 3`;
+  - `open lock (tomada do lock) há 640 ms` aparece só no `processo 3 de 3`; os outros dois têm `pendentes na
+    saída: nenhuma`;
+  - o lock sai `lock presente, de produtor 1 wrapper codex, processo 3 de 3`;
+  - o produtor com o arquivo do teste compartilhado (2 linhas) continua só com a linha da saída (`; 2 linhas da
+    pré-carga`);
+  - a mensagem não tem a raiz, os arquivos de tempos nem o nonce.
+- **Prova discriminante**, numa cópia descartável própria, com um único mutante do apoio que dá sempre
+  `processo 1 de n` ao dono do lock: o caso atual passa e o novo falha.
+- Não é defeito de produto demonstrado. É lacuna de prova, corrigida só na prova.
+
+Proof: `node --test --test-name-pattern="I25-C46 evidência comum" tests/integrations/traces/evidence.unit.test.mjs`
 
 ### S11 — Diagnóstico do I23-C10 e orçamento do job Windows (task 39–40; AC8)
 
@@ -1583,3 +1606,79 @@ Consumidor lento do I4-C16c — mesma sessão de autor, continuação (registros
   de `dc0db9b` sem mudança.
 - **Pendentes, com o coordenador**: o Verifier 19, a formal 12, a publicação, a CI nova e o merge, já
   autorizados. Nada aqui afirma PASS do Verifier, `ready` nem CI verde.
+
+Prova da 3ª linha do C46 (m) — novo autor Claude, handoff do coordenador depois do FAIL da verificação 19
+(registros acima preservados):
+
+- **Falha concreta** (`.checks/issue-25-agent-launch.verified.md`, R19, F1; HEAD verificado `5ee0e0f`, relatório
+  em `67a459b`):
+  - o C46 (m) diz “com o pendente da 3ª; o lock com o `pid` da 3ª sai `de produtor 1 <rótulo>, processo 3 de 3`”;
+  - a prova põe o pendente e o `pid` 3003 na 1ª linha (`evidence.unit.test.mjs:240`, `:246`) e afirma
+    `processo 1 de 3` (`:259`, `:263`);
+  - nenhuma asserção do repositório fixa `processo 3 de 3` como dono do lock.
+
+  Os gates da R19 passaram (A 365/353/0/12, B 365/353/0/12, C 365/345/0/20, D 1.054/1.034/0/20). Não há teste
+  vermelho nem defeito de produto demonstrado. O FAIL 19 fica como está.
+- **O que se decidiu** (coordenador, depois do FAIL 19): fortalecer a prova sem trocar o literal.
+  - O caso atual fica com o mesmo nome, entrada e asserções, como controle da 1ª linha.
+  - Um caso novo põe o pendente e o `pid` do lock na 3ª linha, com valores literais.
+  - A exigência original da 3ª linha permanece.
+- **Alternativa abandonada**: a retificação documental (`3ª` → `1ª`, `processo 3 de 3` → `processo 1 de 3`). O
+  root a preparou num template (`author-r19-doc-fix-template.txt`) antes de ler a razão inteira do FINAL e a
+  abandonou. Com o `pid` na 1ª linha, uma montagem que desse sempre `processo 1 de n` ao dono do lock passaria
+  na prova; o texto ficaria coerente e a lacuna, escondida.
+- **Leitura e fronteira** (antes do código): ~35k tokens.
+  - Lidos: `evidence.unit.test.mjs` (17,5 KB); as seções usadas de `helpers/traces.mjs` (`lockEvidence`,
+    `treeOf`, `describeRecording`, `recordingProducers`; ~10 KB dos 34,6 KB); `helpers/producer-runs.mjs`
+    (4,8 KB); o topo do relatório R19; o C46, o Landing e o Handoff do checklist; o fim do build e do handoff.
+  - Previstos mais ~25k para os gates.
+  - Uma fatia e uma superfície de código: só `tests/integrations/traces/evidence.unit.test.mjs`. Produto,
+    apoios, scripts versionados, workflow, `package.json`, configuração, core, estado da revisão e
+    `.verified.md` ficam só para leitura.
+  - Nenhum consumidor importa o arquivo de teste: `git grep "traces/evidence.unit"` fora de `.checks` e `.tasks`
+    não dá nada.
+- **Provas** (executadas e registradas depois do código):
+  - **GREEN**: o arquivo inteiro no checkout, Windows 24.22.1, com pasta temporária isolada; os dois casos de
+    (m) passam.
+  - **Prova discriminante** numa cópia descartável própria (`builder-r19-proof-fix/`), com um único mutante do
+    apoio `helpers/traces.mjs`: o rótulo do dono do lock sai sempre `processo 1 de <n>`. Esperado: o caso atual
+    passa, e o novo falha na asserção de `processo 3 de 3`. Sem mutação no checkout nem `stash`.
+  - Não há RED do produto: o formatter correto deve passar os dois casos.
+- **Gates** (a lista e os orçamentos são registrados depois do último código e antes de rodar):
+  - **A/B/C**: o arquivo `evidence.unit.test.mjs` inteiro, sem filtro, numa invocação por ambiente, com
+    concorrência 4, nas formas do R19:
+    - A: Windows 24.22.1, no checkout;
+    - B: clone git novo, Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, `core.autocrlf=true`
+      só no clone, bin LF;
+    - C: WSL uid 1000, `env -i`, `HOME`/`TMPDIR`/`RUNNER_TEMP` próprios, Node 24.13.0 copiado num prefixo sem
+      `sh`, PATH sem `/usr/bin` e sem agentes, árvore do `git archive` do HEAD exato.
+
+    `RUNNER_TEMP` presente e válido nos três. Orçamento de 1 h por gate na ferramenta.
+  - **Os outros 42 arquivos** da lista de 43 não rodam de novo em A/B/C. Os resultados deles são **carry
+    explícito** do Verifier 19 (`5ee0e0f`), condicionado à identidade dos blobs, demonstrada antes dos gates.
+  - **D**: um `npm test` completo, Windows 24.22.1, runner padrão (teto 8), runtime Hermes versionado com o
+    `HERMES_HOME` temporário das provas. Orçamento de 2 h na ferramenta, definido antes. Nada rastreado é editado
+    durante ele; espero o término real.
+  - Logs e auxiliares ficam em `.checks/code-review/issue-25/builder-r19-proof-fix/`. Nenhum auxiliar vai para o
+    `/tmp` (Git Bash ou WSL) nem para o temporário global.
+  - A pasta temporária de cada gate é criada e registrada pela execução. Ela é removida só pelo caminho exato,
+    tipo, não link e `ino` (no C, também o uid 1000).
+- **Proveniência de dois auxiliares do autor anterior** (`coordinator-r19-observations.json`; registro aditivo):
+  - **O que houve**: depois do D de `0ae940a`, a comparação dos skips gravou `/tmp/d4.skips` e
+    `/tmp/d-old.skips` pelo Git Bash (`grep … > /tmp/d4.skips; grep … > /tmp/d-old.skips; cmp -s …`).
+  - **Onde**: no Git Bash, `/tmp` resolve para o temporário do usuário Windows (`AppData/Local/Temp`).
+  - **Conteúdo**, pelo comando: nomes de testes e motivos de skip.
+  - **Limite**: não houve inventário anterior nem criação exclusiva desses dois nomes. Não é possível provar que
+    eram novos nem que nenhum conteúdo anterior foi substituído. Também não há evidência concreta de arquivo
+    alheio sobrescrito.
+  - **Escopo**: são auxiliares pós-gate, distintos das raízes de cada gate, que foram conferidas e removidas por
+    caminho e `ino`. Não são o `/tmp` do WSL nem o perfil, e a auditoria metadata-only do perfil, feita pelo
+    root, não os cobre.
+  - Não li, não limpei nem restaurei esses arquivos nem o temporário global.
+  - **Esclarecimento**: a frase “Nada do perfil WSL nem do `/tmp` global foi lido” aparece nos registros dos
+    gates de `dc0db9b` (escrito em `a2ec111`, acima e no build) e de `0ae940a` (escrito em `10dfbe8`, acima). As
+    formas do C dizem que o C não lê o `/tmp` global. Essas frases valem para a leitura nos gates e para o `/tmp`
+    do WSL no C. Não dizem nada sobre esses dois auxiliares gravados no temporário do Windows.
+  - **Preservados como estão**: a limpeza de 1.257 pastas no Windows e 107 no WSL (por prefixo, tipo, dono e
+    janela de mtime, sem prova de proveniência nem auditoria de propriedade) e o incidente da R5 (`ffc5937`).
+    Nada aqui afirma impacto zero.

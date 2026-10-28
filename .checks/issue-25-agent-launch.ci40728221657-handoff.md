@@ -152,3 +152,21 @@ chamado de causa confirmada da parada.
   1.054/1.034/0/20, com os nativos do Hermes.
 - A ordem dos eventos no D interrompido não está demonstrada, e as causas históricas continuam
   desconhecidas. Próximos passos com o coordenador: Verifier 19, formal 12, CI e merge.
+
+### Prova da 3ª linha do C46 (m) (novo autor, depois do FAIL 19)
+
+- **FAIL 19 preservado** (`5ee0e0f`, relatório em `67a459b`): 49/50, só o C46 (m). O literal põe o pendente e o
+  `pid` do lock na 3ª linha (`processo 3 de 3`); a prova os punha na 1ª. Os gates da R19 passaram, sem teste
+  vermelho.
+- **Decisão do coordenador**: fortalecer a prova. O caso da 1ª linha fica intacto, e um caso novo cobre a 3ª,
+  com valores literais. A retificação documental (3ª → 1ª) foi abandonada, porque deixaria passar uma montagem
+  que desse sempre `processo 1 de n`.
+- **Fronteira**: só `tests/integrations/traces/evidence.unit.test.mjs`. Produto, apoios, workflow e prazos não
+  mudam.
+- **Proveniência** (`coordinator-r19-observations.json`): depois do D de `0ae940a`, a comparação de skips gravou
+  `/tmp/d4.skips` e `/tmp/d-old.skips` pelo Git Bash, isto é, no temporário do usuário Windows.
+  - Não há inventário anterior: não se prova que eram nomes novos nem que nada foi substituído. Também não há
+    evidência de arquivo alheio sobrescrito.
+  - Não são o `/tmp` do WSL nem o perfil, e a auditoria metadata-only do root não os cobre.
+  - Não foram lidos, limpos nem restaurados.
+  - As raízes por gate são outra coisa: foram conferidas e removidas por caminho e `ino`.

@@ -389,6 +389,13 @@ o proprietário autorizou o diagnóstico pontual nesta entrega (AC7, ver `Source
     fim do stdout, em qualquer ordem, com os bytes e o status exatos. Carga, intervalo, wrapper,
     fixture, asserções e produto não mudam. A correção da prova não demonstra a causa da parada do D.
 
+    Refinamento do critério 38 (F1 da verificação 19 em `5ee0e0f`, relatório em `67a459b`: o C46 (m)
+    pede o pendente e o `pid` do lock na 3ª linha da árvore do produtor, e a prova só os punha na 1ª;
+    lacuna de prova, sem critério novo nem defeito de produto demonstrado). A evidência mostra os 3
+    processos da árvore uma vez cada, na ordem de saída, e aponta como dono possível do lock o processo
+    cuja linha tem o `pid`, seja a 1ª ou a 3ª. A prova mantém o caso da 1ª linha como está e acrescenta
+    o da 3ª, com valores literais. Só a prova muda; apoios, produto, prazos e asserções existentes, não.
+
 ### Regressão da execução completa instrumentada: primeira criação concorrente do store (C32; critério 25 sem mudança)
 
 Na execução completa instrumentada em `710076e` (Windows, Node 24.22.1, teto de 8 arquivos), o T8-C15 e
