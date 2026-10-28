@@ -1,5 +1,11 @@
 # Iniciar o agente com captura: `skill-me <agente>` — issue #25
 
+
+
+## Handoff da sequência de revisão e medição — 28/10/2026
+
+A formal8 foi `blocked` em `bedda5c` pela evidência remota ainda pendente do AC9. A issue agora explicita a sequência já aprovada: provas locais e `ready` autorizam publicar; depois executar/registrar uma medição manual no HEAD publicado; só fazer merge com os resultados registrados e os cinco checks regulares verdes. Os requisitos remotos permanecem obrigatórios, fora do critério de revisão do código, sem alterar C1–C50, produto, testes ou prazos. Registro15/9: https://github.com/oldboydev/skill-me/issues/25#issuecomment-6470507482. Detalhes e histórico no adendo final da task; a verificação15 carregará as provas R14 com SHA explícito, sem afirmar que as reexecutou. Nenhuma medição remota ocorreu neste registro.
+
 Sources:
 
 - [Medição comparativa do lock na CI Windows, 28/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706): “Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”, aprovando `.checks/issue-25-agent-launch.ci-runner-measure-proposal.md` (`b2638db`; AC9, task 41–42, C49–C50; linhas “Medição comparativa do lock na CI Windows” e “Exceção ao C48” do Landing). Contexto em `.checks/code-review/issue-25/context-ci28-verifier13-approved.json` (23 comentários, 9 ACs).

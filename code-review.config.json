@@ -53,8 +53,8 @@
     },
     "25": {
       "profile": "light",
-      "maxRounds": 8,
-      "approval": "Proprietário autorizou “Pode fazer quantas precisar” para as rodadas necessárias da #25 e em 28/10/2026 aprovou a medição comparativa mantendo testes e prazos e mandou seguir até CI verde/merge. Próxima revisão concreta: 8ª, depois do código3843867 e provas/documentação059e518, preservando as 7 tentativas anteriores; registro específico https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467998235 e escopo https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706. Override exclusivo25/light; globais, outras issues e core intactos. Parar no primeiro ready válido; publicar só com PASS/ready, merge com checks regulares verdes e medição registrada. Sem publicação do pacote."
+      "maxRounds": 9,
+      "approval": "Proprietário autorizou “Pode fazer quantas precisar” e mandou seguir com a medição, preservando testes e prazos, até CI verde/merge. Próxima revisão concreta: 9ª, após a formal8 blocked em bedda5c por falta da medição que a sequência aprovada exige executar após ready/publicação. Contexto alinhado sem alteração do código ou dos gates obrigatórios de merge; registro específico https://github.com/oldboydev/skill-me/issues/25#issuecomment-6470507482 e escopo https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706. Preservar as 8 tentativas anteriores. Override exclusivo25/light; globais, outras issues e core intactos. Parar no primeiro ready válido; publicar só com PASS/ready, merge somente após medição registrada e cinco checks regulares verdes no HEAD aprovado. Sem publicação do pacote."
     }
   }
 }
