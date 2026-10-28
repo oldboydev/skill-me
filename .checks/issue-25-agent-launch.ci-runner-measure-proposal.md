@@ -1,4 +1,6 @@
-# CI Windows: medição comparativa antes de nova mitigação — proposta para aprovação
+# CI Windows: medição comparativa antes de nova mitigação — aprovada em 28/10/2026
+
+O proprietário autorizou: “Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.” [Registro da aprovação](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706). O AC9 foi acrescentado à issue antes do código. Implementação e provas serão registradas pelo autor, preservando a proposta abaixo.
 
 Estado: não implementada. A CI40636157287 do PR28 terminou vermelha no Windows: I23-C4 e T8-C11, ambos lock_present; Ubuntu/macOS passaram. Diagnóstico em d2d54cf, com controles saudáveis e duas vias de falha que reproduzem cada sintoma. Não há defeito do produto demonstrado, nem causa atribuída às ocorrências no runner. O Verifier12 PASS48/48 e a formal7 ready8/8 do conteúdo publicado9244eea ficam preservados.
 

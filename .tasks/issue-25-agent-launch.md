@@ -392,6 +392,39 @@ CI 40514323240 continua desconhecida; nenhum dos dois itens a corrige.
     macOS; os jobs `changes` e `ci` continuam com 5. Passos, runner, comandos, matriz, concorrência,
     skips e os prazos de teste e de produto não mudam. A CI real valida a expressão.
 
+### Medição comparativa do lock na CI Windows (AC9; autorização 6467154706; C49, C50)
+
+A CI 40636157287 (`9244eea`) terminou vermelha no Windows com `lock_present` no I23-C4 e no T8-C11;
+o diagnóstico em `d2d54cf` não demonstrou causa nem defeito do produto. Em 28/10/2026 o proprietário
+aprovou a proposta `.checks/issue-25-agent-launch.ci-runner-measure-proposal.md` (`b2638db`): medir a
+latência do lock no runner Windows, entre o temporário padrão e o `RUNNER_TEMP`, num job manual do
+workflow existente. A medição não corrige nada e não substitui nenhum check regular.
+
+**Exceção datada ao critério 40 (28/10/2026, AC9).** O critério 40 diz que, no workflow, só o
+`timeout-minutes` do job `verify` muda. O AC9 autoriza **acrescentar** um job manual ao mesmo arquivo.
+`changes`, `verify` e `ci` e os orçamentos 20/10/5 continuam exatamente como estão, e o critério 40
+continua valendo para eles. A conferência do C48 passa a comparar os jobs regulares; o job novo é
+provado pelo C49.
+
+41. O workflow `.github/workflows/governance.yml` ganha o job `lock_diagnostics`, de nome
+    `Diagnosticar lock Windows (manual)`, que só roda quando `github.event_name == 'workflow_dispatch'`.
+    Ele roda em `windows-latest`, com `timeout-minutes: 10` e permissão `contents: read`, e usa os
+    mesmos `checkout` e `setup-node` pinados, o Node 24.13.0, `npm ci --ignore-scripts` e
+    `node scripts/ci-lock-latency.mjs`. Não entra em `ci.needs`, não tem `continue-on-error` e não
+    muda nem substitui `changes`, `verify` e `ci`. Em `pull_request` e `push` ele não se aplica; esse
+    skip não dispensa nenhum check regular.
+42. O script `scripts/ci-lock-latency.mjs` usa `createStoreIo` e `holdLockFile` públicos, resolve os
+    caminhos reais do temporário padrão e do `RUNNER_TEMP` e diz quando são o mesmo destino ou quando
+    o `RUNNER_TEMP` não está disponível. Quando são distintos, roda A1 (padrão), B (`RUNNER_TEMP`) e
+    A2 (padrão) no mesmo runner. Cada fase tem 3 produtores de 500 ciclos, cada um no próprio lock, e
+    3 processos de carga gravando 64 KiB com flush, sob um teto de 120 s. Ele informa, por fase, os
+    ciclos previstos, concluídos e incompletos, os erros por código (com `lock_present` separado dos
+    de E/S) e p50, p99, máximo e as contagens ≥ 600 e ≥ 650 ms da tomada, da liberação e das
+    operações de criação, escrita, fechamento e remoção do lock. Erro, ausência de dados ou término
+    parcial nunca viram zero. A saída tem só rótulos e números. A limpeza só remove as próprias
+    pastas, e o supervisor só encerra os filhos que criou. As provas ficam em
+    `scripts/ci-lock-latency.test.mjs`, dentro de `npm run test:governance`.
+
 ## States
 
 Ciclo de vida de cada captura `origin: "launch"`.
@@ -524,6 +557,7 @@ erDiagram
 | `package.json` `bin` | `npm link` no checkout | comando `skill-me` no prefixo npm | do npm | 1 |
 
 ## Sources
+- [Medição comparativa do lock na CI Windows, 28/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706): o proprietário respondeu “Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”, aprovando a proposta `.checks/issue-25-agent-launch.ci-runner-measure-proposal.md` (`b2638db`): um job manual Windows de até 10 min no workflow existente e o script de medição A1/B/A2 (critérios 41 e 42). Produto, testes funcionais existentes, prazos de 750/650 ms, contagens, perdas/retry, carga e orçamentos regulares 20/10/5 ficam iguais; nenhuma mitigação automática; o job manual não substitui os checks regulares. A issue ganhou o AC9; contexto em `.checks/code-review/issue-25/context-ci28-verifier13-approved.json` (23 comentários, 9 ACs). Verifier 12 PASS e formal 7 `ready` ficam no histórico; as próximas rodadas seguem “Pode fazer quantas precisar”; publicar só depois de PASS e `ready`; merge com toda a CI regular verde.
 - [Diagnóstico do I23-C10 e orçamento Windows, 28/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6460177952): o proprietário respondeu “Autorizar diagnóstico e orçamento Windows (recomendado)” à proposta `.checks/issue-25-agent-launch.ci40514323240-proposal.md` (`df2441f`), só nesta entrega: diagnóstico sanitizado do I23-C10 com a pré-carga existente e provas controladas, e orçamento total de 20 minutos só no job Windows da matriz `verify` (Ubuntu e macOS 10, demais jobs 5). Prazos de produto e de testes, concorrência, carga, contagens, asserções, skips e contratos ficam iguais; sem retry novo nem aceitação de perdas (critérios 39 e 40). A issue ganhou o AC8; contexto em `.checks/code-review/issue-25/context-ci28-verifier12-approved.json` (20 comentários, 8 ACs). As 11 verificações e as 6 revisões ficam preservadas; as próximas rodadas seguem “Pode fazer quantas precisar”, registradas uma a uma; depois de PASS e `ready`, publicar no PR #28, rodar a CI do novo HEAD e fazer o merge só com todos os checks verdes; nenhuma publicação do pacote.
 - [Uso da autorização para a 11ª verificação, 27/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6442514838): o proprietário autorizou “Pode fazer quantas precisar”. Após o FAIL10 preservado em `788d160` e a correção concreta do diagnóstico de C32 em `619c8e0` (registro `9e289f3`, alvo122 verde nos três ambientes e npm test1004/984pass/0fail/20skips), a próxima rodada necessária é a 11ª, exclusiva da #25 e com as dez anteriores preservadas. A sexta revisão formal já está autorizada e disponível; nenhum aumento formal ou de configuração. Contexto em `.checks/code-review/issue-25/context-ci28-verifier11-approved.json`. Não repetir execução inalterada para procurar verde; PASS e ready do conteúdo novo precedem push, e merge permanece autorizado somente com toda a CI verde. Pacote privado.
 - [Ajuste pontual do T8-C15 e 10ª verificação, 27/10/2026](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6440482031): o proprietário respondeu “Autorizar ajuste pontual e 10ª verificação”, à proposta do comentário 6435260406 e de `.checks/issue-25-agent-launch.t8c15-handoff.md` (`a718865`). Inclui nesta entrega o diagnóstico pontual do teste antigo T8-C15 e a correção mínima de defeito confirmado dentro dos contratos atuais, preservando os 80 eventos, os produtores sobrepostos, as asserções, os prazos, o teto 8 e o histórico; sem nova tentativa de E/S, aceitação de perdas ou mudança de política (critério 38). Autoriza uma 10ª verificação independente depois das provas do autor, só para a #25; as nove anteriores ficam, inclusive o FAIL da 9ª em `4e66de2`. A 6ª revisão formal continua autorizada e não consumida; o teto formal continua 6, com 5 consumidas. Merge do PR #28 só depois de PASS, `ready` e toda a CI verde; nenhuma publicação. A issue ganhou o AC7; contexto em `.checks/code-review/issue-25/context-ci28-verifier10-approved.json` (18 comentários, 7 ACs).
