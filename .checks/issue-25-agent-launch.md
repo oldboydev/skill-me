@@ -1150,3 +1150,38 @@ preservados):
     rastreado muda durante D.
   - Nenhum gate é repetido para obter verde. Uma falha fica registrada, e só um defeito exato, dentro
     dos contratos, é corrigido.
+- **Onde a fronteira caiu agora**:
+  - **Commits**: registro em `48b191a`; código em `fa2c8eb` (formatter comum, registro por teste em
+    `helpers/producer-runs.mjs`, `io` medido em processo, adoção nos sete arquivos, controles C46 (h)–(k) e
+    C47 (c)–(d), e a linha “Adoção pelos hooks do arquivo…” do Landing, descoberta no build) e `60bbda8`
+    (reforço do controle (h)). Só provas e apoios de prova; `src/` sem mudança desde `f734441`.
+  - **RED** (provas de `93bd1e9` com a mesma injeção): só as mensagens das CIs, sem pendente, processo,
+    laço nem evidência dos produtores.
+  - **Mutações**: as 10 foram detectadas, só por controles I25; a do formatter, depois do reforço, também
+    pelo (h).
+  - **A**: 333 testes, 321 pass, 0 fail, 12 skip. **B**: 333, 314 pass, **7 fail**, 12 skip. **C**: 333,
+    312 pass, **1 fail**, 20 skip. Os 20 I25-C46/C47 passaram nos três.
+  - **As falhas de B e C não são desta entrega e ficam registradas, sem correção nem repetição**:
+    - as 7 do B (nativas do Hermes e I4-C35) vêm do `fs.cpSync`/`rmSync` do Node 24.13.0 no Windows com
+      “ação” no caminho, que não copia nem remove e não dá erro; a mesma falha ocorre em `93bd1e9`;
+    - a do C (I4-C36) mediu 209 ms por `Date.now()` onde o runner mediu ≥ 2.358 ms monotônicos, o que é
+      compatível com um recuo do relógio de parede do WSL, não demonstrado.
+  - **D**: o `npm test` completo saiu com exit 0 em `60bbda8` (1.040 testes, 1.020 pass, 0 fail, 20 skip,
+    com os nativos do Hermes).
+  - **Causa da CI 93**: continua desconhecida; nenhum defeito do produto demonstrado. A próxima falha de um
+    produtor dos sete arquivos traz a evidência de todos os produtores do teste e das raízes. O mapa local
+    do `session_end` (a 73ª operação é o 1º flush, `sync segmento.tmp`) é compatível com as 72 concluídas da
+    CI, mas não a demonstra. Detalhes no build e em `.checks/issue-25-agent-launch.ci40728221657-handoff.md`.
+- **O que foi abandonado**:
+  - envolver o `test` (trocava o local da falha pelo do apoio);
+  - importar o apoio pesado em `installed-hooks.mjs`/`wrapper.mjs` (+22 ms na fixture do launcher);
+  - `t.diagnostic` (não sai no resumo de falhas);
+  - instrumentar mais asserções isoladas;
+  - passar o registro em cada chamada;
+  - adotar nas 30 consumidoras restantes;
+  - contar o `lstat ENOENT` da rota automática como falha;
+  - calcular o prazo da entrega a partir da pré-carga;
+  - corrigir aqui o `cpSync` do 24.13.0 ou a medida por `Date.now()` do I4-C36 (provas da #4, fora do
+    escopo).
+- **Pendentes, com o orquestrador**: o Verifier 19, a formal 12, a publicação e a próxima CI. Nada aqui
+  afirma PASS, `ready`, CI verde nem causa corrigida.

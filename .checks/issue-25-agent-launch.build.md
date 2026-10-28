@@ -1978,3 +1978,158 @@ Limites:
   campos novos; consolidar mudaria provas que passaram.
 - **Pendentes, com o orquestrador**: as rodadas 17/11, a publicação e a próxima CI. Nada aqui afirma
   CI verde, medição nova ou `ready`.
+
+## CI 40728221657 e execução manual 40728249484 (Windows): evidência comum dos produtores (C46 (h)–(k), C47 (c)–(d))
+
+Estado de partida: HEAD `93bd1e9`, publicado. Sessão nova de autor, sem herdar a anterior.
+- **Histórico do orquestrador, preservado**: FAIL 17 (literal 1 vs 2, `1ef4c72`), correção do literal do
+  C46 (g) para 2/0/0/2 (`d8da3c0`), PASS 18 50/50 (`93bd1e9`, código de `51679df`) e formal 11 `ready`.
+- **As falhas** (logs integrais do orquestrador em `.checks/code-review/issue-25/ci93-windows-*.log`):
+  - **PR 40728221657**, job 122957292934: governança 25/25, motor 16/16, doctor 417 (410/0/7),
+    integrações 571 (546 pass, **1 fail**, 24 skip).
+    - **I23-C4** (`control.cli.test.mjs:879`, erro na `:976`): o hook Claude da rota automática saiu com
+      `delivery_timeout` 1/0/0/1 (`unrouted` 0), sem dado de E/S. É **processo filho** (`runHook`), não o
+      produtor em processo; os dois produtores em processo do arquivo (`:557`, `:832`) foram o sintoma da
+      CI 40636157287.
+  - **Manual 40728249484**, matriz regular, job 122957402134: integrações 571 (544 pass, **3 fail**, 24 skip).
+    - **T8-C12** (`follow.cli.test.mjs:59`): `0 !== 1` no `persisted` do 1º hook; o código da entrega não
+      aparece.
+    - **T8-C13** (`:90`): `stop` com `lock_present` depois de dois hooks e um ingest, só com o status deles.
+    - **T8-C2** (`live-capture.cli.test.mjs:178`): `delivery_timeout` 1/0/0/1 no `session_end`, com a
+      mensagem do formatter legado: `359 ms da 1ª à última operação de disco; 72 operações; flush nenhum =
+      0 ms; por operação open 340, stat 5, lstat 2, read 2 ms; mais lenta open lock 339 ms; falhas nenhuma;
+      CPU do processo 15 ms`. Ela só conta as concluídas; os pendentes, a saída, o início e o laço que a
+      pré-carga de `51679df` grava não eram mostrados.
+  - Os quatro controles T8 de `51679df` passaram nas duas.
+- **Medição real** (dados do orquestrador, job 122957247705 sobre `93bd1e9`, `measurement40728249484.*`):
+  4.500/4.500 ciclos, nenhum erro, nenhuma amostra ≥ 600 ms. Não é o caminho das entregas, não dá causa
+  nem justifica otimizar.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `48b191a` | Antes do código: Sources, linha “Evidência comum dos produtores e formatter legado” do Landing, refinamentos do C46 (h)–(k), do C47 (c)–(d) e das tasks 38–39, Handoff com leitura, fronteira e gates |
+| `fa2c8eb` | Formatter comum, registro por teste, `io` medido em processo, adoção nos 7 arquivos, controles; linha “Adoção pelos hooks do arquivo e registro num módulo leve” do Landing (descoberta do build) |
+| `60bbda8` | Reforço do controle (h): os trechos do formatter legado conferidos só na mensagem de sempre |
+
+Pasta de trabalho: `.checks/code-review/issue-25/builder-ci93-shared/` (ignorada).
+
+- **Catálogo antes do código** (`consumers-before.txt`): 37 arquivos de prova importam os apoios mudados;
+  30 iniciam produtores; só 6 passavam a pré-carga; 5 usavam o formatter. Com a prova nova, o gate tem 38.
+- **RED** (provas de `93bd1e9` numa cópia descartável; `red-patch.mjs` muda só o ambiente ou o `io` do
+  produtor; `red-old-win-24.22.1.spec.txt` e `red-old-inprocess-win-24.22.1.spec.txt`):
+  - T8-C2: `pre_tool_bash: 11 ms da 1ª à última operação de disco; 63 operações; flush nenhum = 0 ms; …;
+    falhas nenhuma; CPU do processo 16 ms` e o diff — com uma operação parada ~640 ms, a mensagem não a
+    mostra;
+  - T8-C12: só `0 !== 1`; T8-C13: só `stop: {…lock_present}` e `4 !== 0`; I23-C4 hook: só o diff;
+  - I23-C4 em processo (`io` com o temporário do segmento parado): o primeiro sintoma é o `privacy list` com
+    `lock_present` (`:564`), como na CI 40636157287, sem dado do produtor.
+  - Um erro meu no 1º patch (barras da regex perdidas) deixou a injeção em processo sem efeito; corrigido
+    sem regex e reexecutado só esse caso.
+- **Descobertas do build** (linha nova do Landing, antes do commit do código):
+  - envelopar o `test` trocava o local da falha para `helpers/traces.mjs:380:10`; a adoção passou a ser
+    pelos hooks do arquivo (`context.error`/`context.passed`, conferidos no Node 24.13.0 e 24.22.1);
+  - importar `traces.mjs` em `installed-hooks.mjs` subia a carga da fixture do launcher de 7,9 para 30,4 ms;
+    o estado foi para `helpers/producer-runs.mjs`, e a carga voltou a 7,8 ms;
+  - na rota automática o `lstat ENOENT` é a conferência normal de ausência; no lugar neutro sai como
+    `ausências conferidas`, não como falha.
+- **GREEN** (antes desses dois últimos ajustes): os 10 arquivos tocados e do alvo anterior, 106 testes,
+  100 pass, 0 fail, 6 skip; depois dos ajustes, os 20 controles I25 passaram. A prova final é o A/B/C/D
+  em `60bbda8`.
+- **Mensagens dos controles** (`sample-messages-win-24.22.1.txt`, pelos apoios versionados):
+  - T8-C13 com o ingest parado: os três produtores com relatório, tempos, processo e laço; o ingest com
+    `pendentes na saída: open segmento.tmp (sob o lock, 2ª tomada) há 645 ms`, `saída aos 703 ms (658 ms
+    depois da 1ª operação)`, laço com 11,1 ms; `raiz 1 (produtores 1, 2, 3): lock presente, de produtor 3
+    ingest hermes; capturas indisponível [lock_present]`;
+  - hook automático parado: a raiz lida do home da prova, o pendente e o lock do hook;
+  - em processo: `pendentes no instantâneo: writeExclusive segmento.tmp (sob o lock, 2ª tomada)`, o laço do
+    processo da prova e `lock presente, de produtor 1 claude em processo`.
+- **Mutações** (cópias descartáveis de `fa2c8eb`; os 24 testes T8-C2, T8-C12, T8-C13, I23-C4 e I25-C46/C47
+  dos 4 arquivos; `mutations/`): as 10 foram detectadas, e só controles I25 falharam em cada uma:
+  formatter sem pendentes/processo/laço (2); pendente como concluída (2); registro sem evidência (8); erro
+  novo no lugar do original (8); hook Codex instalado fora do registro (1); home lido fora do temporário
+  (1); laço sem amostra como zero (1); `io` em processo sem medida (3); dono do lock presumido (1); ausência
+  como falha (2). Na 1ª, o controle (h) passava porque os trechos também saíam na evidência anexada:
+  reforçado em `60bbda8`, a mutação reexecutada falhou também no (h) (`mutations-60bbda8/`).
+- **Mapa do T8-C2** (`map-codex-hooks-win-24.22.1.txt`, execução saudável local): o `session_end` (7º caso)
+  conclui 89 operações; por início, a 72ª é `writeFile segmento.tmp` e a 73ª o 1º flush, `sync
+  segmento.tmp` (2ª tomada). Isso é **compatível** com as 72 concluídas e “flush nenhum” da CI, e com a
+  `open lock` de 339 ms, mas não demonstra a operação em curso: o formatter legado não a mostrava.
+
+| Alvo afetado em `60bbda8`: as 38 consumidoras dos apoios mudados (as 37 do catálogo e a prova nova; lista `final/gate-files.txt`, sha256 `0ab90cdf…1754`), `--test-concurrency=4`, uma invocação sem filtro por ambiente, `RUNNER_TEMP` presente e válido | Resultado |
+| --- | --- |
+| A — Windows, Node 24.22.1, npm 11.19.1, Python 3.12.10, checkout principal, `npm_execpath` ausente, 14:52:12–14:59:26 | 333 testes: 321 pass, 0 fail, 12 skip; exit 0; `git status` vazio antes e depois |
+| B — clone git novo de `60bbda8`, `core.autocrlf=true` só no `.git/config` do clone (`traces.mjs`, `producer-runs.mjs` e a prova nova em `w/crlf`; `cli.mjs` `w/lf attr/text eol=lf`), Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, 14:59:57–15:10:56 | 333: 314 pass, **7 fail**, 12 skip; exit 1; status do clone vazio antes e depois; clone removido depois de conferir caminho, tipo e HEAD |
+| C — WSL Ubuntu `oldboydev` uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, npm 11.6.2, `env -i`, `HOME` e `RUNNER_TEMP` do scratch, PATH só com o prefixo e `tools` (`sh`, `git`, `python3`, `id`, `grep`, `mkfifo`), sem `/usr/bin`; `git -c core.autocrlf=false archive 60bbda8` (6.113.280 bytes, sha256 `622d8a52…2559`, `get-tar-commit-id` = `60bbda8e…`, árvore extraída `21865e82…` = `HEAD^{tree}`, `cli.mjs` 755, 0 CR no apoio), 15:14:35–15:15:48 | 333: 312 pass, **1 fail**, 20 skip; exit 1; `~/.skill-me` e a autorização ausentes antes e depois; scratch removido |
+
+Os 327 nomes de teste do TAP são os mesmos nos três. Em cada ambiente passaram os 20 `I25-C46`/`I25-C47`
+(os 9 de antes e os 11 novos), os T8 e os I23-C4; nenhuma falha é de prova tocada nesta entrega.
+
+- **As 7 do B** (`final/B-win-24.13.0.spec.txt`): I4-C19, I4-C20, I4-C21, I4-C22, I4-C37 e I23-C8, nativas
+  do Hermes (`Unknown tool: skillme_fixture_echo` ou `'error' !== 'ok'`), e I4-C35 (`ENOENT` no `rmSync` do
+  plugin de fixture, `skill-tree-hash.cli.test.mjs:101`).
+  - **Causa demonstrada, fora desta entrega**: no Node 24.13.0 do Windows, `fs.cpSync` recursivo para um
+    destino com “ação” no caminho termina sem erro e não copia nada (a pasta-mãe fica vazia), e o `rmSync`
+    recursivo deixa a pasta; com caminho ASCII, ou no 24.22.1, os dois funcionam (`probes/cpsync.mjs`). As
+    provas copiam o plugin de fixture para o `HERMES_HOME` de um scratch `skill-me i4 … ação-…`; sem ele o
+    Hermes não conhece a ferramenta.
+  - **Discriminação** (`final/diag-B/`): o I4-C35 isolado falha com o 24.13.0 e passa com o 24.22.1, no
+    checkout e no clone, e falha igual em `93bd1e9`, antes desta entrega, com o 24.13.0.
+  - **Na CI** as nativas são puladas (sem o Hermes) e, no D com o 24.22.1, passam. Não é defeito do produto
+    nem desta mudança. Não foi corrigido nem repetido: são provas da #4 e do runtime local, fora do escopo
+    deste lote; fica com o orquestrador.
+- **A do C** (`final/C-wsl-24.13.0.spec.txt`): I4-C36 (`failure-matrix.cli.test.mjs:82`), `claude timeout: 209
+  ms`, quando a prova exige ≥ 1.900 ms para o stdin que nunca fecha.
+  - O hook relatou `stdinTimeout` 1 (a asserção anterior passou), e o runner, pelo relógio monotônico, deu
+    2.358 ms ao teste até ali, o que é incompatível com 209 ms reais. A prova mede com `Date.now()`
+    (`collect` de `installed-hooks.mjs`), e o relógio de parede do WSL já recuou antes (linha “Cronologia
+    explícita no C34” do Landing). Compatível com um recuo do relógio de parede; não demonstrado.
+  - O caminho dessa prova não mudou de comportamento: `failure-matrix` não adota o registro, e fora dele
+    `recordedProducer` devolve o mesmo ambiente (prova unitária). Prova da #4, fora do escopo: não
+    corrigida nem repetida.
+- **Skips**, todos de plataforma, com o motivo impresso, e cada um rodou no outro sistema quando o alvo o
+  tem:
+  - **A e B (12)**: I4-C15 e T8-C4 (`posix-signals`); I4-C25b, C25j, C25k (POSIX/Linux) e C25m (macOS);
+    I25-C45, C5, C6, C42, C33 e C15 (POSIX).
+  - **C (20)**: as 11 nativas do Hermes (sem o runtime no `HOME` do scratch); I4-C25g e C25h (Windows) e
+    C25m (macOS); I25-C4, C45 (controle do Windows), C5, C42, C8 e C38 (Windows).
+
+**`npm test` completo em `60bbda8`**: Windows, Node 24.22.1, npm 11.19.1, `npm_execpath` ausente,
+`RUNNER_TEMP` presente, runner padrão com 8 arquivos (32 núcleos) e os nativos do Hermes. Uma vez, sem
+repetir, das 15:16:48 às 15:24:17, com orçamento de 2 h na ferramenta antes do início; esperei o término
+real (`final/npm-test.*`). **Exit 0**: 1.040 testes, 1.020 pass, 0 fail, 20 skip; nenhum `✖`; `git status`
+vazio antes e depois.
+- **Por suíte**: governança 25/25; motor 16/16; doctor 417 (410/0/7); integrações 582 (569/0/13). Eram 571 e
+  ganharam as 11 provas novas (6 da prova unitária, 2 do `control.cli`, 2 do `follow.cli`, 1 do
+  `live-capture.cli`).
+- **Passaram**: as nativas do Hermes (I4-C18 a C23, I4-C37, I4-C44b, as 3 do I25-C40 e as 3 do I23-C8); os
+  20 I25-C46/C47; T8-C2, T8-C12, T8-C13 e os outros T8; os I23-C4 e o I23-C10.
+- **Skips, todos de plataforma**: os 7 do doctor (POSIX, sem texto de motivo) e os 13 das integrações com o
+  motivo: I4-C15 e T8-C4 (`posix-signals`), I4-C25b (`posix-modes`), I4-C25j, C25k e C25l (`posix-acl`),
+  I4-C25m (`macos-acl`) e os I25 só do POSIX (C45, C5, C6, C42, C33 arranjo e C15).
+
+**Limpeza**: no temporário do Windows, as 1.257 pastas `skill-me i4`/`i5` novas na janela A–D (a maioria
+do B, pelo `rmSync` do 24.13.0) foram removidas, com 0 recusas e as 30.087 da linha de base intactas
+(`final/temp-*.json`); no `/tmp` do WSL, as 107 da janela do C, de volta a 381 (`final/C-tmp-cleanup.txt`).
+As cópias do RED e das mutações e o clone B foram removidos com caminho e tipo conferidos.
+
+**Causa**: continua **desconhecida**. Não há defeito do produto ou das provas demonstrado, o que não é o
+mesmo que afirmar que não há defeito. O que mudou é a observabilidade: na próxima falha de um produtor
+dos sete arquivos, a mensagem traz, para todo produtor do teste, o relatório, as operações concluídas, a
+em curso com o lugar e a idade, o processo e o laço, e de cada raiz o lock (com o `pid` coincidente), as
+capturas e a pasta. Nenhuma mitigação é proposta: não há evidência comparável que a sustente; a próxima
+CI decide se cabe uma proposta.
+
+Limites:
+- **Adoção**: sete arquivos (os com produtores vermelhos nas CIs do PR). As outras 30 consumidoras rodam
+  como antes; `codex-run.cli.test.mjs:84` compara o ambiente inteiro do filho, que a pré-carga mudaria.
+- **Pré-carga**: cobre só `node:fs/promises`; E/S síncrona ou outra fila do libuv ficam fora. O laço não
+  vê um bloqueio antes do primeiro tique. `startedAt` é relógio de parede, só para correlacionar.
+- **Em processo**: o laço e a CPU são os do processo da prova desde a criação do produtor, com o que mais a
+  prova fizer nesse tempo; `writeExclusive` aparece inteiro, sem as etapas internas.
+- **Lock e `pid`**: coincidência, não prova de quem deixou o arquivo.
+- **Raiz automática**: só de um home `skill-me …` dentro do temporário; fora dele, `indisponível`.
+- **Custo**: nos sete arquivos todo produtor carrega a pré-carga; o custo não foi medido à parte.
+- **Dívida**: a evidência local do C46/T8-C15 e do C47/I23-C10 e o `rootEvidence` do I23-C10 continuam
+  nos arquivos deles; consolidar mudaria provas que passaram.
+- **Pendentes, com o orquestrador**: Verifier 19, formal 12, publicação e a próxima CI. Nada aqui afirma CI
+  verde, `ready` nem causa corrigida.
