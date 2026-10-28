@@ -53,8 +53,8 @@
     },
     "25": {
       "profile": "light",
-      "maxRounds": 9,
-      "approval": "Proprietário autorizou “Pode fazer quantas precisar” e mandou seguir com a medição, preservando testes e prazos, até CI verde/merge. Próxima revisão concreta: 9ª, após a formal8 blocked em bedda5c por falta da medição que a sequência aprovada exige executar após ready/publicação. Contexto alinhado sem alteração do código ou dos gates obrigatórios de merge; registro específico https://github.com/oldboydev/skill-me/issues/25#issuecomment-6470507482 e escopo https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706. Preservar as 8 tentativas anteriores. Override exclusivo25/light; globais, outras issues e core intactos. Parar no primeiro ready válido; publicar só com PASS/ready, merge somente após medição registrada e cinco checks regulares verdes no HEAD aprovado. Sem publicação do pacote."
+      "maxRounds": 10,
+      "approval": "Proprietário autorizou “Pode fazer quantas precisar” e mandou seguir com a medição, preservando testes e prazos, até CI verde/merge. Próxima revisão concreta: 10ª, após corrigir em f133c55 a herança indevida de RUNNER_TEMP demonstrada na CI40702252461; provas afetadas25/25 nos três ambientes, camadas inalteradas carregadas da R14 com identidade comprovada. Registro específico https://github.com/oldboydev/skill-me/issues/25#issuecomment-6471545504 e escopo https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706. Preservar as 9 tentativas anteriores, inclusive formal8 blocked e formal9 ready41dcf5d. Override exclusivo25/light; globais, outras issues e core intactos. Parar no primeiro ready válido; publicar só com PASS/ready, merge somente após medição registrada e cinco checks regulares verdes no novo HEAD aprovado. Sem publicação do pacote."
     }
   }
 }
