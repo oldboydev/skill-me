@@ -1,3 +1,293 @@
+# Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 17)
+
+**Verdict (R17)**: **FAIL — 49 de 50 checks provados como escritos; o C46 não.** 9 ACs, HEAD `45b512b`. Os gates frescos passaram todos (abaixo); o FAIL vem de um único achado de conferência entre o checklist e a prova, não de teste vermelho nem de defeito de produto.
+- **F1 (bloqueante; C46 (g), checklist × prova)**: o checklist (`.checks/issue-25-agent-launch.md:441`) fixa que, na rotina do T8-C18 com `STALL_SEGMENT=1` só no ingest, “`ingest hermes` fica com `delivery_timeout` **1/0/0/1**”. A prova versionada afirma outro valor: `replay.unit.test.mjs:156` `lost("delivery_timeout", 2)`, que é `{bound: true, code: "delivery_timeout", entries: 2, committed: 0, persisted: 0, lost: 2}` (`:141`).
+  - A prova está certa sobre o produto: o ingest dessa rotina recebe um registro válido e a linha `{quebrado` (`replay.unit:65`). A entrada malformada também entra na contagem (`src/integrations/traces/delivery.mjs:193` `counts.entries += 1`, por `malformed` em `:208`), e o T8-C18 saudável afirma `counters.malformed` 1 (`replay.unit:95`).
+  - O controle passou em A, B, C e D com `deepEqual` estrito; logo o relatório real é 2/0/0/2.
+  - **Nenhuma asserção fixa 1/0/0/1** para o ingest dessa rotina (busca na seção F1). Pela regra “evidence or zero” do `verify.md` (passo 3) e pela regra do `AGENTS.md` de que valores exatos do contrato exigem asserção correspondente, o item (g) do C46 **não está provado como escrito**.
+  - O literal veio de `4d3b1d9` (registro antes do código) e ficou igual em `9a633af`, `f715bee` e no HEAD. O build e o handoff não o reconciliam.
+  - **Não é defeito do produto nem da prova.** O checklist diverge da prova. Retificar o literal (por exemplo, 2/0/0/2, com o motivo: uma entrada válida e uma malformada) é decisão do orquestrador e do autor. Não muda teste, prazo nem asserção. Não corrigi nada.
+- **Gates frescos (verified at `45b512b`)**, cada um numa única invocação, sem filtro e sem repetição:
+  - **A** (Windows, Node 24.22.1, Python 3.12.10, checkout principal): **80 testes, 74 pass, 0 fail, 6 skip**, exit 0.
+  - **B** (Windows, Node 24.13.0 oficial, npm 11.6.2 adjacente, clone git novo com `core.autocrlf=true`): **80/74/0/6**, exit 0.
+  - **C** (WSL isolado, Node 24.13.0 copiado, `env -i`, sem `/usr/bin` no PATH, árvore exata do HEAD): **80/76/0/4**, exit 0.
+  - **D** (`npm test` completo, Windows, Node 24.22.1, teto 8, 12 nativos do Hermes): **1.029 testes, 1.009 pass, 0 fail, 20 skip**, exit 0. Por suíte: governança 25/25, motor 16/16, doctor 417 (410/0/7) e integrações 571 (558/0/13), com os **12 nativos** do Hermes.
+  - Os 80 nomes de A, B e C são idênticos. Os 10 skips de plataforma rodaram no outro sistema.
+- **Causa** das falhas T8 da CI 40709943742 e da execução manual 40710014746: **continua desconhecida.** O código `51679df` é observabilidade (só provas e apoios de prova), não correção, e não há defeito demonstrado. Isso não equivale a dizer que não há defeito.
+- **Gates remotos**: pendentes e obrigatórios. Nenhuma execução manual, Actions, CI, `review:run`, push ou merge ocorreu aqui.
+
+**Profile**: light (`AGENTS.md:138`). Rodada 17 com a faixa inteira e os 50 checks. Pelo perfil, não há fault injection, `Coverage`, `Test policy` nem fonte de UI. Não fiz mutantes, sondas nem correções. RED, GREEN, as 6 mutações e as mensagens dos controles do autor (`build:1860-1907`) são **relato do autor**: li, não reexecutei.
+**Diff range**: `63621c691f132dc8d591414269d36cfa18fca594..45b512b13eee51e0fa4749d4d58764a327f12dee`, a feature inteira: 106 commits, árvore `01a96202…`. Desde a R16 (`8f045c2`, relatório em `76705f9`) entraram 5 commits:
+- `4d3b1d9`: registro antes do código (Landing `:91`, C46 (d)–(g), critério 38 da task e Handoff);
+- `51679df`: **o último código**, só provas e apoios de prova (5 arquivos, abaixo);
+- `9a633af`: build, handoff `ci40709943742-handoff.md` e checklist;
+- `f715bee`: retificação documental (“compatível, não demonstrada”);
+- `45b512b`: override `25` da configuração, de 10 para 11.
+
+**Round**: **17** (light). Base: “Pode fazer quantas precisar” e o escopo [6467154706](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706), com o registro 17/11 em [6473286292](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6473286292). Esse registro é o 28º comentário do contexto 17. A exportação não traz as URLs dos comentários; o número vem da configuração e do despacho. As 16 verificações e as 10 revisões formais ficam preservadas. O `state.json` da revisão tem 10 tentativas: 1–3 `changes_requested`, 4–7 `ready`, 8 `blocked` (`bedda5c`), 9 `ready` (`41dcf5d`) e 10 `ready` (`76705f9`). O sha256 é `13b4df49…`, o mesmo antes e depois deste relatório. A formal 11 é do orquestrador; não rodei `review:run`.
+**Verifier**: subagente novo e independente (Claude Opus 5.5). Não sou o autor nem um Verifier anterior e não herdei sessão. Produto, testes, apoios, scripts, workflow, planos, configuração e estado ficaram só para leitura. Escrevi apenas este arquivo e logs/scripts em `.checks/code-review/issue-25/verifier-round17/`, uma pasta ignorada (`.gitignore:4`).
+
+Data: 28/10/2026, das 12:55 às 13:15 (-03). O HEAD foi `45b512b` do início ao fim. `git status --porcelain=v1 -uall` estava vazio antes de A, antes e depois de A, de B (no clone) e de D, e no fim, antes de gravar este arquivo. Em C, a árvore extraída é igual ao `HEAD^{tree}` antes e depois.
+
+## Fontes lidas
+
+| Fonte | Como |
+| --- | --- |
+| `AGENTS.md`, `CLAUDE.md`, `tlc-implement/references/verify.md` | inteiros |
+| `.tasks/issue-25-agent-launch.md` | inteiro (675 linhas): critérios 1–42, o refinamento T8 do critério 38 (`:331-348`), as exceções e refinamentos dos critérios 40 e 42 e o registro da ordem remota (`:670-675`) |
+| `.checks/issue-25-agent-launch.md` | inteiro (1.011 linhas): Landing `:42-93`, inclusive a linha nova `:91` “Diagnóstico das entregas de um produtor nas provas T8”; C1–C50, com o C46 em `:382-455` e (d)–(g) em `:406-455`; Swept em `:604-614`; Handoff em `:616-1011`, com o bloco novo em `:968-1011` |
+| build `:1788-1980` | a seção nova, **relato do autor** |
+| proposta da medição (71 linhas); handoff `ci40709943742-handoff.md` (91 linhas) | inteiros |
+| `context-ci28-verifier17-final.json` | 28 comentários e 9 ACs (`- [ ]`). Corpo e comentários 1–27 iguais aos do contexto 16 (`r17-context17.txt`); o 28º registra as rodadas 17/11 |
+| `.verified.md` atual (blob `c3db7e2`, de `76705f9`: adendos R16 e R15 e relatório R14) | inteiro, antes de substituí-lo |
+| `git diff 8f045c2..HEAD` dos 5 arquivos de código | inteiro; consumidores do apoio (C46 `concurrency.cli`, C47 `agents.e2e`) relidos no HEAD |
+| logs `ci767-windows-*.log` e `measurement40710014746.json` | não reli; uso só como relato do orquestrador/autor |
+| auditoria externa (`verifier-round17/profile-*`) | **não lida**; vi só os nomes. Não li perfil pessoal |
+
+## Prova Git (verified at `45b512b`; `verifier-round17/blob-identity.txt`, `r17-pre-state.txt`)
+
+- **Código desde a R16** (`git diff --name-only 8f045c2..HEAD -- src scripts tests .github package.json package-lock.json .gitattributes`): só os 5 arquivos de `51679df`.
+  - `tests/integrations/helpers/traces-probe.mjs`: `ac159e8` → `e6bd5bd`.
+  - `tests/integrations/helpers/traces.mjs`: `de67a57` → `18f4c82`.
+  - `tests/integrations/traces/live-capture.cli.test.mjs`: `86f9d0d` → `56cf953`.
+  - `tests/integrations/traces/query.cli.test.mjs`: `2761ad6` → `0fee8d0`.
+  - `tests/integrations/traces/replay.unit.test.mjs`: `40d80b3` → `810489a`.
+- **Desde a R14** (`13bb1d4`): esses 5, mais `scripts/ci-lock-latency.mjs` e `.test.mjs`, a mudança da R16. Todos os outros caminhos de `src/`, `tests/`, `scripts/`, `.github/`, `package*.json` e `.gitattributes` têm o mesmo modo e o mesmo blob. Entre eles estão os 5 arquivos do alvo sem diff (`command.cli` `e0bbbc7`, `end.e2e` `cd2dc94`, `agents.e2e` `669e9a4`, `concurrency.cli` `a078c1e`, `follow.cli` `433545b`), `helpers/launch.mjs` `45c1c7d`, os 9 arquivos de prova fora do alvo e o workflow `474a87b`.
+- **Produto**: `src/` tem 0 diff desde `f734441`.
+- **Core**: os 5 arquivos (`README.md`, `cli.mjs`, `review.mjs`, `review.test.mjs`, `schema.json`) têm o mesmo blob na base e no HEAD.
+- **Configuração**: `8f045c2..HEAD` muda só `roundOverrides["25"]` (2/2 linhas): `maxRounds` 10 → 11, e o `approval` cita 6473286292 e 6467154706 e diz “Preservar as 10 tentativas anteriores”. Os perfis globais e os overrides de 3, 4, 5, 6, 7, 8 e 23 não mudam.
+- **Raio do apoio**: 27 arquivos importam `helpers/traces.mjs`. Os 8 que carregam a pré-carga são exatamente o alvo A/B/C (`r17-helper-consumers.txt`).
+- **Nenhum consumidor depende da forma antiga da linha da pré-carga.** O C46/T8-C15 desestrutura `{op, kind, code, held, commits}` do `diskTrace` (`concurrency.cli:136`). O C47 lê `.op/.kind/.code/held/hold` (`agents.e2e:234-252`). `T8-C1/C2` (`live-capture:98-100`), `T8-C16` (`concurrency.cli:971-985`) e `I25-C28` (`end.e2e:192-194`) leem só `ops` e `cpuMs`. Nenhum compara as chaves da linha.
+
+## Contrato antes do código × implementação (verified at `45b512b`)
+
+`4d3b1d9` vem antes de `51679df`. O Landing `:91` e o C46 (d)–(g) estavam escritos antes do código. `f715bee` só qualifica o texto.
+
+| Contrato (Landing `:91`; task `:331-348`) | Código no HEAD |
+| --- | --- |
+| Pré-carga: `ops` e `cpuMs` iguais; mais `pending` `[op, tipo, início, idade]`, `exitMs`, `startedAt` (`timeOrigin`), `pid` e `loop {samples, maxMs, p99Ms}` do `monitorEventLoopDelay` (10 ms) | `traces-probe.mjs:153-154` (histograma de 10 ms, ligado na carga); `:152-164` (em curso num `Set` até concluir); `:205-212` (linha na saída: `pending` com a idade em `exitAt`, `loop` ou `{samples: 0, maxMs: null, p99Ms: null}`). `ops` com a mesma forma (`tenth`) |
+| Injeção nova só para a prova: `BLOCK_LOOP=<n>\|<ms>` antes da n-ésima criação exclusiva do `.lock` | `traces-probe.mjs:120-131`; só existe com a variável |
+| `diskTrace` ganha `at` e `ms` (acréscimo) | `traces.mjs:185` |
+| Lugar: `fora do lock` / `tomada do lock` / `sob o lock, <k>ª tomada[, depois do commit]` | `traces.mjs:201-202` |
+| Evidência por produtor (relatório; falhas fora do `open lock EEXIST`; disputa; última concluída; pendentes com a idade; processo; laço) | `producerTrace` `traces.mjs:209-231`; `describeProducerTrace` `:237-240`; `describeProcess` `:233-235` |
+| Captura: status pelo CLI (indisponível com o código), segmentos e temporários, lock `presente, de <rótulo>` / `de outro processo` / `ilegível [<código>]` / `ausente`, pela coincidência de `pid`; nonce nunca na saída | `captureEvidence` `traces.mjs:246-264`. O `pid` é lido do `.lock` (`:259`), e só o rótulo sai (`:261-262`). O `pid` não é impresso |
+| Evidência só na falha | `explainedUnless` `traces.mjs:298`. Com `matches` verdadeiro, devolve só o rótulo, sem chamar o CLI |
+| `run.report.delivery` → `run.report?.delivery` | `live-capture:219`, `:247`, `:539-540`; `query.cli:242-243`, `:257` |
+
+**Asserções originais preservadas** (`git diff 8f045c2..HEAD`, conferido linha a linha):
+- **T8-C3**: status 0, stdout vazio, `events.length` e `DELIVERED(n)` (`live-capture:215-219`); o ingest depois do `stop` com `capture_not_active` (`:244-247`).
+- **T8-C8**: hook `DELIVERED(1)`, ingest `DELIVERED(1)` e wrapper `DELIVERED(2)`, na mesma ordem e com conteúdo ligado e desligado (`:536-544`).
+- **T8-C14**: `code === null` nos três (`query.cli:241-243`); `capture_not_active` 1/0/0/1 nos atrasados (`:252-258`).
+- **T8-C18**: os três status 0 (`replay.unit:64-66`); o `stop` com status 0 e stderr vazio (`:73-74`, as asserções do `privacyOk`).
+
+Produtores, payloads, eventos, ordem, concorrência e prazos são os mesmos. Só o ambiente ganha `timedEnv` e só a mensagem ganha a evidência.
+
+## F1 — o literal do C46 (g) diverge da prova
+
+| Item | Checklist (`:436-444`) | Prova (`replay.unit.test.mjs`) | Conferência |
+| --- | --- | --- | --- |
+| `stop` 4 e mensagem `stop: {…lock_present…}\n<evidência>` | sim | `:152` `[4, 0, {schemaVersion: 1, command: "stop", status: "error", error: {code: "lock_present"}}]`; `:154` `startsWith` | igual |
+| `hook claude pre_tool_bash` `DELIVERED(1)` | sim | `:156` `DELIVERED_ONE` (`:140`) | igual |
+| **`ingest hermes` `delivery_timeout` 1/0/0/1** | **1/0/0/1** | **`:156` `lost("delivery_timeout", 2)`** (`:141`) → 2/0/0/2 | **diverge** |
+| pendente `open segmento.tmp (sob o lock, 2ª tomada)` | sim | `:157` | igual |
+| `post_tool_skill` `lock_present` 1/0/0/1 e disputa repetida | sim | `:156` `lost("lock_present", 1)`; `:158` `contention > 0 && failures.length === 0` | igual |
+| captura `indisponível [lock_present]`, lock de `ingest hermes` | sim | `:159` | igual |
+| sem raiz, ID, chave, PATH nem canários | sim | `:160-164` | igual |
+
+**Busca:** `rg -n "delivery_timeout|lost\(" tests/integrations/traces/replay.unit.test.mjs` dá uma só linha, `:156`, com `2`. Nenhuma outra prova cobre o T8-C18 com `STALL_SEGMENT`. O 2 é o valor certo da rotina (`:65`, `delivery.mjs:193`/`:208`, `replay.unit:95`), e o nome real `I25-C46 diagnóstico do T8-C18: …` passou em A, B, C e D. Então o item (g) está provado com outro valor, e o valor escrito no check não tem prova. O mesmo literal aparece só no checklist (`:441`); task, Landing e handoff não o repetem.
+
+## Observações (não bloqueantes; nada corrigido)
+
+- **O1 — comentários com a leitura forte.** `traces-probe.mjs:44-47` diz “laço livre com a operação parada aponta o disco; laço parado, o processo”. `traces.mjs:244-245` diz “O dono do lock é o produtor cujo `pid`…”. O nome do controle `replay.unit:143` diz “mostra quem deixou o lock”. Isso contradiz a leitura qualificada de `f715bee` (Landing `:91`, C46 `:448-451`): compatível, não demonstrado; coincidência de `pid`, não dono. O autor declarou isso no build (`:1954-1963`). As **saídas** não afirmam causa (`lock presente, de <rótulo>`), e, nos controles, quem segura o lock é conhecido pela injeção. Fica a incoerência de comentários com o registro (`AGENTS.md`, “Mantenha a explicação coerente”). Nenhum check depende disso.
+- **O2 — folga de 0,2 ms no (d).** `live-capture:290` usa `ageMs >= ATTEMPT_MS - (startMs - holdEnds[1]) - 0.2`. O checklist (`:420`) não cita a folga. Ela vem do arredondamento a 0,1 ms de três valores da linha: idade ±0,05, início ±0,05 e fim da tomada (início + duração) ±0,1, no máximo 0,2. O comentário em `:287-288` a explica. Não afrouxa o prazo de 650 ms (`ATTEMPT_MS = 750 − 100`, `delivery.mjs:12-18`), só a resolução da medida.
+- **O3 — T8-C3 sem relatório.** `assertHermesDelivered` lê `run.report.events.length` (`live-capture:217`, asserção original) antes da asserção de entrega. Sem relatório no fd 3, o T8-C3 continuaria vermelho, mas com `TypeError`, sem a evidência que o Landing `:91` descreve para `run.report?.delivery`. T8-C8, T8-C14 e T8-C18 não têm esse caminho.
+- **O4 — ramos sem controle.** Nenhum controle exercita `presente, de outro processo`, `ilegível [<código>]`, `laço de eventos: sem amostras` ou `tempos: indisponível [sem linha da pré-carga]` da evidência nova. O C46 (d)–(g) não os exige (sem `Coverage` no perfil `light`).
+- **O5 — limites do diagnóstico** (do autor, `build:1965-1980`, conferidos no código). O histograma não vê um bloqueio antes do primeiro tique. Os pendentes cobrem só as operações de `node:fs/promises` envolvidas pela pré-carga. `startedAt` é do relógio de parede. O custo da pré-carga não foi medido à parte.
+
+## Execuções — verified at `45b512b`
+
+Ordem: A, B e C em sequência, depois D; cada uma uma vez, sem filtro e sem repetição. O alvo A/B/C são os 8 arquivos do gate pré-definido no Handoff (`.checks/issue-25-agent-launch.md:981-992`), com `node --test --test-concurrency=4`, reporters spec e TAP. O `RUNNER_TEMP` foi posto só no ambiente do processo filho, numa pasta própria vazia (nenhum dos 8 arquivos o lê; só `scripts/ci-lock-latency*`), e a precondição foi conferida pelo node de cada ambiente. Scripts: `r17-run-win.sh`, `r17-b-clone-prepare.sh`, `r17-wsl-prepare.sh`, `r17-wsl-run.sh`, `r17-wsl-cleanup.sh`, `r17-run-d.sh`, `r17-matrix.mjs` e `r17-d-summary.mjs`, adaptados do método da R16 depois de lê-lo.
+
+| # | Ambiente | Resultado |
+| --- | --- | --- |
+| A | Windows 11, checkout principal, Node **v24.22.1** (`C:\nvm4w\nodejs\node.exe`), npm 11.19.1, Python 3.12.10 (`python -I`, como `locateSystemPython`), `npm_execpath` ausente; `RUNNER_TEMP` = `verifier-round17\runner-temp-A` (presente, pasta, não link, 0 entradas, fora do `%TEMP%`). 12:56:44–12:59:28 | **80 testes: 74 pass, 0 fail, 6 skip**, exit 0. Status vazio antes e depois |
+| B | Windows 11, Node **v24.13.0 oficial** (zip sha256 `ca274269…` igual ao `SHASUMS256.txt` local), npm **11.6.2** adjacente, Python 3.12.10, `npm_execpath` ausente. **Clone git novo** `--no-hardlinks --config core.autocrlf=true` (só no `.git/config` do clone): HEAD `45b512b` e árvore `01a96202…` conferidos. `cli.mjs` `i/lf w/lf attr/text eol=lf`, **0 CR** antes e depois; os 8 arquivos e os apoios `i/lf w/crlf`. `node_modules` copiado. `RUNNER_TEMP` = `runner-temp-B`. 13:00:08–13:02:38 | **80: 74 pass, 0 fail, 6 skip**, exit 0. Status do clone vazio antes e depois de copiar `node_modules`, antes e depois da execução |
+| C | WSL `Ubuntu`, `oldboydev` uid 1000. `git -c core.autocrlf=false archive HEAD`: 5.980.160 bytes, sha256 `cd6bb2b2…`, `get-tar-commit-id` = `45b512b…`. Árvore extraída `01a96202…` = `HEAD^{tree}`, antes e depois; 0 CR nos arquivos exercidos; `cli.mjs` 755 / `100755`. Node **v24.13.0** copiado byte a byte de `/usr/bin/nsolid` (sha256 `150946e4…`) num prefixo `bin = node npm npx`, **sem `sh`**; npm 11.6.2. `env -i` com só `HOME` (scratch), `LANG`, `PATH=<prefixo>/bin:<tools>` sem `/usr/bin` e `RUNNER_TEMP` (scratch, distinto do `/tmp`). `tools` só com links para `sh` (dash), `git`, `python3` (3.12), `id`, `grep` e `mkfifo`. 13:02:57–13:04:02 | **80: 76 pass, 0 fail, 4 skip**, exit 0. `~/.skill-me` e a autorização reais ausentes antes e depois; `HOME` do scratch vazio depois |
+| D | `npm test`, sem argumentos, no checkout principal: Windows, Node v24.22.1, npm 11.19.1, `npm_execpath` ausente, `availableParallelism` 32 → `testConcurrency` **8**, Python 3.12.10, `RUNNER_TEMP` = `runner-temp-D`. Orçamento de **2 h** definido na ferramenta antes do início; esperei o término real. 13:04:59–13:11:55 | **1.029 testes: 1.009 pass, 0 fail, 20 skip**, exit 0; nenhum `✖` no log. Por suíte: governança 25/25/0/0, motor 16/16/0/0, doctor 417/410/0/7 e integrações 571/558/0/13. Os 12 nativos passaram. Status vazio antes e depois; HEAD igual; `RUNNER_TEMP` com 0 entradas depois |
+
+**Nomes** (`matrix.txt`): 80 nomes únicos, **iguais em A, B e C**, nenhum duplicado e nenhum com 0 execuções. Em cada ambiente passaram os 7 `I25-C46`, os 2 `I25-C47`, o `T8-C15`, o `I23-C10` e os T8 afetados (`T8-C3`, `T8-C8`, `T8-C14`, `T8-C18`). Nenhum `not ok`.
+
+**Skips de A/B/C** (motivo impresso; cada um rodou no outro sistema desta rodada):
+- A e B (6), todos `pass` em C: `I25-C45` POSIX (“componente vazio do PATH como diretório atual é semântica do POSIX…”), `I25-C5` POSIX, `I25-C6` e `I25-C42` POSIX (“sinais POSIX: o Windows não tem grupo de processos nem SIGQUIT/SIGHUP/SIGTERM entregáveis”), `I25-C33` arranjo (“o npm do Windows roda o script pelo ComSpec…”) e `T8-C4` sinal (“posix-signals: …”).
+- C (4), todos `pass` em A e B: `I25-C4` shim, `I25-C5` Ctrl+C e `I25-C42` Ctrl+C (“PATHEXT, .cmd e o console do Windows só existem no Windows”), e `I25-C45` controle do Windows (“controle do PATH do Windows; o POSIX tem o…”).
+
+**Nomes no D** (`D-summary.txt`): cada prefixo de check tem ao menos um nome real no log. São eles: `I25-C1 ` a `I25-C47 `, `governance-C1 C3`, `governance-C49`, os 18 `C50 `, `I4-C20`/`C21`/`C22`/`C37`, os T8 afetados e `I23-C10`. Passaram os 7 `I25-C46`, os 2 `I25-C47`, `T8-C3`, `T8-C8`, `T8-C14`, `T8-C15`, `T8-C18` e `I23-C10`. Os 12 testes de `hermes-plugin.native.test.mjs` passaram (`D-natives.txt`), sem o texto de skip do runtime.
+
+**Skips do D (20), todos de plataforma, com o motivo:**
+- **doctor (7)**, `{skip: process.platform === "win32"}` (`tests/doctor/agent-resolution.unit.test.mjs:279`, `:589`; `fifo-config.cli.test.mjs:30`, `:75`; `fs-adapter.posix.test.mjs:36`, `:53`, `:75`). No log, só `# SKIP`, sem texto: `agent-resolution-formal5-2 …` e `agent-resolution-C2 realpath/symlink …` (POSIX), dois `fifo-config-formal8-4` (FIFO) e três `fs-adapter-formal8-4` (FIFO). **Não rodaram em ambiente nenhum desta rodada.**
+- **integrações (13)**, com o motivo impresso:
+  - `I4-C15` (`posix-signals`), `I4-C25b` (`posix-modes`), `I4-C25j`, `I4-C25k` e `I4-C25l` (`posix-acl`, só Linux) e `I4-C25m` (`macos-acl`). **Não rodaram em ambiente nenhum desta rodada.**
+  - `I25-C15` pty (“pseudoterminal só no POSIX; no Windows o primeiro uso é provado em processo (C8–C14)”). **Não rodou nesta rodada**, porque `prepare.cli` está fora do alvo C; vem da R14.
+  - `I25-C45` POSIX, `I25-C5` POSIX, `I25-C6`, `I25-C42` POSIX, `I25-C33` arranjo e `T8-C4` sinal **rodaram e passaram em C**, porque estão nos 8 arquivos.
+
+Isso não autoriza dizer que todos os skips do D rodaram em outro lugar.
+
+## C46 — citações renovadas (verified at `45b512b`)
+
+Arquivos: `conc` = `traces/concurrency.cli.test.mjs` (blob `a078c1e`, igual ao da R14/R16, que agora importa o apoio novo); `live` = `traces/live-capture.cli.test.mjs` (`56cf953`); `q` = `traces/query.cli.test.mjs` (`0fee8d0`); `rep` = `traces/replay.unit.test.mjs` (`810489a`). Cada nome abaixo existe no arquivo e passou em A, B, C e D (`matrix.txt`, `D-summary.txt`).
+
+| Item do C46 | Teste nomeado (TAP) | Asserção decisiva no HEAD | Resultado |
+| --- | --- | --- | --- |
+| T8-C15 saudável: status 0 e `{bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0}` por produtor, 80 únicos, segmento coerente, pares de hooks, recusa com lock alheio | `T8-C15 concurrent producers: …` | `conc:214-215`; `:226-229` (`80`, `[80, 80]`); `:237`; `:241`; `:251` (`lock_present` 3/0/0/3) | PASS |
+| (a) falha antes do commit | `I25-C46 diagnóstico do T8-C15: falha antes do commit …` | `conc:278-279` (`actual` = relatório de `b`, `expected` = 40/40/40/0; mensagem `b\n<evidência>`); `:295` (`a` 40 e `[]`); `:297` (`io_failure`, `lost > 0`, `committed + lost === 40`, `persisted === committed`); `:298` `["rename segmento.tmp EIO (antes do commit)"]`; `:301-310` export `{records: 40 + committed, a: 40, b: committed, others: 0, repeated: 0}`, status `accepted = persisted = total`, 1 segmento, 0 temporário, lock ausente; `:313` sem vazamento | PASS |
+| (b) confirmação perdida | `… confirmação perdida depois do commit …` | `conc:324`; `:325` `["unlink lock EIO (depois do commit)"]`; `:327-336` export 80 (`a: 40, b: 40`), `persisted` 80, 1 segmento, 0 temporário, lock ausente | PASS |
+| (c) inspeção indisponível | `… com o lock preso, export e status saem indisponíveis …` | `conc:346-347` (primeiro produtor que não confirmou); `:349` `b` `io_failure` 40/0/0/40; `:350` `["unlink lock EIO (depois do commit)"]`; `:351-360` export e status `{unavailable: "lock_present"}`, 1 segmento, 0 temporário, lock presente; `:361` | PASS |
+| T8-C3, T8-C8, T8-C14 e T8-C18 com as mesmas asserções, a pré-carga e a evidência só na falha | `T8-C3 …`, `T8-C8 …`, `T8-C14 …`, `T8-C18 …` | `live:215-219`, `:244-247`; `live:540`, `:542-544`; `q:243`, `:256-257`; `rep:64-66`, `:73-74`. Evidência só com `matches` falso (`traces.mjs:298`) | PASS |
+| comum a (d)–(f): `actual` = `{bound: true, code: "delivery_timeout", entries: 9, committed: 0, persisted: 0, lost: 9}`, `expected` = `DELIVERED(9)`, mensagem `ingest hermes\n<evidência>`, sem raiz, ID, chave, PATH nem canários | os três `I25-C46 diagnóstico das entregas de um produtor: …` | `live:270` `AssertionError`; `:271` `[LOST_BY_TIMEOUT(n), DELIVERED(n)]` (`:256`; n = 9 casos válidos de `hermes-hooks.json`, contados no HEAD); `:273` `startsWith`; `:274-278` | PASS |
+| (d) disco parado sob o lock | `… disco parado sob o lock mantém o T8-C3 vermelho …` | `live:286` `[[], ["open segmento.tmp (sob o lock, 2ª tomada)"], "close state.json (sob o lock, 2ª tomada)"]`; `:290` idade ≥ 650 − (início − fim da 1ª tomada) − 0,2 (O2); `:291` `samples > 0 && maxMs < 650`; `:293` `{status: {unavailable: "lock_present"}, files: {segments: 0, temporaries: 0}, lock: {present: true, owner: "ingest hermes"}}` | PASS |
+| (e) criação do lock parada | `… criação do lock parada …` | `live:301` `[[], ["open lock (tomada do lock)"], "close store.json (fora do lock)", {}]`; `:302` laço < 650; `:304` `{status: {state: "active", accepted: 0, persisted: 0}, files: {0, 0}, lock: {present: false}}` | PASS |
+| (f) laço bloqueado (`BLOCK_LOOP=2\|900`) | `… laço de eventos parado …` | `live:311` a abertura terminou (`holdEnds[1]`); `:312` `loop.maxMs >= 650`. Pendentes e lock não afirmados, como o check diz | PASS |
+| **(g) T8-C18 com o lock deixado** | `I25-C46 diagnóstico do T8-C18: …` | `rep:151-152`, `:154`, `:156-164` (tabela F1). **O ingest é afirmado como 2/0/0/2, não como o 1/0/0/1 do checklist** | **FAIL como escrito (F1)** |
+
+Distinções revistas:
+- **Erro original preservado**: em todos, `actual` e `expected` são os da asserção antiga, e a mensagem começa pelo rótulo antigo.
+- **Pendente × concluída**: (d) e (e) afirmam a pendente e a última concluída separadamente; `producerTrace` separa por `code === "pendente"` (`traces.mjs:213-223`).
+- **Código indisponível**: (d), (g) e (c) afirmam `{unavailable: "lock_present"}`, sem contagem presumida.
+- **Dono não presumido**: o rótulo só sai pela coincidência de `pid` (`traces.mjs:259-262`). Em (g), quem segura o lock é o 2º produtor, e não o 1º; essa é a mutação “dono presumido” do autor (relato). O ramo `outro processo` não tem controle (O4).
+- **Laço medido**: (d) e (e) exigem amostras e < 650 ms; (f) exige ≥ 650 ms. O ramo `sem amostras` não tem controle (O4).
+- **Sem atribuição de causa**: nos 4 controles, a operação e o produtor são conhecidos pela injeção. Os nomes fortes (“mostra quem deixou o lock”) são contexto de controle (O1), não diagnóstico da CI real.
+
+## C47 — I23-C10 e o apoio comum (verified at `45b512b`; `agents.e2e` blob `669e9a4`, sem diff, com o apoio novo)
+
+| Item | Teste nomeado | Asserção decisiva no HEAD | Resultado |
+| --- | --- | --- | --- |
+| I23-C10 saudável: `DELIVERED_AUTO(1)` por hook (intercalados e simultâneos), `DELIVERED_AUTO(20)` no Hermes, 5 capturas com chaves próprias, uma sessão por captura, eventos e relatório isolados | `I23-C10 sessões concorrentes ficam isoladas: …` | `agents.e2e:307-311` (`deepEqual(run.report?.delivery, expected, …)`, evidência só fora do esperado); `:322`, `:325`, `:329`; `:332-333` (`5`, `5`); `:345`; `:349`; `:353`; `:369-374` | PASS |
+| (a) `SEGMENT_EIO=1` | `I25-C47 diagnóstico do I23-C10: falha de E/S …` | `:401-403` (`actual` = relatório, `expected` = `DELIVERED_AUTO(1)`, mensagem `codex A 0\n<evidência>`); `:422` `io_failure` 1/0/0/1 `unrouted: 0`; `:424` `[["rename segmento.tmp EIO (sob o lock, 2ª tomada)"], 0, 1]`; `:426` `active accepted 0 persisted 0`, 0/0, lock ausente; `:427-430` | PASS |
+| (b) `STALL_SEGMENT=1` | `… disco parado no hook (delivery_timeout …)` | `:437` `delivery_timeout` 1/0/0/1; `:439` `[[], "close key (sob o lock, 2ª tomada)"]`; `:441` `{captures: {unavailable: "lock_present"}, files: {0, 0}, lock: {present: true}}`; `:442-444` | PASS |
+| o apoio comum não muda a saída do C46/C47 | os 7 `I25-C46`, `T8-C15`, os 2 `I25-C47` | `diskTrace` só acrescenta `at`/`ms` (`traces.mjs:185`). `failuresWithPhase` (`conc:133-142`) e `hookTiming` (`agents.e2e:241-255`) não leem os campos novos, e as mensagens afirmadas por `startsWith`/`includes` continuaram iguais e verdes | PASS |
+
+## Checks — 49/50 provados como escritos
+
+Fonte da prova:
+- **ABCD**: o nome real passou em A, B, C e D nesta rodada, salvo os skips de plataforma marcados.
+- **D**: o arquivo não é do alvo de 8; o nome real passou no D desta rodada.
+- **Carregadas por blob**: as citações dos arquivos sem diff são as da R14 (`13bb1d4`, relatório em `bedda5c`) e da R16 (C50, `8f045c2`), válidas no HEAD porque os blobs são os mesmos (`blob-identity.txt`). Reli no HEAD `command.cli:48-49`, `:65`, `:77`; `prepare.cli:93-94`, `:200`, `:355`, `:408`; `session.e2e:67`, `:230`; `store.unit:79`, `:168`, `:598`; `report.cli:159`; `docs.test:82`; `hermes-harness.unit:88`; `agent.unit:132-134`; `hermes-plugin.native:335`; e `governance-ci:317-319`. Todas conferem.
+
+| Check | Asserção decisiva (`file:line` no HEAD) | Prova nesta rodada | Result |
+| --- | --- | --- | --- |
+| C1 | `command.cli:48-49` `private === true`, `bin` = `{"skill-me": "src/integrations/launch/cli.mjs"}`; `:65` `[0, SKILL_ME_HELP, ""]`; `:77` `gitStatus() === before` | ABCD; B em clone novo `autocrlf=true` com `cli.mjs` `i/lf w/lf attr/text eol=lf`, 0 CR antes e depois | PASS |
+| C2 | `command.cli:96-98` `argv: LITERAL_ARGS` para os 3 agentes | ABCD | PASS |
+| C3 | `command.cli:105` `{0: 0, 7: 7}` | ABCD | PASS |
+| C4 | `command.cli:130-133` `{status: 127, [launcher_requires_shell], sentinel: false}`; `agent.unit` `I25-C4` | A/B/D (C: skip, só Windows) + D | PASS |
+| C5 | `command.cli:228` POSIX `["SIGINT","SIGQUIT","SIGHUP"]`; `:244-245` `CTRL_C_EVENT` → `["SIGINT"]` | POSIX em C; console em A/B/D | PASS |
+| C6 | `command.cli:267` `signals: ["SIGTERM"]` | C (A/B/D: skip, sinais POSIX) | PASS |
+| C7 | `prepare.cli:93-94` `{status: 127, stdout: "", code: true, asked: false}` | D | PASS |
+| C8 | `prepare.cli:122-126` texto exato até cada pergunta, árvores iguais | D | PASS |
+| C9 | `prepare.cli:163-168` `observe.json` da #23 | D | PASS |
+| C10 | `prepare.cli:189-191` `{exitCode: 3, …, started: false, root: false}` | D | PASS |
+| C11 | `prepare.cli:200` `{exitCode: 2, code: true, …, relative: false, config: false}` | D | PASS |
+| C12 | `prepare.cli:223` `status: 3`, linha `setup_required` | D | PASS |
+| C13 | `prepare.cli:238` SHA-256 iguais, `started: 1` | D | PASS |
+| C14 | `prepare.cli:250` `observe_on` 4 | D | PASS |
+| C15 | `prepare.cli:408` `{status: 3, declined: true, trees: before}` (pty) | **não rodou nesta rodada**: só POSIX, e `prepare.cli` não está no alvo C. No D do Windows, skip (“pseudoterminal só no POSIX; no Windows o primeiro uso é provado em processo (C8–C14)”). **Carregado da R14** (C em `13bb1d4`; blob `8d0a49d` igual) | PASS (carry) |
+| C16 | `session.e2e:67` `{origin: "launch", …, limits: {maxEvents: 500, maxBytes: 8388608}}` | D | PASS |
+| C17 | `store.unit:79` `["launch", invocation, 1, "2026-10-26T10:00:00.000Z"]` | D | PASS |
+| C18 | `session.e2e:111` `stderr: "skill-me: não foi possível abrir a execução [<código>]\n"` | D | PASS |
+| C19 | `session.e2e:161` `[0, 0]` | D | PASS |
+| C20 | `session.e2e:190-192` `code: "binding_invalid"` | D | PASS |
+| C21 | `session.e2e:208-211` bytes iguais | D | PASS |
+| C22 | `session.e2e:230` `[1, "stopped", 500, 500, {}]` | D | PASS |
+| C23 | `session.e2e:282` `["active", MAX_BYTES, {}, 1]` | D | PASS |
+| C24 | `store.unit:168` `[opened.capture, "stopped", 1]` | D | PASS |
+| C25 | `end.e2e:80-89` stderr exato do resumo | ABCD | PASS |
+| C26 | `end.e2e:101-109` `eventos gravados: 0.` e a dica | ABCD | PASS |
+| C27 | `end.e2e:120` `{launch: true, code: "launch_ended", …, lost: 1}`; `store.unit` `I25-C27` | ABCD + D | PASS |
+| C28 | `end.e2e:164-165` `persisted` 3 e `stopped`; regressão `end.e2e:194` `["EIO"]` | ABCD | PASS |
+| C29 | `command.cli:278` término pelo sinal | ABCD | PASS |
+| C30 | `command.cli:342` `captures: [[1, "stopped", 0]]` | ABCD | PASS |
+| C31 | `end.e2e:205-215` `[lock_present]`, `continua active`, `privacy stop` | ABCD | PASS |
+| C32 | `end.e2e:320` `"eventos intercalados: B terminou antes"`; `store.unit:715` `lock_present` | ABCD + D | PASS |
+| C33 | `end.e2e:460` `active`; `:493-494` `spawn sh ENOENT` (arranjo POSIX) | ABCD; o arranjo POSIX em C | PASS |
+| C34 | `report.cli:159` `[newInv, true]` | D | PASS |
+| C35 | `report.cli:252-259` `not_configured` / `no_launch_capture`, `schemaVersion: 1` | D | PASS |
+| C36 | `command.cli:350` `[0, SKILL_ME_HELP, ""]` | ABCD | PASS |
+| C37 | `docs.test:82` `deepEqual(observed, expected)` (os 9 limites) | D | PASS |
+| C38 | `prepare.cli:355` `["done", 0]` | D (console do Windows) | PASS |
+| C39 | `hermes-harness.unit:88` `["concluded", 0, 3]` | D | PASS |
+| C40 | `hermes-harness.unit:196-225` `[5000, "timeout"]`; nativo `hermes-plugin.native:335` (`concluded`/`inactive`/`failed`/`timeout`) | D, com os 12 nativos | PASS |
+| C41 | `store.unit:327-523`; `end.e2e:518` | ABCD (`end.e2e`) + D (`store.unit`) | PASS |
+| C42 | `agent.unit` `I25-C42`; `command.cli:456` Windows `status: 130`; `:424` POSIX | D; console em A/B/D; POSIX em C | PASS |
+| C43 | `store.unit:598` `{code: "root_changed", opened: true, …, lockLeft: false}`; `end.e2e` `I25-C43` | D + ABCD | PASS |
+| C44 | `hermes-harness.unit:263-271` `[1000, "timeout"]`; nativo `I25-C40 \|I4-C22` | D, com os nativos | PASS |
+| C45 | `agent.unit:132-146`; `command.cli:166-186` | D; POSIX em C; controle do Windows em A/B/D | PASS |
+| **C46** | tabela “C46 — citações renovadas” | ABCD (os 7 `I25-C46` e os 5 T8) | **FAIL como escrito (F1, item (g))** |
+| C47 | tabela “C47” (`agents.e2e:307-311`, `:401-403`, `:422-444`) | ABCD | PASS |
+| C48 | estrutural: workflow com o blob `474a87b` da R14/R16 (conferência da R14 contra `d0d5a7f` carregada); `governance-C1 C3` (`governance-ci:263-278`) | estrutura carregada por blob + `governance-C1 C3` em D | PASS |
+| C49 | `governance-ci:317-358` | D | PASS |
+| C50 | (a)–(n), citações da R16 (`ci-lock-latency.test` blob `75eeadd`, script `8c12894`, iguais aos da R16) | D, com os 18 `C50` e `RUNNER_TEMP` presente | PASS |
+
+**AC → checks** (9 ACs do contexto 17, corpo igual ao do 16):
+- AC1–AC6: C1–C45;
+- AC7: C46, **não provado como escrito (F1)**;
+- AC8: C47 e C48;
+- AC9: C49 e C50. A execução remota e os resultados continuam como condição de merge, não de revisão de código.
+
+## Swept `existing` (relido no HEAD; sem diff na feature)
+
+- **Idempotência**: `privacy/lifecycle.mjs:23-24`: `stop` sobre `stopped` → `changed: false`.
+- **Sem reenvio**: `traces/delivery.mjs:55-57` (“encerra a tentativa sem reenviar”) e `:111-113` (“nunca é reenviada”).
+- **Falha de entrega não bloqueia**: `traces/delivery.mjs:145-146` (“a entrega nunca lança para a observação”).
+- **`privacy prune` existente**: `privacy/command.mjs:56-57`.
+
+`lifecycle.mjs`, `delivery.mjs`, `command.mjs` e `src/integrations/cli.mjs` têm 0 diff desde `63621c6`.
+
+## Gates remotos — pendentes e obrigatórios (nenhum ocorreu aqui)
+
+1. Corrigir ou decidir o F1. Depois, uma verificação do conteúdo novo, se o orquestrador assim registrar. Este relatório **não** autoriza a formal 11 sobre `45b512b` como se tivesse PASS.
+2. A revisão formal do orquestrador, com PASS antes.
+3. Com PASS e `ready`, a publicação no PR #28.
+4. **Uma** execução manual do `lock_diagnostics` sobre o HEAD aprovado e publicado, com o registro dos resultados.
+5. Os **cinco checks regulares verdes** nesse HEAD e a reconferência das fontes.
+6. O merge humano, só com 4 e 5 cumpridos.
+
+Nenhuma execução manual do Actions sobre um HEAD novo foi feita aqui. Os runs 40709943742, 40710014746 e a medição 122892425130 são histórico do orquestrador sobre `76705f9`. Não são dados deste HEAD, e nenhum resultado local aqui substitui a CI do Windows. O uso real continua no `Unresolved` 2.
+
+## Processo, limites e limpeza da R17
+
+**Executado.**
+- git só de leitura: `rev-parse`, `status`, `log`, `show`, `diff`, `ls-tree`, `ls-files --eol`, `grep`, `check-ignore` e `get-tar-commit-id`.
+- `git -c core.autocrlf=false archive`.
+- `git clone --no-hardlinks --config core.autocrlf=true` do repositório local, sem rede, com a configuração só no clone.
+- `node -e` só de leitura (contexto, estado da revisão, fixture contada), `sha256sum` e `python -I` (versão e contagem de bytes).
+- A, B, C e D, uma vez cada, sem repetição. O WSL foi chamado com `wsl.exe -d Ubuntu -u oldboydev --exec bash --noprofile --norc` e `MSYS_NO_PATHCONV=1`.
+
+**Não executado.**
+- RED, mutações e sondas novas, inclusive as do autor.
+- Agentes reais, `--help`/`--version` de agente, sondas de PATH, perfis, credenciais, banco, modelo, rede, host, relógio, antivírus, Git global e runtimes. O Hermes real rodou só pelos 12 nativos versionados do D, com o runtime local e o `HERMES_HOME` temporário das provas.
+- Actions, CI, `review:run`, commit, push, PR, merge e alteração de limites.
+- O incidente da R5 (`ffc5937`) não foi desfeito nem repetido. A auditoria externa de metadados (linha de base pré-autor com 12.113 entradas e zero erros, segundo o despacho) é do orquestrador e será fechada por ele depois do D. Não a executei nem li o perfil.
+
+**Limites.**
+- **POSIX/FIFO/macOS do D não reexecutados.** Os skips do D (lista acima) não rodaram por causa do alvo C. Só rodaram em C os que estão nos 8 arquivos: `I25-C45`, `C5`, `C6`, `C42` e `C33` POSIX, e `T8-C4` sinal. Os 7 do doctor, os 6 do I4 e o `I25-C15` (pty) **não rodaram em ambiente nenhum desta rodada**. O C15 é carregado da R14 pela identidade do blob.
+- macOS e o runner não foram executados.
+- As causas históricas das falhas T8, do I23-C10 e dos `lock_present` continuam desconhecidas. Os campos novos são evidência compatível, não identificação de recurso nem de dono do lock.
+
+**Limpeza** (`cleanup.txt`, `C-wsl-cleanup.txt`, `B-clone-cleanup.txt`):
+- o clone de B foi removido depois de conferir o caminho absoluto, o tipo (diretório, não link), o HEAD `45b512b` e o status vazio;
+- `runner-temp-A`/`-B`/`-D` foram removidas depois de conferir 0 entradas;
+- o scratch do WSL `/tmp/skillme-verifier-r17.cXTJUq` foi removido pelo padrão absoluto, pelo dono uid 1000 e pelo tipo (restam 0);
+- no `%TEMP%`, as 363 pastas de scratch das provas desta rodada (`skill-me i4 …`/`skill-me i5 …`) foram removidas, com 0 recusas. Cada uma era nova em relação à linha de base de 12:56:38, diretório comum (não link), filha direta do `%TEMP%` e com mtime na janela. As 15 entradas novas de outra origem não foram tocadas. No `/tmp` do WSL, nenhuma `skill-me*` na janela de C;
+- o host continua sem `RUNNER_TEMP`;
+- nenhum processo meu ficou em segundo plano, e nenhum processo alheio foi encerrado.
+
+Ficam em `verifier-round17/`: logs, TAP/spec, `matrix.txt`, `D-summary.txt`, o tar do HEAD e os meus scripts. Os arquivos `profile-*` da auditoria do orquestrador não foram tocados.
+
+**Integridade do histórico abaixo.** O texto depois da linha `---` final deste adendo é, byte a byte, o blob `c3db7e2` (`.verified.md` de `76705f9`, igual no HEAD): os adendos R16 e R15 e o relatório R14. Fica como histórico.
+- **Substituído por esta R17**: o C46 e o C47 (citações e provas), e a hierarquia dos gates. A/B/C e D frescos de `45b512b` substituem o carry de C1–C47 da R14/R16 e o D da R14. As citações carregadas valem só onde o blob é o mesmo.
+- O PASS 50/50 da R16 foi dado a `8f045c2`, antes de `4d3b1d9`/`51679df`, e não cobre o C46 (d)–(g).
+
+---
+
 # Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 16, adendo)
 
 **Verdict (R16)**: **PASS — 50/50 checks**, 9 ACs, HEAD `8f045c2`. Nenhum fail, skip, carry inválido ou alteração fora da fronteira.
