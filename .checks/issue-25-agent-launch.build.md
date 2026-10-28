@@ -1784,3 +1784,169 @@ Limites:
   não o leem.
 - **Pendentes, com o orquestrador**: as rodadas 16/10, a publicação, a nova medição única no HEAD
   revisto e a CI regular verde para o merge.
+
+## CI 40709943742 e execução manual 40710014746 (Windows): diagnóstico das entregas T8 (C46 (d)–(g))
+
+Estado de partida: HEAD `76705f9`, publicado.
+- **Histórico do orquestrador, preservado**: a formal 10 `ready` (9 ACs, `sufficient`, sem achado) e o
+  R16 PASS 50/50, com o relatório em `76705f9`.
+- **`RUNNER_TEMP`**: a correção (`f133c55`) ficou resolvida na CI real, com governança 25/25 nos três
+  sistemas. Ubuntu e macOS passaram nas duas execuções.
+- **Windows**: as duas execuções ficaram vermelhas por provas antigas da #8, sem diff na feature. A CI
+  e o agregado deram FAIL.
+
+- **As falhas** (logs integrais do orquestrador em `.checks/code-review/issue-25/`):
+  - **PR 40709943742**, Windows, job 122892318605 (`ci767-windows-pr40709943742.log`): governança
+    25/25, motor 16/16, doctor 417 (410/0/7), integrações 567 (540 pass, **3 fail**, 24 skip).
+    - **T8-C8** (`live-capture.cli.test.mjs:441`): o ingest Hermes de 1 registro saiu com
+      `delivery_timeout` 1/0/0/1.
+    - **T8-C14** (`query.cli.test.mjs:217`): o hook Claude saiu com `delivery_timeout`.
+    - **T8-C18** (`replay.unit.test.mjs:41`): `privacy stop` saiu com 4 `lock_present` depois dos três
+      produtores, dos quais a prova só confere o status.
+  - **Execução manual 40710014746**, matriz regular do Windows, job 122892590221
+    (`ci767-windows-manual40710014746.log`): governança, motor e doctor iguais; integrações 567 (542
+    pass, **1 fail**, 24 skip).
+    - **T8-C3** (`live-capture.cli.test.mjs:198`): o ingest Hermes de 9 registros saiu com
+      `delivery_timeout` 9/0/0/9.
+  - Cada uma passou na outra execução. O I23-C4 e o T8-C11, que falharam na CI anterior, passaram, e
+    os instrumentados C47/I23-C10 e C46/T8-C15 também.
+- **Medição real** (dados do orquestrador, não executados aqui): job 122892425130 sobre `76705f9`,
+  arquivos `measurement40710014746.json` e `.log`.
+  - **Fases e ciclos**: A1 no `C:`, B no `D:`, A2 no `C:`; 4.500 de 4.500 ciclos; nenhum erro,
+    incompleto ou linha inválida; todos os filhos saíram com 0; limpeza 3.
+  - **Faixas**: nenhuma amostra ≥ 600 ou ≥ 650 ms em nenhuma operação.
+  - **Tomada, p99/máximo em ms**: A1 3,682/53,370; B 0,747/16,765; A2 3,721/139,837.
+  - **Liberação, p99/máximo em ms**: A1 3,478/4,804; B 1,090/13,752; A2 3,887/139,402.
+  - **Limite**: não prova causa, não permite atribuir nada a antivírus, host, disco ou relógio, e não
+    justifica otimizar `TEMP`, concorrência ou prazos.
+
+| Commit | Conteúdo |
+| --- | --- |
+| `4d3b1d9` | Antes do código: linha “Diagnóstico das entregas de um produtor nas provas T8” do Landing (caminho real, o que não se sabe, forma literal e alternativas), refinamento do C46 com os controles (d)–(g), refinamento do critério 38 e Handoff com o gate exato |
+| `51679df` | A pré-carga com pendentes, saída, início, `pid` e atraso do laço, e a injeção `BLOCK_LOOP`; `helpers/traces.mjs` com `at`/`ms` no `diskTrace` e os apoios novos; T8-C3, T8-C8, T8-C14 e T8-C18 com a pré-carga e a evidência na falha; os quatro controles I25-C46 novos |
+
+Logs em `.checks/code-review/issue-25/builder-ci767/` (pasta ignorada).
+
+- **Comparação das variantes** (código lido):
+  - **T8-C1 e T8-C2** já rodavam os hooks com a pré-carga, desde a #8. Passaram nas duas execuções; a
+    entrega mais lenta levou 76 a 107 ms.
+  - **T8-C3, T8-C8, T8-C14 e T8-C18** rodavam os produtores sem ela. Os quatro usam a captura manual
+    (`createCaptureDelivery`). O ingest abre antes de ler o stdin, com o prazo da abertura contado da
+    chamada (`delivery.mjs:180`, `ingest-command.mjs:13`); o hook abre depois de ler, e o prazo de
+    650 ms conta da leitura.
+  - **Os produtores que falharam**: dois ingests (T8-C3 e T8-C8), um hook (T8-C14), e um lock deixado
+    no T8-C18, de dono desconhecido.
+  - **Nas CIs anteriores**: o C46 teve dois ingests parados na criação do lock da abertura (CI
+    40514323240); o I23-C10, um hook automático; o I23-C4 e o T8-C11, lock deixado (CI 40636157287).
+  - **A classe é uma só**: a primeira tentativa não terminou em 650 ms. Quando ela já tinha o lock, o
+    `process.exit(0)` do CLI (`cli.mjs:24`) encerra a tentativa abandonada e o lock fica, como o
+    contrato prevê (`docs/traces.md`).
+- **Caminho mapeado** (`map-producers-win-24.22.1.txt`):
+  - **Ingest Hermes de 9**: 81 operações, 24 fora do lock, 27 na 1ª tomada (abertura: estado e chave)
+    e 30 na 2ª (segmento e `state.json` por temporário com flush; commit pelo `rename` de
+    `state.json.tmp`), em 23 ms.
+  - **Hook Claude**: 89 operações, em 17 ms.
+- **Sondas antes do plano** (`probe-eld-*`):
+  - o `monitorEventLoopDelay` não mantém o processo vivo;
+  - uma operação em curso no `process.exit` fica visível no `'exit'`;
+  - um bloqueio de 700 ms depois de o laço rodar aparece como 700 ms. Um bloqueio antes do primeiro
+    tique (logo na carga) não aparece, o que fica como limite.
+- **RED** (a prova antiga numa cópia descartável de `4d3b1d9`, que tem as mesmas provas de `76705f9`,
+  com só o env do ingest alterado por `red-patch.mjs`, que acrescenta a pré-carga e
+  `STALL_SEGMENT=1`; `red-old-win-24.22.1.spec.txt`):
+  - **T8-C3**: falhou com só o diff `delivery_timeout` 9/0/0/9;
+  - **T8-C18**: falhou com só `stop: {"…","error":{"code":"lock_present"}}` e `4 !== 0`.
+
+  São as mensagens das CIs, sem operação, tomada, estado do laço nem dono do lock. Reproduzir a
+  mensagem não mostra a causa da CI.
+- **GREEN** (`green-first-win-24.22.1.spec.txt`; os três arquivos tocados): 18 testes, 17 pass, 1 skip
+  (T8-C4 POSIX). As quatro provas novas passaram na primeira execução, com os valores registrados.
+- **Mensagens reais** (`sample-messages-win-24.22.1.txt`, pelos apoios versionados):
+  - **(d) disco parado sob o lock**: `pendentes na saída: open segmento.tmp (sob o lock, 2ª tomada) há
+    654 ms`; laço com atraso máximo de 18,3 ms (43 amostras); `lock presente, de ingest hermes`.
+  - **(e) criação do lock parada**: `pendentes na saída: open lock (tomada do lock) há 659 ms`; laço
+    com 16,3 ms; lock ausente; status `active, accepted 0, persisted 0`.
+  - **(f) laço parado**: `mais lenta open lock 901 ms`; laço com atraso máximo de 901,8 ms; CPU do
+    processo 922 ms.
+
+  Os três casos se distinguem pela operação, pela tomada, pela idade, pelo laço e pela CPU.
+- **Mutações** (cópia descartável; as 4 provas saudáveis e os 4 controles;
+  `mutation-*-win-24.22.1.spec.txt`). Todas foram detectadas, as provas saudáveis passaram em cada
+  uma, e as cópias foram removidas:
+  - pré-carga só com concluídas: (d), (e) e (g) falham;
+  - laço não medido: (d), (e) e (f) falham;
+  - dono do lock presumido: (g) falha;
+  - lugar sem a tomada: (d) e (g) falham;
+  - mensagem sem evidência: as quatro falham;
+  - em curso contada como concluída: (d) e (e) falham.
+
+| Alvo afetado em `51679df`: os 8 arquivos que carregam a pré-carga ou os apoios mudados (`launch/command.cli`, `launch/end.e2e`, `observe/agents.e2e`, `traces/concurrency.cli`, `traces/follow.cli`, `traces/live-capture.cli`, `traces/query.cli`, `traces/replay.unit`), `--test-concurrency=4`, uma invocação sem filtro por ambiente | Resultado |
+| --- | --- |
+| A — Windows, Node 24.22.1, npm 11.19.1, Python 3.12.10, checkout principal, `npm_execpath` ausente, 12:24:10–12:26:56 | 80 testes: 74 pass, 0 fail, 6 skip; `git status` vazio antes e depois |
+| B — Windows, Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, clone git novo com `core.autocrlf=true` (só no `.git/config` do clone; a pré-carga, o apoio e as provas em `w/crlf`; `cli.mjs` `w/lf attr/text eol=lf`), 12:27:11–12:29:56 | 80: 74 pass, 0 fail, 6 skip; status do clone vazio antes e depois; clone removido depois de conferir caminho, tipo e HEAD |
+| C — WSL Ubuntu `oldboydev` uid 1000, Node 24.13.0 copiado num prefixo sem `sh`, npm 11.6.2, `env -i`, `HOME` do scratch, PATH só com o prefixo e `tools` (`sh`, `git`, `python3`, `id`, `grep`, `mkfifo`), sem `/usr/bin`; `git -c core.autocrlf=false archive 51679df` (5.949.440 bytes, sha256 `4b1af460…cab5dfc`, `get-tar-commit-id` = `51679dfc…`, árvore extraída `e7ce68d4…` = `HEAD^{tree}`, `cli.mjs` 755, 0 CR), 12:30:20–12:31:26 | 80: 76 pass, 0 fail, 4 skip; `~/.skill-me` e a autorização ausentes antes e depois; scratch removido |
+
+Os 80 nomes são os mesmos nos três TAP. Em cada ambiente passaram os 7 `I25-C46` (os 3 de antes e os
+4 novos) e 26 testes T8, sem nenhum `not ok`.
+
+Skips, todos de plataforma, com o motivo impresso, e cada um rodou no outro sistema:
+- **A e B (6)**:
+  - `I25-C45` POSIX (vazio do PATH);
+  - `I25-C5`, `I25-C6` e `I25-C42` POSIX (sinais);
+  - `I25-C33` arranjo (`ComSpec`);
+  - `T8-C4` sinal POSIX (`posix-signals`).
+- **C (4)**: `I25-C4` shim, `I25-C45` controle do Windows, e o `I25-C5` e o `I25-C42` do console.
+
+**`npm test` completo em `51679df`**: Windows, Node 24.22.1, npm 11.19.1, `npm_execpath` ausente, runner
+padrão com 8 arquivos (32 núcleos) e os 12 nativos do Hermes. Rodou uma vez, sem repetir, das 12:31:53 às
+12:41:12, com orçamento de 2 h definido na ferramenta antes do início, e esperei o término real
+(`builder-ci767/final/npm-test.*`). **Exit 0**: 1.029 testes, 1.009 pass, 0 fail e 20 skip; nenhum `✖` no
+log; `git status` vazio antes e depois.
+- **Por suíte**: governança 25/25; motor 16/16; doctor 417 (410/0/7); integrações 571 (558/0/13).
+  Integrações eram 567 e ganharam as 4 provas novas.
+- **Passaram**: os 12 nativos; T8-C3, T8-C8, T8-C14 e T8-C18; os 7 `I25-C46`; T8-C15; I23-C10; os 18
+  C50.
+- **Skips, todos de plataforma**:
+  - os 7 do doctor, `{skip: process.platform === "win32"}` em provas só do POSIX, sem texto de motivo;
+  - os 13 das integrações, com o motivo impresso: `I4-C15` e `T8-C4` (`posix-signals`), `I4-C25b`
+    (`posix-modes`), `I4-C25j`, `I4-C25k` e `I4-C25l` (`posix-acl`), `I4-C25m` (`macos-acl`), e os I25
+    só do POSIX (`C45`, `C5`, `C6`, `C42`, `C33` arranjo, `C15`).
+
+  Rodaram em outro ambiente desta rodada os I25 POSIX `C45`, `C5`, `C6`, `C42` e `C33` e o `T8-C4`
+  POSIX, todos no C. O `I25-C15` (`prepare.cli`) não está no alvo afetado. Os 7 do doctor e os I4 não
+  rodaram em nenhum ambiente desta rodada.
+
+Limpeza do `%TEMP%`: 236 pastas na janela A–B e 127 na janela do D foram removidas, com 0 recusas. A
+conferência foi pela linha de base, pelos prefixos `skill-me i4 `, `skill-me i5 ` e `skill-me lock latency `,
+pelo mtime na janela e por não ser link. Nenhuma entrada `skill-me` nova ficou; as outras são de outras
+sessões. A cópia do RED, as cópias das mutações e o clone de B foram removidos, todos com o caminho
+absoluto e o tipo conferidos antes.
+
+**Causa**: continua **desconhecida**. Nenhum defeito do produto ou das provas foi demonstrado:
+- as quatro falhas estão vermelhas com razão (uma entrada perdida no prazo, e o lock que fica pelo
+  contrato);
+- o código do caminho não mudou na feature;
+- a medição isolada não teve operação lenta.
+
+Não há correção. O que muda é a observabilidade da próxima CI. Se um desses produtores falhar, a
+mensagem dirá:
+- qual operação estava em curso, em que tomada e há quanto tempo;
+- se o laço estava livre (disco ou sistema) ou parado (CPU ou processo);
+- quando o processo começou, para correlacionar falhas de arquivos diferentes na mesma janela;
+- de quem é o lock que ficou.
+
+Limites:
+- **Laço de eventos**: o histograma não vê um bloqueio antes do primeiro tique dele, logo na carga do
+  processo.
+- **Operações cobertas**: os pendentes e os tempos cobrem só as operações de `node:fs/promises` que a
+  pré-carga envolve; E/S síncrona ou outra fila do libuv ficam fora.
+- **`startedAt`**: é do relógio de parede e serve só para correlacionar.
+- **Dono do lock**: vem pelo `pid`, que o sistema pode reutilizar; com dois produtores de mesmo `pid`
+  a evidência lista os dois.
+- **Custo da pré-carga**: cada operação ganha uma entrada num `Set` e dois `performance.now()`, e o
+  histograma soma um timer de 10 ms ao processo. Nas quatro provas os produtores passam a carregar a
+  pré-carga por `NODE_OPTIONS`; o custo não foi medido à parte.
+- **Dívida**: a evidência do C46/T8-C15 e do C47/I23-C10 continua local àqueles arquivos, sem os
+  campos novos; consolidar mudaria provas que passaram.
+- **Pendentes, com o orquestrador**: as rodadas 17/11, a publicação e a próxima CI. Nada aqui afirma
+  CI verde, medição nova ou `ready`.

@@ -985,3 +985,21 @@ CI 40709943742 e execução manual 40710014746 no Windows: diagnóstico das entr
     Hermes, com orçamento de 2 h definido na ferramenta antes do início, porque a pré-carga e
     `helpers/traces.mjs` são apoios comuns (27 arquivos importam o apoio).
   - Nenhum arquivo rastreado muda durante D, e nenhum gate é repetido para obter verde.
+- **Onde a fronteira caiu agora**:
+  - **Commits**: registro em `4d3b1d9`; código em `51679df`, só em provas e apoios de prova
+    (`traces-probe.mjs`, `helpers/traces.mjs` e as provas T8-C3/C8/C14/C18 com quatro controles
+    I25-C46 novos). Produto sem mudança.
+  - **RED**: as provas antigas dão só as mensagens das CIs.
+  - **GREEN e mutações**: os três arquivos T8 deram 18/17/0/1, e as 6 mutações foram detectadas.
+  - **A/B/C**: o alvo de 8 arquivos deu 80/74/0/6 em A e B e 80/76/0/4 em C.
+  - **D**: o `npm test` completo saiu com exit 0 em `51679df` (1.029/1.009/0/20, com os 12 nativos).
+  - **Causa**: continua desconhecida, sem defeito demonstrado. A próxima CI traz a operação em curso, a
+    tomada, o laço e o dono do lock. Detalhes no build e em
+    `.checks/issue-25-agent-launch.ci40709943742-handoff.md`.
+- **O que foi abandonado**:
+  - aumentar prazos, repetir, reduzir paralelismo ou pular no Windows;
+  - atribuir a antivírus, disco, relógio ou host;
+  - instrumentar o produto;
+  - mover a evidência do C46/C47;
+  - calcular a evidência sempre;
+  - ler o nonce do lock ou mostrar o `pid`.
