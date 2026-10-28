@@ -62,6 +62,13 @@ const lineBytes = (records) => records.reduce((sum, record) => sum + Buffer.byte
 // depois do prazo é devolvido sem mutação (`onLock` lança dentro do store).
 // A observação automática (#23) reutiliza o mesmo prazo com o vocabulário dela
 // (`codeOfError`).
+//
+// O abandono é terminal, e o prazo vale pelo `clock`, não pelo timer: o timer
+// pode disparar um pouco antes de o relógio chegar ao prazo, e o laço repetia a
+// tentativa com a abandonada ainda pendente (T8-C16, `4 !== 3` criações do lock);
+// com o laço atrasado, o callback do timer pode rodar depois de o lock chegar
+// com o prazo esgotado, que gravaria. Linha "Abandono terminal no prazo da
+// entrega" do Landing em .checks/issue-25-agent-launch.md.
 export async function untilDeadline(operation, deadlineAt, clock, codeOfError = codeOf) {
   let code = "delivery_timeout";
   for (;;) {
@@ -71,6 +78,7 @@ export async function untilDeadline(operation, deadlineAt, clock, codeOfError = 
     let locked = false;
     let abandoned = false;
     const onLock = () => {
+      if (deadlineAt - clock() <= 0) abandoned = true;
       if (abandoned) throw new Error("tentativa abandonada no prazo");
       locked = true;
     };
@@ -82,11 +90,13 @@ export async function untilDeadline(operation, deadlineAt, clock, codeOfError = 
       new Promise((resolve) => {
         timer = setTimeout(() => {
           abandoned = true;
-          resolve({ ok: false, code: locked ? "delivery_timeout" : code });
+          resolve();
         }, remaining);
       }),
     ]);
     clearTimeout(timer);
+    // A rejeição de um `onLock` recusado não é falha de E/S: o motivo é o do prazo.
+    if (abandoned) return { ok: false, code: locked ? "delivery_timeout" : code };
     if (outcome.ok || outcome.code !== "lock_present") return outcome;
     code = "lock_present";
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(LOCK_RETRY_MS, deadlineAt - clock()))));

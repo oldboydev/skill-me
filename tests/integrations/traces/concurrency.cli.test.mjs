@@ -9,7 +9,7 @@ import { after, test } from "node:test";
 import { claudeHookDraft } from "../../../src/integrations/adapters/claude.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
 import { deleteCapture, exportCapture, listCaptures, pruneCaptures } from "../../../src/integrations/privacy/store.mjs";
-import { DELIVERY_DEADLINE_MS, createCaptureDelivery } from "../../../src/integrations/traces/delivery.mjs";
+import { ATTEMPT_MS, DELIVERY_DEADLINE_MS, createCaptureDelivery } from "../../../src/integrations/traces/delivery.mjs";
 import { CAPTURE_REPORT_ENV, appendDeliveryReport, deliveryReportFile, deliveryReportLine } from "../../../src/integrations/traces/delivery-report.mjs";
 import { REPO_ROOT, baseEnv, makeScratch, runIntegrations, runIntegrationsJson } from "../helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers, runClaudeHandler, runCodexHandler } from "../helpers/installed-hooks.mjs";
@@ -926,6 +926,96 @@ test("T8-C16 delivery failure neutrality: tentativa cortada no prazo antes de ob
   assert.deepEqual(snapshotTree(captureDir(root, id)), before, "lock_present: nada gravado depois do prazo");
   assert.ok(!existsSync(path.join(storeDir(root), ".lock")), "lock liberado");
   assert.equal(statusOf(root, id).counters.persisted, 0);
+});
+
+// Prazo da entrega pelo relógio injetado (issue #25, refinamento do C46 (p);
+// linha "Abandono terminal no prazo da entrega" do Landing): a entrada é lida
+// com o relógio em 0, então o prazo da tentativa é ATTEMPT_MS nesse relógio. O
+// roteiro só move o relógio; o timer do prazo continua o real.
+const LOCK_DEADLINE = ATTEMPT_MS;
+
+test("I25-C46 prazo da entrega: depois de uma recusa do lock, a repetição abandonada pelo timer com o relógio ainda aquém do prazo é a última tentativa e não grava", async () => {
+  // Criação 1 do lock = abertura; 2 = commit ocupado; 3 = repetição parada antes de
+  // existir o lock, com o relógio 0,5 abaixo do prazo quando o timer dispara (o caso
+  // do T8-C16 no gate B final).
+  const root = scratch("i25 c46 prazo repeticao");
+  const id = startCapture(root);
+  const lockDisk = gate();
+  let now = 0;
+  const contended = scriptedIo({
+    busy: [2],
+    stall: (file, kind, stats) => {
+      if (kind !== "write" || path.basename(file) !== ".lock" || stats.lockCreations < 3) return null;
+      // Só com o defeito há a 4ª: ela leva o relógio ao prazo, para a entrega terminar.
+      now = stats.lockCreations === 3 ? LOCK_DEADLINE - 0.5 : LOCK_DEADLINE;
+      return lockDisk.promise;
+    },
+  });
+  const before = snapshotTree(captureDir(root, id));
+  const delivery = createCaptureDelivery({ root, id, agent: "claude", io: contended.io, clock: () => now });
+  assert.ok((await deliverOne(delivery, "prazo-relogio")) <= DELIVERY_DEADLINE_MS);
+  assert.deepEqual(delivery.report(), { bound: true, code: "lock_present", entries: 1, committed: 0, persisted: 0, lost: 1 });
+  assert.equal(contended.stats.lockCreations, 3, "nenhuma tentativa nova depois da abandonada");
+  lockDisk.open();
+  await waitUntil(() => contended.stats.lockUnlinks === 2, { label: "tentativa abandonada liberar o lock" });
+  assert.equal(contended.stats.lockCreations, 3);
+  assert.deepEqual(snapshotTree(captureDir(root, id)), before, "nada gravado depois do prazo");
+  assert.ok(!existsSync(path.join(storeDir(root), ".lock")), "lock liberado");
+  assert.equal(statusOf(root, id).counters.persisted, 0);
+});
+
+// io roteirizado que leva o relógio a `at` quando a criação real `creation` do
+// lock termina, antes de o store chamar o onLock (laço atrasado: o timer do
+// prazo ainda não rodou).
+function lockTakenAt(clock, { busy, creation, at }) {
+  const scripted = scriptedIo({ busy });
+  return {
+    stats: scripted.stats,
+    io: {
+      ...scripted.io,
+      async writeExclusive(file, data) {
+        await scripted.io.writeExclusive(file, data);
+        if (path.basename(file) === ".lock" && scripted.stats.lockCreations === creation) clock.now = at;
+      },
+    },
+  };
+}
+
+test("I25-C46 prazo da entrega: lock obtido com o relógio no prazo ou depois, antes de o timer rodar, é devolvido sem gravar e sai com o motivo do prazo", async () => {
+  for (const [label, busy, creation, code] of [
+    ["sem recusa", [], 2, "delivery_timeout"],
+    ["depois de uma recusa", [2], 3, "lock_present"],
+  ]) {
+    for (const [moment, at] of [["no prazo", LOCK_DEADLINE], ["depois do prazo", LOCK_DEADLINE + 1]]) {
+      const name = `${label}, ${moment}`;
+      const root = scratch(`i25 c46 prazo tardio ${creation} ${at}`);
+      const id = startCapture(root);
+      const clock = { now: 0 };
+      const late = lockTakenAt(clock, { busy, creation, at });
+      const before = snapshotTree(captureDir(root, id));
+      const delivery = createCaptureDelivery({ root, id, agent: "claude", io: late.io, clock: () => clock.now });
+      await deliverOne(delivery, "prazo-tardio");
+      assert.deepEqual(delivery.report(), { bound: true, code, entries: 1, committed: 0, persisted: 0, lost: 1 }, name);
+      assert.deepEqual([late.stats.lockCreations, late.stats.lockUnlinks], [creation, 2], `${name}: a abertura e a tentativa tardia devolveram o próprio lock`);
+      assert.deepEqual(snapshotTree(captureDir(root, id)), before, `${name}: nada gravado`);
+      assert.ok(!existsSync(path.join(storeDir(root), ".lock")), `${name}: lock liberado`);
+      assert.equal(statusOf(root, id).counters.persisted, 0, name);
+      assert.deepEqual(exportOf(root, id).records, [], name);
+    }
+  }
+});
+
+test("I25-C46 prazo da entrega: lock obtido com o relógio ainda aquém do prazo grava e confirma", async () => {
+  const root = scratch("i25 c46 prazo limite");
+  const id = startCapture(root);
+  const clock = { now: 0 };
+  const inTime = lockTakenAt(clock, { busy: [], creation: 2, at: LOCK_DEADLINE - 0.001 });
+  const delivery = createCaptureDelivery({ root, id, agent: "claude", io: inTime.io, clock: () => clock.now });
+  await deliverOne(delivery, "prazo-limite");
+  assert.deepEqual(delivery.report(), { bound: true, code: null, entries: 1, committed: 1, persisted: 1, lost: 0 });
+  assert.deepEqual([inTime.stats.lockCreations, inTime.stats.lockUnlinks], [2, 2]);
+  assert.deepEqual(exportOf(root, id).records.map((r) => r.envelope.ids.toolUseId), [expectedPseudonym(root, id, "prazo-limite")]);
+  assertSegmentConsistent(root, id, "commit no limite do prazo");
 });
 
 test("T8-C16 delivery failure neutrality: no hook real, lock obtido na repetição e disco parado aparecem como delivery_timeout no diagnóstico, sem prender o agente", async (t) => {
