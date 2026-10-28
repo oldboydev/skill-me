@@ -438,8 +438,10 @@ não são afirmados: dependem de a tentativa abandonada terminar antes da saída
   - o `stop` falha com status 4, e a mensagem começa por `stop:
     {"schemaVersion":1,"command":"stop","status":"error","error":{"code":"lock_present"}}\n<evidência>`;
   - `hook claude pre_tool_bash` entrega `DELIVERED(1)`;
-  - `ingest hermes` fica com `delivery_timeout` 1/0/0/1 e pendente `open segmento.tmp (sob o lock, 2ª
-    tomada)`;
+  - `ingest hermes` fica com `delivery_timeout` 2/0/0/2 e pendente `open segmento.tmp (sob o lock, 2ª
+    tomada)`. São duas entradas porque a rotina do T8-C18 dá ao ingest um registro válido e a linha
+    malformada `{quebrado`, e a malformada também conta como entrada; o T8-C18 saudável afirma
+    `counters.malformed` 1;
   - `hook claude post_tool_skill` fica com `lock_present` 1/0/0/1 e lock ocupado repetido;
   - captura com status `indisponível [lock_present]` e lock presente, de `ingest hermes`.
 
@@ -1009,3 +1011,25 @@ CI 40709943742 e execução manual 40710014746 no Windows: diagnóstico das entr
   - mover a evidência do C46/C47;
   - calcular a evidência sempre;
   - ler o nonce do lock ou mostrar o `pid`.
+
+Achado F1 da verificação 17 (registros acima preservados):
+
+- **O que se decidiu**: a verificação 17 deu FAIL em `45b512b` (relatório em `1ef4c72`, não alterado
+  aqui), com 49 de 50 checks provados como escritos e um só achado, F1. Os gates frescos da R17
+  passaram:
+  - A e B: 80 testes, 74 pass, 0 fail, 6 skip;
+  - C: 80/76/0/4;
+  - D: 1.029/1.009/0/20, com os 12 nativos.
+- **O achado**: o item (g) do C46 dava `delivery_timeout` 1/0/0/1 para o ingest Hermes da rotina do
+  T8-C18. A prova versionada afirma 2/0/0/2 (`replay.unit.test.mjs:156`, `lost("delivery_timeout",
+  2)`), que é o valor certo da rotina, e o controle passou em A, B, C e D.
+- **A causa do erro**: o literal foi escrito errado no registro antes do código (`4d3b1d9`). Não é
+  mudança de contrato nem rebaixamento.
+- **O que mudou**: só o literal do item (g), de 1/0/0/1 para 2/0/0/2, com o motivo (um registro válido
+  e a linha malformada `{quebrado`, que também conta como entrada). Entrada, payload, prazos,
+  asserções, código, provas, nomes de teste e comentários não mudaram, e nenhum teste foi executado.
+- **O que fica igual**: os outros 1/0/0/1 desta página estão certos e ficaram como estavam. São o
+  `post_tool_skill` com `lock_present` do mesmo item, que a prova afirma com `lost("lock_present",
+  1)`, o T8-C8 da CI, com um registro, e o I23-C10.
+- **Pendentes, com o orquestrador**: a próxima verificação e a revisão formal. Nada aqui afirma PASS
+  nem `ready`.
