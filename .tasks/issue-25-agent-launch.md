@@ -200,6 +200,11 @@ ID. A observação global `on`/`off` não muda.
     o gate completo são executados sem desabilitar casos nativos aplicáveis nem afrouxar
     asserções ou tolerâncias.
 
+    Refinamento do critério 32 (gate B em `60bbda8`, Windows, Node 24.13.0; sem critério novo): a
+    preparação das provas nativas e do I4-C35 instala o plugin de fixture versionado no `HERMES_HOME`
+    temporário com os bytes exatos da fonte, também num caminho com “ação” no Node 24.13.0, e a remoção
+    dele não esconde um plugin ausente. Plugins, argumentos, eventos, Unicode e asserções não mudam.
+
 ### Regressões da revisão formal (dentro de AC1, AC3 e AC4; sem escopo novo)
 
 A revisão formal da feature em `2fd858a` (`.checks/code-review/issue-25/formal-review.stdout.txt`)
@@ -358,6 +363,10 @@ o proprietário autorizou o diagnóstico pontual nesta entrega (AC7, ver `Source
     - nos arquivos de prova com produtores vermelhos nas CIs do PR, todo produtor iniciado pelos apoios
       leva a pré-carga, e, quando um teste falha, o mesmo erro sai com a evidência de todos os
       produtores do teste e das raízes deles (lock, capturas e pasta).
+
+    Refinamento do critério 38 (gate C em `60bbda8`, WSL: I4-C36; sem critério novo): o apoio dos hooks
+    instalados mede a duração de cada chamada pelo relógio monotônico, porque o relógio civil do WSL
+    recua no meio das chamadas (comparação registrada). A faixa e o prazo do I4-C36 não mudam.
 
     Não traz caminho, conteúdo, chave nem ambiente. É evidência, não a causa nem a correção dela.
 
