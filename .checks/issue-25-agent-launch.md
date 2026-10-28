@@ -1725,3 +1725,66 @@ Prova da 3ª linha do C46 (m) — novo autor Claude, handoff do coordenador depo
   - **Orçamentos na chamada, definidos antes**: 1 h para cada um de A, B e C; 2 h para o D.
   - **D**: esperado 1.055 testes (1.054 + 1).
   - Os gates rodam no HEAD deste registro, que só acrescenta docs a `2473632`.
+- **Resultado dos gates em `8dee56d`** (árvore `53b79730…`; código de `2473632`; logs em `builder-r19-proof-fix/`):
+  - **A** (20:08:40–20:08:47; Windows, Node 24.22.1, checkout): **9 testes, 9 pass, 0 fail, 0 skip**, exit 0.
+    - `npm_execpath` ausente, `RUNNER_TEMP` presente (0 entradas antes e depois), temporário isolado.
+    - Status vazio antes e depois.
+  - **B** (20:09:15–20:09:21): **9/9/0/0**, exit 0.
+    - Clone novo em `8dee56d`, com a árvore conferida e `core.autocrlf=true` no `.git/config` dele (o `gitconfig`
+      do sistema do Git for Windows já tem `true`; nada global mudou).
+    - Node 24.13.0 oficial: o `node.exe` (`d14ba95c…`) é o de dentro do zip, e o zip (`ca274269…`) confere com o
+      `SHASUMS256.txt` local. npm 11.6.2 adjacente, `npm_execpath` ausente.
+    - `cli.mjs` com `i/lf w/lf attr/text eol=lf` e 0 CR antes da execução.
+    - Status do clone vazio antes e depois do `node_modules` e depois da execução.
+    - O clone foi removido pelo caminho exato, depois de conferir toplevel, HEAD e status.
+    - **Limite**: a conferência de CR do bin **depois** da execução falhou no meu script (o Python do Windows
+      recebeu um caminho MSYS) e não foi feita. Este gate não roda o `npm link`.
+  - **C** (20:09:40; WSL `Ubuntu`, uid 1000): **9/9/0/0**, exit 0.
+    - `git archive` de `8dee56d` (6.318.080 bytes, `e560e5f2…`), com a árvore extraída igual a `HEAD^{tree}`, 0 CR
+      e `cli.mjs` 755.
+    - Node 24.13.0 copiado de `/usr/bin/nsolid` (`150946e4…`), num prefixo sem `sh`; npm 11.6.2.
+    - `env -i` só com `HOME`, `LANG`, `PATH`, `RUNNER_TEMP` e `TMPDIR`; PATH sem `/usr/bin` e sem agentes.
+    - O scratch `/tmp/sm-b19p-C.cKPLVV`, criado por `mktemp`, foi removido por caminho, pasta não link, uid 1000 e
+      inode 2575.
+  - **Nomes** (`matrix-ABC.txt`): os 9 nomes são iguais em A, B e C, todos `ok`, sem skip nem duplicado. Inclui os
+    dois casos de (m).
+  - **D** (20:10:06–20:20:40; `npm test` completo, Windows, Node 24.22.1, teto 8): terminou sozinho com **exit 0**.
+    - **1.055 testes, 1.035 pass, 0 fail, 20 skip**: governança 25/25, motor 16/16, doctor 417 (410/0/7) e
+      integrações 597 (584/0/13). É o D da R19 mais o caso novo, nas integrações.
+    - Nenhum `✖`. Passaram os 11 nativos do Hermes com runtime, o ramo Hermes do I4-C35 (sem o diagnóstico de
+      observação não executada) e o I23-C8 pelo Python do sistema, que não conta como nativo.
+    - Passaram também os dois casos de (m), os 28 `I25-C46`, os 6 `I25-C47`, os 9 `T8-C16`, o I4-C16c, o I4-C17 e
+      os `C50`.
+    - Os 20 skips são iguais aos do D da R19 em nomes e motivos (`D-vs-R19.txt`).
+    - `RUNNER_TEMP` com 0 entradas depois; HEAD e status iguais antes e depois. Nenhum processo `node` do
+      repositório ficou vivo (`processes-after.txt`).
+  - **Temporário**: as raízes `sm-b19p-*` de A, B e D (1, 20 e 128 entradas dos testes) e as do GREEN e da cópia
+    foram removidas pelo registro. A do C foi removida pelo caminho, uid e inode. As pastas `runner-temp-*`
+    vazias saíram por `rmdir`.
+    - Nenhum auxiliar foi para o `/tmp` (Git Bash ou WSL) nem para o temporário global: logs, listas,
+      comparações, o tar e a cópia ficaram em `builder-r19-proof-fix/`.
+    - Nada do perfil foi lido, e nenhuma seleção foi feita por prefixo ou mtime.
+- **O que isso prova e o que não prova**:
+  - O (m) está provado como escrito pelo caso novo: pendente e dono do lock na 3ª linha, `processo 3 de 3`. O caso
+    da 1ª linha continua como controle.
+  - O mutante “sempre `processo 1 de n`” é aceito só pelo caso da 1ª e recusado pelo novo.
+  - **Carry explícito do Verifier 19** (`5ee0e0f`), com os blobs iguais: os resultados A/B/C dos outros 42
+    arquivos não foram reexecutados nesta continuação.
+  - Os skips de integração do D que só rodam no POSIX (I4-C15, I4-C25b/j/k, I25-C5/C6/C15/C33/C42/C45, T8-C4)
+    **não rodaram nesta continuação**: o C aqui só tinha o arquivo de teste. Ficam como carry do C da R19, com os
+    mesmos blobs.
+  - O I4-C25m e o I4-C25l e os 7 do doctor não rodaram em ambiente nenhum, como na R19.
+  - Não é defeito de produto, e as causas históricas (CI 93, T8-C4, D interrompido de `dc0db9b`) continuam
+    desconhecidas.
+- **O que se decidiu no caminho** (além do Landing): nada novo com o coordenador nem com o usuário.
+- **O que foi abandonado**:
+  - retificar o literal (3ª → 1ª);
+  - mover a entrada do caso da 1ª linha;
+  - calcular o esperado pela posição do `pid`;
+  - função ou módulo comum para os dois casos;
+  - reexecutar os 42 arquivos inalterados em A/B/C;
+  - ler, limpar ou restaurar `/tmp/d4.skips`, `/tmp/d-old.skips` ou o temporário global.
+- **Pendentes, com o coordenador**: o registro da verificação 20 e o despacho dela, sobre a feature inteira, com
+  carry explícito da 19 para o que não mudou e as provas novas de A/B/C (o arquivo) e do D inteiro. Depois, a
+  formal 12, já autorizada, a publicação, a CI e o merge. O FAIL 19 fica como está. Nada aqui afirma PASS, `ready`
+  nem CI verde.

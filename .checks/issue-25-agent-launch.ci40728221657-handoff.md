@@ -178,3 +178,10 @@ chamado de causa confirmada da parada.
 - **Identidade**: fora de `.checks`/`.tasks`, só esse arquivo mudou desde `5ee0e0f`; 42 dos 43 da lista do R19
   ficam como carry do Verifier 19.
 - **Gates**: A/B/C só nesse arquivo e um D completo, definidos antes de rodar.
+- **Resultado em `8dee56d`**:
+  - A 9/9/0/0, B 9/9/0/0 e C 9/9/0/0, com os mesmos 9 nomes;
+  - D com exit 0, 1.055/1.035/0/20 (integrações 597/584/0/13), os nativos do Hermes e os 20 skips da R19.
+- **Não reexecutado**: os outros 42 arquivos em A/B/C e os skips POSIX do D. Ficam como carry explícito do
+  Verifier 19, com os mesmos blobs.
+- **Próximo, com o coordenador**: a verificação 20 sobre a feature inteira, depois a formal 12. Nada aqui afirma
+  PASS, `ready` nem CI verde.

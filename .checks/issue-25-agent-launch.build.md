@@ -2555,3 +2555,35 @@ arquivos da lista do R19 têm o mesmo blob.
 - A/B/C: só `evidence.unit.test.mjs`, inteiro, uma invocação por ambiente, concorrência 4, orçamento de 1 h cada.
   Os outros 42 são carry explícito do Verifier 19.
 - D: um `npm test` completo, com orçamento de 2 h.
+
+**Gates em `8dee56d`** (árvore `53b79730…`, código de `2473632`; uma execução de cada, sem filtro; logs em
+`builder-r19-proof-fix/`):
+
+| Gate | Ambiente | Início–fim | Testes | Pass | Fail | Skip |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | checkout principal, Windows, Node 24.22.1, npm 11.19.1, `npm_execpath` ausente | 20:08:40–20:08:47 | 9 | 9 | 0 | 0 |
+| B | clone git novo (`core.autocrlf=true` no `.git/config` dele), Node 24.13.0 oficial (`d14ba95c…`, zip conferido), npm 11.6.2 ao lado, `npm_execpath` ausente | 20:09:15–20:09:21 | 9 | 9 | 0 | 0 |
+| C | WSL `Ubuntu`, uid 1000, `git archive` de `8dee56d` (árvore = `HEAD^{tree}`, 0 CR), Node 24.13.0 copiado num prefixo sem `sh`, `env -i`, `HOME`/`RUNNER_TEMP`/`TMPDIR` no scratch, PATH sem `/usr/bin` e sem agentes | 20:09:40 | 9 | 9 | 0 | 0 |
+| D | `npm test` completo, Windows, Node 24.22.1, teto 8, nativos do Hermes | 20:10:06–20:20:40 | 1.055 | 1.035 | 0 | 20 |
+
+- **A/B/C**: lista `gate-files-2473632.txt` (sha256 `7d64e892…e83b`). `RUNNER_TEMP` presente e válido; temporário na
+  raiz criada e registrada pela execução; status vazio antes e depois. Os 9 nomes são iguais nos três
+  (`matrix-ABC.txt`).
+- **Limite do B**: a conferência de CR do bin depois da execução falhou no meu script (Python do Windows com
+  caminho MSYS) e não foi feita. Antes, o bin tinha 0 CR, e o status do clone ficou vazio depois.
+- **D**: exit 0, sem interrupção. Governança 25/25, motor 16/16, doctor 417 (410/0/7), integrações 597 (584/0/13).
+  - Passaram os 11 nativos do Hermes com runtime, o ramo Hermes do I4-C35 e o I23-C8 pelo Python do sistema.
+  - Passaram também os dois casos de (m), os 28 `I25-C46`, os 9 `T8-C16`, o I4-C16c e o I4-C17.
+  - Os 20 skips são os da R19 em nomes e motivos (`D-vs-R19.txt`).
+  - Nenhum processo `node` do repositório ficou vivo.
+- **Limpeza**: as raízes foram removidas pelo registro (A 1, B 20 e D 128 entradas dos testes); a do C, por
+  caminho, uid e inode; o clone do B, pelo caminho exato; a cópia da prova discriminante, pelo caminho exato.
+  Nenhum auxiliar foi para o `/tmp` nem para o temporário global.
+
+**O que fica demonstrado e o que não**:
+- o C46 (m) está provado como escrito, e o mutante “sempre `processo 1 de n`” é recusado só pelo caso novo;
+- os A/B/C dos outros 42 arquivos e os skips POSIX do D (que rodaram no C da R19) são carry explícito do Verifier
+  19, com os mesmos blobs; não rodaram nesta continuação;
+- não há defeito de produto demonstrado, e as causas históricas continuam desconhecidas.
+
+Pendentes, com o coordenador: a verificação 20, a formal 12, a publicação, a CI e o merge. O FAIL 19 fica.
