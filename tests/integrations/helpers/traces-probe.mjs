@@ -26,15 +26,29 @@
 // um segmento (`events-*.skill-me-tmp`) nunca termina — disco parado depois de
 // o processo obter o lock.
 //
+// SKILL_ME_TEST_TRACES_BLOCK_LOOP=<n>|<ms>: antes da n-ésima criação exclusiva
+// do `.lock`, prende o laço de eventos de forma síncrona por <ms> — processo
+// parado, não disco (só a prova do diagnóstico das entregas T8, issue #25).
+//
 // SKILL_ME_TEST_TRACES_TIMING=<arquivo>: só observa. Mede cada operação de disco
 // do processo e, na saída, acrescenta ao arquivo uma linha
-// `{"ops":[[operação, tipo do arquivo, início ms, duração ms, código do erro?]…],"cpuMs":n}`
+// `{"ops":[[operação, tipo do arquivo, início ms, duração ms, código do erro?]…],"cpuMs":n,
+// "pending":[[operação, tipo, início ms, idade ms]…],"exitMs":n,"startedAt":n,"pid":n,
+// "loop":{"samples":n,"maxMs":n,"p99Ms":n}}`
 // — tipo e código (`EPERM`…), nunca caminho, ID, mensagem ou conteúdo. Mostra
 // onde a tentativa de entrega gastou o prazo, qual operação falhou e quais
-// arquivos receberam flush (rodada 6 do build da #8).
+// arquivos receberam flush (rodada 6 do build da #8). `pending` são as operações
+// ainda em curso quando o processo saiu (o `process.exit` do CLI encerra a
+// tentativa abandonada no prazo), `exitMs` e os inícios vêm do relógio
+// monotônico do processo, `startedAt` (`performance.timeOrigin`) só serve para
+// correlacionar processos, e `loop` é o atraso do laço de eventos medido pelo
+// `monitorEventLoopDelay`: laço livre com a operação parada aponta o disco;
+// laço parado, o processo (issue #25, linha "Diagnóstico das entregas de um
+// produtor nas provas T8" do Landing).
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 
 const require = createRequire(import.meta.url);
 const fsp = require("node:fs/promises");
@@ -103,6 +117,19 @@ if (segmentEioAt > 0) {
   };
 }
 
+const [blockAt, blockMs] = (env.SKILL_ME_TEST_TRACES_BLOCK_LOOP ?? "").split("|").map(Number);
+if (blockAt > 0) {
+  const realOpen = fsp.open;
+  let creations = 0;
+  fsp.open = async function blockedOpen(file, flags, mode) {
+    if (isLock(file) && typeof flags === "string" && flags.includes("x") && ++creations === blockAt) {
+      const until = performance.now() + blockMs;
+      while (performance.now() < until);
+    }
+    return realOpen(file, flags, mode);
+  };
+}
+
 const timingFile = env.SKILL_ME_TEST_TRACES_TIMING;
 const FILE_KINDS = [
   [/^\.lock$/, "lock"],
@@ -118,13 +145,23 @@ const FILE_KINDS = [
 ];
 const fileKind = (file) => (typeof file === "string" ? (FILE_KINDS.find(([pattern]) => pattern.test(path.basename(file)))?.[1] ?? "pasta") : "fd");
 
+const tenth = (ms) => Math.round(ms * 10) / 10;
+
 if (timingFile) {
   const ops = [];
+  const inFlight = new Set();
+  const loop = monitorEventLoopDelay({ resolution: 10 });
+  loop.enable();
   let cpuAtStart = null;
   const timed = (op, kind, run) => {
     cpuAtStart ??= process.cpuUsage();
     const started = performance.now();
-    const done = (...code) => ops.push([op, kind, Math.round(started * 10) / 10, Math.round((performance.now() - started) * 10) / 10, ...code]);
+    const entry = [op, kind, started];
+    inFlight.add(entry);
+    const done = (...code) => {
+      inFlight.delete(entry);
+      ops.push([op, kind, tenth(started), tenth(performance.now() - started), ...code]);
+    };
     return run().then(
       (value) => {
         done();
@@ -166,8 +203,13 @@ if (timingFile) {
     });
   };
   process.on("exit", () => {
+    const exitAt = performance.now();
+    loop.disable();
     const cpu = process.cpuUsage(cpuAtStart ?? undefined);
-    appendFileSync(timingFile, JSON.stringify({ ops, cpuMs: Math.round((cpu.user + cpu.system) / 1000) }) + "\n");
+    const pending = [...inFlight].map(([op, kind, started]) => [op, kind, tenth(started), tenth(exitAt - started)]);
+    const delay = loop.count > 0 ? { samples: loop.count, maxMs: tenth(loop.max / 1e6), p99Ms: tenth(loop.percentile(99) / 1e6) } : { samples: 0, maxMs: null, p99Ms: null };
+    const line = { ops, cpuMs: Math.round((cpu.user + cpu.system) / 1000), pending, exitMs: tenth(exitAt), startedAt: Math.round(performance.timeOrigin), pid: process.pid, loop: delay };
+    appendFileSync(timingFile, JSON.stringify(line) + "\n");
   });
 }
 

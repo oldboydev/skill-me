@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { after, before, test } from "node:test";
+import { isDeepStrictEqual } from "node:util";
+import { ATTEMPT_MS } from "../../../src/integrations/traces/delivery.mjs";
 import { INTEGRATIONS_CLI, PSEUDONYM, baseEnv, makeScratch, runIntegrationsJson } from "../helpers/cli.mjs";
 import { CANARY_PATTERN, loadFixture } from "../helpers/fixtures.mjs";
 import { readClaudeHandlers, readCodexHandlers, runClaudeHandler, runCodexHandler } from "../helpers/installed-hooks.mjs";
@@ -10,8 +12,12 @@ import { runPrivacy } from "../helpers/privacy-store.mjs";
 import {
   assertAbsentOnDisk,
   boundEnv,
+  captureDir,
+  deliveryEvidence,
   deliveryTiming,
+  describeDeliveryEvidence,
   describeTiming,
+  explainedUnless,
   exportOf,
   expectedPseudonym,
   filesUnder,
@@ -187,15 +193,36 @@ test("T8-C2 Codex hook live capture: linha instalada em hooks.json grava um regi
   for (const file of filesUnder(storeDir(root))) assert.ok(!CANARY_PATTERN.test(readFileSync(file, "latin1")), path.basename(file));
 });
 
-test("T8-C3 Hermes live capture: ingest vinculado grava cada evento suportado uma vez e sai 0", async () => {
-  const root = scratch("t8 c3 raiz");
+// O T8-C3 e as provas do diagnóstico das entregas de um produtor (I25-C46,
+// issue #25; linha "Diagnóstico das entregas de um produtor nas provas T8" do
+// Landing) passam pela mesma rotina: o ingest Hermes dos registros válidos com
+// a pré-carga de tempos — só observa — e, nas provas do diagnóstico, uma
+// injeção dela. Na CI do Windows o T8-C3 perdeu os 9 com `delivery_timeout`
+// sem nenhum dado de onde a entrega parou.
+async function hermesLiveCapture(label, injected = {}) {
+  const root = scratch(`${label} raiz`);
   const id = startCapture(root);
   const records = loadFixture("hermes-hooks.json").cases.filter((c) => c.valid).map((c) => hermesRecord(c.name));
-  const run = await runHermesIngest(records, { env: boundEnv(root, id) });
+  const timing = path.join(scratch(`${label} tempos`), "ingest.ndjson");
+  const run = await runHermesIngest(records, { env: boundEnv(root, id, { ...timedEnv(timing), ...injected }) });
+  return { root, id, records, run, produced: [{ label: "ingest hermes", run, timing }] };
+}
+
+// As asserções de sempre do T8-C3 sobre o ingest; só a mensagem da entrega traz
+// a evidência, e só quando ela não vem como esperado.
+function assertHermesDelivered(flow) {
+  const { run, records } = flow;
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout, "");
   assert.equal(run.report.events.length, records.length, "cada linha fixture é um evento suportado");
-  assert.deepEqual(run.report.delivery, DELIVERED(records.length));
+  const expected = DELIVERED(records.length);
+  assert.deepEqual(run.report?.delivery, expected, explainedUnless(isDeepStrictEqual(run.report?.delivery, expected), "ingest hermes", flow));
+}
+
+test("T8-C3 Hermes live capture: ingest vinculado grava cada evento suportado uma vez e sai 0", async () => {
+  const flow = await hermesLiveCapture("t8 c3");
+  assertHermesDelivered(flow);
+  const { root, id, records, run } = flow;
   const stored = exportOf(root, id).records;
   assert.equal(stored.length, records.length);
   for (const [index, record] of stored.entries()) {
@@ -212,11 +239,77 @@ test("T8-C3 Hermes live capture: ingest vinculado grava cada evento suportado um
   assert.equal(unbound.status, 0);
   assert.equal(unbound.report.delivery, undefined, "sem vínculo, o relatório é o da #4/#5");
   privacyOk(["stop", "--root", root, "--capture", id]);
-  const late = await runHermesIngest(records, { env: boundEnv(root, id) });
+  const lateTiming = path.join(scratch("t8 c3 tempos depois do stop"), "ingest.ndjson");
+  const late = await runHermesIngest(records, { env: boundEnv(root, id, timedEnv(lateTiming)) });
   assert.equal(late.status, 0);
   assert.equal(late.stdout, "");
-  assert.deepEqual(late.report.delivery, { bound: true, code: "capture_not_active", entries: records.length, committed: 0, persisted: 0, lost: records.length });
+  const refused = { bound: true, code: "capture_not_active", entries: records.length, committed: 0, persisted: 0, lost: records.length };
+  assert.deepEqual(late.report?.delivery, refused, explainedUnless(isDeepStrictEqual(late.report?.delivery, refused), "ingest hermes depois do stop", { root, id, produced: [{ label: "ingest hermes depois do stop", run: late, timing: lateTiming }] }));
   assert.equal(exportOf(root, id).records.length, records.length, "nada gravado depois do stop");
+});
+
+// I25-C46 (issue #25): o diagnóstico pela rotina do T8-C3, com uma injeção da
+// pré-carga só no ingest. A asserção do T8-C3 continua vermelha com o sintoma da
+// CI, e a evidência separa disco parado sob o lock, criação do lock parada e laço
+// de eventos parado — pela operação em curso, pela tomada, pela idade e pelo
+// atraso do laço.
+const LOST_BY_TIMEOUT = (n) => ({ bound: true, code: "delivery_timeout", entries: n, committed: 0, persisted: 0, lost: n });
+
+function hermesFailure(flow) {
+  try {
+    assertHermesDelivered(flow);
+  } catch (error) {
+    return error;
+  }
+  return null;
+}
+
+// Falhou a asserção de sempre (`actual` e `expected` dela), e a mensagem começa
+// pelo rótulo e pela evidência inteira; o Node anexa o diff depois dela.
+function explainedFailure(failure, flow) {
+  assert.ok(failure instanceof assert.AssertionError, `a asserção do T8-C3 continua vermelha: ${failure}`);
+  assert.deepEqual([failure.actual, failure.expected], [LOST_BY_TIMEOUT(flow.records.length), DELIVERED(flow.records.length)]);
+  const evidence = deliveryEvidence(flow);
+  assert.ok(failure.message.startsWith(`ingest hermes\n${describeDeliveryEvidence(evidence)}`), failure.message);
+  const key = readFileSync(path.join(captureDir(flow.root, flow.id), "key"));
+  for (const value of [flow.root, flow.id, key.toString("hex"), key.toString("base64"), key.toString("base64url"), process.env.PATH].filter(Boolean)) {
+    assert.ok(!failure.message.includes(value), "a evidência não traz caminho, ID, chave nem ambiente");
+  }
+  assert.deepEqual(leaks(failure.message), []);
+  return evidence.producers[0].trace;
+}
+
+test("I25-C46 diagnóstico das entregas de um produtor: disco parado sob o lock mantém o T8-C3 vermelho e mostra a operação em curso, a tomada, a idade, o laço livre e o lock do produtor", async () => {
+  const flow = await hermesLiveCapture("i25 c46 disco", { SKILL_ME_TEST_TRACES_STALL_SEGMENT: "1" });
+  const failure = hermesFailure(flow);
+  const trace = explainedFailure(failure, flow);
+  assert.deepEqual([trace.failures, trace.pending.map((p) => p.name), trace.last], [[], ["open segmento.tmp (sob o lock, 2ª tomada)"], "close state.json (sob o lock, 2ª tomada)"], failure.message);
+  // O lote só é lido depois da abertura (fim da 1ª tomada) e espera até o prazo
+  // de ATTEMPT_MS da leitura; os valores da linha têm uma casa decimal.
+  const [stalled] = trace.pending;
+  assert.ok(stalled.ageMs >= ATTEMPT_MS - (stalled.startMs - trace.holdEnds[1]) - 0.2, `em curso até o prazo: ${failure.message}`);
+  assert.ok(trace.loop.samples > 0 && trace.loop.maxMs < ATTEMPT_MS, `o laço continuou livre: ${failure.message}`);
+  const { capture } = deliveryEvidence(flow);
+  assert.deepEqual(capture, { status: { unavailable: "lock_present" }, files: { segments: 0, temporaries: 0 }, lock: { present: true, owner: "ingest hermes" } }, failure.message);
+});
+
+test("I25-C46 diagnóstico das entregas de um produtor: criação do lock parada mantém o T8-C3 vermelho e mostra a operação em curso antes da tomada, o laço livre e o lock ausente", async () => {
+  const gate = scratch("i25 c46 lock portão");
+  const flow = await hermesLiveCapture("i25 c46 lock", { SKILL_ME_TEST_TRACES_GATE: `${gate}|1` });
+  const failure = hermesFailure(flow);
+  const trace = explainedFailure(failure, flow);
+  assert.deepEqual([trace.failures, trace.pending.map((p) => p.name), trace.last, trace.holdEnds], [[], ["open lock (tomada do lock)"], "close store.json (fora do lock)", {}], failure.message);
+  assert.ok(trace.loop.samples > 0 && trace.loop.maxMs < ATTEMPT_MS, `o laço continuou livre: ${failure.message}`);
+  const { capture } = deliveryEvidence(flow);
+  assert.deepEqual(capture, { status: { state: "active", accepted: 0, persisted: 0 }, files: { segments: 0, temporaries: 0 }, lock: { present: false } }, failure.message);
+});
+
+test("I25-C46 diagnóstico das entregas de um produtor: laço de eventos parado mantém o T8-C3 vermelho e mostra o atraso do laço maior que o prazo da tentativa", async () => {
+  const flow = await hermesLiveCapture("i25 c46 laço", { SKILL_ME_TEST_TRACES_BLOCK_LOOP: "2|900" });
+  const failure = hermesFailure(flow);
+  const trace = explainedFailure(failure, flow);
+  assert.ok(trace.holdEnds[1] !== undefined, `a abertura terminou antes: ${failure.message}`);
+  assert.ok(trace.loop.maxMs >= ATTEMPT_MS, `o laço ficou parado mais que o prazo da tentativa: ${failure.message}`);
 });
 
 const EXEC_CASES = loadFixture("codex-exec.json").cases.filter((c) => c.valid && c.event);
@@ -435,12 +528,20 @@ test("T8-C8 live content policy: sem opt-in omite argumentos e resultados; com -
   const hermes = hermesRecord("post_tool_call");
   const dir = scratch("t8 c8 wrapper");
   const scenario = writeScenario(dir, "c8", [{ stdout: JSON.stringify(exec) }]);
+  // Cada produtor com a pré-carga de tempos; a mensagem só ganha a evidência
+  // quando a entrega não vem como esperado (na CI do Windows o ingest perdeu a
+  // entrada com `delivery_timeout`, sem dado).
   for (const capture of [off, on]) {
-    const env = boundEnv(root, capture);
-    assert.deepEqual((await runHook("claude", bash, { env })).report.delivery, DELIVERED(1));
-    assert.deepEqual((await runHermesIngest([hermes], { env })).report.delivery, DELIVERED(1));
-    const wrapped = await runWrapper({ args: ["p"], env: boundEnv(root, capture, { FAKE_CODEX_SCENARIO: scenario }), cwd: dir });
-    assert.deepEqual(wrapped.report.delivery, DELIVERED(2));
+    const times = scratch(`t8 c8 tempos ${capture === off ? "sem conteúdo" : "com conteúdo"}`);
+    const deliver = async (label, start, expected) => {
+      const timing = path.join(times, `${label}.ndjson`);
+      const run = await start(timedEnv(timing));
+      const delivery = run.report?.delivery;
+      assert.deepEqual(delivery, expected, explainedUnless(isDeepStrictEqual(delivery, expected), label, { root, id: capture, produced: [{ label, run, timing }] }));
+    };
+    await deliver("hook claude", (timed) => runHook("claude", bash, { env: boundEnv(root, capture, timed) }), DELIVERED(1));
+    await deliver("ingest hermes", (timed) => runHermesIngest([hermes], { env: boundEnv(root, capture, timed) }), DELIVERED(1));
+    await deliver("wrapper codex", (timed) => runWrapper({ args: ["p"], env: boundEnv(root, capture, { FAKE_CODEX_SCENARIO: scenario, ...timed }), cwd: dir }), DELIVERED(2));
   }
   // Referência: o mesmo payload pelo `privacy ingest` da #5.
   for (const [agent, entry] of [["claude", bash], ["hermes", hermes], ["codex-exec", exec]]) {

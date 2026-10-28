@@ -173,21 +173,129 @@ export const shown = (value, describe) => (value.unavailable === undefined ? des
 // `.lock` que deu certo até o `unlink` dele, inclusive; `hold` numera as
 // tomadas do processo (1, 2…); `commits` conta os `rename` de `state.json.tmp`
 // concluídos naquela tomada antes da operação. Cada consumidor diz a fase com
-// o que vale no caminho dele.
+// o que vale no caminho dele. `at` e `ms` são o início e a duração (ou a idade,
+// para uma operação em curso na saída) da linha.
 export function diskTrace(ops) {
   let held = false;
   let hold = 0;
   let commits = 0;
   return [...ops]
     .sort((x, y) => x[2] - y[2])
-    .map(([op, kind, , , code]) => {
-      const entry = { op, kind, code, held, hold: held ? hold : null, commits: held ? commits : 0 };
+    .map(([op, kind, at, ms, code]) => {
+      const entry = { op, kind, code, held, hold: held ? hold : null, commits: held ? commits : 0, at, ms };
       if (op === "writeFile" && kind === "lock" && code === undefined) [held, hold, commits] = [true, hold + 1, 0];
       else if (op === "rename" && kind === "state.json.tmp" && code === undefined && held) commits += 1;
       else if (op === "unlink" && kind === "lock") held = false;
       return entry;
     });
 }
+
+// Diagnóstico das entregas de um produtor nas provas da #8 (consumidores: T8-C3 e
+// T8-C8 em traces/live-capture.cli.test.mjs, T8-C14 em traces/query.cli.test.mjs
+// e T8-C18 em traces/replay.unit.test.mjs; linha "Diagnóstico das entregas de um
+// produtor nas provas T8" do Landing da #25). Na captura manual a 1ª tomada do
+// lock é a abertura e a seguinte grava o lote; cada tomada tem no máximo um
+// commit (o `rename` de state.json.tmp). Nada aqui lança nem traz caminho,
+// conteúdo, ID, chave, nonce ou ambiente.
+const PENDING = "pendente";
+const placeInCapture = ({ held, hold, commits, kind }) =>
+  held ? `sob o lock, ${hold}ª tomada${commits > 0 ? ", depois do commit" : ""}` : kind === "lock" ? "tomada do lock" : "fora do lock";
+const named = (entry) => `${entry.op} ${entry.kind}${entry.code === undefined || entry.code === PENDING ? "" : ` ${entry.code}`} (${placeInCapture(entry)})`;
+const isLockContention = ({ op, kind, code }) => op === "open" && kind === "lock" && code === "EEXIST";
+
+// Da última linha da pré-carga de um produtor: o resumo de sempre com as falhas
+// que não são disputa do lock, a última operação concluída, as que estavam em
+// curso na saída (com a idade), o processo e o laço de eventos.
+export function producerTrace(file) {
+  const lines = timingLines(file);
+  if (lines.length === 0) return { unavailable: "sem linha da pré-carga" };
+  const line = lines.at(-1);
+  const trace = diskTrace([...line.ops, ...(line.pending ?? []).map(([op, kind, at, age]) => [op, kind, at, age, PENDING])]);
+  const done = trace.filter((entry) => entry.code !== PENDING);
+  const failures = done.filter((entry) => entry.code !== undefined && !isLockContention(entry)).map(named);
+  const firstOpMs = line.ops.length === 0 ? null : Math.min(...line.ops.map(([, , at]) => at));
+  return {
+    lines: lines.length,
+    pid: line.pid ?? null,
+    failures,
+    contention: done.filter(isLockContention).length,
+    last: done.length === 0 ? "nenhuma" : named(done.at(-1)),
+    pending: trace.filter((entry) => entry.code === PENDING).map((entry) => ({ name: named(entry), startMs: entry.at, ageMs: entry.ms })),
+    holdEnds: Object.fromEntries(
+      [...new Set(done.filter((entry) => entry.held).map((entry) => entry.hold))].map((hold) => [hold, Math.max(...done.filter((entry) => entry.hold === hold).map((entry) => entry.at + entry.ms))]),
+    ),
+    process: { startedAt: line.startedAt ?? null, firstOpMs, exitMs: line.exitMs ?? null },
+    loop: line.loop ?? null,
+    summary: describeTiming({ ...deliveryTiming(line), failed: failures }),
+  };
+}
+
+const describeProcess = ({ startedAt, firstOpMs, exitMs }, loop) =>
+  `processo: iniciado ${startedAt === null ? "?" : new Date(startedAt).toISOString()}, 1ª operação aos ${firstOpMs ?? "?"} ms, saída aos ${exitMs ?? "?"} ms; ` +
+  `laço de eventos: ${loop === null || loop.samples === 0 ? "sem amostras" : `atraso máximo ${loop.maxMs} ms, p99 ${loop.p99Ms} ms (${loop.samples} amostras)`}`;
+
+export const describeProducerTrace = (t) =>
+  `${t.summary}; lock ocupado (EEXIST, repetido) ${t.contention}x; última concluída: ${t.last}; ` +
+  `pendentes na saída: ${t.pending.length === 0 ? "nenhuma" : t.pending.map((p) => `${p.name} há ${Math.round(p.ageMs)} ms`).join(", ")}` +
+  `${t.lines === 1 ? "" : `; ${t.lines} linhas da pré-carga`}\n  ${describeProcess(t.process, t.loop)}`;
+
+// Da captura, depois que os produtores saíram: o status pelo CLI, como o
+// usuário o consulta (com o lock preso, sai com o código dele); a pasta e o lock
+// lidos direto. O dono do lock é o produtor cujo `pid` (da linha da pré-carga)
+// está no `.lock`; o nonce do lock não é lido para a saída.
+export function captureEvidence(root, id, owners = []) {
+  const status = inspected(() => {
+    const result = privacyBody(["status", "--root", root, "--capture", id]);
+    if (result.unavailable !== undefined) return result;
+    const { state, counters } = result.body.capture;
+    return { state, accepted: counters.accepted, persisted: counters.persisted };
+  });
+  const files = inspected(() => {
+    const names = readdirSync(captureDir(root, id));
+    return { segments: names.filter((name) => /^events-\d{6}\.ndjson$/.test(name)).length, temporaries: names.filter((name) => name.endsWith(".skill-me-tmp")).length };
+  });
+  const lock = inspected(() => {
+    if (!readdirSync(storeDir(root)).includes(".lock")) return { present: false };
+    const pid = inspected(() => JSON.parse(readFileSync(path.join(storeDir(root), ".lock"), "utf8")).pid);
+    if (typeof pid !== "number") return { present: true, owner: `ilegível [${pid.unavailable ?? "sem pid"}]` };
+    const by = owners.filter((owner) => owner.pid === pid).map((owner) => owner.label);
+    return { present: true, owner: by.length > 0 ? by.join(", ") : "outro processo" };
+  });
+  return { status, files, lock };
+}
+
+// Produtores já terminados (`produced`: rótulo, resultado de runInternal e o
+// arquivo da pré-carga de cada um) e a captura deles.
+export function deliveryEvidence({ root, id, produced }) {
+  const producers = produced.map(({ label, run, timing }) => ({
+    label,
+    status: run.status,
+    signal: run.signal,
+    delivery: run.report?.delivery ?? null,
+    trace: inspected(() => producerTrace(timing)),
+  }));
+  const owners = producers.filter((p) => typeof p.trace.pid === "number").map((p) => ({ label: p.label, pid: p.trace.pid }));
+  return { producers, capture: inspected(() => captureEvidence(root, id, owners)) };
+}
+
+export function describeDeliveryEvidence({ producers, capture }) {
+  const lines = producers.flatMap(({ label, status, signal, delivery, trace }) => [
+    `produtor ${label}: status ${status}, sinal ${signal ?? "nenhum"}; entrega ${delivery === null ? "sem relatório" : JSON.stringify(delivery)}`,
+    `  tempos: ${shown(trace, describeProducerTrace)}`,
+  ]);
+  const described = shown(capture, ({ status, files, lock }) =>
+    [
+      `status ${shown(status, (s) => `${s.state}, accepted ${s.accepted}, persisted ${s.persisted}`)}`,
+      `pasta ${shown(files, (f) => `${f.segments} segmento(s), ${f.temporaries} temporário(s)`)}`,
+      `lock ${shown(lock, (l) => (l.present ? `presente, de ${l.owner}` : "ausente"))}`,
+    ].join("; "),
+  );
+  return [...lines, `captura: ${described}`].join("\n");
+}
+
+// Mensagem de uma asserção de entrega: o rótulo de sempre e, só quando o valor
+// não é o esperado, a evidência — o caminho saudável não ganha chamadas de CLI.
+export const explainedUnless = (matches, label, flow) => (matches ? label : `${label}\n${describeDeliveryEvidence(deliveryEvidence(flow))}`);
 
 export const runHook = (agent, payload, options = {}) =>
   runInternal(["hook", "--agent", agent], { ...options, stdinText: options.stdinText ?? JSON.stringify(payload) });
