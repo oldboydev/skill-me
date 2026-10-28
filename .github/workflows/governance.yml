@@ -74,3 +74,22 @@ jobs:
           DETECTION_RESULT: ${{ needs.changes.result }}
           CODE_CHANGED: ${{ needs.changes.outputs.code }}
           VERIFY_RESULT: ${{ needs.verify.result }}
+
+  # Medição comparativa da latência do lock no runner Windows (issue #25, AC9):
+  # só por execução manual, fora dos checks regulares e do agregado `ci`.
+  lock_diagnostics:
+    name: Diagnosticar lock Windows (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.13.0
+      - run: npm ci --ignore-scripts
+      - run: node scripts/ci-lock-latency.mjs

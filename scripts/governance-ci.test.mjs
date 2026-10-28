@@ -289,9 +289,12 @@ test("governance-C1 C3 workflow sempre publica CI sem IA nem release", () => {
   });
   assert.equal(ci["continue-on-error"], undefined);
   assert.equal(result["continue-on-error"], undefined);
+  // `lock_diagnostics`: job manual autorizado pelo AC9 da issue #25, com as
+  // restrições conferidas em governance-C49; os regulares continuam estes três.
   assert.deepEqual(Object.keys(workflow.jobs).sort(), [
     "changes",
     "ci",
+    "lock_diagnostics",
     "verify",
   ]);
   for (const job of Object.values(workflow.jobs))
@@ -303,4 +306,54 @@ test("governance-C1 C3 workflow sempre publica CI sem IA nem release", () => {
           /codex|grok|claude|npm publish|deploy|git push/i,
         );
     }
+});
+
+test("governance-C49 job manual de diagnóstico do lock: só em workflow_dispatch, Windows, 10 min, leitura, mesmas ações pinadas, fora do agregado e sem tolerar falha", () => {
+  const workflow = parse(
+    readFileSync(path.join(root, ".github/workflows/governance.yml"), "utf8"),
+  );
+  const job = workflow.jobs.lock_diagnostics;
+  const verify = workflow.jobs.verify;
+  assert.deepEqual(Object.keys(job).sort(), [
+    "if",
+    "name",
+    "permissions",
+    "runs-on",
+    "steps",
+    "timeout-minutes",
+  ]);
+  assert.equal(job.name, "Diagnosticar lock Windows (manual)");
+  assert.equal(job.if, "github.event_name == 'workflow_dispatch'");
+  assert.equal(job["runs-on"], "windows-latest");
+  assert.equal(job["timeout-minutes"], 10);
+  assert.deepEqual(job.permissions, { contents: "read" });
+  // As mesmas ações do `verify`, nos mesmos hashes; sem cache no setup-node.
+  const [checkout, setup, ...commands] = job.steps;
+  assert.deepEqual(checkout, {
+    uses: verify.steps[0].uses,
+    with: { "persist-credentials": false },
+  });
+  assert.deepEqual(setup, {
+    uses: verify.steps[1].uses,
+    with: { "node-version": "24.13.0" },
+  });
+  assert.deepEqual(commands, [
+    { run: "npm ci --ignore-scripts" },
+    { run: "node scripts/ci-lock-latency.mjs" },
+  ]);
+  // Nem o agregado nem outro job dependem dele, e nada nele tolera falha.
+  assert.deepEqual(workflow.jobs.ci.needs, ["changes", "verify"]);
+  for (const other of Object.values(workflow.jobs)) {
+    assert.ok(![other.needs].flat().includes("lock_diagnostics"));
+    assert.equal(other["continue-on-error"], undefined);
+    for (const step of other.steps ?? [])
+      assert.equal(step["continue-on-error"], undefined);
+  }
+  // A ferramenta roda junto das provas de governança da CI regular.
+  const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  assert.equal(
+    pkg.scripts["test:governance"],
+    "node --test scripts/governance-ci.test.mjs scripts/ci-lock-latency.test.mjs",
+  );
+  assert.equal(pkg.private, true);
 });
