@@ -53,7 +53,23 @@ jobs:
       - run: npm run test:governance
       - run: npm run test:code-review
       - run: npm run test:doctor
-      - run: npm run test:integrations
+      - if: matrix.os != 'windows-latest'
+        run: npm run test:integrations
+      # Windows: TEMP/TMP no RUNNER_TEMP só neste passo e nos filhos dele (issue #25). Na
+      # medição 40790906319, a tomada do lock no RUNNER_TEMP teve latência menor que no
+      # temporário padrão; isso não demonstra a causa das falhas da CI. Sem fallback: um
+      # RUNNER_TEMP inválido interrompe o passo antes do npm. Pelo `pwsh -command` do runner,
+      # um código de saída do npm diferente de 0 chega ao job como 1.
+      - if: matrix.os == 'windows-latest'
+        run: |
+          $destino = $env:RUNNER_TEMP
+          if (-not $destino -or -not [IO.Path]::IsPathFullyQualified($destino) -or -not (Test-Path -LiteralPath $destino -PathType Container)) {
+            throw 'RUNNER_TEMP precisa ser o caminho absoluto de uma pasta existente'
+          }
+          $env:TEMP = $destino
+          $env:TMP = $destino
+          npm run test:integrations
+          exit $LASTEXITCODE
 
   ci:
     name: CI
