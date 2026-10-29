@@ -1,3 +1,223 @@
+# Verificação independente 25 — **FAIL**
+
+**Veredito: FAIL.** O gate B fresco (clone novo `autocrlf=true`, Node 24.13.0 oficial) terminou naturalmente com
+**643/628/2/0 cancelados/13 skips, EXIT=1**. Pela regra da rodada, parei: C e D **não foram executados** (o controlador
+do Root também exige `B-result.valid`). Por isso nenhum check C1–C50 é declarado PASS global nesta rodada. O F1 da R24 está
+corrigido pela leitura e as três regressões novas passaram em A e em B, mas isso não supre um gate vermelho.
+
+- Escopo: feature inteira `63621c691f132dc8d591414269d36cfa18fca594..80cfccf3eb36d04be02ea41e74548c38d0fd3bbd`
+  (árvore `eebb633b2bd6bd7e5defefaf23e90b317a0fd654`). Diffs exportados pelo Root: `independent-25/feature.diff` e
+  `independent-25/s14.diff` (desde `34466ab`), lidos como dados.
+- Verifier Claude novo (rodada 25), sem herdar sessão; não sou o autor S13/S14 nem um Verifier anterior. Perfil light,
+  handoff on. Não fiz fault injection, mutantes, sondas, commits, push, Actions nem rede.
+- Leitura (Read/Grep/Glob): `AGENTS.md`; `context-round25.json` inteiro (9 ACs, comentários 1–41); checklist
+  (`Sources` S14, Landing “Lugar da posse no formatter do I23-C10”, refinamento F1 do C46 (u), `Swept`
+  `.checks/issue-25-agent-launch.md:1103-1122`); o bloco S14 do build e do `Handoff` por `s14.diff`; manifesto e drivers
+  do Root; fontes dos consumidores tocados. **Limite de leitura**: não li inteiros o task, o plano vinculante, CLAUDE.md,
+  `verify.md`, o relatório R24 nem os ~23 mil linhas do `feature.diff`; li o `s14.diff` só até a linha 244 de 969. Os
+  pontos abaixo que dependem dessas fontes estão marcados como carry atribuído, não como conferência minha.
+
+## Achados
+
+### F1 (gate B) — `I25-C46 prazo da entrega: lock obtido com o relógio no prazo ou depois…` vermelho natural
+
+- **Cenário**: B, `tests/integrations/traces/concurrency.cli.test.mjs:992`, iteração `depois de uma recusa, depois do prazo`
+  (`busy [2]`, `creation 3`, `at = LOCK_DEADLINE + 1`).
+- **Esperado** (`:1007`): `[lockCreations, lockReleases]` = `[3, 2]` logo depois de `deliverOne`.
+- **Atual** (`B.log:710-730`): `[3, 1]`. A asserção anterior (`:1006`, relatório `lock_present` 1/0/0/1) passou.
+  `:1008-1011` não foram alcançadas. Evidência dos produtores: “nenhum produtor registrado”.
+- **Leitura (não provada por execução minha)**: `untilDeadline` (`src/integrations/traces/delivery.mjs:85-99`) corre a
+  operação contra um `setTimeout(remaining)` **real**. O relógio do teste é injetado, mas o timer não. Se esse timer
+  disparar antes de a liberação da tentativa recusada terminar, `settle()` resolve com o mesmo código esperado e o `rmdir`
+  da reserva (o contador `lockReleases`, `:851-854`) ainda não ocorreu. A liberação S13 tem mais passos (mkdtemp, lstat,
+  leitura, rename, lstat, leitura, unlink, lstat, rmdir). Diferente de `:933` e `:968`, que esperam com
+  `waitUntil(... lockReleases === 2)`, a linha `:1007` confere **de forma síncrona**. O código `lock_present`/
+  `delivery_timeout` é o mesmo nos dois caminhos, então o teste não distingue “antes de o timer rodar” (premissa do nome)
+  de “timer já rodou”. É um defeito plausível da prova (premissa sem controle e sem espera), não um defeito demonstrado do
+  produto. Não demonstrei a causa.
+- **Coincidência observada, não causa**: o teste seguinte do mesmo arquivo (`:1016`) levou 26.356 ms (`B.log:634`). No
+  mesmo minuto, o T8-C8 teve um `open lock` de 26.713 ms e laço de eventos com atraso máximo de 10.016 ms (abaixo).
+- **Impacto**: o gate B fica vermelho, C e D não rodam e não há PASS.
+- **Onde foi introduzido**: este teste e `lockTakenAt` entraram na feature (`feature.diff:23555-23584`); a contagem por
+  `rmdir` da reserva entrou com a S13 (`feature.diff:23483`).
+
+### F2 (gate B) — T8-C8 antigo, `delivery_timeout` do wrapper Codex
+
+- **Cenário**: `tests/integrations/traces/live-capture.cli.test.mjs:576`, B.
+- **Esperado**: `{bound:true, code:null, entries:2, committed:2, persisted:2, lost:0}`.
+- **Atual** (`B.log:733-776`): `{code:"delivery_timeout", committed:0, persisted:0, lost:2}`. O produtor 3 teve um único
+  `open lock` concluído em 26.713 ms, “falhas nenhuma”, “lock ocupado 0x”, laço com atraso máximo de 10.016 ms (p99 18,1 ms,
+  1.080 amostras), 26.779 ms da 1ª operação à saída. Os produtores 1 e 2 entregaram 1/1 cada. A captura ficou com
+  `accepted 2 persisted 2` e lock ausente.
+- **Leitura**: o produto cumpriu o prazo e informou a perda com código fechado; a política de perdas não mudou. A causa
+  física de um `open` de ~26,7 s no host é **desconhecida**. Não atribuo a antivírus, disco ou à S13, e não reclassifico como
+  verde.
+- **Impacto**: segunda falha natural do B.
+
+Nenhum dos dois foi repetido, contornado ou corrigido por mim.
+
+## Gates (execução minha; infraestrutura do Root)
+
+| Gate | Comando exato (1×) | Ambiente observado | Resultado |
+| --- | --- | --- | --- |
+| A | `matrix-controller.mjs independent-25 A` | Windows, Node v24.22.1, npm 11.19.1; HEAD/árvore iguais; `autocrlf=true`; pwsh `C:\Program Files\PowerShell\7\pwsh.exe` + opt-outs; 32 CPUs → 8; 68 + 2 arquivos; TEMP isolado (`tmpdir_isolado=true`); RUNNER_TEMP vazio | **643/630/0/0/13**, EXIT=0 natural, 20:38:21–20:46:05 UTC; status antes/depois vazio; raiz removida pelo registro (dev/ino) |
+| B | `… B` | clone novo (dev/ino registrados), `core.autocrlf` em `.git/config` = true; `cli.mjs` `i/lf w/lf`, store `w/crlf`; zip `ca274269…` = SHASUMS256; node.exe igual ao zip; npm 11.6.2; Node v24.13.0; 8 | **643/628/2/0/13**, EXIT=1 natural, 20:46:33–20:53:00 UTC; HEAD/árvore/status iguais depois; clone conferido e removido |
+| C | não executado | — | parado por regra após o FAIL do B (o controlador exige B válido) |
+| D | não executado | — | idem |
+
+- **Skips do A** (`A.log:45,192,193,195,196,234,236,238,242,260,285,370,686`): 13, todos de plataforma com motivo —
+  sinais POSIX (I4-C15, I25-C5 POSIX, I25-C6, I25-C42 POSIX, T8-C4), ACL POSIX/macOS (I4-C25j/k/l/m), modos POSIX
+  (I4-C25b), PATH vazio POSIX (I25-C45), arranjo `npm run` POSIX (I25-C33) e pty (I25-C15). O B tem o mesmo total de 13.
+- **Testes novos da S14**: passaram em A (`A.log:333,334,665`) e em B (`B.log:333,334,665`). T8-C15 e os três
+  diagnósticos dele passaram em B (`B.log:614-617`).
+- Os 750/650 ms e o relatório de 1.000 ms aparecem só como resultado dos testes. Observados no B: 652–668 ms
+  (`B.log:619-636`). Não medi nem mudei prazos.
+- **Não observado por mim**: 643/621/0/22 no WSL, 1.076/1.056/0/20 no D, governança 27/27, motor 16/16, doctor 417/410/0/7,
+  integrações 616, os 11 nativos com runtime Hermes, o I4-C35 pelo runtime Hermes e o caso do Python do sistema.
+  Esses números são do autor e continuam atribuídos a ele.
+- Processo: sem execução em segundo plano; 0 tarefas de fundo pendentes. Uma chamada `echo noop`, fora da allowlist, foi
+  recusada pelo hook antes de executar (registrada na declaração).
+
+## F1 da R24 / C46 (u) / C47 — análise fresca
+
+- `helpers/traces.mjs:267`: `neutralPlace` exportado com o mesmo texto; `unheldPlace` (`:260`) dá `UNSURE_PLACE` quando
+  `unsure`. `diskTrace` (`:243-246`): a tomada zera `unsure`; um `rename lock` com código → `unsure`; um `rename lock`
+  concluído → fora; `unlink lock` legado → fora.
+- `observe/agents.e2e.test.mjs:251,258`: as `falhas` e a `última concluída` de `hookTiming` usam `neutralPlace`, e o
+  `placeOf` local não existe mais. Os pendentes já vinham de `pendingOf(line, neutralPlace)` (`helpers/traces.mjs:127`).
+  O quarto consumidor está corrigido.
+- `concurrency.cli.test.mjs:146` ainda tem a decisão própria, com `UNSURE_PLACE`. É a dívida registrada no Landing; a
+  regra está correta.
+- **Alcance das provas novas** (não é só `typeof`):
+  - `agents.e2e:461-487`, hook real com `LOCK_KEPT=2` / `LOST_CONFIRMATION=2`: relatório exato, falhas e última
+    concluída indeterminadas, mensagem sem `(fora do lock)`, `assertNoLeak`, efeito real (lock presente/ausente,
+    `absences` +1) e controle `SEGMENT_EIO=1` concluído → `(fora do lock)`.
+  - `agents.e2e:492-527`: `rmdir` EIO sem mover, `unlink` EIO depois de mover, `rmdir` pendente na saída, retomada →
+    `2ª tomada` com a disputa contada, rename concluído e linha legada fora do lock.
+  - `evidence.unit:264-283`: sequência completa por operação, rename pendente e legado.
+  - O RED estrutural (`typeof`) é só a 1ª linha; a discriminação comportamental vem dos dois testes do `agents.e2e`.
+- C47 (`agents.e2e:424,439`; `control.cli:1065,1081`; `evidence.unit:150,184`) passou em A e B; não li os literais
+  linha a linha.
+- **RED, GREEN e controles** (RED 19/16/3/0, GREEN 19/19/0/0, K1 8/6/2/0, K2 11/9/2/0, K3 11/8/3/0; o K3 recusado
+  antes de executar): provas do autor Claude com infraestrutura do Root, **atribuídas**, não refeitas por mim.
+
+## C1–C50 (status desta rodada)
+
+Legenda: **A✔B✔** = provas nomeadas passaram nos dois gates frescos. **A✔B✖** = falha no B. **POSIX não fresco** = a
+parte POSIX só rodaria no C, que não foi executado; o carry do autor (C2 643/621/0/22 em `a1156da`) fica atribuído.
+Nenhum é PASS global, porque o veredito da rodada é FAIL.
+
+| Check | Provas (arquivo:linha) | Status |
+| --- | --- | --- |
+| C1 | launch/command.cli:46 | A✔B✔ |
+| C2 | command.cli:82 | A✔B✔ |
+| C3 | command.cli:101 | A✔B✔ |
+| C4 | agent.unit:39,83; command.cli:108 | A✔B✔ |
+| C5 | command.cli:204 (POSIX, skip), :232 (Windows) | Windows A✔B✔; POSIX não fresco |
+| C6 | command.cli:251 (POSIX, skip) | não fresco nesta rodada |
+| C7 | prepare.cli:86 | A✔B✔ |
+| C8 | prepare.cli:101,131 | A✔B✔ |
+| C9 | prepare.cli:147 | A✔B✔ |
+| C10 | prepare.cli:180 | A✔B✔ |
+| C11 | prepare.cli:194 | A✔B✔ |
+| C12 | prepare.cli:204,368 | A✔B✔ |
+| C13 | prepare.cli:228 | A✔B✔ |
+| C14 | prepare.cli:242 | A✔B✔ |
+| C15 | prepare.cli:393 (pty POSIX, skip) | não fresco |
+| C16 | agent.unit:157; session.e2e:48 | A✔B✔ |
+| C17 | store.unit:49,82,113; session.e2e:295 | A✔B✔ |
+| C18 | session.e2e:73 | A✔B✔ |
+| C19 | session.e2e:128 | A✔B✔ |
+| C20 | session.e2e:170 | A✔B✔ |
+| C21 | session.e2e:195 | A✔B✔ |
+| C22 | session.e2e:214 | A✔B✔ |
+| C23 | session.e2e:259 | A✔B✔ |
+| C24 | store.unit:159 | A✔B✔ |
+| C25 | end.e2e:51 | A✔B✔ |
+| C26 | end.e2e:92 | A✔B✔ |
+| C27 | end.e2e:112; store.unit:207,241 | A✔B✔ |
+| C28 | end.e2e:153,176 | A✔B✔ |
+| C29 | command.cli:270 | A✔B✔ (Windows) |
+| C30 | command.cli:303 | A✔B✔ |
+| C31 | end.e2e:198,225 | A✔B✔ |
+| C32 | end.e2e:265,303,396; store.unit:706,723,740,755 | A✔B✔ |
+| C33 | end.e2e:446,481; arranjo `npm run` POSIX (skip) | Windows A✔B✔; POSIX não fresco |
+| C34 | report.cli:73,120,189,221 | A✔B✔ |
+| C35 | report.cli:242 | A✔B✔ |
+| C36 | command.cli:347 | A✔B✔ |
+| C37 | launch/docs:56,74,85 | A✔B✔ |
+| C38 | prepare.cli:337 (console Windows) | A✔B✔ |
+| C39 | hermes-harness.unit:88,96,183 | A✔B✔; nativos com runtime Hermes (D) não frescos |
+| C40 | hermes-harness.unit:193,213,315; hermes-plugin.native:333 | idem |
+| C41 | end.e2e:508–732; store.unit:301–514 | A✔B✔ |
+| C42 | agent.unit:177,218; command.cli:390 (POSIX, skip), :429 | Windows A✔B✔; POSIX não fresco |
+| C43 | end.e2e:817–958; store.unit:556–622 | A✔B✔ |
+| C44 | hermes-harness.unit:252,276,295 | A✔B✔ |
+| C45 | agent.unit:126; command.cli:157 (POSIX, skip), :189 | Windows A✔B✔; POSIX não fresco |
+| C46 | lock-release.unit:105–462; concurrency.cli:296,323,350,945,**992**,1016; evidence.unit; delivery.unit; agents.e2e:461,492; follow/demo/docs/replay/live-capture/codex-run/failure-matrix | **A✔B✖** (F1) |
+| C47 | agents.e2e:424,439; control.cli:1065,1081; evidence.unit:150,184 | A✔B✔ |
+| C48 | scripts/governance-ci.test.mjs | A✔B✔ (C não fresco) |
+| C49 | governance-ci.test.mjs | A✔B✔ |
+| C50 | scripts/ci-lock-latency.test.mjs | A✔B✔ |
+
+Além disso, o T8-C8 antigo (F2) falhou no B. Ele é consumidor da evidência do C46.
+
+**Por AC**:
+
+- AC1 (C1–C4, C45): Windows ✔; POSIX pendente.
+- AC2 (C7–C15, C38): ✔ exceto C15 (pty).
+- AC3 (C16–C24): ✔.
+- AC4 (C25–C35, C41–C43): ✔ no Windows; C33/C42 POSIX pendentes.
+- AC5 (C36–C37): ✔.
+- AC6 (C39, C40, C44): unit ✔; o gate completo com os nativos não foi executado.
+- AC7 (C46/T8-C15): T8-C15 ✔ em B, mas o C46 tem o F1.
+- AC8 (C47, C48): ✔ em A/B; o D completo não foi executado.
+- AC9 (C49, C50): ✔ local; a medição remota continua sendo condição de merge, não executada.
+
+Conclusão: **o AC7 não está atendido nesta rodada, e AC1/AC2/AC4/AC6/AC8 estão sem prova fresca completa.**
+
+## Limites, incidentes e atribuições
+
+- **Produto**: não reavaliei integralmente o `13ecc07` (D1–D3, E5, 14 mutantes). Continua por identidade do autor S13 e
+  da R24. Os blobs do HEAD que conferi no `A.env.txt:7` são `store.mjs` `72b138fc…`, `fs.mjs` `b088a4ab…`,
+  `traces.mjs` `dc2668d9…` e `concurrency.cli` `cadb0571…`.
+- **Incidente S14 `/tmp/x`** (o autor sobrescreveu `C:\Users\paulo\AppData\Local\Temp\x`, preexistente desde 26/09):
+  só pelos registros (`s14.diff:44-46,181-184`). Não li nem toquei o arquivo global; impacto desconhecido. O mesmo vale
+  para o C inicial recusado pelo Root (CRLF/8), `budgetMs` obsoletos, o K3 recusado, R5, cleanup 1.257/107, auxiliares
+  globais, D interrompido pelo Root, R21, as seis sobras e as oito chamadas PowerShell da S13. Estão preservados nos
+  registros. Não alego proveniência plena nem impacto global zero.
+- **Raízes desta rodada**: as raízes isoladas A/B foram removidas pelo registro com dev/ino (`A.env.txt:12`,
+  `B.env.txt:12`; 128 e 1.108 entradas deixadas pelos testes). O clone B foi removido depois da conferência
+  (`B-controller.log:42-43`). Os PowerShell iniciados foram só os da prova governance-C48, com os opt-outs herdados.
+- **Auditoria externa 25 (Root)**: `verifier-round25/profile-comparison-final.json` e `profile-target-check.json` **não
+  existem**. Fica pendente do Root, sem atribuição a mim e sem baseline inventado. Metadados WSL não auditam conteúdo,
+  Windows, PowerShell, rede, TEMP ou causalidade.
+- **Histórico preservado**: PR40814315171 e manual40814471097 vermelhos/cancelados, R23 e R24 FAIL, CI066 não
+  integrado. Não declaro CI verde, execução remota, `ready` nem formal 14. A formal 14 continua sem uso e não deve rodar
+  sobre este FAIL.
+
+## Declaração dos gates (escrita ANTES de qualquer execução)
+
+- HEAD `80cfccf3eb36d04be02ea41e74548c38d0fd3bbd`, árvore `eebb633b…` (manifesto Root `worker-guard/independent-25-manifest.json`).
+- A: Windows Node 24.22.1, `node --test --test-concurrency=8` sobre as integrações inteiras (`tests/integrations/**/*.test.mjs`, 68 arquivos) + `scripts/governance-ci.test.mjs` + `scripts/ci-lock-latency.test.mjs`, uma invocação, sem filtro; pwsh oficial e opt-outs no PATH/ambiente antes das fixtures; TEMP/TMP em raiz própria registrada; orçamento local 30 min.
+- B: clone NOVO `core.autocrlf=true`, Node 24.13.0 oficial (zip conferido contra SHASUMS256) / npm 11.6.2, mesmo alvo, concorrência 8; toplevel/HEAD/eol/status antes e depois; orçamento 30 min.
+- C: WSL Ubuntu uid 1000 (oldboydev), `git archive` com `core.autocrlf=false`, árvore igual obrigatória antes dos testes, Node 24.13 copiado num prefixo sem sh, `env -i`, PATH sem `/usr/bin`, sem agentes/pwsh, HOME/TMPDIR/RUNNER_TEMP próprios, concorrência 7 = min(8 CPUs−1, 8); orçamento 30 min.
+- D: um `npm test` completo, Windows Node 24.22.1, runner padrão min(CPU−1, 8), nativos Hermes pelas fixtures versionadas; orçamento local 2 h.
+- Cada comando exato executado uma vez, sequencialmente; qualquer falha/omissão/intervenção é preservada, sem repetição inalterada. Os orçamentos são locais, não prazos de produto/CI.
+- Esperado pelo autor (não afirmado até observar): 643 em A/B/C, 1.076 em D.
+- Observação de processo: antes desta declaração, uma chamada Bash `echo noop` foi recusada pelo hook `verifier-guard.mjs` (fora da allowlist) sem executar nada; registrada aqui.
+
+
+### Adenda do coordenador Root — alcance da rodada25
+
+A CLI do Verifier36486 terminou com exit0 e zero tarefas pendentes; o veredito foi FAIL, não aprovação. O contexto exportado contém42 comentários, incluindo o registro6507736435; o relatório acima diz1–41, e essa omissão de leitura fica preservada, junto com as demais fontes declaradas não lidas. Nenhum desses carries vale como verificação independente completa. O I4-C35 é a prova de integridade da árvore, não uma execução de runtimeHermes. Não foram executados C nem D.
+
+A auditoria25 conserva apenas o baseline copiado do final24 (12113 entradas,18:39:10UTC). Não foi coletado final nem comparação: a condição de encerrar depois do D independente não aconteceu. A próxima janela deve manter esse baseline e declarar que inclui as provas parciais25; não inventar um D25 nem um baseline posterior. A auditoria é de metadados WSL, sem conteúdo/Windows/PowerShell/rede/TEMP/proveniência ou atribuição causal. O incidente do arquivo global Temp/x preexistente sobrescrito continua com conteúdo anterior sem cópia conhecida e impacto desconhecido.
+
+A formal14 continua sem uso(13 anteriores preservadas, teto14). Não houve push, nova Action ou merge. As duas falhas naturais B ficam bloqueantes até diagnóstico, correção necessária comprovada e nova verificação; não serão repetidas inalteradas para procurar verde.
+
+---
+
 # Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 24)
 
 **Verdict (R24)**: **FAIL — 49/50 checks provados; todos os gates frescos passaram.** HEAD `34466ab`, produto `13ecc07`, último código de prova `736e7d7`, 9 ACs. É a primeira verificação independente da liberação do lock por reserva exclusiva (D1–D3) e do esquema 2 da medição.
