@@ -726,3 +726,46 @@ proprietário com B (ver `Sources`) e saiu desta tabela; as demais mantêm o nú
 A formal8 (`bedda5c`) ficou `blocked`/`insufficient`: AC1–AC8 `met`, AC9 `unverified`, pois a medição no Actions ainda não ocorreu. O relatório e o histórico permanecem. A proposta aprovada já exige PASS/ready antes de publicar e executar uma vez o job manual na branch publicada (proposta, linhas23 e45–46). O AC9 da issue foi alinhado a essa ordem: a revisão do código comprova ferramenta, integração e provas locais; a execução e os resultados remotos permanecem obrigatórios antes do merge, junto dos cinco checks regulares verdes no HEAD aprovado, na seção própria da issue. Ready permite publicar para obter as provas remotas; não declara que já ocorreram nem libera o merge enquanto faltarem. Não foi removida nenhuma condição de entrega, prova, teste, prazo, contagem ou carga.
 
 Registro das rodadas concretamente necessárias15/9, sob a autorização humana já vigente: https://github.com/oldboydev/skill-me/issues/25#issuecomment-6470507482. A verificação15 examina esta correção documental e a identidade dos blobs de código/testes, carregando com SHA explícito as provas executadas da R14; não afirma novas execuções nem repete testes de código inalterado. A formal9 avalia o novo contexto, preservando as oito tentativas anteriores. O código permanece `6a242a2`, provado pelo autor e independentemente em A/B/C (151/145/0/6) e D (1023/1003/0/20, doze nativos), com relato R14 em `bedda5c`. Nenhuma execução remota foi feita até este registro.
+
+## Ambiente do passo de integrações no Windows — 28/10/2026 (CI de `86c7677`; sem critério novo)
+
+O HEAD `86c7677` foi publicado com o Verifier 20 PASS (50/50) e a formal 12 `ready`. Na CI dele, o PR
+40790722204 passou nos cinco checks (Windows 1.055/1.024/0/31). A execução manual 40790906319 terminou com o
+diagnóstico, o Ubuntu e o macOS verdes e o Windows e o agregado vermelhos. No Windows, só o passo de integrações
+falhou (597/570/3/24; governança 25/25, motor 16/16, doctor 410/0/7):
+
+- dois I23-C4: `control.cli.test.mjs:547` (`listCaptures` com `lock_present`, depois de um `writeExclusive
+  segmento.tmp` pendente há 310 ms após 424 ms de operações concluídas) e `:906` (um hook com `open lock`
+  pendente há 651 ms, laço de eventos 25,6 ms, CPU 15 ms e lock de 0 byte);
+- o controle positivo do C46 em `concurrency.cli.test.mjs:1008` (`delivery_timeout`, sem produtor registrado).
+
+Log integral em `.checks/code-review/issue-25/ci86-windows-manual40790906319.log`. Nenhuma causa física
+(antivírus, disco, hardware) foi demonstrada. Nada aqui afirma defeito do produto nem a correção dele.
+
+No mesmo job, a medição A1/B/A2 (`measurement40790906319.json`, `-validation.json` e `.log`) completou
+4.500/4.500 ciclos, sem erro, incompleto ou amostra ≥ 600 ms, com os destinos `C:` (padrão) e `D:`
+(`RUNNER_TEMP`). Tomada p50/p99/máximo: A1 0,832/6,491/46,601 ms, B 0,539/1,629/4,262 ms e A2
+0,834/6,374/17,222 ms. Liberação: A1 1,043/5,765/14,875 ms, B 0,912/3,003/10,243 ms e A2 1,069/5,149/7,703 ms.
+Ela compara o componente de E/S do lock sob carga comparável no mesmo runner. Não reproduz o pipeline das provas,
+não demonstra a causa das falhas e não prova que elas deixam de ocorrer.
+
+**Decisão de implementação do coordenador** ([handoff 6484289722](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6484289722);
+reversível e restrita à CI; o usuário foi informado): o passo de integrações da matriz Windows usa o
+`RUNNER_TEMP` como `TEMP` e `TMP`, só no processo do passo e nos filhos dele. Os outros sistemas e passos, o
+produto, os testes funcionais, os prazos, a carga, o paralelismo, retry, perdas, os orçamentos 20/10/5 e 10, os
+jobs e a medição (com os dois destinos originais) ficam como estão. Mesmas autorizações 6467154706 (“Pode fazer a
+medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”)
+e 6442514838 (“Pode fazer quantas precisar”).
+
+**Exceção datada ao critério 40 (28/10/2026).** O critério 40 diz que passos e comandos do workflow não mudam, e
+a exceção do AC9 manteve `changes`, `verify` e `ci` como estavam. Esta decisão troca, só no `verify`, o passo
+`npm run test:integrations` por dois ramos exclusivos por `matrix.os`: o mesmo passo nos sistemas que não são
+Windows e, no Windows, o mesmo comando com `TEMP`/`TMP` no `RUNNER_TEMP`, que para antes do npm se o
+`RUNNER_TEMP` não for o caminho absoluto de uma pasta existente. O resto do critério 40 continua valendo. O C48
+recebe o acréscimo das provas; a forma literal está nas linhas “Ambiente do passo de integrações no Windows” e
+“Exceção ao C48 (passo de integrações)” do Landing.
+
+Alternativas rejeitadas: aumentar prazos ou orçamento, reduzir carga ou paralelismo, repetir tentativas ou aceitar
+perda (vetados por “Mantém os testes e prazos”); trocar o temporário no job, no workflow, em `GITHUB_ENV` ou no
+registro (alcançaria outros passos e persistiria fora do passo); mudar produto ou testes funcionais sem defeito
+demonstrado; cair em silêncio no temporário padrão quando o `RUNNER_TEMP` falta.

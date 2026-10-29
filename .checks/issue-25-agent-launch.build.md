@@ -2587,3 +2587,28 @@ arquivos da lista do R19 têm o mesmo blob.
 - não há defeito de produto demonstrado, e as causas históricas continuam desconhecidas.
 
 Pendentes, com o coordenador: a verificação 20, a formal 12, a publicação, a CI e o merge. O FAIL 19 fica.
+
+## CI de `86c7677` (PR 40790722204 e manual 40790906319): ambiente do passo de integrações no Windows (C48)
+
+Novo autor (Claude), handoff do coordenador. O PASS 20, a formal 12 `ready` e os registros acima ficam como estão.
+
+**Evidência**. O PR 40790722204 passou nos cinco checks (Windows 1.055/1.024/0/31). A execução manual 40790906319
+falhou só no Windows e no agregado, no passo de integrações (597/570/3/24): `control.cli.test.mjs:547` e `:906`
+(I23-C4) e `concurrency.cli.test.mjs:1008` (controle positivo do C46, `delivery_timeout`, sem produtor
+registrado). Em `:547`, um `writeExclusive segmento.tmp` pendente há 310 ms depois de 424 ms de operações
+concluídas, com o lock presente; em `:906`, `open lock` pendente há 651 ms, laço de eventos 25,6 ms, CPU 15 ms e
+lock de 0 byte. A medição do mesmo job deu 4.500/4.500 ciclos, sem erro, e tomada p99 de 6,491 ms (A1), 1,629 ms
+(B, `RUNNER_TEMP`) e 6,374 ms (A2). Ela mede o componente de E/S, não o pipeline, e não dá causa. Nenhuma causa
+física foi demonstrada.
+
+**Decisão do coordenador** (6484289722): `RUNNER_TEMP` como `TEMP`/`TMP` só no passo de integrações da matriz
+Windows. Forma literal e alternativas: linhas “Ambiente do passo de integrações no Windows” e “Exceção ao C48
+(passo de integrações)” do Landing; provas: acréscimo do C48.
+
+**Fronteira**: só `.github/workflows/governance.yml` e `scripts/governance-ci.test.mjs`. Leitura estimada de ~65k
+tokens, mais ~30k para provas e gates. Registro, sondagem, provas e gates: Handoff do checklist, bloco “Ambiente do
+passo de integrações no Windows”.
+
+**Sondagem do pwsh antes do código** (`builder-ci86-temp/explore/`): na forma do runner (`pwsh -command ". '{0}'"`),
+o `$LASTEXITCODE` 17 do npm chega ao script, mas o processo sai 1; sem `exit $LASTEXITCODE`, sai 0. Com `-File`, 17.
+Ausente, vazio, relativo, inexistente e arquivo saíram 1 sem chamar o npm.
