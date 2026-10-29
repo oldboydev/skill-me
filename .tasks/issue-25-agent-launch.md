@@ -769,3 +769,37 @@ Alternativas rejeitadas: aumentar prazos ou orçamento, reduzir carga ou paralel
 perda (vetados por “Mantém os testes e prazos”); trocar o temporário no job, no workflow, em `GITHUB_ENV` ou no
 registro (alcançaria outros passos e persistiria fora do passo); mudar produto ou testes funcionais sem defeito
 demonstrado; cair em silêncio no temporário padrão quando o `RUNNER_TEMP` falta.
+
+## Diagnóstico do T8-C20 do D da verificação 21 — 28/10/2026 (sem critério novo)
+
+A verificação 21 (HEAD `5a0f231`, relatório preservado em `3a15d79`) teve todas as provas nomeadas e a governança
+A/B/C verdes, mas o `npm test` completo terminou sozinho com exit 1: 1.057 testes, 1.036 aprovados, 1 falha e 20
+skips. Falhou só o teste antigo `T8-C20 … o exemplo é o que um hook com lock ocupado grava`
+(`tests/integrations/traces/docs.test.mjs:134-184`): o hook Claude real saiu com 0 e sem saída, e o arquivo
+`diagnóstico de entrega.ndjson` não existia na leitura (`ENOENT`). Ele passou na R20, no D do autor anterior e na
+manual 40790906319. O log não traz tempos nem dados do hook.
+
+**Diagnóstico** (sonda própria fora do repositório, com o cenário exato do T8-C20; detalhes na linha “Diagnóstico do
+T8-C20” do Landing e no build): sem falha injetada, a linha foi gravada nas 20 execuções, ~335–349 ms antes do prazo
+de 1.000 ms do relatório. Quatro classes de falha compatíveis com o contrato dão o mesmo sintoma da R21 — gravação
+parada até o prazo (no `open` ou no `realpath`), `open` com erro de E/S e laço de eventos parado —, e só a linha da
+pré-carga de tempos as distingue. A causa da R21 continua desconhecida e não é atribuída a nenhuma delas.
+
+**Decisão** (dentro das autorizações 6467154706 — “Pode fazer a medição comparativa. Mantém os testes e prazos e
+segue até a CI ficar toda verde para fazer o merge do PR #28.” — e 6442514838 — “Pode fazer quantas precisar”):
+nenhum defeito do produto foi demonstrado, porque perder a linha no prazo ou numa falha de E/S é o melhor esforço
+do contrato da #8. O defeito demonstrado é de observação da prova: a falha do T8-C20 não diz qual classe ocorreu.
+A correção fica só na prova e na pré-carga de provas: o `docs.test.mjs` adota a evidência comum, o hook entra no
+registro com o mesmo comando, a mesma entrada e o mesmo ambiente (mais só a pré-carga de tempos), e dois controles
+com knobs novos da pré-carga provam que a mensagem distingue o prazo e a falha de E/S. O T8-C20, o guia, o produto,
+os prazos 1.000/750/650 ms, o payload, as contagens, a carga e o paralelismo não mudam. O C46 recebe o refinamento
+(r).
+
+Alternativas rejeitadas: mudar o produto para garantir a linha (prazo maior, espera além do prazo, nova tentativa,
+reserva do prazo), que transformaria o melhor esforço em promessa nova; aceitar a perda no guia ou na prova, pular,
+repetir ou reduzir carga, vetados pelo pedido; controle com o knob de laço parado existente, cuja corrida a sonda
+mediu (1 de 5 gravou a linha).
+
+Se uma falha futura do T8-C20 mostrar, com essa evidência, a gravação parada até o prazo sob carga, a prova
+positiva continuaria dependente do melhor esforço; resolver isso exigiria renegociar prazo, carga ou asserção, o
+que fica com o coordenador e o proprietário.
