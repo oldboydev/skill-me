@@ -2717,3 +2717,93 @@ test:governance` completo (esperado 27/27/0/0, 27/27/0/0 e 27/26/0/1), 10 min ca
 **O que fica demonstrado e o que não**: a prova nativa aceita caminhos próprios com aspas e falha sem o escape; os
 casos anteriores, o workflow e o produto não mudaram. O passo no runner e a causa das falhas da CI de `86c7677`
 **não** estão demonstrados. Pendentes, com o coordenador: verificação 21, formal 13, publicação, CI, medição e merge.
+
+## T8-C20 do D da verificação 21: diagnóstico do arquivo de diagnóstico ausente (C46 (r))
+
+Novo autor Claude, fatia nova (registro de abertura `648458f`; Landing, C46 (r), Swept e task `22c1161`;
+retificação do (r) `fce5c59`; código `cad647a`). Origem: o D da verificação 21 em `5a0f231` (relatório `3a15d79`)
+terminou sozinho com 1.057/1.036/1/20; só o `T8-C20 … o exemplo é o que um hook com lock ocupado grava` falhou, com o
+hook em `[0, "", ""]` e `ENOENT` ao ler `diagnóstico de entrega.ndjson` (`docs.test.mjs:179`), sem tempos no log.
+Autorizações 6467154706 e 6442514838. Logs e scripts desta fatia em `.checks/code-review/issue-25/builder-r21-t8c20/`.
+
+### Diagnóstico (sem tocar em rastreados)
+
+**Leitura**: o hook lê o evento, entrega com `untilDeadline` até 650 ms (`ATTEMPT_MS`) disputando o `.lock` alheio a
+cada 10 ms e, no `flush`, chama `publish` com o prazo do relatório (1.000 ms do `flush`). `appendDeliveryReport`
+corre `realpath` da pasta, `lstat`, `open`, `stat`, `write` e `close` contra esse prazo e engole qualquer erro; o CLI
+sai com `process.exit(0)`, que encerra uma gravação ainda em curso. Isso é o contrato da #8 (C16:
+“dentro do prazo do relatório do processo … se o arquivo não puder ser gravado, o diagnóstico se perde”).
+
+**Sonda** (`probe.mjs`, fora do repositório; cenário exato do T8-C20 com a pré-carga de tempos existente; Windows,
+Node 24.22.1, temporário isolado `sm-r21t-probe1-*`, sem outra carga; `probe1.ndjson`):
+
+| Classe | Execuções | Resultado visível | O que a linha da pré-carga mostra |
+| --- | --- | --- | --- |
+| sem falha | 20 | `[0, "", ""]`, a linha do guia | `open` do arquivo termina 651–665 ms depois da 1ª operação; saída logo depois; margem ~335–349 ms até o prazo |
+| `open` do arquivo parado (`fault-preload.mjs`) | 2 | `[0, "", ""]`, `ENOENT` | `open` pendente há ~358 ms; saída ~1.016 ms depois da 1ª operação |
+| `open` com EIO | 2 | `[0, "", ""]`, `ENOENT` | `open … EIO`; saída ~660 ms |
+| `realpath` da pasta parado | 2 | `[0, "", ""]`, `ENOENT` | `realpath` pendente; saída ~1.015 ms |
+| laço parado 1 s (`BLOCK_LOOP=2\|1000`, knob existente) | 5 | 3 `ENOENT`, 1 arquivo sem a linha, 1 a linha | laço máximo ~1.001 ms; corrida do timer de 1 ms contra três operações |
+
+Quatro classes compatíveis com o contrato dão o mesmo sintoma da R21, e só a linha da pré-carga as separa. **A causa
+da R21 continua desconhecida**: nenhuma reprodução é a falha histórica, e nenhuma classe foi atribuída. **Defeito
+demonstrado**: de observação — o T8-C20 não registrava o hook, e a falha trazia só o `ENOENT` com o caminho.
+**Produto**: nenhum defeito demonstrado; nada nele mudou.
+
+### Correção (só a prova e a pré-carga de provas)
+
+- `tests/integrations/traces/docs.test.mjs` (`d52de03` → `852616a`): `recordProducersInEachTest()` no topo; o trecho
+  “Seguindo o guia” virou `followGuide(failures, extra = {})`, com as mesmas linhas, literais e mensagens, e o hook
+  entra no registro por `recordedProducer("hook claude", env)` + `settle`, com o mesmo `runIntegrations` e a mesma
+  entrada; dois controles `I25-C46 diagnóstico do T8-C20: …`.
+- `tests/integrations/helpers/traces-probe.mjs` (`a6440dd` → `292c319`): tipo `diagnóstico` para o caminho exato de
+  `SKILL_ME_CAPTURE_REPORT`; knobs `SKILL_ME_TEST_TRACES_STALL_REPORT=1` e `SKILL_ME_TEST_TRACES_REPORT_EIO=1`, inertes
+  sem a variável.
+- **Retificação durante o build** (antes do commit do código; `fce5c59`, aditiva): o GREEN antes do commit
+  (`green-pre2.log`) mostrou `pendentes na saída: stat store.json (fora do lock) há 0 ms` no controle de E/S — a
+  tentativa da entrega abandonada no prazo continua em segundo plano. Os controles conferem só o diagnóstico nas
+  listas de pendentes e de falhas; o literal `pendentes na saída: nenhuma` do (r) não é garantido. Uma 1ª versão do
+  controle do prazo também falhou (`green-pre.log`) porque a minha asserção tratava o `lstat diagnóstico ENOENT` da
+  “última concluída” como falha; passou a ler só a lista `falhas`.
+
+### RED, GREEN e prova discriminante
+
+- **RED** (`red2-run.txt`; cópia do `git archive` de `22c1161`, antes do código, com a pré-carga própria injetada
+  só no ambiente do hook do T8-C20 atual): `open` parado e `open` com EIO falham os dois na mesma leitura com a mesma
+  mensagem — `ENOENT: no such file or directory, open '<caminho>'` — e nada mais. Uma 1ª tentativa parou no `tar`
+  do meu script, antes de qualquer teste (`red-attempt1-cleanup.txt`).
+- **GREEN** antes do commit: `green-pre3.log`, 4/4 (os 2 T8-C20 e os 2 controles).
+- **Mutantes** (`mutants.mjs`, `mutation2-cad647a.json`/`-outputs.txt`; cópia do `git archive` de `cad647a` com o
+  `node_modules` do checkout, restaurada a cada variante e removida pelo caminho exato, `mutation2-cad647a-cleanup.txt`;
+  a 1ª tentativa parou numa âncora com LF numa cópia CRLF, sem resultado, `mutation-attempt1-cleanup.txt`):
+
+| Variante | T8-C20 | Controle do prazo | Controle da E/S |
+| --- | --- | --- | --- |
+| controle (sem mudança) | ✔ ✔ | ✔ | ✔ |
+| M1 hook fora do registro | ✔ ✔ | ✖ | ✖ |
+| M2 sem o tipo `diagnóstico` | ✔ ✔ | ✖ | ✖ |
+| M3 knobs trocados | ✔ ✔ | ✖ | ✖ |
+| A1 `open` parado no próprio T8-C20, com a adoção | ✖, com a evidência e `open diagnóstico (fora do lock) há 357 ms` | ✔ | ✔ |
+| A2 o mesmo, sem `recordProducersInEachTest()` | ✖, só o `ENOENT` | ✔ | ✔ |
+| A3 `open` com EIO no próprio T8-C20, com a adoção | ✖, com a evidência e `open diagnóstico EIO (fora do lock)` | ✔ | ✔ |
+| A4 o mesmo, sem a adoção | ✖, só o `ENOENT` | ✔ | ✔ |
+
+Na A1, a falha do T8-C20 sai como a R21 deveria ter saído: `produtor 1 hook claude: status 0, sinal nenhum; entrega
+sem relatório`, `lock ocupado (EEXIST, repetido) 41x`, `pendentes na saída: open diagnóstico (fora do lock) há 357
+ms`, `saída aos 1083.5 ms (1008 ms depois da 1ª operação)`, laço máximo 16,2 ms, e `raiz 1 (produtores 1): lock
+presente, ilegível [SyntaxError; 12 bytes]; capturas indisponível [lock_present]; …`.
+
+### Gates (`builder-r21-t8c20/plan.txt`, depois de `cad647a` e antes de rodar)
+
+A/B/C: os 11 arquivos que carregam a pré-carga, inteiros, numa invocação `node --test --test-concurrency=4` por
+ambiente, 30 min cada (A Windows 24.22.1 no checkout; B clone novo, Node 24.13.0 oficial, npm 11.6.2,
+`core.autocrlf=true` só no clone; C WSL uid 1000, `git archive`, Node 24.13.0 copiado, `env -i`, PATH sem `/usr/bin`
+nem agentes). A governança não mudou e carrega os A/B/C da R21 por identidade. D: um `npm test` completo, Windows
+24.22.1, teto 8, Hermes, 2 h; esperado, se nada falhar, 1.059/1.039/0/20.
+
+### Limites
+
+- Nada aqui prova a causa da R21 nem que o T8-C20 deixa de falhar: a prova positiva continua dependendo do melhor
+  esforço do diagnóstico dentro do prazo. Se uma falha futura mostrar, com a evidência, a gravação parada até o prazo
+  sob carga, resolver exigiria renegociar prazo, carga ou asserção — decisão do coordenador e do proprietário.
+- A sonda e os mutantes são deste computador, sem a carga da suíte; não medem o runner da CI.
