@@ -8,6 +8,8 @@ A formal8 foi `blocked` em `bedda5c` pela evidência remota ainda pendente do AC
 
 Sources:
 
+- Continuação do coordenador para um novo autor Claude (28/10/2026), depois do FAIL da verificação 21 (HEAD verificado `5a0f231`, relatório preservado em `3a15d79`): todas as provas nomeadas e a governança A 27/27/0/0, B 27/27/0/0 e C 27/26/0/1 passaram, mas o D completo terminou sozinho com exit 1, 1.057/1.036/1/20. Falhou só o teste antigo `T8-C20 … o exemplo é o que um hook com lock ocupado grava` (`tests/integrations/traces/docs.test.mjs:134-184`): o hook Claude real saiu `[0, "", ""]` (`:178`), e o `readFileSync` do arquivo `diagnóstico de entrega.ndjson` deu `ENOENT` (`:179`); log integral em `.checks/code-review/issue-25/verifier-round21/r21/D.log:1118` e `:1164-1185`, sem tempos nem dados do hook. [Handoff do bloqueio](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6485905666); contexto em `.checks/code-review/issue-25/context-round21-fail.json` (34 comentários, 9 ACs). Pedido: diagnóstico pontual do T8-C20 e a menor correção comprovada dentro dos contratos atuais, sem atribuir causa por hipótese, sem mudar o guia para aceitar a perda do caso positivo, sem tornar o melhor esforço do diagnóstico promessa de persistência e sem mudar prazos (relatório 1.000 ms, entrega 750/650 ms), cargas, contagens ou paralelismo. Mesmas autorizações 6467154706 (“Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”) e 6442514838 (“Pode fazer quantas precisar”). Registro de abertura no bloco “T8-C20 do D da verificação 21” do `## Handoff`.
+
 - Revisão pontual do coordenador para o mesmo autor (28/10/2026), dentro da fatia do C48 e antes da verificação 21 e da formal 13, que não estão registradas: `.checks/code-review/issue-25/coordinator-ci-temp-path-review.md`. A expressão `. '${script}'` da prova nativa nova (`governance-C48 ramo Windows das integrações no pwsh real`) não escapa a aspa simples do caminho: um caminho Windows válido com `'` fecha o literal e quebra o `-Command`. É defeito candidato da harness, não do produto nem da guarda do `RUNNER_TEMP` do workflow. O coordenador confirmou o registro do 17 → 1 sob o `-Command` e mandou manter o shell padrão e o sentido “não zero continua falha”, sem `-File` nem `[Environment]::Exit`. Só `scripts/governance-ci.test.mjs` muda; o workflow de `169e845`, o produto, os testes funcionais, os scripts, a configuração, o core e o `.verified.md` ficam só para leitura. Mesmas autorizações 6467154706 e 6442514838. Linha “Literal do caminho no `-Command` da prova nativa do C48” do Landing; 2º acréscimo do C48.
 
 - Continuação do coordenador para um novo autor Claude (28/10/2026), depois da CI do HEAD publicado `86c7677` (Verifier 20 PASS 50/50, formal 12 `ready`). O PR 40790722204 passou nos cinco checks (Windows 1.055/1.024/0/31). A execução manual 40790906319 falhou só no Windows e no agregado, no passo de integrações (597/570/3/24): `control.cli.test.mjs:547` e `:906` (I23-C4) e `concurrency.cli.test.mjs:1008` (controle positivo do C46), sem causa física demonstrada; log integral em `.checks/code-review/issue-25/ci86-windows-manual40790906319.log`. A medição A1/B/A2 do mesmo job (`measurement40790906319.json`, `-validation.json` e `.log`) completou 4.500/4.500 ciclos, com tomada p99 de 6,491, 1,629 e 6,374 ms; mede o componente de E/S, não o pipeline. [Decisão de implementação do coordenador](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6484289722), reversível e restrita à CI, da qual o usuário foi informado: `RUNNER_TEMP` como `TEMP`/`TMP` só no passo de integrações da matriz Windows; produto, testes funcionais, prazos, carga, paralelismo, retry, perdas, orçamentos, outros sistemas, jobs e a medição ficam como estão. Só `.github/workflows/governance.yml` e `scripts/governance-ci.test.mjs` mudam. Mesmas autorizações 6467154706 (“Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”) e 6442514838 (“Pode fazer quantas precisar”). Linhas “Ambiente do passo de integrações no Windows” e “Exceção ao C48 (passo de integrações)” do Landing; acréscimo do C48; seção da task de mesmo nome.
@@ -2174,3 +2176,32 @@ Literal do caminho no `-Command` da prova nativa do C48 — mesmo autor Claude, 
   a publicação, a CI do novo HEAD, a medição e o merge, já autorizado só com toda a CI verde. Nada aqui afirma PASS,
   `ready`, CI verde, causa física nem impacto zero. Preservados como estão: os gates de `a50870f`, o incidente da R5,
   a limpeza de 1.257/107 pastas e os dois auxiliares pós-D em `/tmp` do Git Bash.
+
+T8-C20 do D da verificação 21 — novo autor Claude, fatia nova (registros e gates acima preservados; aberto antes de
+qualquer sondagem ou código):
+
+- **Origem**: FAIL da verificação 21 (`3a15d79`), D em `5a0f231` com término natural e exit 1, 1.057/1.036/1/20; só o
+  `T8-C20 … o exemplo é o que um hook com lock ocupado grava` (`docs.test.mjs:179`, `ENOENT`), verde na R20, no pf-D
+  de `be29203` e na manual 40790906319. O log não diz se a gravação do diagnóstico perdeu a corrida com o prazo, se
+  falhou em silêncio ou se houve outra coisa; nada aqui atribui causa antes de evidência.
+- **Fronteira da fatia** (superfície nova, só o T8-C20): o diagnóstico de entrega do T8-C20 em
+  `tests/integrations/traces/docs.test.mjs` e, se a evidência pedir, a pré-carga de tempos
+  (`tests/integrations/helpers/traces-probe.mjs`). Produto (`traces/delivery-report.mjs`, `observation.mjs`,
+  `traces/binding.mjs`, `traces/delivery.mjs`) só com defeito demonstrado dentro do contrato, com RED/GREEN. Workflow,
+  governança, benchmark, core, `package*`, `AGENTS.md`/`CLAUDE.md`, configuração de revisão e `.verified.md` ficam só
+  para leitura. O caso real (hook Claude, `.lock` alheio, arquivo `diagnóstico de entrega.ndjson` com espaço e acento)
+  e as asserções literais de `:178-183` continuam como estão.
+- **Gates anteriores**: os de `9b087dc`/`be29203` (pf-A/B/C/D) são do autor anterior, e A/B/C verdes e D vermelho são
+  da verificação 21; nenhum prova esta fatia. Os gates desta fatia serão definidos depois do último código e antes de
+  rodar, numa pasta própria (`.checks/code-review/issue-25/builder-r21-t8c20/`).
+- **Leitura**: ~75k tokens lidos (34 comentários; Sources, Landing e Handoff do checklist, por trechos; topo do R21;
+  build/handoff da CI86; `binding`, `delivery`, `delivery-report`, `observation`, `hook-command` e `cli`; os apoios
+  `traces`, `producer-runs`, `traces-probe` e `trace-kinds`; `docs.test`, o C16 de `concurrency.cli` e o controle do
+  T8-C12 em `follow.cli`). Estimados mais ~35k para sondagens, provas e gates: ~110k, abaixo de 150k; uma fatia, um
+  lote, sem fronteira interna.
+- **Decisões humanas já tomadas**: 6467154706 e 6442514838 (citadas em Sources); manter testes, prazos, cargas,
+  contagens, paralelismo, retry e perdas; nenhuma rodada nova registrada por este autor.
+- **Plano**: (1) diagnóstico sem tocar em rastreados — reproduções controladas, numa pasta própria e com pré-carga
+  própria fora do repositório, das classes compatíveis com o sintoma, com o mesmo hook e o mesmo arquivo Unicode, e o
+  confronto com o código e o contrato; (2) Landing, refinamento do check e task antes de qualquer código; (3) código e
+  provas (RED/GREEN e controles discriminantes); (4) gates afetados depois do último código e um D completo.
