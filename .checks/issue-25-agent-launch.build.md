@@ -2637,3 +2637,31 @@ repositório foi passado. As demais chamadas usaram o pwsh oficial com telemetri
 **Gates** (`plan.txt`, definidos depois de `169e845` e antes de rodar): A/B/C com `npm run test:governance` completo,
 uma invocação sem filtro por ambiente, 10 min cada (esperado 27/27/0/0 em A e B, 27/26/0/1 em C); D com um `npm test`
 completo, 2 h (esperado 1.057 testes se nada falhar).
+
+**Gates em `a50870f`** (árvore `27d9e5c1…`, código de `169e845`; uma execução de cada, sem filtro; logs em
+`builder-ci86-temp/`):
+
+| Gate | Ambiente | Início–fim | Testes | Pass | Fail | Skip |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | checkout principal, Windows, Node 24.22.1, npm 11.19.1, `npm_execpath` ausente, pwsh oficial 7.6.9 | 21:49:20–21:49:28 | 27 | 27 | 0 | 0 |
+| B | clone git novo (`core.autocrlf=true` no `.git/config` dele; workflow em CRLF), Node 24.13.0 oficial (`d14ba95c…`, zip conferido), npm 11.6.2 ao lado, `npm_execpath` ausente | 21:50:02–21:50:38 | 27 | 27 | 0 | 0 |
+| C | WSL `Ubuntu`, uid 1000, `git archive` de `a50870f` (árvore = `HEAD^{tree}`, 0 CR), Node 24.13.0 copiado num prefixo sem `sh`, `env -i` com `HOME`/`RUNNER_TEMP`/`TMPDIR` no scratch e `npm_config_update_notifier=false`, PATH sem `/usr/bin`, sem agentes e sem `pwsh` | 21:51:55–21:51:59 | 27 | 26 | 0 | 1 |
+| D | `npm test` completo, Windows, Node 24.22.1, teto 8, nativos do Hermes | 21:52:58–22:01:28 | 1.057 | 1.037 | 0 | 20 |
+
+- **A/B/C**: alvo `npm run test:governance` completo. `RUNNER_TEMP` presente e válido; temporário na raiz criada e
+  registrada pela execução; status vazio antes e depois. Os 27 nomes são iguais nos três (`matrix-ABC.txt`). O caso
+  do pwsh real executou em A e B (`✔` e `ℹ pwsh: C:\Program Files\PowerShell\7\pwsh.exe`) e é o único skip do C, com
+  o motivo.
+- **D**: exit 0, sem interrupção. Governança 27/27, motor 16/16, doctor 417 (410/0/7), integrações 597 (584/0/13).
+  Contra o D da R20, só as duas linhas novas do `governance-C48` (`D-vs-R20.txt`); os 20 skips são os mesmos. Os 11
+  nativos do Hermes, o ramo Hermes do I4-C35 e o I23-C8 pelo Python do sistema passaram. Nenhum processo do
+  repositório ficou vivo.
+- **Limpeza**: as raízes pelo registro; a do C por caminho, uid e inode; o clone do B e a cópia dos mutantes pelo
+  caminho exato. Nenhum auxiliar no `/tmp` nem no temporário global.
+- **Limites**: o npm de A, B e D usou o cache do usuário, que não li (o aviso de versão do npm só consulta o registro
+  com o carimbo vencido); o pwsh pode atualizar os próprios caches no `LocalAppData`; o incidente de telemetria acima.
+
+**O que fica demonstrado e o que não**: o ramo do Windows faz o que o Landing fixa, no pwsh real e na forma do runner,
+e os mutantes são recusados; o passo no runner, a causa das falhas da CI de `86c7677` e o efeito da troca do
+temporário nelas **não** estão demonstrados. Pendentes, com o coordenador: verificação 21, formal 13, publicação, CI
+do novo HEAD e merge.

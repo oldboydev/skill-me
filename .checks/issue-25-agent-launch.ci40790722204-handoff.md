@@ -41,3 +41,16 @@ carga, paralelismo, retry, perdas, orçamentos, outros sistemas, jobs e a mediç
 
 - A verificação independente e a revisão formal do novo conteúdo, a publicação, a CI do novo HEAD (que prova o
   passo no runner) e o merge. Nada aqui afirma PASS, `ready` nem CI verde.
+
+## Provas do autor (registro `c7e8f14`, código `169e845`, gates em `a50870f`; detalhes no build e no Handoff do checklist)
+
+- **RED**: os dois `governance-C48` falham com o workflow de `86c7677`; **GREEN** no código.
+- **Mutantes** numa cópia descartável: os 13 (roteamento, propagação, configuração, persistência, argumentos,
+  ambiente, orçamento e shell) são recusados; o teste antigo falha contra o workflow novo só no `governance-C1 C3`,
+  cuja lista foi adaptada sem o ramo do Windows.
+- **Código de saída**: no `pwsh -command ". '{0}'"` do runner, o npm em 17 chega ao job como 1 (conversão do
+  `-Command`, a mesma dos outros passos Windows); 0 continua 0.
+- **Gates**: A 27/27/0/0 e B 27/27/0/0 (com o caso do pwsh real executado), C 27/26/0/1 (o skip é esse caso, com o
+  motivo) e D 1.057/1.037/0/20, exit 0, com os nativos do Hermes e os 20 skips da R20.
+- **Identidade**: fora de `.checks`/`.tasks`, só o workflow e `governance-ci.test.mjs` mudaram desde `86c7677`.
+- Nada aqui prova o passo no runner nem que as falhas deixam de ocorrer.

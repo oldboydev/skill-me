@@ -1959,3 +1959,79 @@ preservados):
     Esperado, se nada falhar: 1.057 testes (1.055 + 2), governança 27/27, os mesmos 20 skips da R20. O D não mede o
     runner da CI: o passo novo só é provado no runner pela CI do novo HEAD.
   - Logs e auxiliares em `builder-ci86-temp/`; nenhum no `/tmp` (Git Bash ou WSL) nem no temporário global.
+- **Resultado dos gates em `a50870f`** (árvore `27d9e5c1…`; código de `169e845`; uma execução de cada, sem filtro e sem
+  repetição; logs em `builder-ci86-temp/`):
+  - **A** (21:49:20–21:49:28; Windows, Node 24.22.1, npm 11.19.1, checkout): `npm run test:governance`, **27 testes,
+    27 pass, 0 fail, 0 skip**, exit 0.
+    - `npm_execpath` ausente; `RUNNER_TEMP` numa pasta própria, 0 entradas depois; temporário na raiz isolada.
+    - O caso do pwsh real **executou**: `✔` e `ℹ pwsh: C:\Program Files\PowerShell\7\pwsh.exe` (7.6.9).
+    - Status vazio antes e depois.
+  - **B** (21:50:02–21:50:38): **27/27/0/0**, exit 0.
+    - Clone novo em `a50870f`, com a árvore conferida e `core.autocrlf=true` no `.git/config` dele (o `gitconfig` do
+      sistema do Git for Windows já tem `true`; nada global mudou). O workflow saiu em CRLF (111 CR) e foi lido igual.
+    - Node 24.13.0 oficial: o `node.exe` (`d14ba95c…`) é o de dentro do zip, e o zip (`ca274269…`) confere com o
+      `SHASUMS256.txt` local. npm 11.6.2 adjacente, `npm_execpath` ausente.
+    - O caso do pwsh real **executou**, com o mesmo pwsh, e o npm falso chamou o Node 24.13.0 do clone.
+    - `cli.mjs` com `i/lf w/lf attr/text eol=lf` e 0 CR antes e depois; status do clone vazio antes e depois do
+      `node_modules` e depois da execução. O clone foi removido pelo caminho exato, depois de conferir toplevel, HEAD
+      e status (`B-clone-cleanup.txt`).
+  - **C** (21:51:55–21:51:59; WSL `Ubuntu`, uid 1000): **27 testes, 26 pass, 0 fail, 1 skip**, exit 0.
+    - `git archive` de `a50870f` (6.410.240 bytes, `ae8ee253…`), com a árvore extraída igual a `HEAD^{tree}`, 0 CR
+      em `src/`, `tests/`, `scripts/` e `.github/`, e `cli.mjs` 755.
+    - Node 24.13.0 copiado de `/usr/bin/nsolid` (`150946e4…`), num prefixo sem `sh`; npm 11.6.2.
+    - `env -i` só com `HOME`, `LANG`, `PATH`, `RUNNER_TEMP`, `TMPDIR` e `npm_config_update_notifier=false`. A última
+      é a única diferença para a forma do R19/R20: o alvo agora é `npm run`, e o npm, com o `HOME` novo, consultaria o
+      registro na rede para avisar de versão. PATH sem `/usr/bin`, sem agentes e sem `pwsh`.
+    - O skip é o caso do pwsh real, com o motivo `o ramo roda no pwsh do runner Windows; fora dele, só a estrutura
+      (governance-C48 integrações)`. O `governance-C48` estrutural passou.
+    - O scratch `/tmp/sm-b86t-C.NILZGJ`, criado por `mktemp`, foi removido por caminho, pasta não link, uid 1000 e
+      inode 11548.
+  - **Nomes** (`matrix-ABC.txt`): os 27 nomes são iguais em A, B e C; 26 `pass` nos três; o do pwsh real `pass` em
+    A e B e `skip` em C. Sem duplicado.
+  - **D** (21:52:58–22:01:28; `npm test` completo, Windows, Node 24.22.1, teto 8; orçamento de 2 h na ferramenta,
+    em segundo plano só por isso, com espera em primeiro plano lendo só o registro): terminou sozinho com **exit 0**.
+    - **1.057 testes, 1.037 pass, 0 fail, 20 skip**: governança 27/27, motor 16/16, doctor 417 (410/0/7) e
+      integrações 597 (584/0/13). Nenhum `✖` nem `not ok`.
+    - Contra o D da R20 (`D-vs-R20.txt`): as únicas linhas de resultado novas são os dois `governance-C48`, `✔`;
+      nenhuma linha da R20 sumiu ou mudou de marca. Os 20 skips são os mesmos, em nomes e motivos.
+    - O caso do pwsh real rodou no D (`ℹ pwsh: C:\Program Files\PowerShell\7\pwsh.exe`).
+    - Passaram os 11 nativos do Hermes com runtime (`I4-C18` a `C23`, `C37`, `C44b`, `I25-C40 harness nativa` e os
+      dois `I23-C8` com runtime), o I4-C35 sem o diagnóstico de observação Hermes não executada e o I23-C8 pelo
+      Python do sistema, que não conta como nativo (`D-hermes.txt`).
+    - HEAD e status iguais antes e depois; `RUNNER_TEMP` com 0 entradas depois. Nenhum processo `node`, `pwsh`,
+      `python` ou `cmd` com o repositório ou as minhas raízes na linha de comando ficou vivo (`processes-after-D.txt`).
+  - **Temporário**: as raízes `sm-b86t-*` de A, B, D, do RED, dos GREEN, do I4-C47 e das duas séries de mutantes
+    foram removidas pelo registro (caminho real, filha direta do temporário, nome, pasta não link, `dev`/`ino`; o D
+    deixou 128 entradas dos testes). A do C, por caminho, uid e inode. As pastas `runner-temp-*`, vazias, saíram por
+    `rmdir`. Nenhuma seleção por prefixo ou mtime; nenhum auxiliar no `/tmp` (Git Bash ou WSL) nem no temporário
+    global. A ferramenta guardou a própria cópia da saída do D (`AppData\Local\Temp\claude\…\tasks\b1pwobpq8.output`);
+    não é auxiliar meu, e não a li nem apaguei.
+- **O que isso prova e o que não prova**:
+  - O ramo do Windows, na forma do runner e no pwsh real, põe `TEMP`/`TMP` no `RUNNER_TEMP` só no processo do passo,
+    chama o npm com os mesmos argumentos, sai 0 com o npm em 0 e falha (1) com o npm em 17, e para antes do npm com
+    `RUNNER_TEMP` ausente, vazio, relativo, inexistente ou arquivo, sem `GITHUB_ENV`/`GITHUB_PATH` e sem apagar o
+    `RUNNER_TEMP`. Os outros sistemas ficam com o passo de antes. Os 13 mutantes são recusados.
+  - **Não** prova o passo no runner da CI nem que as falhas da CI de `86c7677` deixam de ocorrer: isso é da CI do
+    novo HEAD, do coordenador. Nenhuma causa física foi demonstrada, e o produto não mudou.
+  - O D é deste computador, com a raiz própria; não mede o runner.
+  - O `I4-C25m` (macOS), o `I4-C25l` e os 7 skips do doctor não rodaram aqui; os skips POSIX do D continuam como
+    carry do C da R19, com os mesmos blobs.
+  - **Limites de ambiente**: em A, B e D o npm usou o cache do usuário, que não li; pelo código do npm 11, ele só
+    consulta o registro (`npm@latest`) se o carimbo do aviso de versão tiver mais de 7 dias, sem CI detectada nem
+    `update-notifier=false` — a mesma condição dos D anteriores. O pwsh pode ter atualizado os próprios caches no
+    `LocalAppData`. O incidente de telemetria acima continua registrado.
+- **O que se decidiu no caminho** (além do Landing): o código de saída 1 do pwsh para o npm em 17, descoberto na
+  sondagem e registrado no Landing antes do código; `npm_config_update_notifier=false` no `env -i` do C. Nada novo
+  com o coordenador nem com o usuário.
+- **O que foi abandonado**:
+  - devolver 17 literal (`shell: pwsh -File {0}` ou `[Environment]::Exit`);
+  - conferir o texto do `stderr` do `throw` na prova (a visão concisa do pwsh corta e colore a linha conforme a
+    largura; o código 1 e o npm não chamado decidem);
+  - comparar o ambiente inteiro recebido pelo npm falso (o pwsh e o `cmd` acrescentam variáveis próprias; a prova
+    usa as variáveis do contrato e uma sentinela);
+  - um avaliador geral de expressões do GitHub (a prova só aceita as duas formas de `if` do workflow).
+- **Pendentes, com o coordenador**: o registro e o despacho da verificação 21 e da formal 13 sobre o conteúdo novo,
+  a publicação, a CI do novo HEAD (a prova do passo no runner) e o merge, já autorizado só com toda a CI verde. Nada
+  aqui afirma PASS, `ready`, CI verde nem causa física demonstrada. Preservados como estão: o incidente da R5
+  (`ffc5937`), a limpeza de 1.257 pastas no Windows e 107 no WSL sem prova de proveniência e os dois auxiliares
+  pós-D do Windows em `/tmp` do Git Bash; nada aqui afirma impacto zero.
