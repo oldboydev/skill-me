@@ -921,3 +921,23 @@ liberação de completa. A operação antiga `remocao` sai do esquema, que passa
 provado pelo gate C (WSL) e pela CI. O custo é medido no código final, nas condições do E5 declaradas antes; os números
 do protótipo não são do produto. Detalhes: linha “Liberação do lock por reserva exclusiva” do Landing, C46 (u), C50 (o)
 e o bloco “Liberação segura do lock” do `Handoff`.
+
+## Formatter do I23-C10 com a posse indeterminada — 29/10/2026 (F1 da verificação 24; item 4 do refinamento do critério 38; sem critério novo)
+
+A verificação independente 24 terminou **FAIL 49/50** em `34466ab` (relatório preservado em `0e0c91d`), com todos os gates
+verdes (A/B 640/627/0/13, C 640/618/0/22, D 1.073/1.053/0/20) e o produto `13ecc07` aprovado pela leitura e pelas provas. O
+F1: o item 4 acima exige, depois de um rename com erro, a posse **indeterminada** em vez de “fora do lock”, e o formatter do
+diagnóstico do I23-C10 (`placeOf`, `tests/integrations/observe/agents.e2e.test.mjs:239`) ignorava essa incerteza. Era o quarto
+rotulador de lugar; o Landing enumerava três. Nenhuma prova falhava por isso.
+
+A correção cumpre a regra já aprovada (aprovação 6502294779, plano `:53`), sem critério, escopo, aceite ou decisão nova: só o
+apoio de prova `tests/integrations/helpers/traces.mjs` (exporta o lugar neutro que já existia) e o consumidor do I23-C10 mudam,
+com provas no hook real (rename do lock com erro antes e depois do movimento, pelas injeções existentes), nos ramos de limpeza
+falha ou pendente e na função exportada. Produto, prazos (750/650 ms, 1.000 ms com settle de 650, 2.000 ms do stdin e a faixa
+1.900–6.000, 5 s do Hermes), limites (500 eventos, 8 MiB, 7 dias), repetição só em `EEXIST` (10 ms), T8-C15 (80 eventos, 40 por
+produtor, 2 produtores, 4 linhas intercaladas, payloads, export 80), T8-C16 (3 criações), cargas, concorrência, política de
+perda, jobs 20/10/5 e o manual 10 ficam como estão. Detalhes: linha “Lugar da posse no formatter do I23-C10” do Landing,
+refinamento F1 do C46 (u) e o bloco de mesmo nome do `Handoff`.
+
+**Limites.** Não muda o veredito da R24 retroativamente nem dispensa a verificação independente 25, a formal 14, a
+publicação, a medição manual e os cinco checks verdes antes do merge já autorizado.
