@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { runObserveCommand } from "../../../src/integrations/observe/command.mjs";
@@ -400,7 +400,9 @@ test("I25-C46 liberação do lock: nos dois consumidores, reserva inválida ante
     { code: "io_failure", opened: true, lockPath: rootLock, lockLeft: true },
   );
   assert.equal(lockState(rootLock), "nosso", "o lock da invocação ficou");
-  rmSync(rootLock);
+  // unlinkSync, não rmSync: no Windows o rmSync do Node 24.13.0 volta sem apagar
+  // um arquivo de caminho não ASCII (o scratch tem "ação"; gate B em e80b99e).
+  unlinkSync(rootLock);
   const base = createStoreIo();
   const swapped = await outcomeOf(
     startLaunch({
@@ -426,7 +428,7 @@ test("I25-C46 liberação do lock: nos dois consumidores, reserva inválida ante
   const on = await runObserveCommand({ argv: ["on"], home, io: brokenReservation(homeLock) });
   assert.deepEqual([on.exitCode, on.body.error?.code], [5, "io_failure"]);
   assert.equal(lockState(homeLock), "nosso", "o lock do home ficou");
-  rmSync(homeLock);
+  unlinkSync(homeLock);
   const storeLock = path.join(observed, "skill-me-privacy", ".lock");
   const foreignIo = {
     ...base,
