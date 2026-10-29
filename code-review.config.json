@@ -16,25 +16,20 @@
     }
   },
   "roundOverrides": {
-    "4": {
-      "profile": "light",
-      "maxRounds": 10,
-      "approval": "Proprietário autorizou em 17/10/2026: use quantas rodadas precisar. Registro e autorização de merge em .tasks/issue-4-integracoes.md; exclusivo da issue #4, preservando o histórico e o máximo de 10 suportado pelo motor."
-    },
     "3": {
       "profile": "light",
       "maxRounds": 9,
       "approval": "Proprietário autorizou em 13/10/2026: pode fazer as revisoes necessarias. Registro em .checks/issue-3-agent-diagnostics.linux.md; exclusivo da issue #3, preservando histórico."
     },
+    "4": {
+      "profile": "light",
+      "maxRounds": 10,
+      "approval": "Proprietário autorizou em 17/10/2026: use quantas rodadas precisar. Registro e autorização de merge em .tasks/issue-4-integracoes.md; exclusivo da issue #4, preservando o histórico e o máximo de 10 suportado pelo motor."
+    },
     "5": {
       "profile": "light",
       "maxRounds": 10,
       "approval": "Proprietário autorizou em 18/10/2026: autorizo quantos precisaram para resolver. Registro literal em .checks/issue-5-privacidade.approval.md e .tasks/issue-5-privacidade.md; exclusivo da issue #5, preservando histórico e usando o máximo de 10 suportado pelo motor. Merge permanece humano."
-    },
-    "8": {
-      "profile": "light",
-      "maxRounds": 3,
-      "approval": "Proprietário autorizou em 19/10/2026 a terceira tentativa formal da issue #8 após falha técnica de capacidade do modelo na segunda; registro em https://github.com/oldboydev/skill-me/issues/8#issuecomment-6265279482. Exclusivo da issue #8, preservando as duas tentativas anteriores. Merge permanece humano."
     },
     "6": {
       "profile": "light",
@@ -46,6 +41,11 @@
       "maxRounds": 35,
       "approval": "Proprietário autorizou até 35 tentativas formais exclusivas da issue #7 após consumir as 30 anteriores, preservando todo o histórico e mantendo os pilotos intocados; registro em https://github.com/oldboydev/skill-me/issues/7#issuecomment-6342492981. Revisões adicionais somente conforme necessárias; push, PR e merge somente após verificação atualizada e status ready."
     },
+    "8": {
+      "profile": "light",
+      "maxRounds": 3,
+      "approval": "Proprietário autorizou em 19/10/2026 a terceira tentativa formal da issue #8 após falha técnica de capacidade do modelo na segunda; registro em https://github.com/oldboydev/skill-me/issues/8#issuecomment-6265279482. Exclusivo da issue #8, preservando as duas tentativas anteriores. Merge permanece humano."
+    },
     "23": {
       "profile": "light",
       "maxRounds": 4,
@@ -53,8 +53,8 @@
     },
     "25": {
       "profile": "light",
-      "maxRounds": 13,
-      "approval": "Proprietário autorizou “Pode fazer quantas precisar” e “Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.” A 13ª revisão permanece autorizada e sem uso, com12 tentativas anteriores preservadas; não há ampliação para14. Código novo cad647a: diagnóstico comum do T8-C20, produto/guia/prazos/asserts preservados. Autor em407edc5: A116/110/0/6, B116/109/1/6 (EPERM não injetado no T8-C15, captura79/80, causa desconhecida), C116/112/0/4 e D1059/1039/0/20; resultados46a5b35. Primeira verificação independente22 deste código, com B vermelho explícito e todos os alvos/casos; nenhuma falha foi dispensada ou rebatizada. Registro https://github.com/oldboydev/skill-me/issues/25#issuecomment-6486798702; escopo https://github.com/oldboydev/skill-me/issues/25#issuecomment-6485905666. Preservar21 verificações anteriores, FAIL21, todos os FAILs/incidentes e política de retry/perda. Override exclusivo25/light13; globais, outras issues e core intactos. Publicar só após PASS independente e ready da formal13, parando no primeiro ready válido; merge já autorizado somente com nova medição registrada e cinco checks regulares verdes nas matrizes PR e manual do HEAD aprovado. Sem publicação do pacote."
+      "maxRounds": 14,
+      "approval": "Proprietário autorizou “Pode fazer quantas precisar”, a medição mantendo testes e prazos até CI toda verde e merge do PR28, e reiterou “acabou pode mergear e finaizar”. Registro específico da verificação23 e revisão14: https://github.com/oldboydev/skill-me/issues/25#issuecomment-6495770228. Preservar22 verificações e13 revisões anteriores, incluindo FAILs/incidentes. Exclusivo25/light, teto13→14; globais2, demais issues e core intactos. Código709ff5d/19a5a5c apenas lifecycle de follows nas harnesses; gates finais autorais A/B/C8/8 e D1062/1042/0/20, preliminar T8-C13 vermelho e CI066 vermelha preservados, causas físicas desconhecidas. Primeiro PASS independente23 e ready da formal14, parar no primeiro ready válido, publicar novoHEAD; merge só com nova medição registrada e cinco checks verdes em PR e manual no HEAD aprovado. Sem publicação de pacote."
     }
   }
 }
