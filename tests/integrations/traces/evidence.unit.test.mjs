@@ -6,7 +6,7 @@ import { after, test } from "node:test";
 import { REPO_ROOT, baseEnv, makeScratch } from "../helpers/cli.mjs";
 import { claudePayload, leaks } from "../helpers/privacy-canaries.mjs";
 import { isTestHome, recordedProducer, rootOf } from "../helpers/producer-runs.mjs";
-import { TRACES_PROBE, deliveryTiming, describeProducerTrace, describeTiming, inProcessProducer, producerTrace, recordingProducers, runHook } from "../helpers/traces.mjs";
+import { TRACES_PROBE, deliveryTiming, describeProducerTrace, describeTiming, diskTrace, inProcessProducer, producerTrace, recordingProducers, runHook } from "../helpers/traces.mjs";
 
 // Provas do apoio comum da evidência dos produtores (issue #25; refinamento do
 // C46 (k) e do C47; linha "Evidência comum dos produtores e formatter legado" do
@@ -255,6 +255,31 @@ test("I25-C46 evidência comum: liberação por rename — concluído encerra a 
 
   const pendingRename = deliveryTiming(line(taken, [["rename", "lock", 5, 40], ["lstat", "lock.reserva", 6, 39]]));
   assert.deepEqual(pendingRename.pending.map((p) => p.name), ["rename lock (sob o lock, 1ª tomada)", "lstat lock.reserva (posse do lock indeterminada)"]);
+});
+
+// I25-C46 (u), refinamento F1 da verificação 24: o lugar neutro é o que os
+// consumidores de fora do apoio (o formatter do I23-C10) usam, em vez de
+// decidir de novo o lugar sem posse. Importado no teste: sem o export, só este
+// teste falha, e os demais do arquivo continuam rodando.
+test("I25-C46 evidência comum: o lugar neutro exportado dá a tomada, a posse, a posse indeterminada depois de rename lock com erro ou pendente até a próxima tomada, e fora do lock depois do rename concluído ou do unlink legado", async () => {
+  const { neutralPlace } = await import("../helpers/traces.mjs");
+  assert.equal(typeof neutralPlace, "function", "helpers/traces.mjs exporta o lugar neutro");
+  const places = (ops) => diskTrace(ops).map((entry) => `${entry.op} ${entry.kind}: ${neutralPlace(entry)}`);
+
+  assert.deepEqual(
+    places([
+      ["open", "lock", 1, 1], ["writeFile", "lock", 2, 1], ["close", "lock", 3, 1], ["rename", "lock", 4, 1, "EIO"], ["rmdir", "lock.reserva", 5, 1, "EIO"],
+      ["open", "lock", 6, 1, "EEXIST"], ["open", "lock", 7, 1], ["writeFile", "lock", 8, 1], ["close", "lock", 9, 1], ["rename", "lock", 10, 1], ["rmdir", "lock.reserva", 11, 1],
+    ]),
+    [
+      "open lock: tomada do lock", "writeFile lock: tomada do lock", "close lock: sob o lock, 1ª tomada", "rename lock: sob o lock, 1ª tomada", "rmdir lock.reserva: posse do lock indeterminada",
+      "open lock: tomada do lock", "open lock: tomada do lock", "writeFile lock: tomada do lock", "close lock: sob o lock, 2ª tomada", "rename lock: sob o lock, 2ª tomada", "rmdir lock.reserva: fora do lock",
+    ],
+  );
+  // Rename ainda em curso na saída: também não prova a liberação.
+  assert.deepEqual(places([["open", "lock", 1, 1], ["writeFile", "lock", 2, 1], ["rename", "lock", 3, 40, "pendente"], ["lstat", "lock.reserva", 4, 39, "pendente"]]).slice(2), ["rename lock: sob o lock, 1ª tomada", "lstat lock.reserva: posse do lock indeterminada"]);
+  // Linha legada: o `unlink lock` encerra a posse.
+  assert.deepEqual(places([["open", "lock", 1, 1], ["writeFile", "lock", 2, 1], ["unlink", "lock", 3, 1], ["stat", "state.json", 4, 1]]), ["open lock: tomada do lock", "writeFile lock: tomada do lock", "unlink lock: sob o lock, 1ª tomada", "stat state.json: fora do lock"]);
 });
 
 // I25-C46 (m)–(n) (gate B em c0d61d7: o T8-C4 saiu com um lock ilegível e a

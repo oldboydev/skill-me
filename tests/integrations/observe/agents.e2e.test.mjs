@@ -21,6 +21,7 @@ import {
   expectedPseudonym,
   filesUnder,
   inspected,
+  neutralPlace,
   privacyBody,
   privacyOk,
   recordProducersInEachTest,
@@ -233,10 +234,10 @@ async function runStep(step, times, injected = {}) {
   );
 }
 
-// Lugar de uma operação em relação ao lock. Na gravação automática uma tomada
-// pode renomear mais de um state.json.tmp (captura nova e commit), então aqui
-// não se diz "antes/depois do commit".
-const placeOf = ({ held, hold, kind }) => (held ? `sob o lock, ${hold}ª tomada` : kind === "lock" ? "tomada do lock" : "fora do lock");
+// O lugar de cada operação é o neutro do apoio comum (helpers/traces.mjs): na
+// gravação automática uma tomada pode renomear mais de um state.json.tmp, então
+// aqui não se diz "antes/depois do commit"; depois de um `rename lock` com erro
+// a posse fica indeterminada, nunca "fora do lock" (C46 (u)).
 const isContention = ({ op, kind, code }) => op === "open" && kind === "lock" && code === "EEXIST";
 const isAbsence = ({ op, code }) => op === "lstat" && code === "ENOENT";
 
@@ -247,14 +248,14 @@ function hookTiming(file) {
   const lines = timingLines(file);
   if (lines.length === 0) return { unavailable: "sem linha da pré-carga" };
   const trace = diskTrace(lines.at(-1).ops);
-  const failures = trace.filter((e) => e.code !== undefined && !isContention(e) && !isAbsence(e)).map((e) => `${e.op} ${e.kind} ${e.code} (${placeOf(e)})`);
+  const failures = trace.filter((e) => e.code !== undefined && !isContention(e) && !isAbsence(e)).map((e) => `${e.op} ${e.kind} ${e.code} (${neutralPlace(e)})`);
   const last = trace.at(-1);
   return {
     lines: lines.length,
     failures,
     contention: trace.filter(isContention).length,
     absences: trace.filter(isAbsence).length,
-    last: last === undefined ? "nenhuma" : `${last.op} ${last.kind}${last.code === undefined ? "" : ` ${last.code}`} (${placeOf(last)})`,
+    last: last === undefined ? "nenhuma" : `${last.op} ${last.kind}${last.code === undefined ? "" : ` ${last.code}`} (${neutralPlace(last)})`,
     summary: describeTiming({ ...deliveryTiming(lines.at(-1)), failed: failures }),
   };
 }
@@ -447,6 +448,82 @@ test("I25-C47 diagnóstico do I23-C10: disco parado no hook (delivery_timeout, o
   assert.ok(failure.message.includes("última concluída: close key (sob o lock, 2ª tomada)"), failure.message);
   assert.ok(failure.message.includes("raiz: capturas automáticas indisponível [lock_present]; pasta das capturas 0 segmento(s), 0 temporário(s); lock presente"), failure.message);
   assertNoLeak(outcome, failure.message);
+});
+
+// I25-C46 (u), refinamento F1 da verificação 24 (plano aprovado `:53`): um
+// `rename` do `.lock` com erro não prova que o lock saiu, então o diagnóstico do
+// I23-C10 não pode dizer "fora do lock" para a limpeza que vem depois. Pela
+// mesma rotina do C47, com as injeções existentes no 2º rename do `.lock` do
+// hook — a liberação da tomada que grava o segmento.
+const UNSURE = "posse do lock indeterminada";
+const RELEASE_EIO = { automatic: true, code: "io_failure", entries: 1, committed: 0, persisted: 0, lost: 1, unrouted: 0 };
+
+test("I25-C46 evidência do I23-C10: rename do lock com erro, sem mover ou depois de mover, deixa a limpeza com a posse indeterminada, nunca fora do lock; a liberação concluída continua fora do lock", async () => {
+  const outcomes = {
+    kept: await codexFirstDelivery("rename sem mover", { SKILL_ME_TEST_TRACES_LOCK_KEPT: "2" }),
+    moved: await codexFirstDelivery("rename moveu", { SKILL_ME_TEST_TRACES_LOST_CONFIRMATION: "2" }),
+  };
+  for (const [name, outcome] of Object.entries(outcomes)) {
+    assertRedWithEvidence(outcome);
+    const { produced, evidence, failure } = outcome;
+    assert.deepEqual(produced[0].run.report.delivery, RELEASE_EIO, name);
+    const [{ timing }] = evidence.producers;
+    assert.deepEqual([timing.failures, timing.last], [["rename lock EIO (sob o lock, 2ª tomada)"], `rmdir lock.reserva (${UNSURE})`], name);
+    assert.ok(failure.message.includes(`falhas rename lock EIO (sob o lock, 2ª tomada); `), `${name}: ${failure.message}`);
+    assert.ok(failure.message.includes(`última concluída: rmdir lock.reserva (${UNSURE})`), `${name}: ${failure.message}`);
+    assert.ok(!failure.message.includes("(fora do lock)"), `${name}: a liberação não confirmada não vira fora do lock: ${failure.message}`);
+    assertNoLeak(outcome, failure.message);
+  }
+  // Sem mover, o lock fica e o retirado não existe (uma ausência conferida a
+  // mais); movido, o lock saiu e o retirado foi apagado.
+  assert.deepEqual([outcomes.kept.evidence.root.lock, outcomes.moved.evidence.root.lock], [{ present: true }, { present: false }]);
+  assert.equal(outcomes.kept.evidence.producers[0].timing.absences, outcomes.moved.evidence.producers[0].timing.absences + 1);
+
+  // Controle: a injeção do C47 (a) falha o callback e a liberação conclui.
+  const released = await codexFirstDelivery("liberação concluída", { SKILL_ME_TEST_TRACES_SEGMENT_EIO: "1" });
+  assertRedWithEvidence(released);
+  assert.equal(released.evidence.producers[0].timing.last, "rmdir lock.reserva (fora do lock)");
+  assert.ok(released.failure.message.includes("última concluída: rmdir lock.reserva (fora do lock)"), released.failure.message);
+});
+
+// Os ramos que as injeções não alcançam (falha da limpeza depois de um rename
+// com erro, limpeza pendente na saída), pelo mesmo `hookTiming` do I23-C10, com
+// linhas da pré-carga gravadas num arquivo.
+test("I25-C46 evidência do I23-C10: pelo formatter do hook, depois de rename lock EIO as falhas, a última concluída e os pendentes saem com a posse indeterminada até a próxima tomada; concluído e legado continuam fora do lock", () => {
+  const dir = scratch("i25 c46 formatter do hook");
+  const taken = [["open", "lock", 1, 1], ["writeFile", "lock", 2, 1], ["close", "lock", 3, 1], ["rename", "state.json.tmp", 4, 1]];
+  let files = 0;
+  const timingOf = (ops, pending = []) => {
+    const file = path.join(dir, `${(files += 1)}.ndjson`);
+    writeFileSync(file, `${JSON.stringify({ ops, cpuMs: 1, pending, exitMs: 100, startedAt: Date.UTC(2026, 9, 29), pid: 4242, loop: { samples: 0, maxMs: null, p99Ms: null } })}\n`);
+    return hookTiming(file);
+  };
+
+  // Sem mover: a reserva não sai.
+  const rmdirFailed = timingOf([...taken, ["mkdtemp", "lock.reserva", 5, 1], ["lstat", "lock.reserva", 6, 1], ["rename", "lock", 7, 1, "EIO"], ["lstat", "lock.reserva", 8, 1], ["lstat", "lock.retirado", 9, 1, "ENOENT"], ["lstat", "lock.reserva", 10, 1], ["rmdir", "lock.reserva", 11, 1, "EIO"]]);
+  assert.deepEqual(rmdirFailed.failures, ["rename lock EIO (sob o lock, 1ª tomada)", `rmdir lock.reserva EIO (${UNSURE})`]);
+  assert.deepEqual([rmdirFailed.last, rmdirFailed.absences], [`rmdir lock.reserva EIO (${UNSURE})`, 1]);
+  assert.ok(rmdirFailed.summary.includes(`; falhas rename lock EIO (sob o lock, 1ª tomada), rmdir lock.reserva EIO (${UNSURE}); `), rmdirFailed.summary);
+
+  // Depois de mover: o retirado não sai.
+  const unlinkFailed = timingOf([...taken, ["rename", "lock", 5, 1, "EIO"], ["lstat", "lock.reserva", 6, 1], ["lstat", "lock.retirado", 7, 1], ["unlink", "lock.retirado", 8, 1, "EIO"], ["lstat", "lock.retirado", 9, 1]]);
+  assert.deepEqual(unlinkFailed.failures, ["rename lock EIO (sob o lock, 1ª tomada)", `unlink lock.retirado EIO (${UNSURE})`]);
+  assert.equal(unlinkFailed.last, `lstat lock.retirado (${UNSURE})`);
+
+  // Limpeza em curso na saída.
+  const pending = timingOf([...taken, ["rename", "lock", 5, 1, "EIO"], ["lstat", "lock.reserva", 6, 1]], [["rmdir", "lock.reserva", 7, 90]]);
+  assert.equal(pending.last, `lstat lock.reserva (${UNSURE})`);
+  assert.ok(pending.summary.includes(`pendentes na saída: rmdir lock.reserva (${UNSURE}) há 90 ms`), pending.summary);
+
+  // A tomada seguinte volta à posse conhecida; a disputa só é contada.
+  const retaken = timingOf([...taken, ["rename", "lock", 5, 1, "EIO"], ["open", "lock", 6, 1, "EEXIST"], ["open", "lock", 8, 1], ["writeFile", "lock", 9, 1], ["rename", "segmento.tmp", 10, 1, "EIO"]]);
+  assert.deepEqual([retaken.failures, retaken.contention, retaken.last], [["rename lock EIO (sob o lock, 1ª tomada)", "rename segmento.tmp EIO (sob o lock, 2ª tomada)"], 1, "rename segmento.tmp EIO (sob o lock, 2ª tomada)"]);
+
+  // Rename concluído e linha legada (`unlink lock`): fora do lock, como antes.
+  const concluded = timingOf([...taken, ["rename", "lock", 5, 1], ["rmdir", "lock.reserva", 6, 1, "EIO"]]);
+  assert.deepEqual([concluded.failures, concluded.last], [["rmdir lock.reserva EIO (fora do lock)"], "rmdir lock.reserva EIO (fora do lock)"]);
+  const legacy = timingOf([["open", "lock", 1, 1], ["writeFile", "lock", 2, 1], ["unlink", "lock", 3, 1], ["stat", "state.json", 4, 1, "EIO"]]);
+  assert.deepEqual([legacy.failures, legacy.last], [["stat state.json EIO (fora do lock)"], "stat state.json EIO (fora do lock)"]);
 });
 
 test("I23-C14 falha de entrega não bloqueia agente: lock ocupado ou raiz ausente deixam hooks com 0 e saídas vazias, e status não promete captura", async () => {

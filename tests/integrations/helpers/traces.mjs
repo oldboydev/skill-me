@@ -261,7 +261,10 @@ const unheldPlace = ({ kind, unsure }) => (kind === "lock" ? "tomada do lock" : 
 const placeInCapture = (entry) => (entry.held ? `sob o lock, ${entry.hold}ª tomada${entry.commits > 0 ? ", depois do commit" : ""}` : unheldPlace(entry));
 // Fora do caminho manual (rota automática, produtor em processo) uma tomada
 // pode renomear mais de um state.json.tmp, então o lugar não diz commit.
-const neutralPlace = (entry) => (entry.held ? `sob o lock, ${entry.hold}ª tomada` : unheldPlace(entry));
+// Exportado para o formatter do I23-C10 (observe/agents.e2e.test.mjs), que
+// decidia o lugar com uma cópia própria e não via a posse indeterminada (F1 da
+// verificação 24 da #25).
+export const neutralPlace = (entry) => (entry.held ? `sob o lock, ${entry.hold}ª tomada` : unheldPlace(entry));
 const named = (entry, place = placeInCapture) => `${entry.op} ${entry.kind}${entry.code === undefined || entry.code === PENDING ? "" : ` ${entry.code}`} (${place(entry)})`;
 const isLockContention = ({ op, kind, code }) => (op === "open" || op === "writeExclusive") && kind === "lock" && code === "EEXIST";
 const traceOfLine = (line) => diskTrace([...line.ops, ...(line.pending ?? []).map(([op, kind, at, age]) => [op, kind, at, age, PENDING])]);

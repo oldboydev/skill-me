@@ -3330,3 +3330,51 @@ em `builder-lock-release/discard-inventory.md`.
 5. **Custo × provas** (“custo não medido … T8-C15 …”): o T8-C15, que grava com fsync, rodou e passou nos gates A2, B2, C e D
    — é evidência de teste. Não houve medição comparativa do custo do pipeline real com fsync. O E5 (callback vazio, mesmo
    `.lock`) e o `ci-lock-latency` (namespace individual) medem só o lock.
+
+## Formatter do I23-C10 com a posse indeterminada (F1 da verificação 24; C46 (u), refinamento F1)
+
+Mesmo autor Claude da abertura S14 (`e06e4dd`), não o autor S13 nem o Verifier 24. Linha “Lugar da posse no formatter do
+I23-C10” do Landing; detalhes e limites no bloco de mesmo nome do `Handoff`. Execuções pelos controladores do Root
+(`worker-guard/`), uma de cada, com resultados em `.checks/code-review/issue-25/builder-uncertain-place/controlled/`.
+
+### O que mudou
+
+- `tests/integrations/helpers/traces.mjs`: o `neutralPlace` existente passa a ser exportado, sem mudar o texto.
+- `tests/integrations/observe/agents.e2e.test.mjs`: `hookTiming` usa o `neutralPlace` nas `falhas` e na `última concluída`; o
+  `placeOf` local, que ignorava o `unsure`, sai. Dois testes novos: `I25-C46 evidência do I23-C10: rename do lock com erro …`
+  (hook real, `LOCK_KEPT=2`, `LOST_CONFIRMATION=2`, controle `SEGMENT_EIO=1`) e `… pelo formatter do hook …` (linhas da
+  pré-carga).
+- `tests/integrations/traces/evidence.unit.test.mjs`: `I25-C46 evidência comum: o lugar neutro exportado …`, com o
+  `neutralPlace` importado dentro do teste.
+- Produto, `concurrency.cli`, injeções, prazos, cargas, contagens e asserções antigas sem mudança.
+
+### Provas (Node v24.22.1, concorrência 8, os dois arquivos inteiros)
+
+| Etapa | Identidade | Resultado |
+| --- | --- | --- |
+| RED `red-1` | `e06e4dd` + testes, 19:30:57–19:31:19 UTC | 19/16/3/0, exit 1 natural: `agents.e2e:470` e `:503` com `(fora do lock)` × `(posse do lock indeterminada)` (comportamentais); `evidence.unit:266`, export ausente (estrutural). Cada teste parou na 1ª asserção falsa |
+| GREEN `green-1` | `e06e4dd` + testes + correção, 19:39:32–19:39:55 UTC | **19/19/0/0**, exit 0 natural; os três novos com todas as asserções |
+| K1 | `placeOf` antigo nos dois usos | 8/6/2/0, exit 1 natural: os dois testes novos do `agents.e2e` |
+| K2 | `unheldPlace` sem `unsure` | 11/9/2/0, exit 1 natural: o teste novo do lugar neutro e o da S13 (`:231`) |
+| K3 | indeterminada para tudo fora do lock, mantendo a tomada | 11/8/3/0, exit 1 natural: o teste novo (`rmdir lock.reserva` depois do rename concluído), o `:231` e o `:184` (C47 em processo) |
+
+Todas com `checkoutSame`. O primeiro K3 (`() => UNSURE_PLACE`) foi recusado por mim antes de qualquer execução, porque o
+teste cairia no rótulo da tomada, sem alcançar o ramo do rename concluído. O Root o preservou como
+`controls-1-manifest.json.rejected-before-execution` e corrigiu só o K3 no manifesto. Os 14 mutantes e o E5 não se repetem:
+o produto `13ecc07` e as provas da S13 são os mesmos, por identidade.
+
+### Processo, incidentes e limites
+
+- **Incidente**: antes do registro, `… | tee /tmp/x` no Git Bash sobrescreveu `C:\Users\paulo\AppData\Local\Temp\x`, que já
+  existia (birth 26/09/2026), sem cópia. Impacto desconhecido; o arquivo não foi tocado de novo
+  (`builder-uncertain-place/incident-tmp-x.md`).
+- **Interrupção**: o Root encerrou só a minha CLI (pid 91848), e a sessão 83978 terminou com exit −1, sem nenhum teste ou
+  gate iniciado. A retomada ampla seguinte foi recusada pela revisão automática.
+- **Fases restritas**: a edição sem shell, PowerShell nem Write; a execução só por comando literal, com hashes, HEAD e
+  status fixados e claim contra repetição. É controle de ferramentas do Root, não sandbox de sistema de arquivos do SO. O
+  `TEMP` do processo foi preparado como privado, mas o `/tmp` explícito do Git Bash continua global.
+- **Atribuição**: as mutações e as provas de comportamento são minhas; o controlador, os manifestos, as raízes registradas e
+  retidas e os hashes são do Root.
+- **Pendente**: o commit do código e dos registros (Root), os gates A/B/C/D do novo HEAD por comandos fixos, a verificação
+  independente 25 (não iniciada) e a formal 14 (sem uso). Nada aqui é PASS global, `ready`, CI ou merge, nem afirma impacto
+  global zero.

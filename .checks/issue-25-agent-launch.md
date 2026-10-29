@@ -2722,3 +2722,91 @@ de qualquer sonda ou código):
   base copiada do final 24; e todos os incidentes e retificações anteriores (R5, 1.257/107, auxiliares `/tmp`, D interrompido
   pelo Root, R21, as seis sobras e as 8 chamadas de PowerShell da S13). Nada aqui afirma PASS, `ready`, CI verde ou impacto
   global zero.
+- **Interrupção e controle do coordenador** (acréscimo factual, depois de `e06e4dd`): depois do registro, o Root encerrou só
+  a minha CLI (pid 91848, conferida por UUID, executável e criação; sessão 83978 com exit 1, sem filhos ativos). Nenhum
+  teste ou gate tinha começado. (Retificação: a sessão 83978 terminou com **exit −1**, não 1. Foi uma interrupção do Root,
+  não um término natural, e nenhum gate tinha começado.) Uma retomada com ferramentas amplas foi recusada pela revisão automática por falta de
+  contenção depois da sobrescrita de `/tmp/x`. A retomada seguinte, na mesma sessão, ficou **só de edição**: sem Bash,
+  PowerShell nem Write; Edit só nos arquivos autorizados. O `Temp\x` global não foi tocado de novo, e o impacto da
+  sobrescrita continua desconhecido. As provas serão executadas por comandos fixos do coordenador, sob o meu papel, depois de
+  ele revisar o diff.
+- **Testes de regressão escritos antes da correção** (nessa etapa; não executados por mim; `placeOf`, `hookTiming` e
+  `helpers/traces.mjs` sem mudança):
+  - `observe/agents.e2e.test.mjs`: `I25-C46 evidência do I23-C10: rename do lock com erro, sem mover ou depois de mover, …`
+    (hook real, `LOCK_KEPT=2`, `LOST_CONFIRMATION=2` e o controle `SEGMENT_EIO=1`) e `I25-C46 evidência do I23-C10: pelo
+    formatter do hook, …` (linhas da pré-carga pelo mesmo `hookTiming`);
+  - `traces/evidence.unit.test.mjs`: `I25-C46 evidência comum: o lugar neutro exportado …`.
+  - **Forma do RED do `evidence.unit`, ajustada ao escrever o teste** (substitui “vermelho na importação”, do refinamento F1
+    do C46 (u)): o `neutralPlace` é importado dentro do teste, por `import()`. Antes do export, só esse teste falha
+    (`typeof … === "function"`), e os outros 10 do arquivo continuam rodando. Com uma importação estática, o arquivo inteiro
+    falharia ao carregar, sem nenhum resultado por teste. Continua um RED estrutural, declarado como tal; a discriminação de
+    comportamento está nos dois testes do `agents.e2e`.
+  - **RED esperado**, ainda não observado, no código de `e06e4dd` com os dois arquivos inteiros:
+    - os dois testes novos do `agents.e2e` vermelhos, porque o `placeOf` atual dá `(fora do lock)` onde o esperado é
+      `(posse do lock indeterminada)`;
+    - o teste novo do `evidence.unit` vermelho, pelo export ausente;
+    - todos os demais verdes, inclusive o I23-C10 e o C47 (a)/(b).
+- **RED observado** (`red-1`, uma execução, término natural, exit 1; 19:30:57–19:31:19 UTC; Node v24.22.1, HEAD
+  `e06e4dd`, concorrência 8; os dois arquivos inteiros; `builder-uncertain-place/controlled/red-1-result.json` e
+  `red-1.log`):
+  - **19 testes, 16 pass, 3 fail**, 0 cancelados, 0 skips. Os 16 que passaram são os antigos: os 10 do `evidence.unit` e
+    os 6 do `agents.e2e` (I23-C6, I23-C7, I23-C10, os dois C47 (a)/(b) e I23-C14). (No relato em chat eu disse “11 antigos
+    do `evidence.unit`”; o certo é 10 antigos mais 1 novo.)
+  - **Comportamentais**:
+    - `agents.e2e:470`, 1ª volta (`kept`, `LOCK_KEPT=2`): as `falhas` bateram (`["rename lock EIO (sob o lock, 2ª
+      tomada)"]`); a última concluída veio `rmdir lock.reserva (fora do lock)` contra `… (posse do lock indeterminada)`;
+    - `agents.e2e:503`, `rmdir lock.reserva EIO` depois de `rename lock EIO`: `(fora do lock)` contra `(posse do lock
+      indeterminada)`.
+  - **Estrutural**: `evidence.unit:266`, `typeof neutralPlace` `'undefined'` contra `'function'`.
+  - **Limites**: cada teste parou na primeira asserção falsa. A volta `moved`, a presença/ausência do lock, a ausência
+    conferida a mais, o controle `SEGMENT_EIO`, o `unlink` falho, os pendentes, a nova tomada, o concluído e o legado ficam
+    para o GREEN. Na mesma mensagem, a evidência comum (o formatter do apoio) já dizia `última concluída: rmdir lock.reserva
+    (posse do lock indeterminada)` para os dois produtores, com `io_failure` 1/0/0/1, lock presente e 2 ausências no `kept`,
+    e lock ausente e 1 ausência no `moved`. Isso é observação, não asserção.
+- **Infraestrutura do Root** (dele, não minha prova): o controlador imutável `worker-guard/proof-controller.mjs` com o
+  manifesto `red-1-manifest.json` (hashes de 9 fontes, HEAD e status exatos, alvos inteiros e orçamento de 900.000 ms),
+  raízes privadas registradas antes do spawn e retidas sem limpeza, logs exclusivos e um hook que só permitiu o comando
+  exato. Eu chamei esse comando uma vez, sem nenhuma outra execução.
+- **Correção** (etapa só de edição, depois do RED; não executada nem commitada), na forma do Landing S14:
+  - `helpers/traces.mjs`: `neutralPlace` passa a ser exportado, sem mudar o texto, mais um comentário com o consumidor;
+  - `observe/agents.e2e.test.mjs`: importa `neutralPlace` e usa-o em `hookTiming`, nas `falhas` e na `última concluída`;
+    o `placeOf` local sai.
+
+  Nenhum outro arquivo, expectativa, campo, tempo ou contagem muda. O `evidence.unit` e o `concurrency.cli` também ficam
+  como estão. Próximo passo: o GREEN dos dois arquivos inteiros, por comando fixo do Root.
+- **GREEN observado** (`green-1`, uma execução, término natural, exit 0; 19:39:32–19:39:55 UTC; Node v24.22.1, HEAD `e06e4dd`
+  com a correção ainda sem commit, concorrência 8; os dois arquivos inteiros; `checkoutSame`; `controlled/green-1-result.json`
+  e `.log`): **19 testes, 19 pass**, 0 fail, 0 cancelados, 0 skips. Os três testes novos passaram com todas as asserções em
+  sequência, sem saída antecipada:
+  - no hook, `kept` e `moved`: `io_failure` 1/0/0/1, `falhas` do rename sob a 2ª tomada, última concluída `rmdir lock.reserva
+    (posse do lock indeterminada)` na evidência e na mensagem, sem `(fora do lock)` e sem vazamento; lock presente/ausente; o
+    `kept` com uma ausência conferida a mais; o controle `SEGMENT_EIO` com `fora do lock`;
+  - no formatter do hook: o `rmdir` e o `unlink` com falha, o pendente, a nova tomada, o concluído e o legado;
+  - o lugar neutro exportado, em toda a sequência.
+
+  Os 16 antigos continuam verdes: os 10 do `evidence.unit` e os 6 do `agents.e2e`.
+- **Controles K1–K3** (`controls-1`, uma execução, 20:01:06–20:01:31 UTC; cópias registradas pelo Root e retidas; wrapper 0
+  e `valid`; `checkoutSame`; `controlled/controls-1-result.json` e `controls-1-K{1,2,3}.log`). Os três filhos saíram com
+  **exit 1 natural**, cada um com a falha nova exigida:
+
+  | Controle | Testes | Asserção que detectou (atual × esperado) |
+  | --- | --- | --- |
+  | **K1**: o `placeOf` antigo nos dois usos do `agents.e2e` | 8/6/2/0 | `agents.e2e:470` (`kept`): `rmdir lock.reserva (fora do lock)` × `(posse do lock indeterminada)`; `:503`: `rmdir lock.reserva EIO (fora do lock)` × indeterminada |
+  | **K2**: `unheldPlace` sem `unsure` | 11/9/2/0 | o teste novo do lugar neutro (`evidence.unit:264`): o 5º lugar `rmdir lock.reserva: fora do lock` × indeterminada; também o teste da S13 (`:231`) |
+  | **K3**: indeterminada para tudo fora do lock, mantendo `tomada do lock` | 11/8/3/0 | `:264`: o último lugar, depois do rename concluído, `posse do lock indeterminada` × `fora do lock`; também o `:231` e o `:184` (C47 em processo: o pendente depois de um `unlink lock` falho, sem rename, esperado `fora do lock`) |
+
+  O primeiro manifesto do K3 (`() => UNSURE_PLACE`, que trocava também o rótulo da tomada) foi recusado por mim **antes de
+  qualquer execução**, porque não discriminava o ramo do rename concluído. O Root o preservou em
+  `controls-1-manifest.json.rejected-before-execution` e corrigiu só o K3, no manifesto do controlador. As mutações são minhas,
+  do Landing; a infraestrutura é do Root. O wrapper com exit 0 não é suíte verde: os três filhos foram vermelhos.
+- **Fases restritas desta fatia** (controle do Root, não sandbox de sistema de arquivos do SO):
+  - etapas de edição sem shell, PowerShell nem Write, com Edit só nos arquivos autorizados;
+  - etapas de execução com um único comando literal, hashes e HEAD/status fixados e claim exclusivo contra repetição.
+
+  A retomada com ferramentas amplas foi **recusada pela revisão automática** antes de começar. O `TEMP` do processo foi
+  preparado como privado, mas o `/tmp` explícito do Git Bash continua sendo o TEMP global. O incidente do `x` continua:
+  `C:\Users\paulo\AppData\Local\Temp\x` já existia e foi sobrescrito sem cópia; o impacto é desconhecido e o arquivo não
+  foi tocado de novo.
+- **Por identidade, sem nova execução**: o produto `13ecc07`, as provas da S13, o E5 e os 14 mutantes. A formal 14 continua
+  sem uso, e a verificação independente 25 não começou. Nada aqui é PASS global, `ready`, CI ou merge. **Próximo**: o Root
+  revisa e faz o commit do código e dos registros, e depois dá os comandos fixos de A/B/C/D para o novo HEAD.
