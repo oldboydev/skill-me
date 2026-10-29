@@ -845,3 +845,31 @@ prendeu o processo do arquivo em 3 de 3, até a sonda encerrar o follow; com a c
 termina. Isso confirma o mecanismo no runtime da CI sem atribuir o cancelamento da manual 40814471097. Ficam
 comunicados, fora desta fatia: as pastas das provas deixadas no `RUNNER_TEMP` por esse `rmSync`, e o mesmo padrão do
 follow em `follow.cli.test.mjs`, que nesse runtime prenderia o arquivo numa falha.
+
+## Ciclo de vida do `follow` em `follow.cli.test.mjs` — 29/10/2026 (T8-C12 e T8-C13; sem critério novo)
+
+Depois de `97baf13`, o coordenador incluiu numa fatia nova a correção do mesmo defeito do C46 (s) em
+`tests/integrations/traces/follow.cli.test.mjs`, sob as autorizações 6467154706 (“Pode fazer a medição comparativa.
+Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”) e 6442514838 (“Pode fazer
+quantas precisar”). Não há aprovação humana específica nova; o “fora desta fatia” da seção anterior fica como estava,
+como registro daquela fatia.
+
+**Diagnóstico** (sondas próprias em cópias de `97baf13`, só com instrumentação e falhas injetadas na cópia; detalhes na
+linha “Ciclo de vida do `follow` em `follow.cli.test.mjs`” do Landing): numa falha do T8-C12 antes do `stop` (passo do
+hook com a injeção existente de E/S na promoção do segmento) ou do T8-C13 com o follow parado no portão, o follow
+continua vivo depois de a falha sair. No Node 24.22.1, ele só termina quando a limpeza do arquivo apaga as pastas (T8-C12)
+ou quando vence o prazo de 30 s do portão da pré-carga (T8-C13, ~22 s depois do último teste); no Node 24.13.0 do
+Windows, a limpeza não remove nada e o processo do arquivo fica preso até o vigia da sonda. A causa do cancelamento da
+manual 40814471097 continua desconhecida. Uma das sondas foi cortada pela interrupção do host e refeita uma vez.
+
+**Decisão**: a correção fica só nesse arquivo. A rotina do T8-C12 encerra o follow que recebe, e a exclusão do T8-C13
+vira uma rotina do arquivo que encerra o follow que inicia; nas duas, o encerramento é pelo próprio objeto, com o
+`close` real esperado, em toda saída, sem engolir a falha, e um filho que já saiu não recebe sinal. Dois controles, um
+por rotina, pelas rotinas reais com as injeções existentes, provam o mesmo erro e o follow já fechado quando a falha
+sai. O T8-C12, o T8-C13, o produto, a pré-carga, os prazos, as cargas, as contagens, o paralelismo e o runner não
+mudam. O C46 recebe o refinamento (t). O reporter adicional proposto na seção anterior continua não implementado.
+
+Alternativas rejeitadas: `t.after`, `afterEach` ou o `after` do arquivo; só enviar o sinal; encerrar pelo pid, pela
+árvore ou por prefixo; `--test-force-exit`, timeout novo, prazo menor do portão ou o `go` escrito na saída; um apoio
+comum com o `demo.e2e.test.mjs`, que mudaria aquele arquivo, verde em `19a5a5c`, e um apoio importado por muitas provas
+(a repetição de duas linhas fica justificada no Landing); uma injeção nova para falhar o `stop`.
