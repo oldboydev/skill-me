@@ -973,8 +973,9 @@ test("I25-C46 prazo da entrega: depois de uma recusa do lock, a repetição aban
 });
 
 // io roteirizado que leva o relógio a `at` quando a criação real `creation` do
-// lock termina, antes de o store chamar o onLock (laço atrasado: o timer do
-// prazo ainda não rodou).
+// lock termina, antes de o store chamar o onLock. O timer do prazo é o real e o
+// roteiro não o controla: ele pode resolver a entrega antes (linha "Fim da
+// liberação esperado na prova do lock tardio" do Landing).
 function lockTakenAt(clock, { busy, creation, at }) {
   const scripted = scriptedIo({ busy });
   return {
@@ -989,7 +990,7 @@ function lockTakenAt(clock, { busy, creation, at }) {
   };
 }
 
-test("I25-C46 prazo da entrega: lock obtido com o relógio no prazo ou depois, antes de o timer rodar, é devolvido sem gravar e sai com o motivo do prazo", async () => {
+test("I25-C46 prazo da entrega: lock obtido com o relógio no prazo ou depois, antes do onLock, é devolvido sem gravar e sai com o motivo do prazo", async (t) => {
   for (const [label, busy, creation, code] of [
     ["sem recusa", [], 2, "delivery_timeout"],
     ["depois de uma recusa", [2], 3, "lock_present"],
@@ -1004,6 +1005,13 @@ test("I25-C46 prazo da entrega: lock obtido com o relógio no prazo ou depois, a
       const delivery = createCaptureDelivery({ root, id, agent: "claude", io: late.io, clock: () => clock.now });
       await deliverOne(delivery, "prazo-tardio");
       assert.deepEqual(delivery.report(), { bound: true, code, entries: 1, committed: 0, persisted: 0, lost: 1 }, name);
+      // A entrega pode voltar pelo timer com a liberação da tentativa ainda em
+      // curso (o agente não espera o disco), então as pós-condições valem depois
+      // do fim dela. Só o observado sai: 2 no retorno não diz quem resolveu a
+      // corrida, e 1 não diz por quê.
+      const releasedAtReturn = late.stats.lockReleases;
+      await waitUntil(() => late.stats.lockReleases === 2, { label: `${name}: a tentativa tardia devolver o próprio lock` });
+      t.diagnostic(`${name}: no retorno da entrega, ${releasedAtReturn} de 2 liberações concluídas; depois da espera, 2`);
       assert.deepEqual([late.stats.lockCreations, late.stats.lockReleases], [creation, 2], `${name}: a abertura e a tentativa tardia devolveram o próprio lock`);
       assert.deepEqual(snapshotTree(captureDir(root, id)), before, `${name}: nada gravado`);
       assert.ok(!existsSync(path.join(storeDir(root), ".lock")), `${name}: lock liberado`);
