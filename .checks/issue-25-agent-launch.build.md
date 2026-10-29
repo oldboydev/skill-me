@@ -3007,3 +3007,93 @@ distingue isso de um T8-C19 que não terminou ou de um `demo.e2e` que não come�
   falha do T8-C12 antes do `stop`, ou do T8-C13 com o follow parado no portão, deixaria o follow vivo e prenderia o
   arquivo da mesma forma (o controle `I25-C46 diagnóstico do T8-C12` já encerra o dele). A mesma correção ali exige
   nova fatia autorizada.
+
+## Ciclo de vida do `follow` em `follow.cli.test.mjs` (T8-C12 e T8-C13; C46 (t))
+
+Novo autor Claude, fatia nova, por ampliação do coordenador depois de `97baf13` (o “fora desta fatia” acima fica como
+registro daquela fatia; autorizações 6467154706 e 6442514838, sem aprovação humana específica nova). Abertura `14b853a`;
+Landing, C46 (t), Swept, task e o incidente da interrupção `12f6f1f`; código `709ff5d` (`follow.cli.test.mjs`
+`c4a84c0` → `73c1da9`). Scripts, logs e saídas em `.checks/code-review/issue-25/builder-ci066-follow-cli/`.
+
+### Confirmação nas rotinas reais (sem tocar em rastreados)
+
+Cópias `git archive` de `97baf13` (`copies.ndjson`), com `follow.cli.test.mjs` instrumentado só na cópia
+(`instrument.mjs`, `instrument.ndjson`: eventos do processo do arquivo, de cada follow e do `after`, e um vigia sem
+referência de 45 s que encerra o follow pelo próprio objeto só se o processo do arquivo continuar vivo); uma raiz
+temporária própria por execução (`run-target.mjs`, `roots.ndjson`); Windows; uma execução por variante
+(`run-probes.sh`, `p-*.log`, `p-*.events.ndjson`, `p-*.env.txt`); pids dos follows conferidos mortos depois
+(`pids-alive.mjs`, só existência).
+
+| Variante | Node | Resultado |
+| --- | --- | --- |
+| sem injeção (`p-base-2413`) | 24.13.0 | 4/4; todo follow sai sozinho antes do `after`, que deixa 6 de 6 pastas; o arquivo sai aos 35 s |
+| T8-C12 com `SEGMENT_EIO=1` no 1º hook (`p-c12-2422`) | 24.22.1 | `0 !== 1` (`io_failure`, lock ausente, captura ativa); o follow da falha vivo de 1,0 s até 26,3 s, quando sai 3, 170 ms depois de o `after` apagar as pastas; o arquivo sai em seguida |
+| idem (`p-c12-2413b`) | 24.13.0 | a mesma falha; o `after` deixa 5 de 5 pastas; o arquivo só sai aos 46,0 s, quando o vigia encerra o follow (`SIGTERM`) |
+| T8-C13 com o portão na 1ª sondagem (`p-c13-2422`) | 24.22.1 | `o acumulado saiu na primeira sondagem`, `0 !== 1`; o `after` apaga as pastas aos 28,5 s, mas o follow fica na espera do portão até o prazo de 30 s da pré-carga e sai aos 50,2 s (código 5); o arquivo sai em seguida |
+| idem (`p-c13-2413`) | 24.13.0 | a mesma falha; o `after` deixa 6 de 6 pastas; passado o portão, o follow sonda a captura ativa até o vigia (64,6 s) |
+
+**Incidente**: a 1ª execução 24.13.0 do T8-C12 (`p-c12-2413`) foi cortada pela interrupção do host às 02:29 (-03),
+com falhas de `fork` do Git Bash (`0xC000026B`): sem fim, sem resumo, e o `.env.txt` sem `EXIT`. O log tem 4 marcas,
+com `✖` no T8-C12 (a falha injetada) e nos controles (i) e (j), sem detalhe impresso; esses dois `✖` não são atribuídos
+e não entram no diagnóstico. Os eventos param aos 22,3 s, com o follow da falha vivo depois do `after` (5 de 5 pastas).
+Na retomada (08:20), a consulta só de leitura por pid e pelo nome da pasta não achou processo meu
+(`resume-process-check.txt`), e a raiz registrada dela (40 entradas) foi removida pelo registro (`cleanup-roots.txt`).
+Refeita uma vez como `p-c12-2413b`.
+
+**Defeito confirmado** (harness, não produto; o mesmo do C46 (s)): numa falha do T8-C12 antes do `stop`, ou do T8-C13
+com o follow no portão, o follow segue vivo depois de a falha sair; só termina pela limpeza do arquivo ou pelo prazo
+do portão, e com o `rmSync` do 24.13.0 do Windows prende o processo do arquivo indefinidamente. A causa do
+cancelamento da manual 40814471097 continua desconhecida.
+
+### Correção (só `tests/integrations/traces/follow.cli.test.mjs`, `c4a84c0` → `73c1da9`)
+
+`endFollow(child, closed)` privado, igual ao do `demo.e2e` (repetição de 2 linhas justificada no Landing).
+`followNewRecords` com o corpo inteiro num `try` cujo `finally` encerra o follow recebido; a exclusão do T8-C13 vira
+`followDeletion(root, gatedPoll = 2, seen = {})`, com `try`/`finally` do spawn ao fim; o T8-C13 chama
+`await followDeletion(root)`; o controle (i) perde o `kill()`/`await` próprio (a rotina já encerrou); dois controles
+novos. `git diff -w`: só o `endFollow`, os comentários, o `try`/`finally` das duas rotinas, a extração da exclusão
+(mesmas linhas, com `${gatedPoll}` no lugar do `2` do portão), o (i) e os controles.
+
+### GREEN, RED e prova discriminante
+
+- **GREEN antes do commit** (checkout, Windows 24.22.1, temporário próprio): `green-pre` 5/6 — o controle novo do
+  T8-C13 falhou por um erro meu de literal: a mensagem esperada sem o diff que o Node anexa
+  (`'o acumulado saiu na primeira sondagem\n\n0 !== 1\n'`); corrigido gerando a mensagem pela mesma asserção, como (i)
+  e (j). `green-pre2` 5/6 — o **T8-C13 positivo** falhou em `records.length` `2 !== 3`: o 2º hook do `finishedCapture`
+  (trecho anterior a qualquer follow, igual a `97baf13`) teve `delivery_timeout` 1/0/0/1 com `pendentes na saída:
+  lstat pasta (fora do lock) há 652 ms`, sem disputa do lock (`lock ocupado 0x`). Falha natural de E/S neste
+  computador, da mesma família do `sync key` 601 ms da CI 066; causa desconhecida; preservada, sem repetição e sem
+  correção (fora do contrato desta fatia). Os dois controles novos passaram.
+- **RED e mutantes** (`mutants.mjs`, `mut-mutation.json`, `mut-*.log`, `mut-run.out.txt`; cópia `copy-m` de `709ff5d`,
+  sha256 do arquivo igual ao blob; texto restaurado e conferido por sha256 depois de cada variante):
+
+| Variante | T8-C12 | T8-C13 | (i) | (j) | ciclo T8-C12 | ciclo T8-C13 |
+| --- | --- | --- | --- | --- | --- | --- |
+| controle (sem mudança) | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| RED: `followNewRecords` sem o encerramento | ✔ | ✔ | ✔ | ✔ | ✖ `exit` indefinido | ✔ |
+| RED: `followDeletion` sem o encerramento | ✔ | ✔ | ✔ | ✔ | ✔ | ✖ `exit` indefinido |
+| M2: `kill()` sem esperar o `close` | ✔ | ✔ | ✔ | ✔ | ✖ `exit` indefinido | ✖ `exit` indefinido |
+| M3: `catch` que engole, no T8-C12 | ✔ | ✔ | ✖ `null` | ✔ | ✖ `continua vermelha: null` | ✔ |
+| M3: `catch` que engole, no T8-C13 | ✔ | ✔ | ✔ | ✔ | ✔ | ✖ `continua vermelha: null` |
+| M4: `kill()` sempre | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+
+Limites: o código anterior não tem `followDeletion` nem o encerramento em `followNewRecords`, então os controles novos
+não rodam nele; o RED é a rotina sem o encerramento, que reproduz o ciclo de vida anterior (método do C46 (q) e (s)), e
+a confirmação acima mostra o efeito no código anterior. O M4 é equivalente: nos positivos o follow já fechou quando o
+`finally` roda, e `kill()` num filho que já saiu devolve `false` sem sinal (sondado em `builder-ci066-follow`); a
+guarda evita até a chamada, mas isso não é observável sem espiar o objeto. O RED do T8-C13 levou 48 s: o follow ficou no
+portão até o prazo de 30 s, depois do `after`.
+
+### Gates (`builder-ci066-follow-cli/plan.txt`, depois de `709ff5d` e antes de rodar)
+
+Alvo de A/B/C: `follow.cli.test.mjs` (o arquivo mudado) e `demo.e2e.test.mjs` (a mesma família e a fatia anterior)
+inteiros, numa invocação por ambiente, `node --test --test-concurrency=8 <os dois>` (o teto do runner; com dois
+arquivos, os dois em paralelo, como no D). São os únicos arquivos de `src`/`tests`/`scripts` diferentes de `066bd98`
+(`blob-identity.txt`); nenhum apoio mudou e nenhum arquivo importa os dois. 30 min cada na ferramenta. A Windows
+24.22.1, checkout; B clone novo do HEAD com `core.autocrlf=true` só no clone, Node 24.13.0 oficial (zip contra
+`SHASUMS256.txt`, `node.exe` contra o zip), npm 11.6.2 adjacente na frente do PATH, bin em LF/0 CR e
+toplevel/HEAD/status antes e depois; C WSL uid 1000, `git archive` do HEAD, Node 24.13 copiado num prefixo sem `sh`,
+`env -i`, PATH sem `/usr/bin` nem agentes. Esperado em cada um, se nada falhar: 8 testes, 8 pass. D: um `npm test`
+completo, Windows 24.22.1, runner padrão (teto 8), nativos do Hermes pelas provas versionadas, pwsh oficial só no PATH,
+2 h na ferramenta; esperado, se nada falhar, 1.062/1.042/0/20 (o D de `aa934df` mais os dois controles novos). Falha em
+qualquer gate: preservar e diagnosticar, sem repetir o mesmo conteúdo para obter verde.
