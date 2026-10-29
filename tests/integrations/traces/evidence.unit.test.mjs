@@ -6,7 +6,7 @@ import { after, test } from "node:test";
 import { REPO_ROOT, baseEnv, makeScratch } from "../helpers/cli.mjs";
 import { claudePayload, leaks } from "../helpers/privacy-canaries.mjs";
 import { isTestHome, recordedProducer, rootOf } from "../helpers/producer-runs.mjs";
-import { TRACES_PROBE, deliveryTiming, describeTiming, inProcessProducer, recordingProducers, runHook } from "../helpers/traces.mjs";
+import { TRACES_PROBE, deliveryTiming, describeProducerTrace, describeTiming, inProcessProducer, producerTrace, recordingProducers, runHook } from "../helpers/traces.mjs";
 
 // Provas do apoio comum da evidência dos produtores (issue #25; refinamento do
 // C46 (k) e do C47; linha "Evidência comum dos produtores e formatter legado" do
@@ -222,6 +222,39 @@ test("I25-C47 evidência comum: o io medido do produtor em processo traz as conc
   for (const piece of ["produtor 1 produtor parado (em processo): entrega sem relatório", "nenhuma operação de disco concluída", "pendentes no instantâneo: nenhuma", "1ª operação aos ? ms, última conclusão aos ? ms, instantâneo aos "]) {
     assert.ok(idle.message.includes(piece), `${piece}: ${idle.message}`);
   }
+});
+
+// I25-C46 (u) (liberação segura do lock): o rename do `.lock` é a liberação; um
+// rename com erro não prova que o lock saiu, então as operações seguintes ficam
+// com a posse indeterminada até a tomada seguinte. As linhas legadas com
+// `unlink lock` (acima) continuam como antes.
+test("I25-C46 evidência comum: liberação por rename — concluído encerra a posse e a limpeza sai fora do lock; com erro ou pendente, as seguintes ficam com a posse indeterminada até a próxima tomada", () => {
+  const dir = scratch("i25 c46 evidência liberação");
+  const taken = [["open", "lock", 1, 1], ["writeFile", "lock", 2, 1], ["close", "lock", 3, 1], ["rename", "state.json.tmp", 4, 1]];
+  const line = (ops, pending = []) => ({ ops, cpuMs: 1, pending, exitMs: 100, startedAt: STARTED_AT, pid: 4242, loop: { samples: 0, maxMs: null, p99Ms: null } });
+  const traceOf = (name, value, options) => {
+    const file = path.join(dir, `${name}.ndjson`);
+    writeFileSync(file, `${JSON.stringify(value)}\n`);
+    return producerTrace(file, options);
+  };
+
+  const released = traceOf("concluido", line([...taken, ["mkdtemp", "lock.reserva", 5, 1], ["lstat", "lock.reserva", 6, 1], ["rename", "lock", 7, 1], ["lstat", "lock.reserva", 8, 1], ["unlink", "lock.retirado", 9, 1], ["lstat", "lock.reserva", 10, 1], ["rmdir", "lock.reserva", 11, 1]], [["open", "segmento.tmp", 12, 50]]));
+  assert.deepEqual([released.failures, released.last, released.pending.map((p) => p.name)], [[], "rmdir lock.reserva (fora do lock)", ["open segmento.tmp (fora do lock)"]]);
+
+  const cleanup = [["lstat", "lock.reserva", 8, 1], ["lstat", "lock.retirado", 9, 1, "ENOENT"], ["lstat", "lock.reserva", 10, 1], ["rmdir", "lock.reserva", 11, 1]];
+  const unsure = traceOf("erro", line([...taken, ["mkdtemp", "lock.reserva", 5, 1], ["lstat", "lock.reserva", 6, 1], ["rename", "lock", 7, 1, "EIO"], ...cleanup], [["open", "segmento.tmp", 12, 50]]));
+  assert.deepEqual(unsure.failures, ["rename lock EIO (sob o lock, 1ª tomada, depois do commit)", "lstat lock.retirado ENOENT (posse do lock indeterminada)"]);
+  assert.deepEqual([unsure.last, unsure.pending.map((p) => p.name)], ["rmdir lock.reserva (posse do lock indeterminada)", ["open segmento.tmp (posse do lock indeterminada)"]]);
+  assert.ok(describeProducerTrace(unsure).includes("última concluída: rmdir lock.reserva (posse do lock indeterminada)"), describeProducerTrace(unsure));
+
+  const neutral = traceOf("neutro", line([...taken, ["rename", "lock", 5, 1, "EIO"], ["rmdir", "lock.reserva", 6, 1]]), { commits: false });
+  assert.deepEqual([neutral.failures, neutral.last], [["rename lock EIO (sob o lock, 1ª tomada)"], "rmdir lock.reserva (posse do lock indeterminada)"]);
+
+  const retaken = traceOf("nova tomada", line([...taken, ["rename", "lock", 5, 1, "EIO"], ["open", "lock", 6, 1, "EEXIST"], ["open", "lock", 8, 1], ["writeFile", "lock", 9, 1]], [["open", "segmento.tmp", 11, 50]]));
+  assert.deepEqual([retaken.contention, retaken.pending.map((p) => p.name)], [1, ["open segmento.tmp (sob o lock, 2ª tomada)"]]);
+
+  const pendingRename = deliveryTiming(line(taken, [["rename", "lock", 5, 40], ["lstat", "lock.reserva", 6, 39]]));
+  assert.deepEqual(pendingRename.pending.map((p) => p.name), ["rename lock (sob o lock, 1ª tomada)", "lstat lock.reserva (posse do lock indeterminada)"]);
 });
 
 // I25-C46 (m)–(n) (gate B em c0d61d7: o T8-C4 saiu com um lock ilegível e a

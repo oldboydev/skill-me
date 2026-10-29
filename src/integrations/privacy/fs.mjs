@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, readdir, realpath, rename, rmdir, stat, unlink } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rmdir, stat, unlink } from "node:fs/promises";
 import { createProductionFsAdapter } from "../../doctor/fs-adapter.mjs";
 import { readSnapshot } from "../../doctor/snapshot-read.mjs";
 
@@ -28,6 +28,10 @@ export function createStoreIo({ openFile = open } = {}) {
     },
     // Não recursivo: só a pasta pedida, nunca ancestrais.
     mkdir: (dir) => mkdir(dir, { mode: 0o700 }),
+    // Pasta nova `<prefixo>XXXXXX`, que nunca reaproveita um nome existente:
+    // 0700 no POSIX (mkdtemp(3)); no Windows, a DACL herdada da pasta-mãe. Só a
+    // liberação do lock a usa (store.mjs, `releaseLockFile`).
+    mkdtemp: (prefix) => mkdtemp(prefix),
     // `wx`: falha se o caminho existe — serve de lock e impede que um
     // temporário sobrescreva o que não é nosso. `durable: false` dispensa o
     // flush; só o lock o usa (store.mjs, `withLock`).

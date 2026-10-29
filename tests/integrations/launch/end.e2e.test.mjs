@@ -778,18 +778,19 @@ async function launchInProcess(prepared, io, label, env = {}) {
   return { exitCode: result.exitCode, stderr, started: existsSync(probe) };
 }
 
-// Unlink do `.lock` falhando: `times` vezes, ou sempre (Infinity).
+// Liberação do `.lock` falhando sem movê-lo: `times` vezes, ou sempre
+// (Infinity). A liberação é o rename do `.lock` (C46 (u)); antes, o unlink dele.
 function lockKeptIo(times) {
   const base = createStoreIo();
   let failures = 0;
   return {
     ...base,
-    async unlink(file) {
-      if (path.basename(file) === ".lock" && failures < times) {
+    async rename(from, to) {
+      if (path.basename(from) === ".lock" && failures < times) {
         failures += 1;
         throw eio();
       }
-      return base.unlink(file);
+      return base.rename(from, to);
     },
   };
 }
@@ -929,14 +930,14 @@ test("I25-C43 encerramento pelo launcher com a liberação do lock falhando por 
   const prepared = preparedLaunch(scratch, "i25 c43 fim", { agents: ["claude"] });
   const work = scratch("i25 c43 fim cenario");
   const scenario = writeScenario(work, "um", [{ hook: { agent: "claude", payload: claudePayload("pre_tool_bash") } }]);
-  // 1º unlink do `.lock` neste io: a liberação da abertura; o 2º, a do encerramento.
+  // 1º rename do `.lock` neste io (a liberação, C46 (u)): o da abertura; o 2º, o do encerramento.
   const base = createStoreIo();
-  let unlinks = 0;
+  let releases = 0;
   const io = {
     ...base,
-    async unlink(file) {
-      if (path.basename(file) === ".lock" && ++unlinks === 2) throw eio();
-      return base.unlink(file);
+    async rename(from, to) {
+      if (path.basename(from) === ".lock" && ++releases === 2) throw eio();
+      return base.rename(from, to);
     },
   };
   const run = await launchInProcess(prepared, io, "i25 c43 fim", { FAKE_AGENT_SCENARIO: scenario, FAKE_AGENT_EXIT: "3" });

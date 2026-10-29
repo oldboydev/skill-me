@@ -60,7 +60,9 @@ const scratch = (label) => {
   return dir;
 };
 
-const ok = (ciclo) => ({ ciclo, tomada: 1.5, liberacao: 0.5, criacao: 0.2, escrita: 0.1, fechamento: 0.05, remocao: 0.1, erro: null });
+// Esquema 2 (C50 (o)): a liberação é o rename do `.lock` para uma reserva própria.
+const RELEASE_OPERATIONS = ["reserva", "renomeacao", "remocaoRetirado", "pasta"];
+const ok = (ciclo) => ({ ciclo, tomada: 1.5, retirada: 0.3, liberacao: 0.5, criacao: 0.2, escrita: 0.1, fechamento: 0.05, reserva: 0.1, renomeacao: 0.1, remocaoRetirado: 0.1, pasta: 0.05, erro: null });
 const lines = (records) => records.map((record) => `${JSON.stringify(record)}\n`).join("");
 const fixture = (code) => (role) => spawn(process.execPath, ["-e", code], { stdio: [role === "carga" ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true });
 const forever = "setInterval(() => {}, 1000);";
@@ -136,10 +138,13 @@ test("C50 percentis e faixas: valores exatos por posição mais próxima, inclus
 
 test("C50 sem amostras: a métrica fica indisponível, nunca percentil ou contagem zero, também numa fase em que todos os ciclos tiveram erro", () => {
   assert.deepEqual(summarize([]), UNAVAILABLE);
-  const failed = [1, 2].map((ciclo) => ({ ...ok(ciclo), tomada: null, liberacao: null, criacao: null, escrita: null, fechamento: null, remocao: null, erro: "EIO" }));
+  const failed = [1, 2].map((ciclo) => ({ ...Object.fromEntries(Object.keys(ok(ciclo)).map((key) => [key, null])), ciclo, erro: "EIO" }));
   const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 1, cycles: 2, result: { durationMs: 1, timedOut: false, children: [{ role: "produtor", text: lines(failed), exit: { codigo: 0, sinal: null } }] } });
   assert.deepEqual(phase.ciclos, { previstos: 2, concluidos: 2, comErro: 2, incompletos: 0 });
-  assert.deepEqual([phase.tomada, phase.liberacao, phase.operacoes], [UNAVAILABLE, UNAVAILABLE, { criacao: UNAVAILABLE, escrita: UNAVAILABLE, fechamento: UNAVAILABLE, remocao: UNAVAILABLE }]);
+  assert.deepEqual(
+    [phase.tomada, phase.retirada, phase.liberacao, phase.operacoes],
+    [UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, Object.fromEntries(["criacao", "escrita", "fechamento", ...RELEASE_OPERATIONS].map((op) => [op, UNAVAILABLE]))],
+  );
   assert.deepEqual(phase.erros, { lockPresent: 0, lockLost: 0, es: { EIO: 2 } });
 });
 
@@ -188,30 +193,44 @@ test("C50 caminhos reais: um link ou junção para o temporário padrão resolve
 });
 
 test("C50 E/S: a remoção do lock com EIO dá EIO entre os erros de E/S e os ciclos seguintes saem com lock_present, separado; tomada e liberação só de ciclos sem erro", async () => {
+  // A liberação é o rename do `.lock` (C50 (o)): o EIO vai ao 1º, sem movê-lo, e
+  // o lock fica — o mesmo efeito do unlink que falhava no esquema 1.
   const dir = scratch("eio");
   const real = createStoreIo();
   let failed = false;
   const io = {
     ...real,
-    async unlink(file) {
-      if (!failed && path.basename(file) === ".lock") {
+    async rename(from, to) {
+      if (!failed && path.basename(from) === ".lock") {
         failed = true;
         throw Object.assign(new Error("EIO injetado"), { code: "EIO" });
       }
-      return real.unlink(file);
+      return real.rename(from, to);
     },
   };
   const records = [];
   await measureCycles({ lockPath: path.join(dir, ".lock"), cycles: 3, io, onCycle: (cycle) => records.push(cycle) });
   assert.deepEqual(records.map((r) => r.erro), ["EIO", "lock_present", "lock_present"]);
-  assert.ok(records.every((r) => r.tomada === null && r.liberacao === null && r.remocao === null));
+  const measured = (value) => (value === null ? null : typeof value);
+  assert.deepEqual(
+    records.map((r) => ["tomada", "retirada", "liberacao", ...RELEASE_OPERATIONS].map((key) => measured(r[key]))),
+    [
+      [null, null, null, "number", null, null, "number"],
+      [null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null],
+    ],
+    "só as operações concluídas contam: no 1º a reserva e o rmdir dela; nos ocupados, nada da liberação",
+  );
   const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 1, cycles: 3, result: { durationMs: 1, timedOut: false, children: [{ role: "produtor", text: lines(records), exit: { codigo: 0, sinal: null } }] } });
-  assert.deepEqual([phase.ciclos, phase.erros, phase.tomada, phase.liberacao], [{ previstos: 3, concluidos: 3, comErro: 3, incompletos: 0 }, { lockPresent: 2, lockLost: 0, es: { EIO: 1 } }, UNAVAILABLE, UNAVAILABLE]);
+  assert.deepEqual([phase.ciclos, phase.erros, phase.tomada, phase.retirada, phase.liberacao], [{ previstos: 3, concluidos: 3, comErro: 3, incompletos: 0 }, { lockPresent: 2, lockLost: 0, es: { EIO: 1 } }, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE]);
 
-  // Controle: o mesmo io sem falha dá três ciclos limpos, com tomada e liberação.
+  // Controle: o mesmo io sem falha dá três ciclos limpos, com tomada, retirada, liberação e as operações da liberação.
   const clean = [];
   await measureCycles({ lockPath: path.join(scratch("eio controle"), ".lock"), cycles: 3, io: real, onCycle: (cycle) => clean.push(cycle) });
-  assert.deepEqual(clean.map((r) => [r.erro, typeof r.tomada, typeof r.liberacao, typeof r.remocao]), Array(3).fill([null, "number", "number", "number"]));
+  assert.deepEqual(
+    clean.map((r) => [r.erro, ...["tomada", "retirada", "liberacao", ...RELEASE_OPERATIONS].map((key) => typeof r[key])]),
+    Array(3).fill([null, ...Array(7).fill("number")]),
+  );
 });
 
 test("C50 teto: produtores de fixture que nunca terminam são encerrados no teto, e um processo alheio continua vivo; nada vira zero", async () => {
@@ -375,7 +394,8 @@ test("C50 fronteira real: uma fase com os filhos reais do script (3 produtores d
   const result = await runPhase({ dir: scratch("real"), producers: 3, cycles: 5, loaders: 3, loadBytes: 64 * 1024, limitMs: 60_000 });
   const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 3, cycles: 5, result });
   assert.deepEqual([phase.encerradaPeloTeto, phase.ciclos, phase.erros, phase.linhasInvalidas], [false, { previstos: 15, concluidos: 15, comErro: 0, incompletos: 0 }, { lockPresent: 0, lockLost: 0, es: {} }, 0]);
-  for (const [name, metric] of [["tomada", phase.tomada], ["liberacao", phase.liberacao], ...Object.entries(phase.operacoes)]) {
+  assert.deepEqual(Object.keys(phase.operacoes), ["criacao", "escrita", "fechamento", ...RELEASE_OPERATIONS]);
+  for (const [name, metric] of [["tomada", phase.tomada], ["retirada", phase.retirada], ["liberacao", phase.liberacao], ...Object.entries(phase.operacoes)]) {
     assert.equal(metric.amostras, 15, name);
     assert.ok(metric.p50 <= metric.p99 && metric.p99 <= metric.max, name);
   }
@@ -389,6 +409,7 @@ test("C50 relatório: A1/B/A2 com o RUNNER_TEMP distinto, uma fase sem ele, e ne
   const standard = scratch("relatorio padrao");
   const runner = scratch("relatorio runner");
   const both = await measure({ phase: small, env: { RUNNER_TEMP: runner }, tmpdir: standard });
+  assert.deepEqual([both.skillMeLockLatency, both.namespace], [2, "individual: um lock por produtor; não mede disputa entre produtores"]);
   assert.deepEqual([both.comparacao, both.fases.map((f) => [f.fase, f.destino, f.ciclos.concluidos])], ["A1/B/A2", [["A1", "padrao", 6], ["B", "runner", 6], ["A2", "padrao", 6]]]);
   assert.deepEqual(both.limpeza, { removidas: 3, recusadas: [], falhas: [] });
   assert.deepEqual([readdirSync(standard), readdirSync(runner)], [[], []], "as pastas da medição saíram");

@@ -221,22 +221,28 @@ export const shown = (value, describe) => (value.unavailable === undefined ? des
 
 // Operações de uma linha da pré-carga de tempos em ordem de início, cada uma
 // com o lugar dela em relação ao lock do store: `held` vale do `writeFile` do
-// `.lock` que deu certo até o `unlink` dele, inclusive; `hold` numera as
-// tomadas do processo (1, 2…); `commits` conta os `rename` de `state.json.tmp`
-// concluídos naquela tomada antes da operação. Cada consumidor diz a fase com
-// o que vale no caminho dele. `at` e `ms` são o início e a duração (ou a idade,
-// para uma operação em curso na saída) da linha.
+// `.lock` que deu certo até o `rename` dele que libera (C46 (u)), inclusive;
+// `hold` numera as tomadas do processo (1, 2…); `commits` conta os `rename` de
+// `state.json.tmp` concluídos naquela tomada antes da operação. Um `rename lock`
+// com erro, ou ainda em curso na saída, não prova que o lock saiu: até a tomada
+// seguinte as operações ficam com `unsure` (posse indeterminada), nunca “fora do
+// lock”. Nas linhas legadas a liberação era o `unlink lock`, que encerra a posse
+// como antes. Cada consumidor diz a fase com o que vale no caminho dele. `at` e
+// `ms` são o início e a duração (ou a idade, para uma operação em curso na
+// saída) da linha.
 export function diskTrace(ops) {
   let held = false;
+  let unsure = false;
   let hold = 0;
   let commits = 0;
   return [...ops]
     .sort((x, y) => x[2] - y[2])
     .map(([op, kind, at, ms, code]) => {
-      const entry = { op, kind, code, held, hold: held ? hold : null, commits: held ? commits : 0, at, ms };
+      const entry = { op, kind, code, held, unsure, hold: held ? hold : null, commits: held ? commits : 0, at, ms };
       // `writeExclusive lock`: a tomada vista pelo io medido de um produtor em processo.
-      if ((op === "writeFile" || op === "writeExclusive") && kind === "lock" && code === undefined) [held, hold, commits] = [true, hold + 1, 0];
+      if ((op === "writeFile" || op === "writeExclusive") && kind === "lock" && code === undefined) [held, unsure, hold, commits] = [true, false, hold + 1, 0];
       else if (op === "rename" && kind === "state.json.tmp" && code === undefined && held) commits += 1;
+      else if (op === "rename" && kind === "lock") [held, unsure] = [false, code !== undefined];
       else if (op === "unlink" && kind === "lock") held = false;
       return entry;
     });
@@ -250,11 +256,12 @@ export function diskTrace(ops) {
 // commit (o `rename` de state.json.tmp). Nada aqui lança nem traz caminho,
 // conteúdo, ID, chave, nonce ou ambiente.
 const PENDING = "pendente";
-const placeInCapture = ({ held, hold, commits, kind }) =>
-  held ? `sob o lock, ${hold}ª tomada${commits > 0 ? ", depois do commit" : ""}` : kind === "lock" ? "tomada do lock" : "fora do lock";
+export const UNSURE_PLACE = "posse do lock indeterminada";
+const unheldPlace = ({ kind, unsure }) => (kind === "lock" ? "tomada do lock" : unsure ? UNSURE_PLACE : "fora do lock");
+const placeInCapture = (entry) => (entry.held ? `sob o lock, ${entry.hold}ª tomada${entry.commits > 0 ? ", depois do commit" : ""}` : unheldPlace(entry));
 // Fora do caminho manual (rota automática, produtor em processo) uma tomada
 // pode renomear mais de um state.json.tmp, então o lugar não diz commit.
-const neutralPlace = ({ held, hold, kind }) => (held ? `sob o lock, ${hold}ª tomada` : kind === "lock" ? "tomada do lock" : "fora do lock");
+const neutralPlace = (entry) => (entry.held ? `sob o lock, ${entry.hold}ª tomada` : unheldPlace(entry));
 const named = (entry, place = placeInCapture) => `${entry.op} ${entry.kind}${entry.code === undefined || entry.code === PENDING ? "" : ` ${entry.code}`} (${place(entry)})`;
 const isLockContention = ({ op, kind, code }) => (op === "open" || op === "writeExclusive") && kind === "lock" && code === "EEXIST";
 const traceOfLine = (line) => diskTrace([...line.ops, ...(line.pending ?? []).map(([op, kind, at, age]) => [op, kind, at, age, PENDING])]);
@@ -457,7 +464,7 @@ export function inProcessProducer(label, root, create, { base = createStoreIo() 
   return producer;
 }
 
-const IO_OPERATIONS = ["lstat", "stat", "realpath", "readdir", "rename", "rmdir", "unlink", "mkdir", "readBounded", "writeExclusive"];
+const IO_OPERATIONS = ["lstat", "stat", "realpath", "readdir", "rename", "rmdir", "unlink", "mkdir", "mkdtemp", "readBounded", "writeExclusive"];
 const tenth = (ms) => Math.round(ms * 10) / 10;
 
 function measuredIo(base) {

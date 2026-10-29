@@ -823,8 +823,8 @@ test("I23-C4 off encerra e é idempotente: off que entra com o on em voo e a pas
   const rows = [
     // A reprodução: o on repetido já leu a configuração e para antes do lock da raiz.
     { when: "on repetido parado antes do lock da raiz", startOn: true, pause: (root) => pausedAt("writeExclusive", (file) => file === storeLock(root)) },
-    // O on liga a raiz, solta o lock dela e para antes de soltar o do home.
-    { when: "on parado depois de ligar a raiz", startOn: false, pause: (root) => pausedAt("unlink", (file) => file === storeLock(root), { after: true }) },
+    // O on liga a raiz, solta o lock dela (o rename que libera, C46 (u)) e para antes de soltar o do home.
+    { when: "on parado depois de ligar a raiz", startOn: false, pause: (root) => pausedAt("rename", (file) => file === storeLock(root), { after: true }) },
   ];
   const observed = [];
   const expected = [];

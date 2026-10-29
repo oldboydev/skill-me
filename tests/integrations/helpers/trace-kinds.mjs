@@ -7,6 +7,10 @@ import path from "node:path";
 // node:fs do processo da prova.
 const FILE_KINDS = [
   [/^\.lock$/, "lock"],
+  // Liberação do lock (issue #25, C46 (u)): a reserva — o prefixo dado ao
+  // `mkdtemp` e a pasta criada — e o lock retirado dentro dela, que não é o lock.
+  [/^\.lock-release-(?:[A-Za-z0-9]{6})?$/, "lock.reserva"],
+  [/^lock$/, "lock.retirado"],
   [/^store\.json$/, "store.json"],
   [/^state\.json$/, "state.json"],
   [/^key$/, "key"],

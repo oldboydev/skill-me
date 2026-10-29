@@ -182,10 +182,97 @@ async function assertUnchanged(ctx) {
   if (real !== ctx.rootReal || (await entryKind(ctx.io, ctx.storeDir)) !== "dir") throw new StoreError("root_changed");
 }
 
+// Liberação do lock por reserva exclusiva (issue #25, linha "Liberação do lock
+// por reserva exclusiva" do Landing; plano aprovado em
+// .tasks/issue-25-lock-release-proposal.md). No Windows, entre a marca de
+// exclusão de um `unlink` e o fechamento do arquivo, a tomada `wx` de outro
+// processo recebe EPERM — o mesmo código do acesso negado real, então não pode
+// virar `lock_present`. O rename tira o nome de uma vez; a limpeza vem com o
+// lock já livre e só toca o que esta chamada criou e conferiu.
+const RELEASE_SUFFIX = "-release-";
+const RETIRED_FILE = "lock";
+
+// A reserva deixou de ser a pasta que o `mkdtemp` criou (não é pasta real, é
+// link ou mudou de identidade). Erro interno, sem `code`: não inventa errno do
+// sistema e não é `lostCode`, porque antes da retirada o nosso lock ficou — na
+// fronteira é E/S (`io_failure`, `lockLeft: true`).
+class LockReleaseError extends Error {
+  constructor() {
+    super("reserva da liberação do lock trocada");
+    this.name = "LockReleaseError";
+  }
+}
+
+// `dev`/`ino` exatos (bigint) da reserva, só se for uma pasta real; senão null.
+async function slotIdentity(io, slot) {
+  const stats = await io.lstat(slot, { bigint: true });
+  return stats.isDirectory() && !stats.isSymbolicLink() ? { dev: stats.dev, ino: stats.ino } : null;
+}
+
+async function assertSameSlot(io, slot, identity) {
+  const current = await slotIdentity(io, slot);
+  if (current === null || current.dev !== identity.dev || current.ino !== identity.ino) throw new LockReleaseError();
+}
+
+// Cada passo roda no máximo uma vez; vale a primeira falha, e nenhuma é
+// escondida. Nada é movido de volta (outro processo já pode ter o nome do
+// lock), atravessado, removido de forma recursiva ou escolhido por nome,
+// prefixo ou idade: a reserva só sai vazia e com a identidade conferida.
+async function releaseLockFile({ io, lockPath, lostCode, bytes }) {
+  const slot = await io.mkdtemp(lockPath + RELEASE_SUFFIX);
+  const identity = await slotIdentity(io, slot);
+  if (identity === null) throw new LockReleaseError();
+  const retired = path.join(slot, RETIRED_FILE);
+  let failure = null;
+  let moving = false;
+  try {
+    // Conferência adjacente ao rename, como antes do unlink.
+    const current = await readSmallFile(io, lockPath, bytes.length, lostCode);
+    if (current === null || !current.equals(bytes)) throw new StoreError(lostCode);
+    moving = true;
+    await io.rename(lockPath, retired);
+  } catch (error) {
+    failure = error;
+  }
+  // Sem o rename a reserva está vazia. Com ele — mesmo com erro, pois o rename
+  // pode ter movido e lançado — só sai o retirado com os nossos bytes.
+  let empty = !moving;
+  if (moving) {
+    try {
+      await assertSameSlot(io, slot, identity);
+      const moved = await readSmallFile(io, retired, bytes.length, lostCode);
+      if (moved !== null && !moved.equals(bytes)) throw new StoreError(lostCode);
+      if (moved !== null) {
+        try {
+          await io.unlink(retired);
+        } catch (error) {
+          // O unlink pode ter apagado antes de lançar: só a ausência conferida
+          // libera o rmdir; a falha que sai continua a dele.
+          empty = (await entryKind(io, retired).catch(() => null)) === "missing";
+          throw error;
+        }
+      }
+      empty = true;
+    } catch (error) {
+      failure ??= error;
+    }
+  }
+  if (empty) {
+    try {
+      await assertSameSlot(io, slot, identity);
+      await io.rmdir(slot);
+    } catch (error) {
+      failure ??= error;
+    }
+  }
+  if (failure !== null) throw failure;
+}
+
 // Lock exclusivo por arquivo, sem espera: ocupado → conflito sem mutação, e
 // nunca removido por outro processo. Só sai se ainda tiver os bytes que
-// gravamos; senão `lostCode`. Consumidores: o lock da raiz (withLock) e o da
-// configuração da observação (#23, linha "Barreira da configuração").
+// gravamos; senão `lostCode`. Sai por `releaseLockFile`, igual nas três
+// plataformas. Consumidores: o lock da raiz (withLock) e o da configuração da
+// observação (#23, linha "Barreira da configuração").
 //
 // O lock é criado sem flush: só serializa processos vivos — a criação `wx` é
 // atômica e os bytes conferidos na liberação são lidos pelo mesmo sistema — e,
@@ -209,9 +296,7 @@ export async function holdLockFile({ io, lockPath, lostCode }, fn) {
     failure = error;
   }
   try {
-    const current = await readSmallFile(io, lockPath, bytes.length, lostCode);
-    if (current === null || !current.equals(bytes)) throw new StoreError(lostCode);
-    await io.unlink(lockPath);
+    await releaseLockFile({ io, lockPath, lostCode, bytes });
   } catch (error) {
     failure ??= error;
   }

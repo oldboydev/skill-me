@@ -525,17 +525,19 @@ test("I25-C41 ponteiro de A com a captura de B ilegível por um instante: o ence
 
 // C43 (segunda revisão formal em 6d57e6e, P2 de store.mjs:1042; linha "Lock
 // após a abertura" do Landing): a abertura grava o segmento 1 e o ponteiro, e
-// só a liberação do lock da raiz falha. `mode`: "kept" — o unlink do `.lock`
-// lança EIO sem apagá-lo; "lost" — apaga e lança EIO (confirmação perdida).
+// só a liberação do lock da raiz falha. `mode`: "kept" — o rename que libera o
+// `.lock` lança EIO sem movê-lo; "lost" — move e lança EIO (confirmação
+// perdida). Antes da C46 (u) a liberação era o unlink do `.lock`; o efeito para
+// quem chama e no disco é o mesmo.
 const rootLock = (root) => path.join(storeDir(root), ".lock");
 const EIO = () => Object.assign(new Error("falha de E/S injetada"), { code: "EIO" });
 const lockRelease = (mode) => {
   const base = createStoreIo();
   return {
     ...base,
-    async unlink(file) {
-      if (path.basename(file) !== ".lock") return base.unlink(file);
-      if (mode === "lost") await base.unlink(file);
+    async rename(from, to) {
+      if (path.basename(from) !== ".lock") return base.rename(from, to);
+      if (mode === "lost") await base.rename(from, to);
       throw EIO();
     },
   };
@@ -607,11 +609,9 @@ test("I25-C43 prioridade: falha ao gravar o ponteiro e falha da liberação junt
     ...base,
     async rename(from, to) {
       if (path.basename(path.dirname(to)) === "launches") throw EIO();
+      // A liberação do lock (o rename do `.lock`, C46 (u)) também falha.
+      if (path.basename(from) === ".lock") throw EIO();
       return base.rename(from, to);
-    },
-    async unlink(file) {
-      if (path.basename(file) === ".lock") throw EIO();
-      return base.unlink(file);
     },
   };
   const rejected = await rejection(startLaunch({ root, expectedReal: root, io }));

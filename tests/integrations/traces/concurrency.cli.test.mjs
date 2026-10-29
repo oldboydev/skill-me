@@ -37,6 +37,7 @@ import {
   storeDir,
   timedEnv,
   timingLines,
+  UNSURE_PLACE,
   waitUntil,
 } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
@@ -134,14 +135,15 @@ async function runConcurrentProducers(label, injected = {}) {
 // com a fase. No caminho manual cada tomada do lock tem um só `rename` de
 // `state.json.tmp`, que é o commit (store.mjs). O `open` do `.lock` com EEXIST
 // é a disputa normal do lock, repetida pelo contrato da entrega: só contada,
-// senão esconderia a falha real.
+// senão esconderia a falha real. Depois de um `rename lock` com erro a posse
+// fica indeterminada (`unsure`, C46 (u)), nunca “fora do lock”.
 function failuresWithPhase(ops) {
   let contention = 0;
   const failures = [];
-  for (const { op, kind, code, held, commits } of diskTrace(ops)) {
+  for (const { op, kind, code, held, unsure, commits } of diskTrace(ops)) {
     if (code === undefined) continue;
     if (op === "open" && kind === "lock" && code === "EEXIST") contention += 1;
-    else failures.push(`${op} ${kind} ${code} (${held ? (commits > 0 ? "depois do commit" : "antes do commit") : kind === "lock" ? "tomada do lock" : "fora do lock"})`);
+    else failures.push(`${op} ${kind} ${code} (${held ? (commits > 0 ? "depois do commit" : "antes do commit") : kind === "lock" ? "tomada do lock" : unsure ? UNSURE_PLACE : "fora do lock"})`);
   }
   return { contention, failures };
 }
@@ -327,7 +329,8 @@ test("I25-C46 diagnóstico do T8-C15: confirmação perdida depois do commit man
   assert.deepEqual([a.delivery, a.timing.failures], [{ bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0 }, []], failure.message);
   const { code, committed, persisted, lost } = b.delivery;
   assert.ok(code === "io_failure" && lost > 0 && committed + lost === 40 && persisted === committed, failure.message);
-  assert.deepEqual(b.timing.failures, ["unlink lock EIO (depois do commit)"], "a injeção aconteceu, sem nova tentativa");
+  // A liberação é o rename do `.lock` (C46 (u)): a injeção foi para ele.
+  assert.deepEqual(b.timing.failures, ["rename lock EIO (depois do commit)"], "a injeção aconteceu, sem nova tentativa");
   // O commit aconteceu: as entradas dadas como perdidas estão no export.
   assert.deepEqual(
     evidence.capture,
@@ -339,7 +342,7 @@ test("I25-C46 diagnóstico do T8-C15: confirmação perdida depois do commit man
     },
     failure.message,
   );
-  assert.ok(failure.message.includes("falhas unlink lock EIO (depois do commit)"), failure.message);
+  assert.ok(failure.message.includes("falhas rename lock EIO (depois do commit)"), failure.message);
   assert.ok(failure.message.includes("captura: export 80 registros: a 40/40, b 40/40, outros 0, repetidos 0"), failure.message);
   assertNoLeak(flow, failure.message);
 });
@@ -352,7 +355,9 @@ test("I25-C46 diagnóstico do T8-C15: com o lock preso, export e status saem ind
   assertFailedWithEvidence(failure, first, flow, evidence);
   const { b } = evidence.producers;
   assert.deepEqual(b.delivery, { bound: true, code: "io_failure", entries: 40, committed: 0, persisted: 0, lost: 40 }, failure.message);
-  assert.deepEqual(b.timing.failures, ["unlink lock EIO (depois do commit)"], "a injeção aconteceu, sem nova tentativa");
+  // O rename que libera falhou sem mover (C46 (u)): a limpeza confere o retirado,
+  // que não existe, e a posse fica indeterminada em vez de “fora do lock”.
+  assert.deepEqual(b.timing.failures, ["rename lock EIO (depois do commit)", `lstat lock.retirado ENOENT (${UNSURE_PLACE})`], "a injeção aconteceu, sem nova tentativa");
   assert.deepEqual(
     evidence.capture,
     {
@@ -822,11 +827,14 @@ test("T8-C16 delivery failure neutrality: SKILL_ME_CAPTURE_REPORT dentro do stor
 // io do store em processo com um roteiro: `busy` (1-based) são as criações do
 // `.lock` que falham com EEXIST sem tocar no disco; `stall(file, kind, stats)`
 // devolve uma promessa que segura aquela operação (ou null para seguir).
-// `lockUnlinks` conta as liberações reais do lock.
+// `lockReleases` conta as liberações completas do lock: o `rmdir` da reserva,
+// último passo depois do rename que libera (C46 (u)); antes era o `unlink` do
+// `.lock`, então as esperas continuam pelo fim real da liberação.
 function scriptedIo({ busy = [], stall = () => null }) {
   const real = createStoreIo();
-  const stats = { lockCreations: 0, lockUnlinks: 0 };
+  const stats = { lockCreations: 0, lockReleases: 0 };
   const isLock = (file) => path.basename(file) === ".lock";
+  const isReservation = (dir) => /^\.lock-release-[A-Za-z0-9]{6}$/.test(path.basename(dir));
   return {
     stats,
     io: {
@@ -840,9 +848,9 @@ function scriptedIo({ busy = [], stall = () => null }) {
         await stall(file, "read", stats);
         return real.readBounded(file, maxBytes);
       },
-      async unlink(file) {
-        await real.unlink(file);
-        if (isLock(file)) stats.lockUnlinks += 1;
+      async rmdir(dir) {
+        await real.rmdir(dir);
+        if (isReservation(dir)) stats.lockReleases += 1;
       },
     },
   };
@@ -880,7 +888,7 @@ test("T8-C16 delivery failure neutrality: commit cortado no prazo depois de obte
   // Liberado o disco, o commit que já tinha o lock termina: a entrada contada
   // como perdida está gravada uma vez — por isso o código não afirma o lock ocupado.
   disk.open();
-  await waitUntil(() => commit.stats.lockUnlinks === 2, { label: "commit abandonado terminar" });
+  await waitUntil(() => commit.stats.lockReleases === 2, { label: "commit abandonado terminar" });
   assert.deepEqual(exportOf(root, id).records.map((r) => r.envelope.ids.toolUseId), [expectedPseudonym(root, id, "prazo-commit")]);
   assertSegmentConsistent(root, id, "commit depois do prazo");
 });
@@ -901,7 +909,7 @@ test("T8-C16 delivery failure neutrality: abertura cortada no prazo depois de ob
   assert.deepEqual(delivery.report(), { bound: true, code: "delivery_timeout", entries: 1, committed: 0, persisted: 0, lost: 1 });
   assert.deepEqual([opening.stats.lockCreations, stateReads], [2, 1], "a repetição obteve o lock e parou na leitura");
   read.open();
-  await waitUntil(() => opening.stats.lockUnlinks === 1, { label: "abertura abandonada terminar" });
+  await waitUntil(() => opening.stats.lockReleases === 1, { label: "abertura abandonada terminar" });
   assert.deepEqual(snapshotTree(captureDir(root, id)), before, "abertura só lê");
 });
 
@@ -922,7 +930,7 @@ test("T8-C16 delivery failure neutrality: tentativa cortada no prazo antes de ob
   assert.equal(contended.stats.lockCreations, 3, "a repetição estava em curso no prazo");
   // Liberado o disco, a tentativa abandonada obtém o lock e o devolve sem mutação.
   lockDisk.open();
-  await waitUntil(() => contended.stats.lockUnlinks === 2, { label: "tentativa abandonada liberar o lock" });
+  await waitUntil(() => contended.stats.lockReleases === 2, { label: "tentativa abandonada liberar o lock" });
   assert.deepEqual(snapshotTree(captureDir(root, id)), before, "lock_present: nada gravado depois do prazo");
   assert.ok(!existsSync(path.join(storeDir(root), ".lock")), "lock liberado");
   assert.equal(statusOf(root, id).counters.persisted, 0);
@@ -957,7 +965,7 @@ test("I25-C46 prazo da entrega: depois de uma recusa do lock, a repetição aban
   assert.deepEqual(delivery.report(), { bound: true, code: "lock_present", entries: 1, committed: 0, persisted: 0, lost: 1 });
   assert.equal(contended.stats.lockCreations, 3, "nenhuma tentativa nova depois da abandonada");
   lockDisk.open();
-  await waitUntil(() => contended.stats.lockUnlinks === 2, { label: "tentativa abandonada liberar o lock" });
+  await waitUntil(() => contended.stats.lockReleases === 2, { label: "tentativa abandonada liberar o lock" });
   assert.equal(contended.stats.lockCreations, 3);
   assert.deepEqual(snapshotTree(captureDir(root, id)), before, "nada gravado depois do prazo");
   assert.ok(!existsSync(path.join(storeDir(root), ".lock")), "lock liberado");
@@ -996,7 +1004,7 @@ test("I25-C46 prazo da entrega: lock obtido com o relógio no prazo ou depois, a
       const delivery = createCaptureDelivery({ root, id, agent: "claude", io: late.io, clock: () => clock.now });
       await deliverOne(delivery, "prazo-tardio");
       assert.deepEqual(delivery.report(), { bound: true, code, entries: 1, committed: 0, persisted: 0, lost: 1 }, name);
-      assert.deepEqual([late.stats.lockCreations, late.stats.lockUnlinks], [creation, 2], `${name}: a abertura e a tentativa tardia devolveram o próprio lock`);
+      assert.deepEqual([late.stats.lockCreations, late.stats.lockReleases], [creation, 2], `${name}: a abertura e a tentativa tardia devolveram o próprio lock`);
       assert.deepEqual(snapshotTree(captureDir(root, id)), before, `${name}: nada gravado`);
       assert.ok(!existsSync(path.join(storeDir(root), ".lock")), `${name}: lock liberado`);
       assert.equal(statusOf(root, id).counters.persisted, 0, name);
@@ -1013,7 +1021,7 @@ test("I25-C46 prazo da entrega: lock obtido com o relógio ainda aquém do prazo
   const delivery = createCaptureDelivery({ root, id, agent: "claude", io: inTime.io, clock: () => clock.now });
   await deliverOne(delivery, "prazo-limite");
   assert.deepEqual(delivery.report(), { bound: true, code: null, entries: 1, committed: 1, persisted: 1, lost: 0 });
-  assert.deepEqual([inTime.stats.lockCreations, inTime.stats.lockUnlinks], [2, 2]);
+  assert.deepEqual([inTime.stats.lockCreations, inTime.stats.lockReleases], [2, 2]);
   assert.deepEqual(exportOf(root, id).records.map((r) => r.envelope.ids.toolUseId), [expectedPseudonym(root, id, "prazo-limite")]);
   assertSegmentConsistent(root, id, "commit no limite do prazo");
 });
@@ -1074,9 +1082,10 @@ test("T8-C16 delivery failure neutrality: no hook real, a tentativa só faz flus
       ["segmento.tmp", "state.json.tmp"],
       `${label}: flush do segmento e do state.json, nessa ordem, e nenhum outro`,
     );
+    // A liberação é o rename do `.lock` (C46 (u)), e cada uma reserva e remove a própria pasta.
     assert.deepEqual(
-      ["writeFile", "unlink"].map((name) => ops.filter(([op, kind]) => op === name && kind === "lock").length),
-      [2, 2],
+      [["writeFile", "lock"], ["rename", "lock"], ["mkdtemp", "lock.reserva"], ["rmdir", "lock.reserva"]].map(([name, file]) => ops.filter(([op, kind]) => op === name && kind === file).length),
+      [2, 2, 2, 2],
       `${label}: abertura e commit gravaram e liberaram o próprio lock`,
     );
   }

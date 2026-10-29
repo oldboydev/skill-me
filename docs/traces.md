@@ -495,6 +495,17 @@ não tinha, não grava mais. Se o processo sair durante um commit, o `.lock` pod
 ficar, e as operações seguintes saem com 4 (`lock_present`) até você conferir
 que nenhum processo está ativo e removê-lo.
 
+O lock é liberado por um rename para uma pasta nova ao lado dele
+(`.lock-release-XXXXXX` no store, `.skill-me-observe.lock-release-XXXXXX` no
+home), e só depois o arquivo retirado e a pasta são apagados. Se o processo sair
+no meio da liberação, ou se essa limpeza falhar, a pasta pode sobrar, vazia ou
+com um arquivo `lock` que só traz o `pid` e o nonce do lock retirado — nenhuma
+chave nem conteúdo. Ela não impede gravações, o skill-me nunca a remove pelo nome
+e a retenção de 7 dias das capturas não a alcança: remova-a à mão depois de
+conferir que nenhum processo do skill-me está ativo. Numa pasta
+`skill-me-privacy` ainda sem `store.json`, ela faz a criação do store sair com
+`store_invalid` até ser removida.
+
 `status` e `list` mostram o que chegou à captura: os contadores separam aceitos,
 persistidos, malformados, descartados por motivo e conteúdo omitido. Uma entrega
 que falhou não chega lá — com o lock ocupado ou o disco falhando, a captura não

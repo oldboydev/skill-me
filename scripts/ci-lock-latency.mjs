@@ -25,7 +25,11 @@ const MARKER = ".skill-me-lock-latency";
 // Depois do kill() (no teto ou num erro), quanto esperar o close antes de
 // insistir com SIGKILL.
 const KILL_GRACE_MS = 5_000;
-const OPERATIONS = ["criacao", "escrita", "fechamento", "remocao"];
+// Esquema 2 (C50 (o)): a liberação é o rename do `.lock` para uma reserva
+// própria (store.mjs, `releaseLockFile`); a antiga `remocao` (unlink do `.lock`)
+// saiu para nenhum número novo ser comparado com ela.
+const OPERATIONS = ["criacao", "escrita", "fechamento", "reserva", "renomeacao", "remocaoRetirado", "pasta"];
+const NAMESPACE = "individual: um lock por produtor; não mede disputa entre produtores";
 
 // O `code` E… da E/S ou o nome do erro; nunca a mensagem, que traz caminho.
 const codeOf = (error) => (typeof error?.code === "string" && /^E[A-Z]+$/.test(error.code) ? error.code : (error?.name ?? "erro"));
@@ -99,7 +103,7 @@ export function resolveDestinations({ tmpdir = os.tmpdir(), runnerTemp, platform
 // como inválida, nunca como ciclo.
 const isDuration = (value) => value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0);
 const isCycle = (value) =>
-  Number.isSafeInteger(value?.ciclo) && ["tomada", "liberacao", ...OPERATIONS].every((key) => isDuration(value[key])) && (value.erro === null || typeof value.erro === "string");
+  Number.isSafeInteger(value?.ciclo) && ["tomada", "retirada", "liberacao", ...OPERATIONS].every((key) => isDuration(value[key])) && (value.erro === null || typeof value.erro === "string");
 
 export function parseLines(text) {
   const parts = text.split("\n");
@@ -117,22 +121,38 @@ export function parseLines(text) {
 }
 
 // Ciclos de um produtor no próprio lock, pela implementação real do store.
-// Tomada: do início até a entrada no callback; liberação: da saída do callback
-// até o retorno. Um ciclo com erro não dá tomada nem liberação; as operações
-// concluídas nele contam. `ops.current` recebe criação, escrita e fechamento da
-// instrumentação do processo (instrumentLockFile) e a remoção daqui.
+// Tomada: do início até a entrada no callback; retirada: da saída do callback
+// ao fim do rename do `.lock`, o instante em que o nome fica livre; liberação:
+// da saída do callback até o retorno, a liberação completa com a limpeza. Um
+// ciclo com erro não dá tomada, retirada nem liberação; as operações concluídas
+// nele contam. `ops.current` recebe criação, escrita e fechamento da
+// instrumentação do processo (instrumentLockFile) e as operações da liberação
+// daqui: a reserva (`mkdtemp` com o prefixo do lock), o rename do `.lock`, o
+// unlink do retirado e o `rmdir` da reserva.
 export async function measureCycles({ lockPath, cycles, io, onCycle, ops = { current: null }, clock = () => performance.now() }) {
+  let retiredAt = null;
+  const reservation = `${lockPath}-release-`;
+  const timed = (name, key, isOwn, after = () => {}) =>
+    async function measuredOperation(...args) {
+      const start = clock();
+      const value = await io[name](...args);
+      const end = clock();
+      if (isOwn(...args, value)) {
+        ops.current[key] = end - start;
+        after(end);
+      }
+      return value;
+    };
   const measured = {
     ...io,
-    async unlink(file) {
-      const start = clock();
-      const value = await io.unlink(file);
-      if (path.basename(file) === ".lock") ops.current.remocao = clock() - start;
-      return value;
-    },
+    mkdtemp: timed("mkdtemp", "reserva", (prefix) => prefix === reservation),
+    rename: timed("rename", "renomeacao", (from) => from === lockPath, (end) => (retiredAt = end)),
+    unlink: timed("unlink", "remocaoRetirado", (file) => path.dirname(path.dirname(file)) === path.dirname(lockPath) && path.basename(file) === "lock"),
+    rmdir: timed("rmdir", "pasta", (dir) => path.dirname(dir) === path.dirname(lockPath) && path.basename(dir).startsWith(path.basename(reservation))),
   };
   for (let ciclo = 1; ciclo <= cycles; ciclo++) {
-    ops.current = { criacao: null, escrita: null, fechamento: null, remocao: null };
+    ops.current = { criacao: null, escrita: null, fechamento: null, reserva: null, renomeacao: null, remocaoRetirado: null, pasta: null };
+    retiredAt = null;
     let entered = null;
     let left = null;
     let erro = null;
@@ -146,7 +166,8 @@ export async function measureCycles({ lockPath, cycles, io, onCycle, ops = { cur
       erro = error instanceof StoreError ? error.code : codeOf(error);
     }
     const end = clock();
-    onCycle({ ciclo, tomada: erro === null ? entered - start : null, liberacao: erro === null ? end - left : null, ...ops.current, erro });
+    const ok = erro === null;
+    onCycle({ ciclo, tomada: ok ? entered - start : null, retirada: ok ? retiredAt - left : null, liberacao: ok ? end - left : null, ...ops.current, erro });
   }
 }
 
@@ -344,6 +365,7 @@ export function aggregatePhase({ fase, destino, producers, cycles, result }) {
     ciclos: { previstos, concluidos: done.length, comErro: done.length - clean.length, incompletos: previstos - done.length },
     erros,
     tomada: summarize(clean.map((record) => record.tomada)),
+    retirada: summarize(clean.map((record) => record.retirada)),
     liberacao: summarize(clean.map((record) => record.liberacao)),
     operacoes: Object.fromEntries(OPERATIONS.map((op) => [op, summarize(done.map((record) => record[op]).filter((value) => value !== null))])),
     linhasInvalidas: invalid,
@@ -403,7 +425,8 @@ export async function measure({ phase = PHASE, env = process.env, tmpdir = os.tm
   const plan = resolveDestinations({ tmpdir, runnerTemp: env.RUNNER_TEMP, platform });
   const nonce = randomBytes(8).toString("hex");
   const report = {
-    skillMeLockLatency: 1,
+    skillMeLockLatency: 2,
+    namespace: NAMESPACE,
     comparacao: plan.comparacao,
     destinos: plan.destinos,
     parametros: { produtores: phase.producers, ciclosPorProdutor: phase.cycles, carga: phase.loaders, bytesPorEscrita: phase.loadBytes, tetoMs: phase.limitMs, faixasMs: [...BANDS_MS] },
@@ -445,7 +468,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === SCRIPT) {
       process.stdout.write(`${JSON.stringify(await measure(), null, 2)}\n`);
     } catch (error) {
       // O temporário padrão não resolvido ou um erro interno: sem relatório de fases.
-      process.stdout.write(`${JSON.stringify({ skillMeLockLatency: 1, indisponivel: `medição não concluída [${codeOf(error)}]` })}\n`);
+      process.stdout.write(`${JSON.stringify({ skillMeLockLatency: 2, indisponivel: `medição não concluída [${codeOf(error)}]` })}\n`);
       process.exitCode = 1;
     }
   }

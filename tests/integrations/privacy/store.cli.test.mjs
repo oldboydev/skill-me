@@ -420,7 +420,9 @@ test("I5-C49b pasta .deleting-<id> inesperada junto da captura ativa ou parada: 
   unchanged("prune pelo CLI");
 
   // API em processo: nenhuma operação dentro de nenhuma das duas pastas, além
-  // do lstat dos dois nomes; nenhuma mutação além do próprio .lock.
+  // do lstat dos dois nomes; nenhuma mutação além do próprio .lock e da reserva
+  // da liberação dele (C46 (u)): o `mkdtemp` ao lado do lock, o rename do
+  // `.lock` para dentro dela e o `unlink`/`rmdir` só do que esse rename moveu.
   const later = () => Date.now() + 30 * DAY_MS;
   const runs = [
     ...[active, stopped].flatMap((id) => [["delete", "--root", root, "--capture", id], ["delete", "--root", root, "--capture", id, "--apply"]]),
@@ -433,8 +435,13 @@ test("I5-C49b pasta .deleting-<id> inesperada junto da captura ativa ou parada: 
     assert.equal(result.exitCode, 4, argv.join(" "));
     assert.deepEqual(result.body, argv[0] === "delete" ? refused("delete") : pruneBody(argv.includes("--apply")), argv.join(" "));
     const lock = path.join(storeDir(root), ".lock");
+    const retired = calls.filter(([op, from]) => op === "rename" && from === lock).map(([, , to]) => to);
+    assert.equal(retired.length, 1, `${argv.join(" ")}: uma liberação`);
+    assert.equal(path.dirname(path.dirname(retired[0])), storeDir(root), `${argv.join(" ")}: a reserva fica ao lado do lock`);
+    assert.match(path.relative(storeDir(root), retired[0]), /^\.lock-release-[A-Za-z0-9]{6}[\\/]lock$/);
+    const own = { writeExclusive: [lock], mkdtemp: [`${lock}-release-`], rename: [lock], unlink: retired, rmdir: retired.map((file) => path.dirname(file)), mkdir: [] };
     for (const [op, file] of calls) {
-      if (["unlink", "rename", "rmdir", "mkdir", "writeExclusive"].includes(op)) assert.equal(file, lock, `${argv.join(" ")}: ${op} só no lock`);
+      if (Object.hasOwn(own, op)) assert.ok(own[op].includes(file), `${argv.join(" ")}: ${op} só no lock e na reserva dele`);
       for (const id of [active, stopped]) {
         for (const dir of [foreign(id), path.join(captures, id)]) {
           if (file === dir) assert.equal(op, "lstat", `${argv.join(" ")}: ${op} na pasta`);
