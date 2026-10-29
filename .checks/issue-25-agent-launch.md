@@ -2447,3 +2447,31 @@ de qualquer sonda ou código):
   revisões; nada muda nesta fatia.
 - **Diagnóstico confirmado** e forma: linha “Ciclo de vida do `follow` em `follow.cli.test.mjs`” do Landing, C46 (t),
   Swept e task, registrados antes do código.
+
+- **Onde a fronteira caiu**: abertura `14b853a`; Landing, C46 (t), Swept, task e o incidente `12f6f1f`; código
+  `709ff5d` (`follow.cli.test.mjs` `c4a84c0` → `73c1da9`); confirmação, GREEN, RED, mutantes e gates declarados
+  `ec4a412`; resultados e este fechamento no commit seguinte, só docs. Produto, apoios, pré-carga, `demo.e2e`
+  (`19a5a5c`), workflow, runner, governança, core, `package*` e configuração iguais a `97baf13`.
+- **Diagnóstico**: no código anterior, uma falha do T8-C12 antes do `stop` ou do T8-C13 com o follow no portão deixa o
+  follow vivo depois da falha; no 24.22.1 ele só sai pela limpeza do arquivo (T8-C12) ou pelo prazo de 30 s do portão
+  (T8-C13, ~22 s depois do último teste); no 24.13.0 do Windows o processo do arquivo fica preso até o vigia da sonda.
+  Com a correção, as rotinas encerram o follow (`SIGTERM`) e esperam o `close` antes de a falha sair.
+- **Gates em `ec4a412`**: A 8/8/0/0, B 8/8/0/0, C 8/8/0/0 (`follow.cli.test.mjs` e `demo.e2e.test.mjs` inteiros), D
+  1.062/1.042/0/20 (exit 0, término natural, teto 8, 11 nativos Hermes e o I4-C35; contra o D de `aa934df`, só as
+  duas linhas dos controles novos entram).
+- **Falhas preservadas, não repetidas**: `green-pre` (literal da mensagem no meu controle novo; corrigido antes do
+  commit) e `green-pre2` (T8-C13 positivo `2 !== 3` por `lstat pasta (fora do lock)` pendente há 652 ms no 2º hook do
+  `finishedCapture`, trecho anterior a qualquer follow e sem mudança; causa desconhecida; fora desta fatia).
+- **O que se decidiu no caminho**: a forma da correção e dos controles (Landing); a conferência síncrona pelo `exit`
+  gravado no `close`; a mensagem do controle do T8-C13 gerada pela mesma asserção. Nada novo com o usuário; do
+  coordenador, só a retomada depois da interrupção (registrada acima).
+- **O que foi abandonado**: o literal fixo da mensagem do controle do T8-C13; mover o spawn do T8-C12 para dentro da
+  rotina; o controle (i) como controle do ciclo de vida; `t.after`/`afterEach`/`after`; `kill()` sem esperar o `close`;
+  `catch` sem relançar; pid, árvore ou prefixo; force-exit, timeout, prazo do portão ou `go` no `finally`; apoio comum
+  com o `demo.e2e`; injeção nova. O M4 (`kill()` sempre) foi rodado e é equivalente (o filho já fechou nos positivos).
+- **Pendente, com o coordenador**: (1) a observação do runner (2º reporter), ainda proposta e não implementada; (2) a E/S
+  lenta fora do lock vista no `green-pre2` e o `rmSync` do 24.13.0, comunicados no build; (3) Verifier 23 sobre C1–C50,
+  formal 14, publicação, CI nova e a medição no HEAD aprovado, e o merge só com a CI toda verde. Nada aqui afirma PASS,
+  `ready`, CI verde, causa física do cancelamento ou impacto zero. Preservados: os gates de `aa934df`, o PASS 22, as CI
+  066, a interrupção do host, os incidentes da R5 e da R21, a limpeza de 1.257/107 pastas e os auxiliares antigos em
+  `/tmp`.

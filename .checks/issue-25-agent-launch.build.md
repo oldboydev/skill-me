@@ -3097,3 +3097,45 @@ toplevel/HEAD/status antes e depois; C WSL uid 1000, `git archive` do HEAD, Node
 completo, Windows 24.22.1, runner padrão (teto 8), nativos do Hermes pelas provas versionadas, pwsh oficial só no PATH,
 2 h na ferramenta; esperado, se nada falhar, 1.062/1.042/0/20 (o D de `aa934df` mais os dois controles novos). Falha em
 qualquer gate: preservar e diagnosticar, sem repetir o mesmo conteúdo para obter verde.
+
+### Resultado dos gates em `ec4a412` (árvore `3b7ded0a…`; código de `709ff5d`; uma execução de cada, sem filtro e sem repetição; logs em `builder-ci066-follow-cli/`)
+
+| Gate | Ambiente | Início–fim | Testes | Pass | Fail | Skip |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | checkout principal, Windows, Node 24.22.1, `npm_execpath` ausente, temporário e `RUNNER_TEMP` próprios | 11:35:24–11:35:43 UTC | 8 | 8 | 0 | 0 |
+| B | clone git novo (`core.autocrlf=true` no `.git/config` dele; `demo.e2e` 149 CR e `follow.cli` 314 CR no clone; bin em LF, 0 CR antes e depois), Node 24.13.0 oficial (zip `ca274269…` igual ao `SHASUMS256.txt`, `node.exe` `d14ba95c…` igual ao do zip), npm 11.6.2 adjacente na frente do PATH | 11:36:00–11:36:21 UTC | 8 | 8 | 0 | 0 |
+| C | WSL `Ubuntu`, uid 1000, `git archive` de `ec4a412` (`get-tar-commit-id` igual; árvore extraída = `HEAD^{tree}`; 0 CR; `cli.mjs` 755; `follow.cli` `f33951d4…` = blob), Node 24.13.0 copiado (`150946e4…`) num prefixo sem `sh`, npm 11.6.2, `env -i`, PATH sem `/usr/bin` e sem agentes/pwsh | 08:36:36–08:36:52 (-03) | 8 | 8 | 0 | 0 |
+| D | `npm test` completo, Windows, Node 24.22.1, npm 11.19.1, teto 8 (`availableParallelism` 32), Hermes pelas provas versionadas, pwsh oficial só no PATH, `SKILL_ME_HERMES_PYTHON` ausente | 08:37:03–08:42:43 (-03) | 1.062 | 1.042 | 0 | 20 |
+
+- **A/B/C** (`node --test --test-concurrency=8` com os dois arquivos): o T8-C19 e o controle do C46 (s), o T8-C12, o
+  T8-C13, os controles (i) e (j) e os dois controles novos do (t) rodaram e passaram nos três; nenhum skip. HEAD e
+  status iguais e vazios antes e depois em A (`A-git.txt`) e no clone B (`B-clone.txt`); clone removido pelo caminho,
+  toplevel, HEAD e status (`B-clone-cleanup.txt`); scratch do C removido por caminho, pasta não link, uid 1000 e inode
+  13753 (`C.run.txt`). A raiz do B terminou com 111 entradas (o `rmSync` do 24.13.0), removidas com ela; a do A com 0.
+- **D**: terminou sozinho com exit 0. Governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7, integrações
+  602/589/0/13. Contra o D de `aa934df` (`d-compare.mjs`, `D-summary.txt`, linhas de resultado sem a duração): entram só
+  as duas linhas `✔ I25-C46 ciclo de vida do follow no T8-C12 …` e `… no T8-C13 …`; nenhuma sai; as mesmas marcas e os
+  mesmos 20 skips, cada um com o motivo (os 7 POSIX/FIFO do doctor; I4-C15, I4-C25b/j/k/l/m, I25-C5/C6/C15/C33/C42/C45 e
+  o sinal do T8-C4). Hermes: os 11 nativos com runtime (I4-C18–C23, C37, C44b, `I25-C40 harness nativa` e os dois
+  I23-C8 com runtime, `D.log:622-631`, `:633`) passaram, e o I23-C8 pelo Python do sistema (`:632`), que não conta como
+  nativo, também; o I4-C35 (`:1077`) passou, sem diagnóstico de Hermes ausente ou de revisão diferente no log. A CI não
+  tem o runtime do Hermes. HEAD igual e status vazio antes e depois; `RUNNER_TEMP` com 0 entradas; raiz `sm-c066c-D-…`
+  (1.356 entradas dos testes) removida pelo registro.
+- **Processos e temporários**: as 18 raízes `sm-c066c-*` (sondas, GREEN, mutantes, A, B, D, e a da sonda cortada) foram
+  removidas pelo registro (`roots.ndjson`, `cleanup-roots.txt`: 18 registradas, 0 restantes), as `runner-temp-*` vazias
+  por `rmdir`, as quatro cópias pelo caminho registrado (`copies-cleanup.txt`) e o clone B como acima. Os pids dos
+  follows das sondas estavam mortos depois de cada execução terminada. Depois do D, a consulta só de leitura pelo nome
+  da pasta e pelo prefixo das raízes não achou processo meu (`post-D-process-check.txt`); as duas tarefas em segundo
+  plano (mutantes e D) terminaram sozinhas. Nenhuma seleção por prefixo ou mtime para remover; nada no `/tmp` fora do
+  scratch do C nem no temporário global fora das raízes registradas.
+- **O que isso prova e o que não prova**: o encerramento do follow nas saídas de falha das rotinas do T8-C12 e do
+  T8-C13 está provado (controles, RED, M2, M3) nos três ambientes e no D. Não prova a causa do cancelamento da manual
+  40814471097 nem que a CI fique verde; o D é deste computador e não mede o runner.
+
+### Achados fora desta fatia (comunicados, não corrigidos)
+
+- **E/S lenta fora do lock neste computador**: no `green-pre2` (antes do commit do código), o 2º hook do
+  `finishedCapture` do T8-C13 teve `lstat pasta (fora do lock)` pendente há 652 ms e perdeu a entrega
+  (`delivery_timeout`), e o T8-C13 positivo falhou em `2 !== 3`. É o mesmo tipo de operação de disco lenta da CI 066
+  (`sync key` 601 ms), num trecho que esta fatia não muda; causa desconhecida; não é defeito demonstrado do produto.
+- O `rmSync` do Node 24.13.0 no Windows continua deixando as pastas das provas no temporário (comunicado em `97baf13`).
