@@ -662,6 +662,14 @@ e o literal de (m) não mudam, e o T8-C20 continua com o mesmo nome, entrada e a
 - **RED**: numa cópia descartável, o `docs.test.mjs` atual com as mesmas falhas injetadas no hook sai só com o
   `ENOENT` e o caminho, igual nas classes; **GREEN** com a adoção; mutantes (sem o registro do hook, sem o tipo
   `diagnóstico`, knobs trocados) recusados numa cópia descartável.
+- **Retificação do autor durante o build, antes do commit do código** (o texto acima fica como estava): na E/S, o
+  literal `pendentes na saída: nenhuma` não é garantido. A tentativa da entrega abandonada no prazo continua em
+  segundo plano e pode estar em curso na saída (GREEN antes do commit, `builder-r21-t8c20/green-pre2.log`:
+  `pendentes na saída: stat store.json (fora do lock) há 0 ms`). O que separa os controles passa a ser só o
+  diagnóstico: no prazo, a lista de pendentes contém `open diagnóstico (fora do lock) há ` (talvez depois do pendente
+  da entrega) e a lista de falhas não tem o diagnóstico; na E/S, a lista de falhas contém `open diagnóstico EIO (fora
+  do lock)` e a de pendentes não tem o diagnóstico. A ausência do `lstat ENOENT` do arquivo ainda não criado é a
+  conferência normal (`ausências conferidas`), não falha.
 - Não é defeito de produto demonstrado nem correção da causa da R21, que continua desconhecida.
 
 Proof: `node --test tests/integrations/traces/docs.test.mjs`
