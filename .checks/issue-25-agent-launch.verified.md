@@ -1,3 +1,386 @@
+# Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 24)
+
+**Verdict (R24)**: **FAIL — 49/50 checks provados; todos os gates frescos passaram.** HEAD `34466ab`, produto `13ecc07`, último código de prova `736e7d7`, 9 ACs. É a primeira verificação independente da liberação do lock por reserva exclusiva (D1–D3) e do esquema 2 da medição.
+- **Gates frescos (verified at `34466ab`)**, uma vez cada, sem filtro e sem repetição:
+  - **A** Windows, Node 24.22.1: 640 testes, 627 pass, 0 fail, 13 skip, exit 0;
+  - **B** clone novo com `autocrlf=true`, Node 24.13.0 oficial: 640/627/0/13, exit 0;
+  - **C** WSL isolado, Node 24.13.0: 640/618/0/22, exit 0;
+  - **D** `npm test` completo: **1.073 testes, 1.053 pass, 0 fail, 20 skip**, exit 0, término natural.
+- **O protocolo novo está correto pela leitura e pelas provas.** A disputa real passou nos quatro ambientes: 2.000/2.000 eventos por processo, sem nenhum erro além de `lock_present`. O T8-C15 saudável, os controles (a)–(c), as 3 criações do T8-C16, os follows (T8-C12/C13/C19) e o I23-C6 passaram em A/B/C e no D.
+- **O que falha (F1)**: um formatter de evidência ficou sem a adaptação que o plano vinculante exige.
+  - `tests/integrations/observe/agents.e2e.test.mjs:239` (`placeOf`, diagnóstico I23-C10/C47) consome o `diskTrace` novo e ignora `unsure`.
+  - Depois de um `rename lock` com erro, ele marca as operações seguintes como “fora do lock”.
+  - O ajuste do Root (`.tasks/issue-25-lock-release-proposal.md:53`), o item 4 do refinamento do critério 38 (task) e o `Sources` (checklist `:11`) proíbem exatamente isso.
+  - O C46 (u) diz “nas três funções de lugar” (Landing `:128`); há quatro, e a quarta não é coberta.
+  - Não muda o produto nem faz nenhuma prova falhar.
+- **O que isto não é**:
+  - não é PASS;
+  - não demonstra a causa do `EPERM` da R23, do B de `407edc5`, do `sync key` de 601 ms do I23-C6 da CI 066 nem do cancelamento da manual 40814471097;
+  - não declara verde nenhuma CI futura.
+
+  Não corrigi nada e não repeti nenhum gate.
+- **Gates remotos**: pendentes e bloqueados por este FAIL. Não executei Action, CI, `review:run`, commit, push nem merge.
+
+**Profile**: light (`AGENTS.md:138`). Por isso não há fault injection, `Coverage`, `Test policy` nem fonte de UI. Não criei mutantes, sondas, testes nem correções. RED, GREEN preliminares, mutantes, sondas `rmSync` e medições E5/`ci-lock-latency` são **provas do autor**, só atribuídas (`builder-lock-release/`).
+
+**Diff range**: `63621c691f132dc8d591414269d36cfa18fca594..34466ab6e68e60179d0db765dd425a092cb276ed`, a feature inteira: 177 commits, árvore `09ceee25…`. Desde a R23 (`6204613`, relatório em `d80b246`), entraram 9 commits:
+- `2c276d5` (proposta), `1613e23` (aprovação) e `1851481` (forma e provas, antes do código);
+- **`13ecc07` (produto)**, `e80b99e` (disputa com o lock preso) e **`736e7d7` (último código de prova)**;
+- `7ea4c1d` e `5a94042` (fechamento e retificação, só docs);
+- `34466ab` (só o `approval` do override 25).
+
+**Round**: **24** (light). Autorizações: “Pode fazer quantas precisar” e “Pode aplicar o plano completo nas três plataformas, mantendo os testes e prazos, e seguir até a CI ficar toda verde para fazer o merge e finalizar” ([6502294779](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6502294779)). Registro 24: [6504633472](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6504633472).
+- `context-round24.json` (sha256 `4e40426c…`) tem 41 comentários e 9 ACs. O corpo e os comentários 1–37 são iguais aos de `context-round23.json`. Os novos são o 38 (FAIL 23), o 39 (diagnóstico), o 40 (aprovação) e o 41 (registro 24). O `round24-registration.md` é igual ao comentário 41, sem placeholders.
+- `roundOverrides["25"]` = `{profile: "light", maxRounds: 14}`. Os perfis globais continuam com 2. De `736e7d7` ao HEAD, só a linha `approval` mudou.
+- O `state.json` da revisão tem 13 tentativas (sha256 `6cf84579…`). A formal 14 está autorizada, **não foi usada e não deve rodar sobre este FAIL**.
+
+**Verifier**: subagente novo e independente (Claude Opus 5.5). Não sou o autor nem os Verifiers anteriores, e não herdei sessão.
+- Produto, testes, apoios, scripts, workflow, planos, configuração e estado ficaram só para leitura.
+- Escrevi este arquivo e as evidências em `.checks/code-review/issue-25/verifier-round24/r24/`, pasta ignorada (`.gitignore:4`). Fora dela, só as raízes próprias dos gates, o clone B dentro de `r24/` e o scratch do C.
+- Não li `profile-before.json`, `profile-final.json` nem os scripts do Root. Li só os agregados finais (abaixo).
+
+Data: 29/10/2026 (-03).
+- **Plano**: a identidade (`r24/blob-identity.txt`, 15:18), os processos de base (`r24/processes-before.txt`) e o alvo com orçamentos e concorrências (`r24/plan.txt`) foram gravados antes de qualquer gate. O F1 já estava no plano, achado por leitura antes dos gates.
+- **Horários**: A 15:20:38–15:25:46; B 15:26:00 (clone), 15:26:07–15:30:56; C 15:31:18–15:32:32; D 15:32:43–15:38:27 (5 min 44 s).
+- **Estado**: o HEAD foi `34466ab` do início ao fim. O `git status` ficou vazio antes e depois de A e do D. Em B, o status do clone ficou vazio. Em C, a árvore extraída é igual ao `HEAD^{tree}`.
+
+## Fontes lidas (R24)
+
+| Fonte | Como |
+| --- | --- |
+| `AGENTS.md`, `CLAUDE.md`, `tlc-implement/SKILL.md` e `references/verify.md` | inteiros. **Não há `CONTRIBUTING`** no repositório (busca: só dentro de `ci-node-24.13.0/…/node_modules`) |
+| `.tasks/issue-25-lock-release-proposal.md` (plano aprovado, fonte vinculante) | inteiro |
+| `context-round24.json`, `round24-registration.md`, `verifier-round24-dispatch.txt` | inteiros (o corpo e os 41 comentários) |
+| `.checks/issue-25-agent-launch.md` | `Sources` (`:9-13`), a linha do Landing “Liberação do lock por reserva exclusiva” (`:128`) inteira, o C46 (u) (`:737-810`), o refinamento (o) do C50 (`:1036-1063`), `Swept` (`:1065-1083`) e o bloco do `Handoff` “Liberação segura do lock” (`:2586-2647`), com a retificação. O resto é histórico, carry da R23 |
+| `.tasks/issue-25-agent-launch.md` | a seção nova (`git diff d80b246..HEAD`) |
+| build | as seções novas (`git diff 736e7d7..HEAD`): mudança, RED, GREEN, mutantes, medição, gates, incidentes e a “Retificação documental” |
+| `builder-lock-release/` | `plan.txt`, `discard-inventory.md`, os totais e `env` dos gates, `green-b-fix-cleanup.txt`, `probe-rmsync.txt`, `red-stop-control.txt`, `mutants2/result.json` e o m13 de `scripts/mutants.mjs`. São **relato do autor**, só atribuição |
+| nota externa do Root | `coordinator-lock-release-method-note.md`, inteira, **atribuída ao Root** |
+| relatório 23 | o topo R23 do `.verified.md` (`:1-357`) inteiro; o resto é histórico, atribuído sem nova execução |
+| código | `store.mjs:55-320`, `:425-460`, `fs.mjs` inteiro, o diff de `d80b246..HEAD` de `src`, `scripts`, `docs` e de todas as provas e apoios mudados, `lock-release.unit.test.mjs` e `lock-release-child.mjs` inteiros, `trace-kinds.mjs`, `agents.e2e:225-300`, `launch/command.mjs:130-175`, `observe/command.mjs:120-175`, `governance-ci.test.mjs:437-560`, `scripts/test-integrations.mjs` |
+
+## Prova Git (verified at `34466ab`; `r24/blob-identity.txt`)
+
+- **Alterados de `d80b246` ao HEAD, fora de `.checks`/`.tasks`** (blob em `d80b246` → HEAD; o HEAD é igual ao de `736e7d7` em todos, salvo a configuração):
+  - produto: `store.mjs` `326a0ac` → `72b138f` e `fs.mjs` `85d0b98` → `b088a4a`;
+  - medição: `ci-lock-latency.mjs` `8c12894` → `3e00581` e o `.test` `75eeadd` → `955668e`;
+  - apoios: `traces.mjs` `b71938f` → `88d3a6d`, `traces-probe.mjs` `292c319` → `ebcac0e`, `trace-kinds.mjs` `96a67e9` → `70817ec` e `lock-release-child.mjs` (novo, `0449e6d`);
+  - provas: `lock-release.unit` (novo, `ed76ae0`), `concurrency.cli` `3d507e0` → `cadb057`, `evidence.unit` `6ccbf48` → `2e5ee18`, `launch/store.unit` `791770c` → `d0a9087`, `launch/end.e2e` `cd2dc94` → `1912fe9`, `observe/control.cli` `cc37712` → `8f1f811`, `observe/privacy.e2e` `ec11620` → `40bdf8e` e `privacy/store.cli` `b9b62cd` → `21ed9e6`;
+  - `docs/traces.md` `b5baff6` → `4a63422`;
+  - `code-review.config.json` `897a480` → `c1caab8` (`736e7d7` ainda `897a480`; só o `approval`).
+- **Depois de `736e7d7`**: só `.checks/issue-25-agent-launch{,.build}.md`, `.tasks/issue-25-lock-release-proposal.md` e a linha do `approval`. Produto, provas, workflow, package e core sem mudança.
+- **Iguais a `d80b246`**: `.github` `6a0b533`, `scripts/code-review` `6b98d7c`, `tests/doctor` `bcedb83`, `tests/integrations/fixtures` `6591970`, `package.json` `8fd02fa`, `package-lock.json` `9ec32e0`, `test-integrations.mjs` `22824c4`, `governance-ci.test.mjs` `5313dba`, `delivery.mjs` `e1cf25a`, `observe/command.mjs` `e0bd660`, `launch/command.mjs` `ca44a9d`, `agents.e2e` `eb23d7b`, `follow.cli` `73c1da9`, `demo.e2e` `3838b03` e `delivery.unit` `ee11376`.
+- **Core vendorizado**: os 5 arquivos de `scripts/code-review/` têm o blob da base (`25e5284`, `c6a4abc`, `1bda8e4`, `216125c`, `b02001e`).
+- **Alcance** (por busca):
+  - `holdLockFile` serve `withLock` (toda operação do store) e `withControlLock` (setup/on/off no home). Os consumidores em `src` são `launch/command`, `observe/{authorization,command,config,delivery}`, `report/command` e `traces/{delivery-report,delivery,replay}`;
+  - os apoios mudados são importados por 31 arquivos de prova;
+  - os **68** arquivos `tests/integrations/**/*.test.mjs` importam `src/integrations` ou `helpers/`, e nenhum fica de fora;
+  - `tests/doctor`, `src/doctor` e `scripts/code-review` não importam `integrations`.
+
+  Por isso o alvo de A/B/C é o fecho real: as integrações inteiras, mais o par de governança que é o Proof do C50. São os mesmos 640 testes do autor, mas derivados por mim. Os não PASS remotos e históricos estão dentro dele: I23-C6 (`agents.e2e`), T8-C15 e controles (`concurrency.cli`), T8-C12/C13 (`follow.cli`), T8-C19 (`demo.e2e`) e `delivery.unit`. O motor e o doctor rodaram só no D.
+
+## Análise da mudança (verified at `34466ab`, por leitura; as provas estão nos gates)
+
+**1. Protocolo** (`store.mjs:185-269`, `releaseLockFile`, chamado de `holdLockFile:298-302`), contra o plano aprovado e os ajustes do Root:
+- **Tomada intacta**: `wx` com `{lockVersion, pid, nonce}`, sem flush (`:284-286`). Só `EEXIST` vira `lock_present` (`:288`). O callback e a prioridade do erro dele (`:293-303`, `failure ??=`) não mudaram.
+- **Reserva**: `io.mkdtemp(lockPath + "-release-")` (`:222`), ao lado do lock. `fs.mjs:31-34` usa o `mkdtemp` de `node:fs/promises`: 0700 no POSIX (mkdtemp(3)) e a DACL herdada no Windows. O nome nunca é reutilizado.
+- **Identidade**: `lstat(slot, {bigint: true})`, pasta e não link, com `dev`/`ino` (`:207-210`). O `lstat` de `createStoreIo` é o de `node:fs/promises` e recebe a opção. Sem identidade, `LockReleaseError` sem `code` (`:199-204`, `:224`), e a reserva não é limpa.
+- **Conferência adjacente**: `readSmallFile(lockPath)` e a comparação dos bytes (`:230-231`) logo antes de `rename(lockPath, <slot>/lock)` (`:233`). O destino fica dentro da pasta recém-criada.
+- **Limpeza só do comprovado**:
+  - com o rename tentado, `assertSameSlot` (`:242`) vem antes de abrir o retirado; depois, a releitura e a comparação (`:243-244`) e o `unlink` só com os nossos bytes (`:245-247`);
+  - um `unlink` que lança libera o `rmdir` só com a ausência conferida (`:251`, `lstat` com `catch → null`), e a falha que sai é a dele;
+  - o `rmdir` exige a identidade de novo (`:262-263`);
+  - sem `readdir`, sem remoção recursiva, sem rollback e sem escolha por nome, prefixo, idade ou pid. Cada efeito roda no máximo uma vez, e vale a primeira falha (`failure ??=`, `:257`, `:265`, `:268`).
+- **Caminhos de falha** (todos pela leitura, todos com uma prova na tabela f1–f14):
+  - `mkdtemp` ou `lstat` que falham: erro cru, lock fica;
+  - bytes alheios antes: `lostCode`, reserva vazia removida;
+  - rename sem mover: o retirado ausente (`null`) libera o `rmdir`, erro do rename, lock fica;
+  - rename que move e lança: o retirado com os nossos bytes é apagado, erro do rename;
+  - retirado alheio: `lostCode`, nada apagado;
+  - troca do slot antes ou depois do rename: `LockReleaseError`, nada atravessado.
+- **Leitura auxiliar depois do `unlink` que lança** (`:251`): é só um `lstat` do retirado, sem reconferir o slot. Ele decide apenas se o `rmdir` é tentado, e o `rmdir` reconfere a identidade. Fica dentro do limite de ameaça aprovado (sem promessa contra a mesma autoridade entre conferência e efeito). Não é achado.
+- **Retirado ausente depois de um rename confirmado**: a chamada sai sem erro e remove a reserva vazia. O rename é a liberação (`proposal:44`), e o sumiço só ocorre com interferência da mesma autoridade. Nenhum requisito aprovado pede falha aqui; não invento um.
+- **Fronteira**: `lockLeft: !(error instanceof StoreError)` (`store.mjs:1203`). Então:
+  - `LockReleaseError` e os erros crus dão `io_failure` com `lockLeft: true`;
+  - `lostCode` dá `lockLeft: false`.
+
+  Nenhum errno é inventado, e a recomendação antiga `lockLeft: false` não voltou. No home, `withControlLock` usa `foreign_entry` (`observe/command.mjs:146-149`).
+- **D2**: `needsAdoption` e `initStore` sem diff. Com o marcador, uma sobra é inerte (`initStore` volta ao ler o marcador, `:454`). Sem ele, a entrada desconhecida dá `store_invalid` (`:169`, `:455`). Numa primeira criação normal, a reserva só nasce depois do marcador publicado.
+- **Política**: só `EEXIST` é repetido (10 ms, `delivery.mjs:19`); `EPERM` real continua `io_failure`. Não há fallback para o `unlink` nem nova tentativa.
+
+**2. Injeções reapontadas** (`traces-probe.mjs:105-124`; I25-C43 em `launch/store.unit:534-545` e `launch/end.e2e:781-796`, `:933-941`):
+- `LOST_CONFIRMATION` renomeia e lança. Pela leitura do produto, o lock sai, a limpeza termina e quem chama vê o EIO, como o antigo `unlink` que apagava e lançava;
+- `LOCK_KEPT` lança sem mover: o lock fica, e a reserva vazia sai.
+
+Os efeitos para quem chama e no disco são os mesmos. A única diferença visível é o `lstat lock.retirado ENOENT` na evidência do lock preso, que o C46 (u) e o Landing exigem. **As adaptações não são prova causal**: o autor declarou que ficam vermelhas no código anterior porque a injeção mira o rename.
+
+**3. Evidência** (`traces.mjs:222-248`, `:256-264`):
+- `rename lock` concluído encerra a posse. Com erro ou pendente, `unsure` vale até a tomada seguinte. As linhas legadas com `unlink lock` encerram a posse como antes.
+- `placeInCapture`, `neutralPlace` (por `unheldPlace`) e a função do `concurrency.cli:146` dizem “posse do lock indeterminada”.
+- `trace-kinds.mjs:12-13` classifica a reserva e o retirado só pelo tipo. O fallback é “pasta”, sem caminho.
+- **A quarta função de lugar, `agents.e2e:239`, não foi adaptada (F1).**
+
+**4. Medição, esquema 2** (`ci-lock-latency.mjs:28-32`, `:131-171`, `:368`, `:428-429`):
+- `skillMeLockLatency: 2` e o `namespace` individual;
+- `retirada` vai até o fim do rename; `liberacao` é a completa;
+- as sete operações: `reserva`, `renomeacao`, `remocaoRetirado` e `pasta`, sem a antiga `remocao`;
+- `isCycle` exige as dez chaves (`:105-106`), e a ausência nunca vira 0;
+- `PHASE` 3×500, 3 cargas de 64 KiB, 120 s e as faixas 600/650 (`:21-22`) sem diff.
+
+**5. Docs**: `docs/traces.md:498-507` traz os nomes das reservas, as sobras sem chave nem conteúdo, nenhuma coleta, a retenção de 7 dias que não as alcança, a remoção manual e o `store_invalid` sem `store.json` (D2).
+
+## F1 — formatter do I23-C10 sem a posse indeterminada (bloqueante)
+
+- **Cenário**: num processo de hook do I23-C10 (`agents.e2e`, com a pré-carga de tempos), a liberação do `.lock` falha no rename, por exemplo `EPERM`/`EIO` real do Windows, antes ou depois do movimento. A limpeza continua (`lstat` do slot e do retirado, `rmdir lock.reserva`).
+- **Esperado** (plano aprovado `:53`): “O formatter deve representar posse indeterminada quando não houver confirmação do efeito, em vez de marcar automaticamente as operações seguintes como ‘fora do lock’.” Dizem o mesmo:
+  - o item 4 do refinamento do critério 38 (task): “depois de um rename com erro, a posse indeterminada em vez de ‘fora do lock’”;
+  - o `Sources` (`:11`), que dá a regra antiga como superada.
+
+  O formatter comum faz isso (`evidence.unit:246-248`: `rmdir lock.reserva (posse do lock indeterminada)`).
+- **Atual** (pela leitura; a função é pura):
+  - `placeOf = ({ held, hold, kind }) => (held ? … : kind === "lock" ? "tomada do lock" : "fora do lock")` (`agents.e2e:239`);
+  - o `diskTrace` devolve `held: false, unsure: true` depois do `rename lock` com código (`traces.mjs:245`), mas `placeOf` descarta o `unsure`;
+  - `hookTiming` (`:246-262`) produz `última concluída: rmdir lock.reserva (fora do lock)`, e qualquer falha seguinte, como um `rmdir lock.reserva EIO`, sai “(fora do lock)” nas `falhas`, pelo `describeTiming` (`traces.mjs:192-193`, que usa `describeDiskOps`, `:165-168`).
+- **Cobertura**:
+  - o Landing (`:128`) enumera “três funções de lugar, inclusive a do `concurrency.cli`”, mas há quatro consumidores de `diskTrace` com rótulo de lugar (busca por `fora do lock` em `tests/integrations`: `traces.mjs:260`, `concurrency.cli:146` e `agents.e2e:239`);
+  - o `agents.e2e` tem o mesmo blob desde antes da R23 (`eb23d7b`), então a fatia não o tocou;
+  - os controles do I23-C10 injetam `SEGMENT_EIO` e disco parado (`agents.e2e:424`, `:438`), nunca uma falha do rename;
+  - o m13 do autor muda só o `traces.mjs` e é morto só pelo `evidence.unit` (`scripts/mutants.mjs:28`).
+
+  Nenhuma prova afirma o lugar nesse formatter.
+- **Impacto**:
+  - nenhum no produto, e nenhuma prova falha;
+  - mas a evidência do I23-C10, a prova cujo diagnóstico motivou o AC8, afirmaria uma liberação não confirmada justamente na classe de falha desta entrega (a liberação do lock). Isso induz a investigação a erro.
+  - é o requisito vinculante do Root, não uma preferência minha.
+- **Localização**: `tests/integrations/observe/agents.e2e.test.mjs:239` (função) e `:249-257` (uso). A lacuna da enumeração está no checklist, `:128`, “três funções de lugar”.
+- **Decisão**: com o coordenador. Não proponho código nem corrijo nada.
+
+## Histórico do autor — preservado e analisado (não são resultados meus)
+
+- **RED** (`1613e23` + provas): 143/107/35/1. A disputa teve `EPERM` 72 (a) e 59 (b), a regressão estatística vermelha declarada.
+  - **Execução interrompida**: o autor encerrou o processo do `control.cli` (pid 64760, pai 12728) por identidade (`red-stop-control.txt`). Os totais incluem esse arquivo interrompido. **Não é término natural completo.**
+  - As adaptações vermelhas eram esperadas e não são prova do defeito.
+  - O RED do formatter usou `TEMP` = `logs/` privada, sem raiz registrada; a listagem sem sobras não foi retida.
+- **GREEN e sondagem**: `green1` 173/172/0/1, `green2` 10/10/0/0 e `probe-int` 613/600/0/13. Não são gates.
+- **Mutantes**:
+  - a 1ª bateria, em `13ecc07`, teve 13 términos naturais vermelhos. O **m6 ficou interrompido**: o autor encerrou os filhos 72604 e 85064 por identidade (`m6-stop.txt`);
+  - a 2ª bateria (`mutants2`, `e80b99e`) é a única com os **14 términos naturais**, todos vermelhos (`result.json`).
+- **B de `e80b99e`**: 640/626/1/13, **exit 1, término natural, preservado**. O `rmSync` do Node 24.13.0 não apagava um arquivo em “raiz ação”. O autor confirmou com a sonda ASCII/Unicode nos dois Nodes (`probe-rmsync.txt`: 24.13.0 `rmSync raiz ação` “ficou”; 24.22.1 removido; `unlinkSync` removido nos dois). A correção `736e7d7` trocou só as duas remoções da prova por `unlinkSync`, com as asserções intactas.
+- **Gates finais do autor em `736e7d7`**: A2 e B2 640/627/0/13, C 640/618/0/22 e D 1.073/1.053/0/20, exit 0. O meu D tem as **mesmas 1.073 linhas, nome a nome e marca a marca** (`r24/D-summary.txt`).
+- **Medição do autor (E5 copiado, callback vazio, 2×5.000 no mesmo `.lock`, C:)**:
+  - antes: 555 `EPERM` em 20.000 (149/132 e 134/140);
+  - depois: 0, com 20.000 concluídos e sem sobras;
+  - liberação completa p50 de 0,67–0,68 ms para 2,51–2,61 ms.
+
+  É uma medida do lock, não do pipeline com fsync. A medição local do `ci-lock-latency` foi só a fase A, 1.500 ciclos, sem `RUNNER_TEMP`, e não há 4.500 comparativos novos. Nada disso substitui POSIX, CI ou a medição remota.
+- **Retificação `5a94042`**, que prevalece sobre os trechos antigos:
+  - **descartes**: as seis sobras foram escolhidas por prefixo/`birthtime` dentro de `logs/`, sem `dev`/`ino` individual. As guardas das cópias e dos clones são distintas das raízes `sm-blr-*` e do E5, que tiveram `dev`/`ino`. A `mutants-copy` saiu sem conferir tipo;
+  - **PowerShell**: **8** chamadas, todas atribuídas ao autor:
+    - **7** com o opt-out só dentro do comando, sem `UPDATECHECK` nem TEMP próprio;
+    - **1** depois do D, com os opt-outs herdados antes, mas TEMP/TMP = `logs/` sem raiz registrada.
+
+    A `sed` documental que menciona `powershell.exe` não conta como execução.
+
+  O alcance e os limites ficam como o autor e o Root os registraram: sem proveniência individual plena, sem impacto global zero e sem efeitos auditados das inicializações.
+
+## Execuções — verified at `34466ab`
+
+A ordem foi A, B, C e D, em sequência, uma vez cada, sem filtro e sem repetição (`r24/plan.txt`).
+- **Alvo de A/B/C**: `node --test --test-concurrency=<n> "tests/integrations/**/*.test.mjs" scripts/governance-ci.test.mjs scripts/ci-lock-latency.test.mjs`, ou seja, 68 + 2 arquivos.
+- **Concorrência**: `<n>` é o contrato do runner (`max(1, min(CPU−1, 8))`), calculado no ambiente e conferido com o declarado: A e B, 8 (32 CPUs); C, 7 (8 CPUs).
+- **Orçamentos**, passados à ferramenta: 30 min em A, B e C; 2 h no D. Esperei o término real de cada um.
+- **Forma comum**:
+  - `RUNNER_TEMP` numa pasta própria, vazia antes e com 0 entradas depois;
+  - TEMP/TMP numa raiz própria `sm-v24-<rótulo>-…` (mkdtemp; caminho real, tipo, `dev`, `ino` registrados);
+  - `npm_execpath` ausente e `npm_config_update_notifier=false`;
+  - em A, B e D, `POWERSHELL_TELEMETRY_OPTOUT=1`, `POWERSHELL_UPDATECHECK=Off`, TEMP/TMP próprios e o pwsh oficial `C:\Program Files\PowerShell\7` na frente do PATH, **exportados antes do node**. Só a prova `governance-C48` iniciou o pwsh, por `spawnSync` com timeout (`governance-ci.test.mjs:503-515`).
+- **Scripts** (meus, em `r24/`): `isolated-root.mjs`, `run-target.sh`, `make-clone-B.sh`, `remove-clone-B.sh`, `wsl-run.sh`, `run-npm-test.sh`, `matrix.mjs` e `d-summary.mjs`.
+
+| # | Ambiente | Resultado |
+| --- | --- | --- |
+| A | Windows 11, checkout principal, Node **v24.22.1** (`C:\nvm4w\nodejs`), npm 11.19.1. Blobs de `store.mjs`, `fs.mjs`, `lock-release.unit`, `concurrency.cli`, `traces.mjs` e `ci-lock-latency.test` iguais aos do HEAD; concorrência 8 | **640: 627 pass, 0 fail, 13 skip**, exit 0. Status vazio antes e depois. Raiz `sm-v24-A-iDZhjO` (128 entradas) conferida e removida pelo registro |
+| B | **Clone git novo** em `r24/B-clone` (`--no-hardlinks --no-checkout --config core.autocrlf=true`, sem rede; nada global mudou), com `dev`/`ino` registrados. HEAD, árvore e toplevel conferidos. Node **v24.13.0 oficial**: o zip `ca274269…` é igual ao `SHASUMS256.txt`, o `node.exe` `d14ba95c…` é igual ao do zip e o npm **11.6.2** fica adjacente. `cli.mjs` `i/lf w/lf`, **0 CR antes e depois**; `store.mjs` com 1.428 CR e `lock-release.unit` com 475 CR no clone (o autocrlf agiu). Status vazio antes e depois do `node_modules`; concorrência 8 | **640: 627 pass, 0 fail, 13 skip**, exit 0. Depois: HEAD, árvore e toplevel iguais, bin LF/0 CR e status vazio. Raiz `sm-v24-B-dXovgS` (1.099 entradas, o `rmSync` do 24.13.0) removida pelo registro. Clone removido depois de conferir o caminho real, pasta não link, o mesmo `dev`/`ino`, toplevel, HEAD e status vazio (`B-clone-cleanup.txt`) |
+| C | WSL `Ubuntu`, `oldboydev`, uid 1000. `git -c core.autocrlf=false archive` do HEAD: 6.799.360 bytes, sha256 `3ed61674…`, `get-tar-commit-id` = `34466ab…`. Árvore extraída `09ceee25…` = `HEAD^{tree}`; 0 CR; `cli.mjs` 755. Node **v24.13.0** copiado de `/usr/bin/nsolid` (`150946e4…`, igual) num prefixo `node npm npx`, **sem `sh`**; npm 11.6.2. `env -i` só com `HOME`, `LANG`, `PATH`, `RUNNER_TEMP`, `TMPDIR` e `npm_config_update_notifier`. `PATH` = prefixo + `tools` (links para `/usr/bin/{sh,git,python3,id,grep,mkfifo}`), **sem `/usr/bin`**, sem agentes nem `pwsh`; concorrência 7 | **640: 618 pass, 0 fail, 22 skip**, exit 0. `RUNNER_TEMP` e `HOME` com 0 entradas; `TMPDIR` com 128. Scratch `/tmp/sm-v24-C.EnwwMV` removido pelo caminho exato, pasta não link, uid 1000, dev 2096 e inode 1474 |
+| D | `npm test`, sem argumentos, no checkout principal: Windows, Node v24.22.1, npm 11.19.1, `SKILL_ME_HERMES_PYTHON` ausente, `availableParallelism` 32 → runner 8. O pwsh oficial na frente do PATH (só o caminho). Orçamento de **2 h** (7.200.000 ms). Checkout commitado e limpo | **1.073 testes: 1.053 pass, 0 fail, 20 skip**, **exit 0**, término natural (`D.env.txt`). Por suíte: governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7 e integrações 613/600/0/13. HEAD igual e status vazio antes e depois; `RUNNER_TEMP` com 0 entradas. Raiz `sm-v24-D-dS86YW` (128 entradas) removida pelo registro |
+
+**Nomes de A/B/C** (`r24/matrix-ABC.txt`): as 640 linhas (634 de topo) têm os **mesmos nomes, com subtestes, nos três ambientes**, sem duplicado e sem falha.
+- `I25-C46 liberação do lock` teve 10/10 em A, B e C.
+- `I25-C46 evidência comum` 8, `diagnóstico do T8-C15` 3, `prazo da entrega` 8, T8-C15 1, T8-C16 9, I25-C43 12 e I23-C4 7 também passaram nos três, assim como I23-C6, I23-C10, I23-C17, I5-C49b, T8-C12, T8-C13, T8-C19 e os 18 C50.
+- Governança: 9 em A e B; 8 + 1 skip em C (o ramo Windows do `governance-C48`).
+- **Disputa real** (`ℹ disputa`): sempre `ok` 2.000/2.000 e `falhas {}`. Os `lockPresent` foram A 2.249/5.591, B 2.205/2.637, C 7.748/7.646 e D 2.476/2.924.
+
+**Skips**:
+- **A e B (13)**: I4-C15, I4-C25b/j/k/l/m, I25-C5, C6, C15, C33 (arranjo POSIX), C42, C45 e T8-C4 (sinal POSIX). Todos com motivo de plataforma, e **todos passaram em C, salvo o I4-C25m** (macOS).
+- **C (22)**:
+  - 11 `hermes-runtime-ausente`;
+  - o `governance-C48` Windows;
+  - I4-C25g/h/i (DACL);
+  - I4-C25m (macOS);
+  - I25-C4, C5 (console), C8 (LOCALAPPDATA), C38, C42 (console) e C45 (controle do Windows).
+
+  Todos com motivo, e os do Windows passaram em A e B.
+
+**D** (`r24/D-summary.txt`, comparado nome a nome):
+- **Contra o D do autor (`736e7d7`)**: idêntico, com as mesmas 1.073 linhas, marcas e motivos.
+- **Contra o D da R23 (`6204613`)**:
+  - entram os 10 `I25-C46 liberação do lock` e 1 `evidência comum`;
+  - o T8-C15 saudável troca de `✖` para `✔`;
+  - os skips são os mesmos 20, em nome e motivo.
+- **Nomes por check**: cada prefixo de `I25-C1 ` a `I25-C47 ` tem ao menos um `✔`, salvo `I25-C6` e `I25-C15`, que no Windows só têm skip e passaram em C.
+  - O `I25-C46` soma 44 `✔`, `I25-C43` 12 e `I25-C47` 6.
+  - Também passaram os 9 T8-C16, T8-C15, T8-C19, T8-C12, T8-C13, os 2 T8-C20, os 7 I23-C4, I23-C6, I23-C10, I23-C17, I5-C49b, I4-C16 (3), I4-C17, I4-C35, I4-C36, I4-C47 e T8-C2/C3/C8/C14/C18.
+  - Os 9 `governance-` (os dois `governance-C48` com o pwsh oficial) e os 18 `C50` também, com `RUNNER_TEMP` presente.
+- **Hermes**:
+  - os **11 nativos com runtime** passaram: I4-C18–C23 (`D.log:622-627`), I4-C37 (`:628`), `I25-C40 harness nativa` (`:629`), os dois I23-C8 com runtime (`:630-631`) e I4-C44b (`:633`), pelo runtime local das provas versionadas e o `HERMES_HOME` temporário delas;
+  - o **ramo Hermes do I4-C35** passou (`:1088`);
+  - o `I23-C8 … pelo Python do sistema` (`:632`) passou, mas não é runtime do Hermes.
+
+  A CI não tem o runtime do Hermes; lá os nativos não rodam.
+- **Skips (20)**:
+  - doctor (7): POSIX/FIFO (`# SKIP`). Não rodaram em ambiente nenhum desta rodada;
+  - integrações (13): os mesmos de A, todos rodados em C salvo o I4-C25m.
+
+## Checks — 49/50 provados; C46 não provado contra a fonte vinculante
+
+Fontes da prova:
+- **A/B/C24**: as integrações inteiras e o par de governança, frescos nos três ambientes, com os mesmos nomes. Não há mais carry de A/B/C por blob.
+- **D24**: o nome real passou no D fresco.
+- **G21**: só a análise estrutural do workflow (blob `f24e82d` igual).
+
+As citações dos arquivos mudados foram renovadas no HEAD. As dos demais são as da R23 (blobs iguais).
+
+| Check | Asserção decisiva (`file:line` no HEAD) | Prova | Result |
+| --- | --- | --- | --- |
+| C1 | `command.cli:48-49` `private`/`bin`; `:65` `[0, SKILL_ME_HELP, ""]`; `:77` `gitStatus() === before` | A/B/C24; D24 | provado |
+| C2 | `command.cli:96-98` `argv: LITERAL_ARGS` | A/B/C24; D24 | provado |
+| C3 | `command.cli:105` `{0: 0, 7: 7}` | A/B/C24; D24 | provado |
+| C4 | `command.cli:130-133` 127 `launcher_requires_shell`; `agent.unit` `I25-C4` | A/B (shim só Windows), C (skip com motivo); D24 (3 `✔`) | provado |
+| C5 | `command.cli:228` POSIX; `:244-245` `CTRL_C_EVENT` → `["SIGINT"]` | console em A/B/D24; POSIX em C24 | provado |
+| C6 | `command.cli:267` `signals: ["SIGTERM"]` | **C24** (skip no Windows, com motivo) | provado (fresco) |
+| C7–C14 | `prepare.cli:93-94`, `:122-126`, `:163-168`, `:189-191`, `:200`, `:223`, `:238`, `:250` | A/B/C24; D24 | provado |
+| C15 | `prepare.cli:408` (pty) | **C24** (skip no Windows, com motivo) | provado (fresco) |
+| C16–C23 | `session.e2e:67`, `store.unit:79`, `session.e2e:111`, `:161`, `:190-192`, `:208-211`, `:230`, `:282` | A/B/C24; D24 | provado |
+| C24 | `store.unit:168` | A/B/C24; D24 | provado |
+| C25–C28 | `end.e2e:80-89`, `:101-109`, `:120`, `:164-165` e `:194` `["EIO"]` | A/B/C24; D24 | provado |
+| C29–C31 | `command.cli:278`, `:342`; `end.e2e:205-215` | A/B/C24; D24 | provado |
+| C32 | `end.e2e:320`; `store.unit:715` | A/B/C24; D24 (9 `✔`) | provado |
+| C33 | `end.e2e:460`; `:493-494` (arranjo POSIX) | A/B/C24 (arranjo em C); D24 | provado |
+| C34–C35 | `report.cli:159`, `:252-259` | A/B/C24; D24 | provado |
+| C36–C38 | `command.cli:350`; `launch/docs.test:82`; `prepare.cli:355` | A/B/C24 (C38 em A/B); D24 | provado |
+| C39–C40 | `hermes-harness.unit:90`; `:220`, `:320`, `:324`, `:327`; nativo `hermes-plugin.native:336` | A/B/C24 (harness); **D24**: os 11 nativos | provado |
+| C41–C45 | `store.unit:327-523`, `end.e2e:518`; `agent.unit` `I25-C42`, `command.cli:456`/`:424`; **`store.unit:562`, `:580` `{code: "io_failure", …, lockLeft: true}`, `:600` `root_changed`/`lockLeft: false`** (I25-C43 reapontado ao rename, `:534-545`); `end.e2e:817-958` (I25-C43, `lockKeptIo` `:781-796`, `:933-941`); `hermes-harness.unit:288`, `:291`; `agent.unit:132-146`, `command.cli:166-186` | A/B/C24 (I25-C43 12/12 nos três; POSIX C42/C45 em C); D24 (17, 4, 12, 3 e 3) | provado |
+| **C46** | **(u)**: saudável `lock-release.unit:107` `{value: "resultado"}`, `:108` `[1, 1, 1, 1]`, `:110` prefixo `` `${lockPath}-release-` ``, `:117` `["readBounded", lockPath]` adjacente ao rename, `:118` releitura antes do `unlink`, `:120` `["ausente", []]`; **f1–f14** `:127-235` com `:239-245` (erro `LockReleaseError` sem `code` `:99-103`, cru ou `lostCode`; `[lockState, leftovers, counts]`); link `:261-263`; f13 e troca depois do rename `:282-303`; nomes parecidos `:316-317` (bytes e `ino`); quedas `:341-351`; D2 `:367-376`; dois consumidores `:398-401` `{io_failure, opened: true, lockLeft: true}`, `:420` `{root_changed, lockLeft: false}`, `:429` `[5, "io_failure"]`, `:441` `[4, "foreign_entry"]`; saudável nos dois `:452-459`; disputa `:468` `[0, null, ""]`, `:472` `{ok: 2000, falhas: {}}` ×2, `:474` pasta vazia. Evidência `evidence.unit:242`, `:246-248` (posse indeterminada), `:251`, `:254`, `:257`; `concurrency.cli:333`, `:345`, `:360` (os literais do C46 (u)); `lockReleases` `:891`, `:912`, `:933`, `:968`, `:1007`, `:1024`; flush `[2, 2, 2, 2]` `:1086-1089`; `control.cli:827`; `store.cli:439-447`; `privacy.e2e:130-131`. **T8-C15 saudável** `concurrency.cli:222` `{bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0}` (teste `:226`; 2×40 intercalados por 4 `:128`; `:233` 80; `:235-236` `[80, 80]`); (a)–(c) `:296-372`; T8-C16 3 criações `:887`, `:930`, `:966`; (d)–(t) com as citações da R23 nos blobs iguais, renovadas onde mudaram: (k) `evidence.unit:54-148`, (m) `:287-296`, `:320-331`, (n) `:336-338`, `:345`, (p) `concurrency.cli:945-1024`, T8-C16 `:916-933` | **A/B/C24** (10 + 8 + 3 + 8 nos três; T8-C15/C16 nos três); **D24**: 44 `I25-C46` `✔` | **não provado contra a fonte vinculante** (F1). Todas as provas nomeadas de (a)–(u) passaram em A/B/C/D; a exigência do Root sobre o formatter não vale no `agents.e2e:239`, e o (u) a enumera de forma incompleta |
+| C47 | I23-C10 `agents.e2e:315`; (a) `:427`, `:429`; (b) `:442`, `:444`; (c) `control.cli:1071-1077`; (d) `:1097-1105`; `evidence.unit:150-225` | A/B/C24; D24 (6 `✔`, 7 `I23-C4`) | provado como escrito. É a localização do F1 (`:239`), cujos controles não exercitam um rename com erro |
+| C48 | estrutura contra `d0d5a7f` (R21, workflow `f24e82d` igual); `governance-ci:373-433`, `:444-582`, `:511`, `:565-576`; `governance-C1 C3` `:271-283` | **A/B24** e **D24** (os dois `governance-C48` com o pwsh oficial); C24 com o ramo Windows em skip e motivo | provado |
+| C49 | `governance-ci:322-329`, `:330-334`, `:337-348`, `:350-356`, `:359-362`; `:299-304` | A/B/C24; D24 | provado |
+| C50 | (a)–(n) com as citações da R23 nos trechos sem diff; **(o)**: `ci-lock-latency.test:146` tudo `UNAVAILABLE` com `retirada` e as 7 operações; `:216-219` EIO no rename, com só `reserva` e `pasta` numéricas no 1º; `:231-232` 3 × `[null, …7 × "number"]`; `:397` as 7 operações em ordem; `:399` `amostras` 15; `:412` `[2, "individual: um lock por produtor; não mede disputa entre produtores"]` | **A/B/C24** (18 `C50` nos três, `RUNNER_TEMP` presente); D24 (18) | provado |
+
+- **Critérios não reduzidos** (`src` fora de `store`/`fs` sem diff desde a R23):
+  - `DELIVERY_DEADLINE_MS = 750`, `ATTEMPT_MS = 750 − 100` e `LOCK_RETRY_MS = 10` (`traces/delivery.mjs:12`, `:18`, `:19`);
+  - `REPORT_DEADLINE_MS = 1000` (`observation.mjs:39`);
+  - `HOOK_STDIN_DEADLINE_MS = 2000` (`hook-command.mjs:7`);
+  - a faixa 1.900–6.000 (`failure-matrix.cli:83`, `:119`);
+  - `DEFAULT_SETTLE_MAX_MS = 5000` (`settle.py:13`, `:41`);
+  - `PRIVACY_LIMITS` 500/8 MiB (`lifecycle.mjs:5`) e retenção de 7 dias (`:7`);
+  - `MAX_PARALLEL_FILES = 8` (`test-integrations.mjs:14`);
+  - o workflow, com o mesmo blob: detecção 5 (`:21`), verify 20 no Windows e 10 nos demais (`:43`), CI 5 (`:79`) e o manual 10 só por `workflow_dispatch` (`:98-100`).
+
+  O T8-C15 mantém 80 eventos, 40 por produtor, 2 produtores, 4 linhas intercaladas, payloads e export 80. O T8-C16 mantém 3 criações. Nenhuma asserção, contagem, carga, concorrência, retry ou política de perda mudou: as adaptações só trocam a operação que libera, e o único literal novo é o exigido no C46 (u).
+- **AC → checks** (9 ACs): AC1–AC6 com C1–C45, provados, e o gate completo do AC6/S6 verde. **AC7 com C46, não provado contra a fonte vinculante (F1).** AC8 com C47 e C48, provados como escritos; o F1 está no diagnóstico do C47. AC9 com C49 e C50, provados.
+
+## Swept `existing` (carry R23; `src` igual fora de `store`/`fs`)
+
+- idempotência: `privacy/lifecycle.mjs:23-24`;
+- sem reenvio: `traces/delivery.mjs:57`, `:123`;
+- falha de entrega não bloqueia: `traces/delivery.mjs:156`;
+- `privacy prune`: `privacy/command.mjs:56-57`;
+- acréscimos da liberação segura do lock: são refinamentos do C46 (u) e do C50 (o), sem check novo.
+  - **failure modes, idempotency and retry**: f1–f14;
+  - **concurrency and ordering**: a disputa;
+  - **data lifecycle**: quedas, D2 e docs;
+  - **authorization**: nomes parecidos, troca, link e alheio;
+  - **observability**: a evidência e o esquema 2.
+
+  Todos estão provados acima, salvo a observabilidade no formatter do I23-C10 (F1).
+
+## Observações (não bloqueantes; nada corrigido)
+
+- **O1 — mensagem do launcher depois do movimento.** Com `lockLeft: true` também depois do rename, o launcher diz que o lock “pode ter ficado” e manda conferir o `pid` (`launch/command.mjs:159-164`). Isso segue o Landing (“confirmação incerta do contrato vigente”). A mensagem não cita a reserva que pode sobrar; `docs/traces.md:498-507` cobre a recuperação.
+- **O2 — sobras do `rmSync` do 24.13.0.** O B deixou 1.099 entradas na raiz própria (A e D, 128; C, 128 no `TMPDIR`). Todas foram removidas com a raiz pelo registro. É fora da fatia, como o autor comunicou.
+- **O3 — disputa estatística.** No Windows, o RED é só do autor (72/59 e o m1 53/57). Nos outros sistemas a prova passa antes e depois, sem servir de RED, como o C46 (u) declara.
+
+## Gates remotos — pendentes e bloqueados
+
+A ordem aprovada é esta: PASS independente → formal 14 `ready` → publicação → **uma** execução manual com a medição (esquema 2) → **cinco checks regulares verdes** nas matrizes PR e manual do HEAD aprovado → merge já autorizado. **Este FAIL bloqueia o primeiro passo.** A formal 14 não deve rodar sobre ele.
+
+O HEAD publicado continua `066bd98`. O PR 40814315171 e a manual 40814471097, vermelhos, e a medição 4.500/4.500 de `066bd98` ficam **como história**: medida individual, que não cumpre o novo HEAD nem substitui a CI. Não disparei nada e não declaro verde nenhuma CI futura.
+
+## Processo, limites e limpeza da R24
+
+**Executado.**
+- **git**, só de leitura: `rev-parse`, `status`, `log`, `diff`, `show`, `ls-files --eol`, `ls-tree`, `hash-object`, `check-ignore`, `config --show-origin` e `get-tar-commit-id`. Também:
+  - `git -c core.autocrlf=false archive` do HEAD para `r24/head.tar`;
+  - um `git clone --no-hardlinks --no-checkout --config core.autocrlf=true` do repositório local, sem rede, com a configuração só no clone.
+- **Leitura**: `node` (contexto, config, `state.json` só com a contagem, logs), `sha256sum`, `python -I` (sha do zip e CR) e `stat`.
+- **Gates**: A, B, C e D, uma vez cada, sem repetição. O WSL foi chamado com `wsl.exe -d Ubuntu -u oldboydev --exec /bin/bash --noprofile --norc` e `MSYS_NO_PATHCONV=1`. Fora do gate, rodei uma checagem de leitura do WSL (`id`, `nproc`, `nsolid --version`, o `package.json` do npm).
+- **Modo**: `run_in_background` com os orçamentos do plano. Esperei o término real pelas notificações da ferramenta: **4 tarefas, todas concluídas com exit 0; 0 em segundo plano**. Durante o D, só leitura (logs do autor e arquivos de prova).
+- **A ferramenta** guardou cópias das saídas em `AppData\Local\Temp\claude\…\tasks\*.output`. Não são auxiliares meus, e não as apaguei.
+- **PowerShell**: **não iniciei nenhum** (nem `powershell.exe`, nem `pwsh`, nem `-?`/`help`/`version`). O pwsh oficial só foi iniciado pela prova versionada `governance-C48` em A, B e D, com os opt-outs e o TEMP próprio herdados antes.
+- **Processos depois do D** (`r24/processes-before.txt`, `processes-after.txt`, por `ps -W` do Git Bash, sem linha de comando):
+  - 16 processos `node`/`pwsh` com início depois de 15:20 estavam vivos na 1ª leitura. Os 7 de 15:38:28–15:38:45 já tinham saído na 2ª;
+  - ficaram 9: três `pwsh` (15:24:43, 15:35:59, 15:36:23) e seis `node` v24.22.1, no mesmo padrão `pwsh` → 2 `node` da linha de base de 08:43–08:44, de outra sessão do host. Dois `node` (15:26:56–57) nasceram durante o B, cujo Node era o 24.13.0;
+  - **nenhum é atribuível a mim pelo que se vê**: o pwsh das provas roda por `spawnSync` e é esperado, nenhuma prova de integração usa pwsh, e nenhum processo novo usa o Node 24.13.0 do B ou do C;
+  - **limite**: sem linha de comando (não há `wmic`, e não iniciei PowerShell só para isso), a atribuição não é plena.
+
+**Incidentes meus**: nenhum. Não iniciei agente real nem rede.
+
+**Não executado.**
+- RED, mutantes, sondas, testes novos, fault injection e as reproduções e medições do autor.
+- Uma prova para o F1: o achado é por leitura de uma função pura, e o despacho proíbe sonda.
+- Agentes reais, `--help`/`--version` de agente, perfis, credenciais, banco, modelo, rede, relógio do host, antivírus, Git global, TEMP global e runtimes fora das provas. O Hermes real rodou só pelas provas nativas versionadas do D, com o `HERMES_HOME` temporário delas.
+- Actions, CI, `review:run`, commit, push, PR, merge, alteração de limites e subagentes.
+- **Incidentes anteriores**, preservados sem leitura, remoção nem restauração:
+  - a R5 (`ffc5937`: até 5 inícios do Codex no WSL e 12 mtimes, sem linha de base de conteúdo);
+  - a limpeza de 1.257 pastas no Windows e 107 no WSL, sem proveniência e sem os nomes do Windows;
+  - os auxiliares `/tmp/d4.skips` e `/tmp/d-old.skips` no TEMP global, sem inventário nem criação exclusiva;
+  - o D de `dc0db9b`, **interrompido pelo root** (não é falha natural);
+  - os dois incidentes da R21 (`pwsh -?` sem opt-outs, com efeitos não auditados; o `post-D-checks.txt` ~9 s na raiz depois do D);
+  - a interrupção do host na sonda `p-c12-2413`;
+  - o B vermelho de `407edc5` (`EPERM`) e o T8-C13 positivo vermelho do autor anterior;
+  - o RED e o m6 interrompidos, as seis sobras por prefixo/`birthtime` e as 8 chamadas de PowerShell do autor desta fatia, com os limites que o autor e o Root registraram.
+
+  Não afirmo impacto global zero.
+
+**Auditoria externa 24 (do Root).** Às 15:39:59, depois do fim real do meu D (15:38:27), existiam `profile-comparison-final.json` e `profile-target-check.json` (15:39). Li **só esses agregados**:
+- 12.113 entradas antes e depois;
+- `added`, `removed`, `modified` e `errors` vazios;
+- `sameProfileTarget: true`;
+- linha de base de 12:08:40 UTC (o final da R23) e o depois em 18:39:10 UTC.
+
+O resultado e o método são **do Root**; não li os snapshots nem os scripts. O escopo é o declarado nos próprios arquivos: só metadados do perfil WSL e igualdade do alvo. Não cobre conteúdo, temporários, Windows, PowerShell, rede, proveniência ou causalidade, e não desfaz a R5. As auditorias 19–23 (12.113/12.113, zero diferenças), a recusa pré-coleta do método 20 e a inclusão da formal 13 na janela da 23 ficam como estão.
+
+**Limites.**
+- **macOS**: o I4-C25m não rodou em ambiente nenhum.
+- **Doctor**: os 7 skips POSIX/FIFO não rodaram (o doctor só rodou no D, Windows).
+- **Runtime do Hermes**: só no D (Windows). O caso pelo Python do sistema não é runtime do Hermes.
+- **Causas**: continuam desconhecidas as do `EPERM` da R23 e do B de `407edc5` (o diagnóstico mostrou a classe, não a causa daquelas execuções), do `green-pre2`, do I23-C6 da CI 066, do cancelamento da manual 40814471097 e as históricas.
+- **Abrangência**: os verdes A/B/C/D são deste computador. O POSIX real da mudança só tem o C (WSL) e a CI futura. O custo com fsync não foi medido comparativamente; o T8-C15 com fsync é prova de teste, não de custo.
+
+**Limpeza** (`A.env.txt`, `B.env.txt`, `B-clone-cleanup.txt`, `C.run.txt`, `D.env.txt`):
+- as raízes `sm-v24-A`/`B`/`D` foram removidas só pelo registro (caminho real absoluto, filha direta do temporário, nome, pasta não link, mesmo `dev`/`ino`);
+- o scratch do C, por caminho exato, uid 1000, dev e inode;
+- o clone do B, por caminho real, pasta não link, mesmo `dev`/`ino` registrado na criação, toplevel, HEAD e status vazio;
+- `runner-temp-A`/`B`/`D`, vazias, por `rmdir`;
+- nenhuma seleção por prefixo ou mtime, e nenhum auxiliar meu no `/tmp` (Git Bash ou WSL) nem no TEMP global.
+
+Logs, tar, scripts e matrizes ficam em `r24/`.
+
+**Integridade do histórico abaixo.** O texto depois da linha `---` que fecha esta rodada (e da linha em branco seguinte) é, byte a byte, o `.verified.md` do HEAD: 378.751 bytes, sha256 `8cbbf2f1…`, 0 CR. É igual ao `verified-before.bin` guardado pelo Root (`r24/verified-integrity.txt`). Nele estão o **FAIL 23**, o **PASS 22**, o **FAIL 21**, o **PASS 20**, o **FAIL 19** e os relatórios anteriores, sem rebatizar nenhum resultado.
+- O FAIL 23 estava certo para `6204613`, e a correção nova não o desfaz retroativamente.
+- Este FAIL 24 é do conteúdo de `34466ab`. Todos os gates passaram, e o F1 é a cobertura incompleta de uma exigência vinculante.
+
+---
+
 # Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 23)
 
 **Verdict (R23)**: **FAIL — 49/50 checks provados; o gate D completo terminou naturalmente com exit 1.** HEAD `6204613`, último código `709ff5d`, 9 ACs. É a primeira verificação independente do código de `19a5a5c` (C46 (s)) e de `709ff5d` (C46 (t)).
