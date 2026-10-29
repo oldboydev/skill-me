@@ -1,3 +1,361 @@
+# Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 23)
+
+**Verdict (R23)**: **FAIL — 49/50 checks provados; o gate D completo terminou naturalmente com exit 1.** HEAD `6204613`, último código `709ff5d`, 9 ACs. É a primeira verificação independente do código de `19a5a5c` (C46 (s)) e de `709ff5d` (C46 (t)).
+- **Gates frescos (verified at `6204613`)**, uma vez cada, sem filtro e sem repetição:
+  - **A** Windows Node 24.22.1: 19/19/0/0;
+  - **B** clone novo com `autocrlf=true`, Node 24.13.0 oficial: 19/19/0/0;
+  - **C** WSL isolado, Node 24.13: 19/19/0/0;
+  - **D** `npm test` completo: **1.062 testes, 1.041 pass, 1 fail, 20 skip**, exit 1, término natural.
+- **A falha (F1)**: o T8-C15 **saudável**, sem injeção (`concurrency.cli.test.mjs:224`, asserção `:220`). O produtor `b` recebeu `open lock EPERM (tomada do lock)`, que não foi injetado. Ele saiu `io_failure` 40/39/39/1, e a captura ficou com 79 de 80. O C46 exige que o T8-C15 “passa no caso saudável” (checklist `:432-435`). Por isso o C46 não está provado neste HEAD.
+- **A mudança nova está correta pela leitura e pelas provas.** O T8-C19, o T8-C12, o T8-C13 e os três controles do ciclo de vida, (s) e (t), passaram em A/B/C e no D. A falha está num arquivo sem diff desde a R22 (`concurrency.cli` com o blob `3d507e0`). Ela é a mesma classe de erro do B vermelho do autor em `407edc5`. Não há relação demonstrável com `19a5a5c`/`709ff5d`, e eu também não demonstro que não haja (F1).
+- **O que isto não é**:
+  - não é PASS;
+  - não demonstra a causa do `EPERM`, do `sync key` de 601 ms do I23-C6 na CI 066 ou do cancelamento da manual 40814471097;
+  - não declara verde nenhuma CI futura.
+
+  Não corrigi nada nem repeti o D.
+- **Gates remotos**: pendentes e bloqueados por este FAIL. Não executei Action, CI, `review:run`, commit, push nem merge.
+
+**Profile**: light (`AGENTS.md:138`). Por isso não há fault injection, `Coverage`, `Test policy` nem fonte de UI. Não criei mutantes, sondas, testes nem correções. As sondas, os RED, os GREEN preliminares e os mutantes de (s) e (t) são **provas do autor**, só atribuídas (`builder-ci066-follow/`, `builder-ci066-follow-cli/`).
+
+**Diff range**: `63621c691f132dc8d591414269d36cfa18fca594..6204613cecaf32e19c2ae8a3cfe2b62243d75a5d`, a feature inteira: 167 commits, árvore `c59da561…`. Desde a R22 (`2383c52`, relatório em `066bd98`), entraram 15 commits:
+- `3d50ced` (CI 066);
+- a fatia (s): `46f949d`, `b90abdd`, `1b7b561`, **`19a5a5c` (código)**, `aa934df` e `97baf13`;
+- a fatia (t): `14b853a`, `12f6f1f`, **`709ff5d` (último código)**, `ec4a412` e `d4f304a`;
+- `9c02c05` e `6204613` (override 25: `maxRounds` 13 → 14 e o `approval`).
+
+**Round**: **23** (light). Autorizações: “Pode fazer quantas precisar” e “Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28”. Escopo [6467154706](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706) e registro 23 [6495770228](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6495770228).
+- `context-round23.json` (sha256 `9466ebef…`) tem 37 comentários e 9 ACs. O corpo e os comentários 1–35 são iguais aos de `context-round22.json`. Os novos são o 36 (CI 066) e o 37 (registro 23). O `round23-registration.md` é igual ao comentário 37, sem placeholders (`r23/context-config.txt`).
+- `roundOverrides["25"]` = `{profile: "light", maxRounds: 14}`. Os perfis globais continuam com 2.
+- O `state.json` da revisão tem 13 tentativas (sha256 `6cf84579…`). A formal 14 está autorizada e **não deve ser usada sobre este FAIL**.
+
+**Verifier**: subagente novo e independente (Claude Opus 5.5). Não sou o autor nem o Verifier 22, e não herdei sessão.
+- Produto, testes, apoios, scripts, workflow, planos, configuração e estado ficaram só para leitura.
+- Escrevi este arquivo e as evidências em `.checks/code-review/issue-25/verifier-round23/r23/`, pasta ignorada (`.gitignore:4`). Fora dela, só as raízes próprias dos gates e o scratch do C.
+- Não li `profile-before.json`, os scripts de perfil do root nem nenhum snapshot.
+
+Data: 29/10/2026 (-03).
+- **Plano**: a identidade (`r23/blob-identity.txt`, 08:52) e o alvo com os orçamentos e as concorrências (`r23/plan.txt`) foram gravados antes de qualquer gate.
+- **Horários**: A 08:56:12–08:56:31; B 08:56:57–08:57:17; C 08:58:06–08:58:24; D 08:58:37–09:06:54 (8 min 17 s).
+- **Estado**: o HEAD foi `6204613` do início ao fim. O `git status` ficou vazio antes e depois de A e do D. Em B, o status do clone ficou vazio. Em C, a árvore extraída é igual ao `HEAD^{tree}`.
+
+## Fontes lidas (R23)
+
+| Fonte | Como |
+| --- | --- |
+| `AGENTS.md`, `CLAUDE.md`, `tlc-implement/references/verify.md` | inteiros |
+| `context-round23.json`, `round23-registration.md`, `round23-values.json`, `verifier-round23-dispatch.txt` | inteiros (o corpo e os 37 comentários) |
+| `.checks/issue-25-agent-launch.md` (2.477 linhas) | `Sources` (`:9-49`, com as duas entradas novas `:11`, `:13`), `Out of scope`, as linhas do Landing “Ciclo de vida do `follow` no T8-C19” (`:124`) e “… em `follow.cli.test.mjs`” (`:125`) inteiras, o enunciado do C46 (`:432-435`), o (r) e os refinamentos (s) e (t) (`:652-732`), `Swept` (com os dois acréscimos) e os dois blocos novos do `Handoff` (`:2327-2477`). Os demais blocos são histórico, carry da R22 |
+| `.tasks/issue-25-agent-launch.md` | as duas seções novas (`git diff 066bd98..HEAD`) |
+| build | as duas seções novas (`git diff 066bd98..HEAD`): diagnóstico, correção, RED/GREEN, mutantes, gates e achados fora da fatia |
+| `.checks/issue-25-agent-launch.ci40814315171-handoff.md` | inteiro |
+| `.checks/issue-25-agent-launch.verified.md` | o topo R22 inteiro (`:1-355`). O resto é histórico, atribuído sem nova execução |
+| evidências do autor | `builder-ci066-follow-cli/{plan.txt, green-pre2.log, mut-run.out.txt}` e `builder-ci066-follow/{mut-*.log, spawn-error-probe.out.txt}`. São **relato do autor**, só atribuição |
+| CI 066 | `ci066-windows-pr40814315171.log` (a falha do I23-C6, `:1322-1345`), o fim da `ci066-windows-manual40814471097.log` e `ci066-manual-result-name-diff.json` |
+| código | `demo.e2e.test.mjs` e `follow.cli.test.mjs` inteiros, com `git diff` e `git diff -w` desde `066bd98`; `traces-probe.mjs:1-40`, `:115-135`; `traces.mjs:11-31`, `:116`; `producer-runs.mjs:14`; `scripts/test-integrations.mjs`; `agents.e2e:95-120`, `:315`, `:427-444`; `delivery.unit:50-116`; `concurrency.cli:205-230`; `store.mjs:194-205`; `delivery.mjs:49-53`, `:98-104`; `privacy/fs.mjs:34-36` |
+
+## Prova Git (verified at `6204613`; `r23/blob-identity.txt`, `r23/context-config.txt`)
+
+- **Alterados de `2383c52` (R22) ao HEAD, fora de `.checks`/`.tasks`**:
+  - `tests/integrations/traces/demo.e2e.test.mjs`: `63a4d8e` → `3838b03` (`19a5a5c`);
+  - `tests/integrations/traces/follow.cli.test.mjs`: `c4a84c0` → `73c1da9` (`709ff5d`);
+  - `code-review.config.json`: `40f9fd8` → `897a480`, só o override 25 (`maxRounds` 13 → 14 e o `approval`).
+
+  De `066bd98` ao HEAD é o mesmo conjunto. Depois de `709ff5d`, mudou só a configuração.
+- **Iguais a `2383c52`**:
+  - árvores: `src` `51f0c98`, `docs` `d9f546f`, `scripts` `ab2df5a`, `scripts/code-review` `6b98d7c`, `.github` `6a0b533`, `tests/integrations/fixtures` `6591970`, `tests/integrations/helpers` `18782eb` e `tests/doctor` `bcedb83`;
+  - arquivos: `package.json` `8fd02fa`, `package-lock.json` `9ec32e0`, `.gitattributes`, `.gitignore`, `README.md`, `AGENTS.md`, `CLAUDE.md`, o workflow `f24e82d`, `test-integrations.mjs` `22824c4`, `governance-ci.test.mjs` `5313dba` e `ci-lock-latency{,.test}.mjs` (`8c12894`/`75eeadd`);
+  - apoios: `traces.mjs` `b71938f`, `producer-runs.mjs` `13cd7c6`, `traces-probe.mjs` `292c319`, `trace-kinds.mjs` `96a67e9` e `cli.mjs` `59923fc`;
+  - `agents.e2e` `eb23d7b`, `delivery.unit` `ee11376`, `docs.test` `852616a` e `concurrency.cli` `3d507e0`.
+
+  Dos 247 rastreados de `src`/`tests`/`scripts`, 245 têm o blob de `2383c52`, e também o de `066bd98`.
+- **Permanecem**:
+  - **`cad647a`**: `docs.test` `852616a` e `traces-probe` `292c319`;
+  - o **produto `322bcad`**: `git diff 322bcad HEAD -- src` vazio, com `delivery.mjs` `e1cf25a`;
+  - o **EOF `68f84c4`**: `codex-run.cli` `ff47369`;
+  - o **terceiro produtor `2473632`**: `evidence.unit` `6ccbf48`;
+  - o **workflow Windows `169e845`/`0caf9be`**: o workflow `f24e82d` e `governance-ci.test` `5313dba`.
+- **Core vendorizado**: os 5 arquivos de `scripts/code-review/` têm o blob da base no HEAD (`25e5284`, `c6a4abc`, `1bda8e4`, `216125c`, `b02001e`).
+- **Alcance** (por busca):
+  - nenhum arquivo importa `demo.e2e` ou `follow.cli`. Só `docs.test.mjs:121` confere, por `existsSync`, que o `demo.e2e` existe;
+  - nenhum apoio mudou. Os outros `privacy follow` das provas são síncronos (`query.cli:300`, `concurrency.cli:814`, `store.cli:627`);
+  - o alvo de A/B/C é o fecho mínimo, `demo.e2e` e `follow.cli`, mais o `agents.e2e` (I23-C6 remoto não PASS) e o `delivery.unit` (último arquivo impresso na manual cancelada). Nenhum outro arquivo é afetado. O restante vem do D e do carry por blob.
+
+## Análise da mudança (verified at `6204613`, por leitura; as provas estão nos gates)
+
+**1. O T8-C19 continua o mesmo** (`r23/demo-e2e-diff-w.txt`). O `git diff -w` e o corpo normalizado de `066bd98` contra o de `walkthrough` mostram mudança em uma só linha: `boundEnv(root, id)` virou `boundEnv(root, id, hookEnv)` (`demo.e2e:67`).
+- Com o padrão `hookEnv = {}`, o `...extra` de `boundEnv` (`traces.mjs:25`) dá o mesmo ambiente.
+- Ficaram iguais: os comandos, as entradas, os nove passos (`:120`), os cinco registros com as origens (`:88-97`), as seis linhas com o `end` 6 (`:105`), `lines.slice(0, 5)` igual a `exported.records` (`:106`), o replay (`:110`), os literais, os status e a ordem.
+- O resto é a extração para a rotina, o `Object.assign(seen, …)` (`:61`), o `try`/`finally` (`:63`, `:122-124`) e o import de `TRACES_PROBE`, um export que já existia (`traces.mjs:19`). Nenhum critério foi reduzido.
+
+**2. O `try`/`finally` e o `endFollow`** (`demo.e2e:37-40`, `follow.cli:64-67`, as mesmas duas linhas):
+- **Alcance do `try`**: no demo, entre o spawn (`:57`) e o `try` (`:63`) só há `on("data")`, `new Promise(on("close"))` e `Object.assign`. A retificação aditiva `1b7b561`, anterior ao código, leva o `try` até o fim da rotina. Toda asserção e todo `await` depois do spawn estão dentro dele.
+- **Close observado cedo**: a promessa do `close` é criada no mesmo tick do spawn (demo `:60`; `follow()` `:46`). Nenhum `close` se perde.
+- **Sinal só a filho vivo**: `kill()` só vai se `exitCode` e `signalCode` são nulos. Um filho que já saiu (`exit` antes do `close`, ou fechado) não recebe sinal. Em todos os casos, espera-se o `close` real.
+- **Sem `catch`**: o erro original atravessa o `finally`.
+- **Spawn com erro**: emite `error` e depois `close`, e `kill()` depois do `exit` devolve `false` sem sinal. É sonda do autor (`spawn-error-probe.out.txt`), atribuição.
+- **Caminho positivo**: o follow já fechou (`await followDone`, `:103`; `await followed.done`, `follow.cli:90`; `deletedExit`, `:141`) antes do `finally`. Então não há sinal, só a espera já resolvida.
+
+**3. Os controles e as asserções decisivas**:
+- **(s)** `demo.e2e:138-149`, pela mesma rotina, com `SEGMENT_EIO=1` e a pré-carga só no hook:
+  - `:144` `failure instanceof assert.AssertionError`;
+  - `:145` `[actual, expected, operator]` = `[0, 1, "strictEqual"]`;
+  - `:146-147` corrida do `close` com uma volta de `setImmediate`, que precisa dar `"close"`;
+  - `:148` `[exitCode, signalCode]` = `[null, "SIGTERM"]`.
+- **(t)** `follow.cli:269-314`:
+  - `closedByRoutine` (`:278-282`) exige `[exit?.status, exit?.signal, exitCode, signalCode]` = `[null, "SIGTERM", null, "SIGTERM"]`. O `exit` é gravado no `close` (`:46`), e entre o `kill()` e a conferência só há microtarefas, então um sinal sem a espera deixa `exit` nulo de forma determinística;
+  - T8-C12: `:293` `instanceof`, `:294` `[0, 1, "strictEqual"]` e `:295`;
+  - T8-C13: `:305` `instanceof`, `:312` `[0, 1, "strictEqual", original]`, com a mensagem gerada pela mesma asserção (`:306-311`), e `:313`.
+- **O que cada asserção pega**:
+
+  | Erro plausível | Asserção que reprova |
+  | --- | --- |
+  | sem `finally` | `:147` no demo, `closedByRoutine` no follow |
+  | `kill()` sem esperar o `close` | `:147` no demo; `exit` nulo no follow |
+  | `catch` que engole | `failure` nulo e `instanceof` falso: `:144`, `:293`, `:305` |
+
+  Os mutantes do autor confirmam esse quadro: RED, M2 e M3 de (s) (`builder-ci066-follow/mut-*.log`); RED de cada rotina, M2 e M3 de cada rotina de (t) (`builder-ci066-follow-cli/mut-run.out.txt`). É atribuição, não execução minha.
+- **M4 (`kill()` sempre)**: **equivalente**, não morto. Depois do `close`, `kill()` devolve `false` sem enviar sinal (`spawn-error-probe.out.txt`: `sentAfterExit: false`), e o M4 do autor ficou 6/6. Não inventei um mutante morto.
+- Os positivos estão no alvo inteiro: T8-C19, T8-C12 e T8-C13 rodaram e passaram em A/B/C e no D.
+
+**4. A fatia T8-C12/T8-C13** (`r23/follow-cli-diff-w.txt`):
+- **`followNewRecords`** (`:72-103`): o corpo normalizado é idêntico ao de `066bd98` fora do `try`/`finally`. Ficam iguais `QUIET_MS` (`:30`, de `FOLLOW_POLL_MS`), os dois produtores, os literais, o `[0, null, ""]` (`:91`) e as três linhas com o `end` 3 (`:94-99`).
+- **`followDeletion`** (`:128-150`): o corpo é idêntico ao trecho antigo do T8-C13, salvo `${gate}|2` → `${gate}|${gatedPoll}`, com o padrão 2. Ficam iguais:
+  - o payload secreto com `MARKER`;
+  - o `stop` e o `delete --apply`;
+  - o `go`;
+  - o status 3 e o `capture_not_found` (`:142-143`);
+  - o stderr vazio, a ausência de eco (`:144-145`) e a captura não recriada (`:146`).
+
+  O T8-C13 chama `await followDeletion(root)` no mesmo ponto (`:172`).
+- **Os outros follows**: `finished`, `missing` e `blocked`, com `FOLLOW_LOCK_PATIENCE_MS` e o `.lock` alheio intacto (`:181-184`), não mudaram. O `close` deles é esperado logo depois do spawn.
+- **Controles anteriores**: no (i), saíram só o `kill()`/`await` e o comentário; as asserções `:223`, `:230-234` ficam. O (j) (`:237-266`) não mudou.
+- **Encerramento**: todos os filhos que as rotinas iniciam ou recebem têm o `close` real esperado antes de a falha sair, sem depender do `after` nem da limpeza.
+
+**5. Riscos remotos não PASS, reexaminados** (nenhum é declarado corrigido):
+- **I23-C6 do PR 40814315171**: o produtor 7 saiu `delivery_timeout` com `sync key` 601 ms (`ci066-windows-pr40814315171.log:1322-1345`; asserção `agents.e2e:115`).
+  - O arquivo e o produto são os mesmos blobs. A mudança não toca esse caminho, e o I23-C6 roda em outro processo.
+  - Ele passou aqui (A/B/C e D), o que não explica nem elimina a lentidão do runner.
+- **Manual 40814471097 cancelada**: o defeito de ciclo de vida demonstrado pelo autor está fechado nas duas harnesses e provado pelos controles.
+  - O cancelamento continua **sem causa atribuída**. O log não distingue o processo do `delivery.unit` vivo, um T8-C19 sem terminar ou um `demo.e2e` sem começar.
+  - O `delivery.unit` (5 testes unitários, sem filhos) passou em A/B/C e no D.
+- **`rmSync` do Node 24.13.0 no Windows**: o B desta rodada deixou 39 entradas na raiz própria (o A, 1). É coerente com o achado do autor, fora da fatia, e as entradas foram removidas com a raiz.
+- **Carry por blob**: `cad647a`, o produto `322bcad`, o EOF `68f84c4`, o terceiro produtor `2473632` e o workflow `169e845`/`0caf9be`, todos com os mesmos blobs (acima).
+
+## Histórico do autor — preservado e analisado (não são resultados meus)
+
+- **`green-pre` (5/6)**: o controle novo do T8-C13 tinha um literal errado, sem o diff que o Node anexa à mensagem. O autor o corrigiu antes do commit, gerando a mensagem pela mesma asserção (`:306-311`).
+- **`green-pre2` (5/6)**: o **T8-C13 positivo** falhou em `records.length` `2 !== 3` (`green-pre2.log:22-32`).
+  - O 2º hook do `finishedCapture` (`:118`), trecho anterior a qualquer follow e sem diff, saiu `delivery_timeout` 1/0/0/1, com `pendentes na saída: lstat pasta (fora do lock) há 652 ms`, `lock ocupado (EEXIST, repetido) 0x` e 2 operações concluídas.
+  - É uma falha natural de E/S fora do lock, da mesma família do `sync key` 601 ms da CI 066. A causa é desconhecida; não houve correção nem repetição preliminar inalterada.
+  - O verde posterior do autor e o meu não a apagam.
+- **Interrupção do host** (Handoff `:2437-2447`): a sonda `p-c12-2413` foi cortada às 02:29, sem fim nem resumo. Ela **não tem PASS/FAIL natural**, e os dois `✖` sem detalhe não são atribuídos. Foi refeita uma vez (`p-c12-2413b`), depois da consulta de processos e da limpeza registradas. Nenhum gate final ocorreu durante a interrupção.
+- **Gates finais do autor em `ec4a412`**: A/B/C 8/8 e D 1.062/1.042/0/20, atribuídos. Neste HEAD, o meu D teve uma falha natural que o do autor não teve (F1).
+
+## F1 — o T8-C15 saudável falhou no D (bloqueante)
+
+- **Cenário**: `npm test` completo, Windows, Node 24.22.1, runner padrão (8 arquivos), checkout limpo em `6204613`. No T8-C15, os dois produtores `ingest hermes` de 40 eventos rodam em paralelo na mesma captura, **sem injeção**.
+- **Esperado**: cada produtor com status 0 e `{bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0}` (`concurrency.cli.test.mjs:219-220`), e 80 eventos únicos. É o “passa no caso saudável” do C46 (checklist `:432-435`, AC7).
+- **Atual** (`r23/D.log:1078`, `:1169-1235`; `r23/D-failure.txt`):
+  - `a`: 40/40/40/0;
+  - `b`: `io_failure` 40/39/39/1, com `falhas open lock EPERM (tomada do lock)`, `lock ocupado (EEXIST, repetido) 21x`, `última concluída: unlink lock (sob o lock, 16ª tomada)` e `pendentes na saída: nenhuma`;
+  - captura: export 79 (`a` 40/40, `b` 39/40, sem outros nem repetidos), `active accepted 79 persisted 79`, 1 segmento, 0 temporário, lock ausente;
+  - os três controles do C46 do T8-C15 passaram no mesmo D (`:1079-1081`).
+
+  A evidência do C46 (a)–(c) cumpriu o papel dela numa falha real: operação, código e fase, mais o export que mostra a entrada perdida antes do commit, sem caminho nem chave.
+- **Política do produto**, por leitura e sem diff:
+  - `holdLockFile` só converte o `EEXIST` da criação exclusiva do `.lock` (`open(file, "wx")`, `privacy/fs.mjs:35`) em `lock_present` e relança qualquer outro erro (`store.mjs:196-203`);
+  - `codeOf` dá `io_failure` a todo erro que não é `StoreError` (`delivery.mjs:51`), e só `lock_present` é repetido (`:100-102`).
+
+  Então um `EPERM` na tomada vira perda sem nova tentativa, como o AC7 manda (“sem retry novo”).
+- **Ocorrências** (busca por `open lock EPERM` nos `.log`/`.txt` de `.checks/code-review/issue-25/`): só o B do autor em `407edc5` (Node 24.13.0, controle (b), produtor `a` sem injeção) e este D (Node 24.22.1, caso saudável, produtor `b`). As falhas antigas do T8-C15 não tinham errno.
+- **Causa**: **não demonstrada**. Um `EPERM` na criação exclusiva no Windows é compatível com o nome do `.lock` ainda pendente de remoção, logo depois do `unlink` do outro produtor (houve 21 disputas). Mas o log não distingue essa classe de outra, como outro processo do sistema ou o disco. Não atribuo a antivírus, indexador ou hardware.
+- **Relação com a mudança**: não demonstrável. O `concurrency.cli` tem o mesmo blob desde antes da R22; a raiz do T8-C15 é própria; e nenhum caminho dos arquivos mudados chega a ela. O runner já rodava esses arquivos em paralelo antes. Também não demonstro que não haja relação, por exemplo pela carga dos controles novos.
+- **Impacto**:
+  - o gate D desta rodada é vermelho, então a rodada é FAIL;
+  - a mesma classe já apareceu duas vezes neste computador e pode aparecer na matriz Windows da CI, em que o T8-C15 roda, deixando o PR vermelho;
+  - pela política atual, cada ocorrência perde a entrada. A prova está certa em ficar vermelha.
+- **Localização**:
+  - prova: `tests/integrations/traces/concurrency.cli.test.mjs:220` (asserção) e `:224-226` (teste);
+  - política: `src/integrations/privacy/store.mjs:196-203`, `src/integrations/traces/delivery.mjs:51`, `:100-102` e `src/integrations/privacy/fs.mjs:35`.
+- **Decisão**: com o coordenador e o proprietário. Pelo AC7, a correção exige defeito demonstrado e não admite retry novo, aceitação de perdas ou redução de concorrência. Tratar `EPERM` como disputa seria mudança de política. Não proponho código.
+
+## Execuções — verified at `6204613`
+
+A ordem foi A, B, C e D, em sequência, uma vez cada, sem filtro e sem repetição. O alvo, as concorrências e os orçamentos foram registrados antes (`r23/plan.txt`).
+- **Alvo de A/B/C**: os 4 arquivos inteiros, numa invocação: `node --test --test-concurrency=<n>` + `observe/agents.e2e`, `traces/delivery.unit`, `traces/demo.e2e` e `traces/follow.cli`.
+- **Concorrência**: `<n>` é o contrato do runner (`test-integrations.mjs:14-16`, `max(1, min(CPU−1, 8))`), conferido no próprio ambiente antes de rodar. A e B (32 CPUs) usaram 8; C (8 CPUs), 7. Com 4 arquivos, os 4 rodaram em paralelo nos três. Não reduzi a carga nem a concorrência interna.
+- **Forma comum**:
+  - `RUNNER_TEMP` numa pasta própria, vazia antes e com 0 entradas depois;
+  - temporário dos testes numa raiz própria `sm-v23-<rótulo>-…`, criada por `mkdtemp` e registrada (caminho real, `dev`, `ino`), só no `TEMP`/`TMP` do processo do gate (A, B, D) ou no `TMPDIR` do scratch (C);
+  - `npm_execpath` ausente e `npm_config_update_notifier=false`;
+  - em A, B e D, `POWERSHELL_TELEMETRY_OPTOUT=1` e `POWERSHELL_UPDATECHECK=Off` só no processo.
+- **Scripts** (escritos por mim, em `r23/`): `isolated-root.mjs`, `run-target.sh`, `make-clone-B.sh`, `remove-clone-B.sh`, `wsl-run.sh`, `run-npm-test.sh`, `matrix.mjs` e `d-summary.mjs`.
+
+| # | Ambiente | Resultado |
+| --- | --- | --- |
+| A | Windows 11, checkout principal, Node **v24.22.1** (`C:\nvm4w\nodejs\node.exe`), npm 11.19.1; os 4 blobs iguais aos do HEAD; concorrência 8 | **19 testes, 19 pass, 0 fail, 0 skip**, exit 0. Status vazio antes e depois; `RUNNER_TEMP` com 0 entradas. Raiz `sm-v23-A-aweQwN` (1 entrada) conferida e removida pelo registro |
+| B | **Clone git novo** em `r23/B-clone` (`--no-hardlinks --no-checkout --config core.autocrlf=true`, sem rede; o `gitconfig` do sistema já tinha `true`; nada global mudou). HEAD `6204613`, árvore `c59da561…` e toplevel conferidos. Node **v24.13.0 oficial**: zip `ca274269…` igual à linha do `SHASUMS256.txt`, `node.exe` `d14ba95c…` igual ao do zip, npm **11.6.2** adjacente, na frente do PATH. `cli.mjs` `i/lf w/lf attr/text eol=lf`, **0 CR antes e depois**; `demo.e2e` 149 CR e `follow.cli` 314 CR no clone. Status vazio antes e depois do `node_modules` copiado; concorrência 8 | **19: 19 pass, 0 fail, 0 skip**, exit 0. Depois: HEAD, árvore e toplevel iguais, bin LF/0 CR, status vazio. Raiz `sm-v23-B-3QfAc3` (39 entradas, o `rmSync` do 24.13.0) removida pelo registro. Clone removido pelo caminho exato, depois de conferir pasta não link, toplevel, HEAD e status vazio (`B-clone-cleanup.txt`) |
+| C | WSL `Ubuntu`, `oldboydev`, uid 1000. `git -c core.autocrlf=false archive` do HEAD: 6.645.760 bytes, sha256 `3b243441…`, `get-tar-commit-id` = `6204613…`. Árvore extraída `c59da561…` = `HEAD^{tree}`; 0 CR; `cli.mjs` 755; `follow.cli` `f33951d4…` (o mesmo da cópia do autor). Node **v24.13.0** copiado de `/usr/bin/nsolid` (`150946e4…`, igual) num prefixo `node npm npx`, **sem `sh`**; npm 11.6.2. `env -i` só com `HOME`, `LANG`, `PATH`, `RUNNER_TEMP`, `TMPDIR` e `npm_config_update_notifier`. `PATH` = prefixo + `tools` (links para `/usr/bin/{sh,git,python3,id,grep,mkfifo}`), **sem `/usr/bin`**, sem agentes nem `pwsh`; concorrência 7 | **19: 19 pass, 0 fail, 0 skip**, exit 0. `RUNNER_TEMP` 0 entradas, `HOME` 0. Scratch `/tmp/sm-v23-C.JaKqqd` removido pelo caminho exato, pasta não link, uid 1000 e inode 2237 |
+| D | `npm test`, sem argumentos, no checkout principal: Windows, Node v24.22.1, npm 11.19.1, `SKILL_ME_HERMES_PYTHON` ausente, `availableParallelism` 32 → runner 8. `C:\Program Files\PowerShell\7` na frente do PATH: é o pwsh oficial já instalado, só o caminho, sem iniciá-lo para inspeção. Orçamento de **2 h** (7.200.000 ms), definido no plano e passado à ferramenta. Checkout commitado e limpo | **1.062 testes: 1.041 pass, 1 fail, 20 skip**, **exit 1**, término natural (`D.env.txt`). Por suíte: governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7, integrações **602/588/1/13**. HEAD igual e status vazio antes e depois; `RUNNER_TEMP` com 0 entradas. Raiz `sm-v23-D-FS2d1J` (128 entradas) removida pelo registro |
+
+**Nomes de A/B/C** (`r23/matrix-ABC.txt`): os 19 nomes de topo são iguais nos três ambientes, sem duplicado e sem skip. Os seis de `agents.e2e`, os cinco de `delivery.unit`, os dois de `demo.e2e` (com as nove linhas de diagnóstico do T8-C19 em A) e os seis de `follow.cli` passaram nos três.
+
+**D** (`r23/D-summary.txt`, comparado nome a nome):
+- **Contra o D do autor (`ec4a412`)**: as mesmas linhas, salvo a marca do T8-C15, `✖` aqui e `✔` lá. O `✖ 2` do resumo é o mesmo teste listado de novo em “failing tests”.
+- **Contra o D da R22 (`2383c52`)**: entram os três controles do ciclo de vida, (s) e os dois de (t), e o T8-C15 troca de marca.
+- **Nomes por check**: cada prefixo de `I25-C1 ` a `I25-C47 ` tem ao menos um `✔`, salvo `I25-C6` e `I25-C15`, que no Windows só têm skip.
+  - O `I25-C46` soma 33 `✔`: 3 do ciclo de vida, 3 dos controles do T8-C15, 2 do T8-C20, 7 de `evidência comum`, 8 de `prazo da entrega`, os diagnósticos do T8-C12/C13, entre outros.
+  - Também passaram: 6 `I25-C47`, 9 `T8-C16`, `T8-C19`, `T8-C12`, `T8-C13`, 2 `T8-C20`, 7 `I23-C4`, `I23-C6`, `I23-C10`, `I4-C16` (3), `I4-C17`, `I4-C35`, `I4-C36`, `I4-C47` e `T8-C2`/`C3`/`C8`/`C14`/`C18`.
+  - Os 9 `governance-…` (os dois `governance-C48` com o pwsh oficial do PATH) e os 18 `C50` também, com `RUNNER_TEMP` presente.
+- **Falha**: só o `T8-C15` saudável (F1).
+- **Hermes** (`r23/D-hermes.txt`):
+  - os **11 nativos com runtime** passaram: `I4-C18`–`C23`, `C37`, `C44b`, `I25-C40 harness nativa` e os dois `I23-C8` com runtime (`D.log:622-631`, `:633`), com o runtime local de `hermes-runtime.mjs` e `HERMES_HOME` temporário;
+  - o **ramo Hermes do `I4-C35`** passou (`:1077`), sem diagnóstico de Hermes ausente ou de revisão diferente;
+  - o `I23-C8 … pelo Python do sistema` (`:632`) passou, mas não é runtime do Hermes. Os `I25-C40` de `hermes-harness.unit` (`:616-621`) são da harness.
+
+  A CI não tem o runtime do Hermes; lá os nativos não rodam.
+- **Skips (20)**: os mesmos do D do autor e da R22, em nome e motivo.
+  - **Doctor (7)**: POSIX/FIFO (`# SKIP`). Não rodaram em ambiente nenhum desta rodada.
+  - **Integrações (13)**:
+    - `I25-C5`/`C6`/`C33`/`C42`/`C45` e `T8-C4` são POSIX: carry do C da R22 (`2383c52`), com os blobs iguais;
+    - `I4-C15`, `I4-C25b`/`j`/`k` e `I25-C15` são carry do C da R19;
+    - `I4-C25m` (macOS) e `I4-C25l` não rodaram em ambiente nenhum.
+
+## Checks — 49/50 provados; C46 não provado neste HEAD
+
+Fontes da prova:
+- **A/B/C23**: os 4 arquivos inteiros, frescos nos três ambientes;
+- **D23**: o nome real passou no D fresco;
+- **R22**: o A/B/C dos 11 arquivos em `2383c52`, carregado por blob igual (nenhum deles mudou, salvo `follow.cli`, rodado de novo aqui);
+- **G21**: a governança A/B/C da R21, carregada por identidade;
+- **R19/R20**: o A/B/C cross-platform dos demais arquivos, carregado por blob igual.
+
+As citações dos arquivos sem diff são as da R22, com as mesmas linhas (blobs iguais). As de `demo.e2e` e `follow.cli` foram renovadas no HEAD.
+
+| Check | Asserção decisiva (`file:line` no HEAD) | Prova | Result |
+| --- | --- | --- | --- |
+| C1 | `command.cli:48-49` `private`/`bin`; `:65` `[0, SKILL_ME_HELP, ""]`; `:77` `gitStatus() === before` | D23; A/B/C R22 (B em clone `autocrlf=true`) | provado |
+| C2 | `command.cli:96-98` `argv: LITERAL_ARGS` | D23; A/B/C R22 | provado |
+| C3 | `command.cli:105` `{0: 0, 7: 7}` | D23; A/B/C R22 | provado |
+| C4 | `command.cli:130-133` 127 `launcher_requires_shell`; `agent.unit` `I25-C4` | D23 (3 `✔`); A/B R22 | provado |
+| C5 | `command.cli:228` POSIX; `:244-245` `CTRL_C_EVENT` → `["SIGINT"]` | console em D23; POSIX em C R22 | provado |
+| C6 | `command.cli:267` `signals: ["SIGTERM"]` | C R22 (skip POSIX no D23, com motivo) | provado (carry) |
+| C7–C14 | `prepare.cli:93-94`, `:122-126`, `:163-168`, `:189-191`, `:200`, `:223`, `:238`, `:250` | D23; ABC R19 | provado |
+| C15 | `prepare.cli:408` (pty) | C R19 (skip no D23, com motivo) | provado (carry) |
+| C16–C23 | `session.e2e:67`, `store.unit:79`, `session.e2e:111`, `:161`, `:190-192`, `:208-211`, `:230`, `:282` | D23; ABC R19 | provado |
+| C24 | `store.unit:168` | D23; ABC R19 | provado |
+| C25–C28 | `end.e2e:80-89`, `:101-109`, `:120`, `:164-165` e `:194` `["EIO"]` | D23; A/B/C R22 | provado |
+| C29–C31 | `command.cli:278`, `:342`; `end.e2e:205-215` | D23; A/B/C R22 | provado |
+| C32 | `end.e2e:320`; `store.unit:715` | D23 (9 `✔`); A/B/C R22 | provado |
+| C33 | `end.e2e:460`; `:493-494` (arranjo POSIX) | D23; arranjo em C R22 | provado |
+| C34–C35 | `report.cli:159`, `:252-259` | D23; ABC R19 | provado |
+| C36–C38 | `command.cli:350`; `launch/docs.test:82`; `prepare.cli:355` | D23; A/B/C R22 | provado |
+| C39–C40 | `hermes-harness.unit:90`; `:220`, `:320`, `:324`, `:327`; nativo `hermes-plugin.native:336` | D23 (os 11 nativos, `harness nativa`, `fixture do plugin`); ABC R19 | provado |
+| C41–C45 | `store.unit:327-523`, `end.e2e:518`; `agent.unit` `I25-C42`, `command.cli:456`/`:424`; `store.unit:598`; `hermes-harness.unit:288`, `:291`; `agent.unit:132-146`, `command.cli:166-186` | D23 (17, 4, 12, 3 e 3 resultados); POSIX em C R22 | provado |
+| **C46** | **T8-C15 saudável `concurrency.cli:220`** (e `:234`, `:256`); (a)–(c) `:283`–`:360`; (d)–(g) `live-capture:341`, `:348`, `:356`, `:367`, `replay.unit:161`, `:100`; (h) `live-capture:227-248`; **(i) `follow.cli:223`, `:230-233`**; **(j) `:243`, `:253-264`**; (k) `evidence.unit:54-148`; (l) `failure-matrix.cli:116-119`; (m) `evidence.unit:254-263`, `:287-298`; (n) `:303-305`, `:312`; (o) `delivery.unit:52-113`; (p) `concurrency.cli:956-1018`, T8-C16 `:920-928`; (q) `codex-run.cli:289-348`; (r) `docs.test:162-167`, `:218`, `:225-226`, `:254-258`, `:264`, `:266`, `:272-273`; **(s) `demo.e2e:144`, `:145`, `:146-147`, `:148`** (T8-C19 `:103`, `:105-106`, `:110`, `:120`); **(t) `follow.cli:278-282`, `:293-295`, `:305`, `:312-313`** (T8-C12 `:91`, `:94-99`; T8-C13 `:142-146`, `:158-164`, `:181-184`) | **A/B/C23** ((i), (j), (o), (s), (t), T8-C19/C12/C13); **D23**: 33 `I25-C46` `✔`, mas **o T8-C15 saudável `✖`** (`D.log:1078`); A/B/C R22 com o T8-C15 verde em `2383c52` (mesmo blob) | **não provado neste HEAD** (F1). Todas as provas nomeadas (a)–(t) passaram; o caso saudável que o C46 exige falhou no D fresco |
+| C47 | I23-C10 `agents.e2e:315`; (a) `:427`, `:429`; (b) `:442`, `:444`; (c) `control.cli:1071-1077`; (d) `:1097-1105`; `evidence.unit:150-225` | **A/B/C23** (`agents.e2e` inteiro); D23 (6 `✔`, 7 `I23-C4`); `control.cli`/`evidence.unit` A/B/C R22 | provado (fresco) |
+| C48 | estrutura contra `d0d5a7f` (R21); `governance-ci:373-433`, `:444-582`, `:511`, `:565-576`; `governance-C1 C3` `:271-283` | **G21** (A/B 27/27/0/0, C 27/26/0/1); **D23**: os dois `governance-C48` `✔`, nativo no pwsh oficial | provado |
+| C49 | `governance-ci:322-329`, `:330-334`, `:337-348`, `:350-356`, `:359-362`; `:299-304` | G21; D23 | provado |
+| C50 | `ci-lock-latency.test:127`, `:68`, `:137`, `:160-161`, `:187`, `:190-215`, `:217-240`, `:247`, `:250-303`, `:315-373`, `:377`, `:393-396`, `:406-434`, `:443` | G21; D23 (18 `C50`, `RUNNER_TEMP` presente) | provado |
+
+- **Critérios não reduzidos**: as constantes do contrato estão em `src` sem diff desde `2383c52`:
+  - `DELIVERY_DEADLINE_MS = 750`, `ATTEMPT_MS = 750 − 100` e `LOCK_RETRY_MS = 10` (`traces/delivery.mjs:12`, `:18`, `:19`);
+  - `REPORT_DEADLINE_MS = 1000` (`observation.mjs:39`);
+  - `HOOK_STDIN_DEADLINE_MS = 2000` (`hook-command.mjs:7`);
+  - a faixa 1.900–6.000 do I4-C36 (`failure-matrix.cli:83`, `:119`);
+  - `settleMaxMs` com padrão 5.000 (`settle.py:41`);
+  - `PRIVACY_LIMITS` 500 eventos/8 MiB (`privacy/lifecycle.mjs:5`);
+  - `MAX_PARALLEL_FILES = 8` (`test-integrations.mjs:14`).
+
+  O workflow tem o mesmo blob (jobs 20/10/5, manual 10 e `RUNNER_TEMP` só no passo Windows das integrações). Os 80 eventos de dois produtores, os payloads, as contagens, as perdas, o retry, a carga e a concorrência estão nos blobs iguais. Os diffs de `demo.e2e` e `follow.cli` só extraem as rotinas, acrescentam o encerramento e os controles, e tiram o `kill()` do (i).
+- **AC → checks** (9 ACs): AC1–AC6 com C1–C45; **AC7 com C46, não provado neste HEAD** (F1); AC8 com C47 e C48; AC9 com C49 e C50. O gate completo exigido no AC6/S6 e no despacho **falhou** neste HEAD.
+
+## Swept `existing` (carry R22; `src` igual)
+
+- idempotência: `privacy/lifecycle.mjs:23-24`;
+- sem reenvio: `traces/delivery.mjs:57`, `:123`;
+- falha de entrega não bloqueia: `traces/delivery.mjs:156`;
+- `privacy prune`: `privacy/command.mjs:56-57`;
+- acréscimos das fatias do T8-C19 e do `follow.cli`: C46 (s) e (t), provados acima. São refinamentos sem check novo.
+
+## Observações (não bloqueantes; nada corrigido)
+
+- **O1 — `kill()` com erro do sistema.** Se o `kill()` falhasse com `EPERM`, o `ChildProcess` emitiria `error` sem ouvinte, a exceção substituiria a original e o `close` não seria esperado. O autor declara isso como consequência conhecida, não observada (Landing `:125`). O sinal vai a um filho próprio, e o caso é improvável.
+- **O2 — conferências diferentes nos controles.** O controle (s) confere por uma volta de `setImmediate` (`demo.e2e:146`). Com a rotina correta, o `close` já resolveu antes da rejeição, então o resultado é sempre `"close"`, sem falso vermelho. Já a detecção do M2 depende de o `close` não chegar na mesma volta do laço: o M2 do autor foi recusado, mas ali a detecção não é determinística como no `follow.cli` (`:278-282`).
+- **O3 — o Landing tem textos anteriores às retificações.** A linha do T8-C19 (`:124`) ainda diz que o `try` vai até `assert.equal(await followDone, 0)`. A retificação `1b7b561` está só no C46 (s) (`:697-701`), como texto aditivo. O O1 da R22 (o literal do T8-C20 no Landing) continua igual.
+- **O4 — sobras do `rmSync` do 24.13.0.** O B deixou 39 entradas na raiz própria, e as do D e do A foram 128 e 1. Fora da fatia, como o autor comunicou.
+- **O5 — outros filhos assíncronos não foram auditados.** O levantamento por busca achou os outros `spawn` assíncronos de `tests/integrations` em apoios de produtores, ingest, wrapper e fake agents, que terminam sozinhos. Não auditei todas as saídas de falha deles.
+
+## Gates remotos — pendentes e bloqueados
+
+A ordem aprovada é esta: PASS independente → formal 14 `ready` → publicação → **uma** execução manual com a medição nos destinos originais → **cinco checks regulares verdes** nas matrizes PR e manual do HEAD aprovado → merge já autorizado. **Este FAIL bloqueia o primeiro passo.** A formal 14 não deve rodar sobre ele.
+
+O HEAD publicado continua `066bd98`. O PR 40814315171 e a manual 40814471097, vermelhos, e a medição 4.500/4.500 ficam **como história** e não cumprem o novo HEAD. Não disparei nada e não declaro verde nenhuma CI futura.
+
+## Processo, limites e limpeza da R23
+
+**Executado.**
+- **git**, só de leitura: `rev-parse`, `status`, `log`, `diff`, `show`, `ls-files --eol`, `ls-tree`, `hash-object`, `check-ignore`, `config --show-origin` e `get-tar-commit-id`. Também:
+  - `git -c core.autocrlf=false archive` do HEAD para `r23/head.tar`;
+  - um `git clone --no-hardlinks --no-checkout --config core.autocrlf=true` do repositório local, sem rede, com a configuração só no clone.
+- **Leitura**: `node` só de leitura (contexto, config, `state.json` só com contagem e campos escalares das duas últimas tentativas, logs), `sha256sum`, `python -I` (sha do zip oficial e CR) e `stat`.
+- **Gates**: A, B, C e D, uma vez cada, sem repetição. O WSL foi chamado com `wsl.exe -d Ubuntu -u oldboydev --exec /bin/bash --noprofile --norc` e `MSYS_NO_PATHCONV=1`. Fora do gate, só versões, `id`, `nproc` e caminhos de sistema.
+- **Modo dos gates**: A, B e C usaram `run_in_background` só para passar o orçamento de 30 min (1.800.000 ms), e o D, o de 2 h (7.200.000 ms). Esperei o término real de cada um pela notificação da ferramenta.
+- **Durante o D**:
+  - li arquivos de `r23/`, das evidências do autor e do `.verified.md`;
+  - rodei **um** `git log -1` só de leitura (o último commit do `.verified.md`), além de `sha256sum`, `wc` e `ls`;
+  - não escrevi nada no checkout nem no `r23/`.
+- **A ferramenta** guardou cópias das saídas em `AppData\Local\Temp\claude\…\tasks\*.output`. Não são auxiliares meus, e não as apaguei.
+- **Depois do D**, uma consulta `Get-CimInstance Win32_Process` pelo Windows PowerShell 5.1 (`powershell.exe -NoProfile -NonInteractive`, com os dois opt-outs no processo), filtrada por `node`/`python`/`pwsh`/`powershell`/`cmd`/`bash`/`wsl` com `sm-v23` ou o repositório na linha de comando, excluindo o próprio processo:
+  - listou só os três `bash.exe` da própria invocação, criados no mesmo segundo (`r23/post-D-checks.txt`);
+  - **nenhum processo meu ficou vivo**, e nenhuma tarefa em segundo plano minha está ativa;
+  - o arquivo foi gravado por caminho absoluto em `r23/`, depois de conferir o diretório atual. A raiz do checkout ficou sem arquivo novo.
+
+**Incidentes meus**: nenhum. Não iniciei pwsh (nem `-?`, `help` ou `version`), agente real nem rede.
+
+**Não executado.**
+- RED, mutantes, sondas, testes novos e as reproduções do autor.
+- Uma nova execução do D ou do T8-C15 depois da falha, porque o despacho proíbe rerun inalterado.
+- Agentes reais, `--help`/`--version` de agente, perfis, credenciais, banco, modelo, rede, relógio do host, antivírus, Git global, TEMP global e runtimes fora das provas. O Hermes real rodou só pelas provas nativas versionadas do D, com o `HERMES_HOME` temporário delas.
+- Actions, CI, `review:run`, commit, push, PR, merge, alteração de limites e subagentes.
+- **Arquivos fora do alvo em A/B/C**: os outros arquivos da lista da R22 (incluindo `concurrency.cli`) e os demais de integração são carry por blob (R22 `2383c52`; R19/R20) e rodaram só no D. A governança em A/B/C é carry da R21 (G21).
+- **Incidentes anteriores**, preservados sem leitura, remoção nem restauração:
+  - o incidente da R5 (`ffc5937`: até 5 inícios do Codex no WSL e 12 mtimes, sem linha de base de conteúdo);
+  - a limpeza antiga de 1.257 pastas no Windows e 107 no WSL, sem prova de proveniência e sem os nomes do Windows;
+  - os auxiliares `/tmp/d4.skips`/`/tmp/d-old.skips` no temporário global, sem inventário anterior;
+  - o D de `dc0db9b`, **interrompido pelo root** (não é falha natural);
+  - o incidente 1 da R21 (`pwsh -?` sem opt-outs; afirmação errada corrigida; efeitos não auditados);
+  - o incidente 2 da R21 (`post-D-checks.txt` ~9 s na raiz depois do D);
+  - a interrupção do host na sonda do autor (`p-c12-2413`).
+
+  Não afirmo impacto global zero.
+
+**Auditoria externa 23 (do root) — pendente.** Às 09:08:02, depois do fim real do meu D (09:06:54), `verifier-round23/profile-comparison-final.json` **não existia**. Pela pasta, a linha de base do root é de 00:35–00:36. Não li `profile-before.json` nem os scripts dele.
+- **Pendência**: o root fecha a auditoria depois deste D. Peço um complemento documental com o nível superior e o `sameProfileTarget` agregado, atribuído ao root.
+- Pelo escopo das anteriores, ela audita só metadados do perfil WSL. Não audita conteúdo, temporários, Windows, PowerShell, rede nem causalidade, e não desfaz a R5. As auditorias 19–22 tiveram 12.113/12.113 e zero diferenças, no escopo delas, e a recusa pré-coleta corrigida do método 20 permanece.
+
+**Complemento externo do coordenador (Root), depois do relatório do Verifier.** A auditoria 23 foi fechada às 09:08:40 (-03), depois do término real do D: 12.113 entradas antes e depois; zero adições, remoções, alterações e erros; `sameProfileTarget=true`. Fonte: agregados de `verifier-round23/profile-comparison-final.json` e `profile-target-check.json`, produzidos pelo Root, sem leitura de conteúdo. A janela vai do final da R22 (00:35:59) até este D e inclui a revisão formal Codex13 intencional anterior aos autores. As limitações acima permanecem; este complemento fecha só a pendência da auditoria externa e não altera o **FAIL23**, a falha F1 ou os gates. O Verifier não executou nem afirmou ter lido esta auditoria.
+
+**Limites.**
+- **macOS**: o `I4-C25m` não rodou em ambiente nenhum.
+- **Windows**: os 7 skips do doctor e o `I4-C25l` não rodaram em ambiente nenhum desta rodada.
+- **Runtime do Hermes**: só no D (Windows). O caso pelo Python do sistema não é runtime do Hermes.
+- **Causas**: continuam desconhecidas as do `EPERM` (F1 e B do autor), do `green-pre2`, do I23-C6 da CI 066, do cancelamento da manual 40814471097 e as históricas. Os verdes A/B/C desta rodada são deste computador e não medem o runner da CI.
+
+**Limpeza** (`A.env.txt`, `B.env.txt`, `B-clone-cleanup.txt`, `C.run.txt`, `D.env.txt`, `post-D-checks.txt`):
+- as raízes `sm-v23-A`/`B`/`D` foram removidas só pelo registro (caminho real absoluto, filha direta do temporário, nome, pasta não link, mesmo `dev`/`ino`);
+- o scratch do C, por caminho exato, uid 1000 e inode;
+- o clone do B, por caminho, toplevel, HEAD e status;
+- `runner-temp-A`/`B`/`D`, vazias, por `rmdir`;
+- nenhuma seleção por prefixo ou mtime, e nenhum auxiliar meu no `/tmp` (Git Bash ou WSL) nem no temporário global. Logs, tar, scripts e a cópia do `.verified.md` anterior ficam em `r23/`.
+
+**Integridade do histórico abaixo.** O texto depois da linha `---` que fecha esta rodada (e da linha em branco seguinte) é, byte a byte, o `.verified.md` do HEAD: blob `df42fe3`, de `066bd98`, com 335.766 bytes, sha256 `1b528f80…` e 0 CR (`r23/verified-integrity.txt`). Nele estão o **PASS 22**, o **FAIL 21**, o **PASS 20**, o **FAIL 19** e os relatórios anteriores, sem rebatizar nenhum resultado.
+- O PASS 22 estava certo para `2383c52`, e a CI de `066bd98` não o desfaz retroativamente.
+- Este FAIL 23 é do conteúdo de `6204613`. A mudança nova passou, mas o D fresco teve a falha natural F1.
+
+---
+
 # Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 22)
 
 **Verdict (R22)**: **PASS — 50/50 checks considerados e provados; gates frescos sem falha.** HEAD `2383c52`, último código `cad647a`, 9 ACs. Primeira verificação independente do código novo do T8-C20.
