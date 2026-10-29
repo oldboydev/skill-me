@@ -2612,3 +2612,28 @@ passo de integrações no Windows”.
 **Sondagem do pwsh antes do código** (`builder-ci86-temp/explore/`): na forma do runner (`pwsh -command ". '{0}'"`),
 o `$LASTEXITCODE` 17 do npm chega ao script, mas o processo sai 1; sem `exit $LASTEXITCODE`, sai 0. Com `-File`, 17.
 Ausente, vazio, relativo, inexistente e arquivo saíram 1 sem chamar o npm.
+
+**Código** (`169e845`; registro em `c7e8f14`): o workflow (+17/−1) e `governance-ci.test.mjs` (+205/−1). O passo
+antigo ganhou `if: matrix.os != 'windows-latest'`; o ramo `if: matrix.os == 'windows-latest'` valida o `RUNNER_TEMP`
+(`IsPathFullyQualified` e `Test-Path -PathType Container`, `throw` sem fallback), põe `TEMP`/`TMP` nele, chama `npm run
+test:integrations` e termina com `exit $LASTEXITCODE`. `governance-C1 C3` mantém a lista dos cinco comandos, sem o ramo
+do Windows; os dois `governance-C48` são novos.
+
+**RED** (workflow de `86c7677` no checkout, prova nova sem commit): 9 testes, 7 pass, 2 fail — os dois
+`governance-C48`. **GREEN**: 9/9 antes do commit; no commit, o Proof do C48 3/3 com o pwsh oficial 7.6.9; `I4-C47` 1/1.
+
+**Prova discriminante** (cópia do `git archive` de `169e845`; detalhes e tabela no Handoff do checklist): controle 9/9;
+o teste de `86c7677` contra o workflow novo falha no `governance-C1 C3` antigo; os 13 mutantes (roteamento,
+propagação, configuração, persistência, argumentos, ambiente, orçamento e shell) são recusados, M3–M6 só pelo pwsh real
+e M10–M13 só pela estrutura. A cópia foi restaurada e removida pelo caminho exato; o checkout não foi mutado.
+
+**Identidade** (`blob-identity.txt`): fora de `.checks`/`.tasks`, só os dois arquivos; `src`, `tests`, `docs`, o core,
+`ci-lock-latency.*` (C49/C50), `test-integrations.mjs`, `package*` e a configuração iguais a `86c7677`.
+
+**Incidente de rede, meu**: uma chamada de versão do `pwsh` do runtime do Codex (7.6.5), antes da sondagem, rodou sem
+`POWERSHELL_TELEMETRY_OPTOUT`; pode ter enviado a telemetria de início do PowerShell. Não verificado; nenhum conteúdo do
+repositório foi passado. As demais chamadas usaram o pwsh oficial com telemetria e checagem de versão desligadas.
+
+**Gates** (`plan.txt`, definidos depois de `169e845` e antes de rodar): A/B/C com `npm run test:governance` completo,
+uma invocação sem filtro por ambiente, 10 min cada (esperado 27/27/0/0 em A e B, 27/26/0/1 em C); D com um `npm test`
+completo, 2 h (esperado 1.057 testes se nada falhar).

@@ -1885,3 +1885,77 @@ preservados):
   o workflow de `86c7677` e mutantes de configuração, roteamento e propagação numa cópia descartável
   (`builder-ci86-temp/`), sem mutação no checkout.
 - **Gates**: a lista e os orçamentos ficam registrados depois do último código e antes de rodar.
+- **Onde a fronteira caiu**: registro em `c7e8f14`; código em `169e845`. Só `.github/workflows/governance.yml`
+  (+17/−1: o `if` do ramo dos outros sistemas, o comentário e o ramo do Windows) e `scripts/governance-ci.test.mjs`
+  (+205/−1: dois imports, a lista de `governance-C1 C3` sem o ramo do Windows e os dois `governance-C48`).
+  Nenhum outro arquivo executável mudou.
+- **RED** (`builder-ci86-temp/red-86-workflow.*`; Windows 24.22.1, checkout, temporário isolado): o arquivo de prova
+  novo, ainda sem commit, contra o workflow de `86c7677` (blob `474a87b`, o mesmo do HEAD daquele momento): 9 testes,
+  7 pass, 2 fail. Falharam os dois `governance-C48`: o estrutural na lista dos passos (sem o `if` no passo de
+  integrações) e o do pwsh em `ramo Windows das integrações` (nenhum ramo). O `governance-C1 C3` adaptado passou
+  nele: a lista dos cinco comandos é a mesma decisão de antes.
+- **GREEN**: antes do commit (`green-pre-commit.*`), 9/9; no commit (`green-169e845.*`), o comando do Proof do C48,
+  3/3 (`governance-C1 C3` e os dois `governance-C48`), com `ℹ pwsh: C:\Program Files\PowerShell\7\pwsh.exe` (pwsh
+  7.6.9). O comentário do YAML mudou entre os dois (só texto de comentário). O consumidor `I4-C47` passou 1/1 no
+  commit (`i4c47-169e845.*`).
+- **Prova discriminante** (`mutants.mjs`, `mutation.json`, `mutants2-169e845.*`; cópia do `git archive` de
+  `169e845`, sha256 `4d2c7d55…5ce0`, em `builder-ci86-temp/copy/`, com o `node_modules` do checkout):
+  - controle saudável: 9/9;
+  - o `governance-ci.test.mjs` de `86c7677` contra o workflow novo: 7 testes, 1 fail, o `governance-C1 C3` antigo
+    (a lista com seis `run`). A adaptação era necessária;
+  - um mutante do workflow por vez, sempre recusado (9 testes em cada):
+
+    | Mutante | Falhou | Onde |
+    | --- | --- | --- |
+    | M1 roteamento: ramo Windows com `matrix.os == 'windows-2022'` | `C1 C3`, os dois `C48` | lista; `if`; ramo ausente |
+    | M2 roteamento: ramo dos outros com `matrix.os == 'ubuntu-22.04'` (macOS sem integrações) | `C48` estrutural | lista dos passos |
+    | M3 propagação: sem `exit $LASTEXITCODE` | `C48` pwsh | npm 17 → `status` 0, esperado 1 |
+    | M4 propagação: `exit 0` | `C48` pwsh | npm 17 → `status` 0, esperado 1 |
+    | M5 configuração: `$destino = $env:TEMP` no lugar do `throw` (fallback) | `C48` pwsh | `ausente`: npm chamado, `status` 0 |
+    | M6 configuração: sem `IsPathFullyQualified` | `C48` pwsh | `relativo`: npm chamado, `status` 0 |
+    | M7 configuração: sem `$env:TMP = $destino` | os dois `C48` | variáveis; `TMP` do npm |
+    | M8 persistência: `Add-Content` no `$env:GITHUB_ENV` | os dois `C48` | variáveis; `GITHUB_ENV` não vazio |
+    | M9 argumentos: `-- --test-concurrency=1` | os dois `C48` | linha `npm`; `argv` |
+    | M10 `env` no ramo dos outros sistemas | `C48` estrutural | lista dos passos |
+    | M11 `env` no job `verify` | `C48` estrutural | `env` do job |
+    | M12 orçamento 30 no Windows | `C48` estrutural | `timeout-minutes` |
+    | M13 `shell: pwsh -File {0}` no ramo Windows | `C48` estrutural | chaves do passo |
+
+  - M3–M6 passam no estrutural e só o pwsh real os recusa; M10–M13 só o estrutural os recusa.
+  - A cópia foi restaurada depois de cada mutante (o workflow e o teste dela tinham, no fim, os blobs `f24e82d` e
+    `971e866`, os do HEAD) e removida pelo caminho exato, depois de conferir pasta, não link e sem `.git`
+    (`copy-cleanup.txt`). Nada foi mutado no checkout, e não houve `stash`.
+  - A 1ª série (`mutants-169e845-1.log`, `mutation-1.json`) deu os mesmos resultados, sem o detalhe das asserções;
+    a 2ª só acrescentou esse detalhe.
+- **Identidade** (`builder-ci86-temp/blob-identity.txt`, `86c7677` × `169e845`): fora de `.checks` e `.tasks`, só o
+  workflow (`474a87b` → `f24e82d`) e `governance-ci.test.mjs` (`bfe5a0c` → `971e866`). Iguais: `src` (`51f0c98`),
+  `tests` (`e77a618`, com `helpers` `7931703` e `fixtures` `6591970`), `tests/doctor` (`bcedb83`), `docs`
+  (`d9f546f`), `scripts/code-review` (`6b98d7c`, os cinco blobs do core), `ci-lock-latency.mjs` (`8c12894`) e
+  `ci-lock-latency.test.mjs` (`75eeadd`) — o C49/C50 byte a byte —, `test-integrations.mjs`, `package.json`,
+  `package-lock.json`, `code-review.config.json`, `.gitattributes` e `.gitignore`. Dos 247 arquivos rastreados em
+  `src`, `tests` e `scripts`, 246 têm o mesmo blob; o outro é `governance-ci.test.mjs`.
+- **Incidente meu, de rede** (antes da sondagem): para ver a versão, rodei uma vez `pwsh -NoProfile -NonInteractive
+  -Command '$PSVersionTable.PSVersion.ToString()'` com o `pwsh` do PATH da sessão (o do runtime do Codex, 7.6.5), sem
+  `POWERSHELL_TELEMETRY_OPTOUT`. Pelo comportamento documentado do PowerShell 7, essa inicialização pode ter enviado a
+  telemetria de início (versão, sistema, identificador anônimo). Não verifiquei se houve envio; nenhum conteúdo do
+  repositório foi passado ao pwsh. Todas as outras chamadas de pwsh (sondas, provas e linhas de versão dos meus
+  scripts) usaram o pwsh oficial com a telemetria e a checagem de versão desligadas.
+- **Limite do pwsh nas provas**: o pwsh roda sem perfil, mas, como em qualquer uso, pode atualizar os próprios caches
+  de execução no `LocalAppData` do usuário Windows e procurar módulos nos caminhos padrão. Não li nem limpei nada disso.
+- **Gates definidos depois do último código (`169e845`) e antes de rodar** (`builder-ci86-temp/plan.txt`):
+  - **A/B/C**: `npm run test:governance` completo (os dois arquivos, todos os casos), uma invocação sem filtro por
+    ambiente, com `RUNNER_TEMP` presente e válido e o temporário numa raiz própria registrada:
+    - A: Windows 24.22.1, checkout, `C:\Program Files\PowerShell\7` primeiro no PATH. Esperado 27/27/0/0, com o caso
+      do pwsh real executado;
+    - B: clone git novo, Node 24.13.0 oficial, npm 11.6.2 adjacente, `npm_execpath` ausente, `core.autocrlf=true` só
+      no clone (o workflow em CRLF), bin LF; mesmo PATH do pwsh. Esperado 27/27/0/0, com o caso do pwsh executado;
+    - C: WSL uid 1000, `env -i`, `HOME`/`TMPDIR`/`RUNNER_TEMP` próprios, Node 24.13.0 copiado num prefixo sem `sh`,
+      PATH sem `/usr/bin` e sem agentes, árvore do `git archive` do HEAD exato. Esperado 27 testes, 26 pass, 1 skip
+      (o caso do pwsh, com o motivo).
+
+    Orçamento de 10 min por gate na ferramenta.
+  - **D**: um `npm test` completo, Windows 24.22.1, runner padrão (teto 8), runtime Hermes das provas versionadas,
+    orçamento de 2 h na ferramenta, definido antes. Nada rastreado é editado durante ele; espero o término real.
+    Esperado, se nada falhar: 1.057 testes (1.055 + 2), governança 27/27, os mesmos 20 skips da R20. O D não mede o
+    runner da CI: o passo novo só é provado no runner pela CI do novo HEAD.
+  - Logs e auxiliares em `builder-ci86-temp/`; nenhum no `/tmp` (Git Bash ou WSL) nem no temporário global.
