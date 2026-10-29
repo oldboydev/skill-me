@@ -2608,3 +2608,25 @@ de qualquer sonda ou código):
   intacto); a verificação independente 24 não registrada; a auditoria do Root 24 só com a linha de base; os incidentes da
   R5, a limpeza de 1.257/107 pastas, os auxiliares `/tmp`, o D interrompido pelo Root, o `pwsh -?` e o `post-D-checks`
   da R21 e a interrupção do host. Nada aqui afirma PASS, `ready`, CI verde, causa das falhas históricas ou impacto zero.
+
+- **Onde a fronteira caiu**: S13 inteira num lote, sem fronteira interna — é a última fatia do plano aprovado. Registro
+  `1851481`; produto, provas, instrumentação, medição e `docs/traces.md` `13ecc07` (`store.mjs` `326a0ac` → `72b138f`,
+  `fs.mjs` `85d0b98` → `b088a4a`); correções das provas `e80b99e` (disputa encerra com o lock preso, depois do m6) e
+  `736e7d7` (`unlinkSync`, depois do gate B); resultados no commit seguinte, só docs. C46 (u) e C50 (o) fechados pelo autor.
+  **Gates no último código `736e7d7`** (alvo: integrações inteiras + o par de governança do C50, uma invocação): A2
+  640/627/0/13; B2 640/627/0/13 (clone `autocrlf=true`, Node 24.13.0 oficial); C 640/618/0/22 (WSL); D 1.073/1.053/0/20,
+  exit 0, término natural (11 nativos Hermes e o I4-C35 verdes; T8-C15 saudável verde). Preservados: o B de `e80b99e`
+  640/626/1/13 (defeito da prova nova, `rmSync` do 24.13.0 num caminho não ASCII, reproduzido e corrigido), o RED (disputa
+  com `EPERM` 72/59 no código anterior) e os 14/14 mutantes, duas vezes. Medição E5 copiada: antes 132–149 `EPERM` por
+  produtor; depois 0, liberação completa p50 2,51–2,61 ms. Detalhes no build, seção “Liberação segura do lock”.
+- **O que se decidiu no caminho**: o `lstat` de conferência depois de um `unlink` do retirado que lança (Landing, antes de
+  qualquer verde); o limite de 30 s, só da prova, para a disputa terminar vermelha com o lock preso (Landing, antes da
+  mudança); `unlinkSync` na prova dos consumidores. Nada novo com o usuário: a aprovação 6502294779 bastou para o escopo, o
+  protocolo, as adaptações e as rodadas.
+- **O que foi abandonado**: tentar sempre o `rmdir` (dependeria do `ENOTEMPTY`) ou nunca tentá-lo depois de um `unlink`
+  falho (sobra sem necessidade); repetição sem limite na prova de disputa (travou no m6); 650 ms por evento, como o E5;
+  `rmSync` para apagar um arquivo nas provas; reutilizar a medição do protótipo como custo do produto.
+- **Pendente, com o coordenador**: a verificação independente 24 da feature inteira (`63621c69..HEAD`, C1–C50), ainda não
+  registrada; a formal 14 só depois de um PASS legítimo; a auditoria do Root 24; publicação, uma execução manual com a
+  medição (agora no esquema 2) e os cinco checks verdes no HEAD aprovado; o merge já autorizado só com tudo verde. Nada aqui
+  é PASS, `ready`, CI verde, causa das falhas históricas ou impacto global zero.

@@ -3139,3 +3139,141 @@ qualquer gate: preservar e diagnosticar, sem repetir o mesmo conteúdo para obte
   (`delivery_timeout`), e o T8-C13 positivo falhou em `2 !== 3`. É o mesmo tipo de operação de disco lenta da CI 066
   (`sync key` 601 ms), num trecho que esta fatia não muda; causa desconhecida; não é defeito demonstrado do produto.
 - O `rmSync` do Node 24.13.0 no Windows continua deixando as pastas das provas no temporário (comunicado em `97baf13`).
+
+## Liberação segura do lock (D1–D3, aprovação 6502294779; C46 (u), C50 (o))
+
+Novo autor Claude, sem herdar sessão (não é o investigador do diagnóstico nem o Verifier 23), sob a aprovação do
+proprietário [6502294779](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6502294779) do plano versionado
+`.tasks/issue-25-lock-release-proposal.md`. Registro antes do código `1851481`; código e provas `13ecc07`; correções das
+provas `e80b99e` (disputa com o lock preso) e `736e7d7` (`unlinkSync` na prova dos consumidores). Produto:
+`store.mjs` `326a0ac` → `72b138f`, `fs.mjs` `85d0b98` → `b088a4a` (iguais de `13ecc07` a `736e7d7`). Scripts, logs e saídas em
+`.checks/code-review/issue-25/builder-lock-release/` (`plan.txt` registrado antes de cada execução).
+
+### O que mudou
+
+- **Produto**: `createStoreIo` ganha `mkdtemp`; `holdLockFile` libera por `releaseLockFile` — reserva `<lock>-release-XXXXXX`
+  ao lado do lock, identidade `dev`/`ino` (bigint) de pasta real, conferência dos bytes adjacente ao rename, `rename` do
+  `.lock` para `<slot>/lock` (a liberação), releitura do retirado antes do `unlink`, identidade de novo antes de abrir o
+  retirado e antes do `rmdir`, `rmdir` só da reserva vazia. Reserva trocada → `LockReleaseError` (sem `code`; `io_failure`,
+  `lockLeft: true`); bytes alheios → `lostCode`. Tomada, callback, prioridade e repetição só em `lock_present` iguais.
+- **Provas novas**: `tests/integrations/privacy/lock-release.unit.test.mjs` (10 testes) e o filho próprio
+  `tests/integrations/helpers/lock-release-child.mjs`; caso novo do formatter em `evidence.unit.test.mjs`.
+- **Adaptações** (só a operação que libera; nomes, contagens, códigos, lock presente/ausente, export e mensagens iguais):
+  `traces-probe.mjs` (`LOST_CONFIRMATION`/`LOCK_KEPT` no rename do `.lock`; `mkdtemp` medido), `trace-kinds.mjs`
+  (`lock.reserva`, `lock.retirado`), `traces.mjs` (`diskTrace` com `unsure`, `UNSURE_PLACE`, `mkdtemp` no io medido),
+  `concurrency.cli` (literais `rename lock EIO (depois do commit)` e, no lock preso, mais `lstat lock.retirado ENOENT (posse
+  do lock indeterminada)`; `lockReleases` pelo `rmdir` da reserva; flush com `writeFile`/`rename` do lock e
+  `mkdtemp`/`rmdir` da reserva = 2 cada), `launch/store.unit` e `launch/end.e2e` (I25-C43 no rename do `.lock`),
+  `observe/control.cli` (I23-C4 pausa depois do `rename` do lock da raiz), `privacy/store.cli` (as mutações das recusas: o
+  lock, o `mkdtemp` com o prefixo dele, o rename para `<slot>/lock` e só o `unlink`/`rmdir` do que ele moveu),
+  `observe/privacy.e2e` (nenhuma `*-release-*` no fim), `scripts/ci-lock-latency{,.test}.mjs` (esquema 2).
+- **Documentação**: `docs/traces.md` (“Falhas de entrega”) — recuperação manual das sobras, sem coleta automática, e a D2.
+
+### RED (antes do produto; `logs/red.*`, `red-formatter.log`)
+
+Produto de `1613e23`, testes novos e adaptados no working tree, Node 24.22.1, concorrência 8, TEMP próprio: 143 testes, 107
+pass, 35 fail, 1 skip, exit 1. Os 10 testes novos de protocolo ficaram vermelhos, salvo a D2 e os nomes parecidos, que
+documentam validações que não mudam e passam nos dois. **Disputa no código anterior: `EPERM` 72 (a) e 59 (b)** — a regressão
+estatística, vermelha como declarado. As adaptações (C46 confirmação perdida/lock preso, T8-C16 de prazo e de flush, I25-C43,
+I5-C49b, C50) ficaram vermelhas porque a injeção mira o rename; isso é adaptação, não prova do defeito. O I23-C4 adaptado
+esperou a pausa no rename, que o código anterior não faz: só o processo do `control.cli` (pid 64760, filho do runner 12728,
+criado 13:50:27) foi encerrado às 14:01, depois de conferir a identidade (`red-stop-control.txt`). Formatter: numa cópia
+`git archive` de `1851481` com só o `evidence.unit` novo, o `diskTrace` antigo deixa a limpeza “sob o lock” (RED); cópia
+removida pelo caminho exato.
+
+### GREEN, sondagem e mutantes
+
+- **GREEN dos alvos** em `13ecc07` (`green1`): 11 arquivos, 173 testes, 172 pass, 0 fail, 1 skip (I25-C33, POSIX); disputa
+  2.000/2.000 nos dois, `lockPresent` 2.409/3.118, nenhuma falha.
+- **Sondagem preliminar** (não é gate) em `13ecc07`: integrações inteiras, 613 testes, 600 pass, 0 fail, 13 skip.
+- **Mutantes** (cópia `git archive`, uma substituição exata cada, `scripts/mutants.mjs`): 14/14 vermelhos em `13ecc07`
+  (`logs/mutants/`). O **m6** (rename para nome fixo ao lado do lock) travou a disputa: um rename que falhava deixava o lock e os
+  dois filhos repetiam `lock_present` para sempre. Encerrei só esses dois (72604, 85064; pai 65404; raiz
+  `sm-blr-mutants-gutT2N`) às 14:24:49, com identidade conferida (`m6-stop.txt`); os outros 5 reprovados do m6 são
+  determinísticos. Corrigi a prova (Landing antes; `e80b99e`): um evento só com `lock_present` por mais de 30 s conta
+  `lock_present preso` e encerra. De novo em `e80b99e` (`logs/mutants2/`): **14/14 vermelhos**, o m6 sem travar
+  (`lock_present preso`) e o m1 com `EPERM` 53/57.
+
+  | Mutante | Reprovados (de 10) |
+  | --- | --- |
+  | m1 `unlink` direto | 8, inclusive a disputa (`EPERM`) |
+  | m2 sem a conferência antes do rename | 2 (f5; consumidores) |
+  | m3 apaga o retirado sem reler | 2 (saudável; f8) |
+  | m4 `rmdir` sem a identidade | 1 (f13) |
+  | m5 repete um passo da limpeza | 1 (f12, contagem) |
+  | m6 rename para nome fixo ao lado | 6 (saudável, f-tabela, identidade, nomes parecidos, queda, disputa) |
+  | m7 sem a prioridade do callback | 1 (f14) |
+  | m8 sem o tipo no `lstat` do slot | 2 (f4; junção atravessada) |
+  | m9 slot fora da pasta do lock | 6 |
+  | m10 `unlink` quando o `mkdtemp` falha | 1 (f2) |
+  | m11 slot inválido como `lostCode` | 3 (f4, link, consumidores) |
+  | m12 identidade só antes do `rmdir` | 1 (troca depois do rename) |
+  | m13 `rename lock` com erro como fim da posse | 1 (evidência) |
+  | m14 falha da limpeza engolida | 2 (f-tabela; troca) |
+
+### Medição do código final (condições fixadas antes no `plan.txt`; `logs/e5/`, `logs/ci-measure.*`)
+
+Arnês do E5 copiado byte a byte (`e5.mjs` `a3cc70df…`), condição U = `holdLockFile` do produto: antes = cópia de `1851481`;
+depois = o checkout em `e80b99e` (produto igual ao de `736e7d7`). 2 produtores × 5.000 eventos no mesmo `.lock`, nova tentativa
+por `setImmediate`, callback vazio, C:, teto 300 s, uma célula por Node e lado, em sequência.
+
+| Lado | Node | `EPERM` a/b | Outras falhas | Concluídos a/b | Posse p50/p99/máx (µs) | Liberação completa p50/p99/máx (µs) | Ops de io | Sobras |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| antes | 24.13.0 | 149/132 | 0 | 4.851/4.868 | 683/1.901/9.636; 680/1.980/15.637 | 683/1.901/9.639; 680/1.980/15.638 | 3 | nenhuma |
+| antes | 24.22.1 | 134/140 | 0 | 4.866/4.860 | 669/1.767/5.637; 669/1.840/5.290 | 669/1.767/5.637; 669/1.840/5.291 | 3 | nenhuma |
+| depois | 24.13.0 | **0/0** | 0 | 5.000/5.000 | 1.385/3.035/14.642; 1.370/2.857/9.799 | 2.608/5.497/16.108; 2.588/5.255/13.312 | 11 | nenhuma |
+| depois | 24.22.1 | **0/0** | 0 | 5.000/5.000 | 1.337/2.774/17.512; 1.334/2.887/11.020 | 2.524/4.792/18.769; 2.507/5.037/19.473 | 11 | nenhuma |
+
+A liberação completa do código final custa ~2,5–2,6 ms no p50 (o protótipo E5 S mediu 2,34–2,39 ms; as conferências extras
+de identidade somam ~0,2 ms), com o lock livre depois de ~1,3–1,4 ms de posse. Caudas de até 19 ms, sem falha. `node
+scripts/ci-lock-latency.mjs` local (Node 24.13.0, fase A, namespace individual): 1.500/1.500 ciclos, 0 erros; `tomada` p50
+0,27 ms, `retirada` p50 0,75 ms, `liberacao` p50 1,44/p99 3,40/máx 13,97 ms; nenhum valor ≥ 600 ms. Medidas locais deste
+Windows, sem promessa de desempenho, POSIX ou CI.
+
+### Gates (plano registrado antes; uma execução de cada)
+
+Alvo de A/B/C = o fecho real da mudança: as integrações inteiras e o par de governança do C50, numa invocação
+`node --test --test-concurrency=<n> "tests/integrations/**/*.test.mjs" scripts/governance-ci.test.mjs scripts/ci-lock-latency.test.mjs`.
+
+| Gate | Identidade | Resultado |
+| --- | --- | --- |
+| A | `e80b99e`, Windows, Node 24.22.1, n 8 | 640/627/0/13, exit 0 (história: o último código mudou depois) |
+| B | `e80b99e`, clone `autocrlf=true`, Node 24.13.0 oficial, n 8 | **640/626/1/13, exit 1**, término natural, preservado (abaixo) |
+| A2 | `736e7d7`, como A | **640/627/0/13**, exit 0; status vazio antes e depois |
+| B2 | `736e7d7`, clone novo, como B | **640/627/0/13**, exit 0; clone conferido e removido |
+| C | `736e7d7`, WSL Ubuntu uid 1000, archive exato, Node 24.13.0 copiado, n 7 | **640/618/0/22**, exit 0; scratch removido por caminho, uid e inode |
+| D | `736e7d7`, um `npm test` completo, Windows, Node 24.22.1, runner 8, pwsh oficial no PATH, orçamento 2 h | **1.073 testes, 1.053 pass, 0 fail, 20 skip**, exit 0, término natural (14:56:12–15:01:25); governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7, integrações 613/600/0/13; status vazio antes e depois |
+
+**D, nome a nome**: o T8-C15 saudável, os três controles (a)–(c), os 9 T8-C16, os 11 testes novos do C46 (u) e os 18 C50
+passaram; 44 `I25-C46` ✔ (eram 33 na R23: +10 de `lock-release.unit` e +1 da evidência); disputa 2.000/2.000, sem falha. Os
+**11 nativos com runtime Hermes** (I4-C18–C23, C37, C44b, `I25-C40 harness nativa` e os dois I23-C8 com runtime) e o
+**I4-C35** passaram; o `I23-C8 … pelo Python do sistema` também passou, mas não é runtime Hermes. Skips (20): os 7 do doctor
+(POSIX/FIFO) e os 13 de integração de sempre, os mesmos nomes do D da R23. Contra o D da R23 (1.062/1.041/1/20): +11 testes,
+e o T8-C15 troca de `✖` para `✔`. Depois do D, nenhum processo meu de prova vivo (`logs/post-D-processes.txt`) e nenhuma tarefa
+em segundo plano.
+
+**Falha do B em `e80b99e`** (`gates/B.log:707`): no teste novo “dois consumidores”, a 2ª abertura saiu `lock_present` em vez de
+`root_changed`, porque o `rmSync(rootLock)` da prova não apagou o lock. Reprodução controlada (`scripts/probe-rmsync.mjs`,
+`logs/probe-rmsync.txt`): no Node 24.13.0 do Windows, `rmSync` de um arquivo em “raiz ação” não remove; no 24.22.1 remove;
+`unlinkSync` remove nos dois. Defeito confirmado da minha prova (não do produto), corrigido em `736e7d7` com `unlinkSync`,
+como as outras provas do repositório; GREEN do teste no 24.13.0 antes dos gates novos. O B não foi repetido inalterado: A2,
+B2, C e D são da nova identidade.
+
+**Skips**: A2 e B2, 13 (POSIX, Linux e macOS: I25-C5, C6, C15, C33, C42, C45, I4-C15, I4-C25b/j/k/l/m, T8-C4); C, 22 (11
+`hermes-runtime-ausente`, 10 só do Windows — LOCALAPPDATA, PATHEXT ×3, console, PATH, DACL ×3, `governance-C48` ramo
+Windows —, 1 macOS).
+
+### Incidentes e limites
+
+- Dois encerramentos de processo próprio, ambos por identidade (pid, pai, linha de comando, raiz, horário): o `control.cli`
+  do RED e os dois filhos de disputa do m6. Nenhum outro processo foi encerrado.
+- As consultas de processo pelo Windows PowerShell 5.1 (`powershell.exe -NoProfile -NonInteractive`, 7 invocações: listar, conferir e encerrar) definiram
+  `POWERSHELL_TELEMETRY_OPTOUT` **dentro** do comando, não antes do início, sem `POWERSHELL_UPDATECHECK` e sem TEMP próprio.
+  Não afirmo efeito nenhum disso; fica registrado. Nenhum pwsh foi iniciado por mim; o pwsh oficial só entrou no PATH dos
+  gates Windows, onde a prova `governance-C48` o inicia.
+- O PATH do host tem um `pwsh.exe` de um runtime local do Codex; não foi usado (o oficial ficou na frente).
+- Uma verificação rápida no 24.13.0 deixou 6 pastas de scratch na minha pasta de logs (o `rmSync` do `after`); removidas pelo
+  nome exato, conferindo pasta real e horário (`green-b-fix-cleanup.txt`). As cópias `git archive` (formatter, mutantes,
+  E5 antes) foram removidas pelo caminho exato dentro da minha pasta.
+- Custo não medido: no POSIX, no home real, no runner da CI e sob a carga com fsync do T8-C15 (que só passou nos gates). A causa
+  das falhas da R23 e do B de `407edc5` continua não atribuída; nada aqui garante uma CI futura verde.

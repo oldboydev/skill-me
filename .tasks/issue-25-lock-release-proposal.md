@@ -4,6 +4,10 @@
 
 **Progresso (29/10/2026, acréscimo):** implementação iniciada por um novo autor Claude na mesma branch, a partir de `1613e23`. A forma literal, os refinamentos observáveis, as provas e o corte em fatias foram registrados antes do código no plano principal (seção “Liberação segura do lock”), no Landing (“Liberação do lock por reserva exclusiva”), no C46 (u), no C50 (o), no `Swept` e no `Handoff` de `.checks/issue-25-agent-launch.md`. Este registro não é resultado: nenhuma prova, gate, verificação ou CI desta implementação existe ainda.
 
+**Progresso (29/10/2026, acréscimo):** o código e as provas do autor estão em `13ecc07`, `e80b99e` e `736e7d7`, com os gates
+do autor no último código (A2, B2, C e D verdes) e a medição do código final registrados no `Handoff` e no build de
+`.checks/issue-25-agent-launch*`. Não é verificação independente, revisão, `ready` nem CI.
+
 Este plano aprovado complementa `.tasks/issue-25-agent-launch.md`. A decisão explícita acima resolve a alteração do layout e do ciclo de vida descrita aqui, conforme `AGENTS.md:86-98` e o retorno ao proprietário previsto no plano principal, `:332-334`. As decisões abaixo ficam registradas na forma em que foram propostas e aprovadas.
 
 ## Problema e evidência
