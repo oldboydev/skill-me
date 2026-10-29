@@ -2630,3 +2630,18 @@ de qualquer sonda ou código):
   registrada; a formal 14 só depois de um PASS legítimo; a auditoria do Root 24; publicação, uma execução manual com a
   medição (agora no esquema 2) e os cinco checks verdes no HEAD aprovado; o merge já autorizado só com tudo verde. Nada aqui
   é PASS, `ready`, CI verde, causa das falhas históricas ou impacto global zero.
+- **Retificação documental** (acréscimo sobre `7ea4c1d`): pedida pelo Root depois da leitura externa
+  (`coordinator-lock-release-method-note.md`) e incorporada por mim. Não é a auditoria do Root. Produto, provas e gates de
+  `736e7d7` não mudam, e nada foi rodado de novo. Detalhes no build (“Retificação documental”) e em
+  `builder-lock-release/discard-inventory.md`.
+  - **Seis sobras da verificação rápida**: foram escolhidas por `readdir` da pasta privada `logs/`, prefixos, `birthtime`
+    nos últimos 10 min e pasta não link, não pelo nome exato com identidade. Os nomes estão em `green-b-fix-cleanup.txt`.
+    Isso não prova proveniência individual nem ausência de impacto global.
+  - **“Removidas pelo registro”** (abertura deste bloco): vale só para as raízes `sm-blr-*` e as do arnês E5, que tiveram
+    `dev`/`ino` registrado e comparado. O scratch do WSL teve inode e uid; os clones B e B2, toplevel, HEAD e status. As
+    cópias privadas tiveram só caminho, e às vezes tipo e não link; a `mutants-copy` nem isso.
+  - **PowerShell**: foram oito chamadas. Sete atribuíram o opt-out dentro do comando, sem `UPDATECHECK` nem TEMP próprio; a
+    pós-D herdou os opt-outs antes do início, com TEMP/TMP na pasta privada `logs/`. Não afirmo ausência de efeitos.
+  - **Execuções interrompidas**: o RED e o m6 da 1ª execução dos mutantes ficaram interrompidos por mim. Só os `mutants2`
+    tiveram os 14 términos naturais, vermelhos.
+  - **Custo**: o T8-C15 com fsync passou nos gates, mas não houve medição comparativa do custo desse pipeline.

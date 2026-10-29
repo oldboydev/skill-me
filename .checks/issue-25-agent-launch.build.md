@@ -3277,3 +3277,56 @@ Windows —, 1 macOS).
   E5 antes) foram removidas pelo caminho exato dentro da minha pasta.
 - Custo não medido: no POSIX, no home real, no runner da CI e sob a carga com fsync do T8-C15 (que só passou nos gates). A causa
   das falhas da R23 e do B de `407edc5` continua não atribuída; nada aqui garante uma CI futura verde.
+
+### Retificação documental (pedida pelo Root depois da leitura externa; acréscimo sobre `7ea4c1d`)
+
+O Root leu de fora o fechamento acima e pediu esta retificação
+(`.checks/code-review/issue-25/coordinator-lock-release-method-note.md`, nota externa e ignorada pelo Git); eu a incorporo. Não fiz
+a auditoria externa do Root nem a substituo. Os textos acima ficam como estavam; onde divergem, vale esta seção. Nenhum
+comando de teste, sonda, PowerShell ou limpeza foi rodado para ela, e nenhum gate foi repetido. O inventário completo está
+em `builder-lock-release/discard-inventory.md`.
+
+1. **As seis sobras da verificação rápida** (“removidas pelo nome exato, conferindo pasta real e horário”): a seleção real
+   foi um `readdir` da minha pasta privada `builder-lock-release/logs/`, com os prefixos `skill-me i4 i25 c46 consumidor` e
+   `skill-me i4 i25 c46 saudável`, `birthtime` nos últimos 10 min e pasta não link; a remoção foi um `rmSync` recursivo no
+   caminho absoluto, dentro dessa pasta. Não houve registro individual de identidade (`dev`/`ino`) no ato, então prefixo e
+   horário não comprovam a proveniência de cada entrada. Os seis nomes estão em `logs/green-b-fix-cleanup.txt`. A pasta
+   `logs/` também serviu de TEMP ao RED do formatter, sem raiz registrada; ali o `after` da prova removeu os scratches dela, e a
+   minha listagem seguinte, sem sobra, não foi retida em arquivo. Não foi varredura do TEMP global, e não há evidência de
+   remoção fora dessa pasta. Isso não prova proveniência individual plena nem ausência de impacto global. Nada foi
+   reconstruído ou restaurado.
+2. **Cópias e clones** (“removidas pelo caminho exato”): as guardas não foram as mesmas das raízes temporárias.
+   - **Com `dev`/`ino` registrado no ato e comparado no descarte**: só as raízes `sm-blr-*` do `isolated-root.mjs` (red,
+     green1, probe-int, green2, mutants, mutants2, ci-measure, A, B, A2, B2, D; registros `*-iso.json`) e as do arnês E5
+     (`logs/e5/U-*.json`).
+   - **Scratch do WSL**: caminho, uid 1000 e inode (`gates/C.run.txt`).
+   - **Clones B e B2**: caminho exclusivo na criação; no descarte, pasta não link, toplevel, HEAD e status vazio
+     (`gates/B*-clone*.txt`). Sem `dev`/`ino`.
+   - **Cópias privadas** `red-formatter-copy`, `mutants-copy2` e `e5-before`: caminho exclusivo na criação; no descarte,
+     caminho exato, pasta não link e `package.json` (a `e5-before`, também `roots/` interna vazia). Sem `dev`/`ino`.
+   - **`mutants-copy`**: `rm -rf` do caminho exato, sem conferir tipo ou link.
+   - **Evidência das cópias**: só a saída da sessão e o `plan.txt`.
+   - **Confirmação das raízes `mutants` e `mutants2`**: saiu só na saída da ferramenta; os registros `logs/mutants*-iso.json`
+     ficaram.
+
+   Não declaro todos esses descartes “por identidade” na mesma acepção, e não crio linha de base retrospectiva.
+3. **PowerShell**: foram **oito** chamadas a `powershell.exe -NoProfile -NonInteractive`, não sete.
+   - **Sete** (consultas, uma tentativa de encerramento recusada pela conferência e os encerramentos confirmados):
+     `POWERSHELL_TELEMETRY_OPTOUT` atribuído **dentro** do comando, sem `POWERSHELL_UPDATECHECK` e sem TEMP próprio.
+   - **A oitava**, a consulta depois do D (`logs/post-D-processes.txt`): `POWERSHELL_TELEMETRY_OPTOUT=1`,
+     `POWERSHELL_UPDATECHECK=Off` e TEMP/TMP herdados antes do início, mas o TEMP/TMP era a pasta privada `logs/`, não uma
+     raiz registrada.
+
+   Não afirmo ausência de efeitos de nenhuma delas. As auditorias do perfil WSL não cobrem Windows, PowerShell, rede nem
+   TEMP. A próxima chamada essencial herda, antes do início, os opt-outs e um TEMP/TMP próprio registrado.
+4. **Execuções interrompidas**:
+   - **RED**: ficou interrompido, porque encerrei o `control.cli`. Os totais 143/107/35/1 incluem esse arquivo
+     interrompido.
+   - **1ª execução dos mutantes** (`13ecc07`): 13 vermelhos com término natural. O m6 ficou interrompido; a disputa dele
+     ficou vermelha por eu ter encerrado os filhos, e os outros 5 reprovados são naturais. “14/14 vermelhos em `13ecc07`”
+     deve ser lido assim.
+   - **`mutants2`**: a única execução com os 14 terminando naturalmente, todos vermelhos.
+   - O B vermelho de `e80b99e` continua preservado como término natural.
+5. **Custo × provas** (“custo não medido … T8-C15 …”): o T8-C15, que grava com fsync, rodou e passou nos gates A2, B2, C e D
+   — é evidência de teste. Não houve medição comparativa do custo do pipeline real com fsync. O E5 (callback vazio, mesmo
+   `.lock`) e o `ci-lock-latency` (namespace individual) medem só o lock.
