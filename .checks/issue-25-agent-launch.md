@@ -691,6 +691,11 @@ follow no T8-C19: …`):
   com o `close` pendente; **GREEN** com o `finally`; mutantes recusados numa cópia descartável: sem o `finally`, `kill()`
   sem esperar o `close` e `catch` que engole a falha;
 - não demonstra a causa do cancelamento da manual 40814471097 nem que ele não volte a ocorrer; não é defeito do produto.
+- **Retificação do autor durante o build, antes do commit do código** (o texto acima e a linha do Landing ficam como
+  estavam): o `try` vai do spawn até o fim da rotina, e não só até `assert.equal(await followDone, 0)`. O `exported`
+  declarado nesse trecho é lido depois (`lines.slice(0, 5)` contra `exported.records`); fechar o `try` antes exigiria
+  tirar o `const` dessa linha. No caminho positivo nada muda: o follow já fechou com 0 nessa asserção, e o `finally`
+  só espera o `close` já ocorrido, sem sinal.
 
 Proof: `node --test tests/integrations/traces/demo.e2e.test.mjs`
 
