@@ -8,6 +8,8 @@ A formal8 foi `blocked` em `bedda5c` pela evidência remota ainda pendente do AC
 
 Sources:
 
+- Continuação do coordenador para um novo autor Claude (29/10/2026), depois da CI do HEAD publicado `066bd98` (Verifier 22 PASS 50/50, formal 13 `ready`): o PR 40814315171 falhou só no Windows e no agregado, no I23-C6 Claude (`agents.e2e.test.mjs:102`, asserção `:115`; produtor 7 com `delivery_timeout` 1/0/0/1, `sync key` 601 ms e `close key` ainda pendente na saída), e a execução manual 40814471097 teve o Windows cancelado no teto de 20 min (anotação do GitHub), com as integrações incompletas: último resultado 04:02:02 UTC, cancelamento 04:11:42, 39 rótulos não impressos a partir do `T8-C19 trace walkthrough` (`ci066-manual-result-name-diff.json`; observação de saída, não prova de qual teste executava). A medição do mesmo job deu 4.500/4.500 ciclos, sem erros; mede o lock `durable:false`, não a chave nem o pipeline. Logs integrais `.checks/code-review/issue-25/ci066-windows-pr40814315171.log` e `ci066-windows-manual40814471097.log`; handoff técnico `.checks/issue-25-agent-launch.ci40814315171-handoff.md` (`3d50ced`); [registro da investigação](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6487953025); contexto `context-ci066-fail.json` (36 comentários, 9 ACs). Pedido: provar ou descartar, por reprodução controlada com filhos e raízes próprios, o candidato de ciclo de vida da harness do T8-C19 — o `privacy follow` iniciado em `tests/integrations/traces/demo.e2e.test.mjs:42` não tem finalizador por teste para as saídas de falha anteriores ao `stop` (`:85`); se confirmado, a menor correção do encerramento dos filhos próprios em todas as saídas, preservando a falha original, os nove passos, os cinco registros, o `end` 6, as origens, os payloads e as asserções, com regressão e controle saudável; sem timeout ou abort novo, retry, mudança de produto, prazos, carga, paralelismo, runtime ou infraestrutura. Se não confirmado: registrar a ausência de reprodução e propor a menor observação de início/fim que localize o pendente, com Landing e prova antes do código. Nenhum defeito do produto foi demonstrado pelo `sync key` de 601 ms. Mesmas autorizações 6467154706 (“Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”) e 6442514838 (“Pode fazer quantas precisar”). Registro de abertura no bloco “Ciclo de vida do `follow` no T8-C19” do `## Handoff`.
+
 - Continuação do coordenador para um novo autor Claude (28/10/2026), depois do FAIL da verificação 21 (HEAD verificado `5a0f231`, relatório preservado em `3a15d79`): todas as provas nomeadas e a governança A 27/27/0/0, B 27/27/0/0 e C 27/26/0/1 passaram, mas o D completo terminou sozinho com exit 1, 1.057/1.036/1/20. Falhou só o teste antigo `T8-C20 … o exemplo é o que um hook com lock ocupado grava` (`tests/integrations/traces/docs.test.mjs:134-184`): o hook Claude real saiu `[0, "", ""]` (`:178`), e o `readFileSync` do arquivo `diagnóstico de entrega.ndjson` deu `ENOENT` (`:179`); log integral em `.checks/code-review/issue-25/verifier-round21/r21/D.log:1118` e `:1164-1185`, sem tempos nem dados do hook. [Handoff do bloqueio](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6485905666); contexto em `.checks/code-review/issue-25/context-round21-fail.json` (34 comentários, 9 ACs). Pedido: diagnóstico pontual do T8-C20 e a menor correção comprovada dentro dos contratos atuais, sem atribuir causa por hipótese, sem mudar o guia para aceitar a perda do caso positivo, sem tornar o melhor esforço do diagnóstico promessa de persistência e sem mudar prazos (relatório 1.000 ms, entrega 750/650 ms), cargas, contagens ou paralelismo. Mesmas autorizações 6467154706 (“Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28.”) e 6442514838 (“Pode fazer quantas precisar”). Registro de abertura no bloco “T8-C20 do D da verificação 21” do `## Handoff`.
 
 - Revisão pontual do coordenador para o mesmo autor (28/10/2026), dentro da fatia do C48 e antes da verificação 21 e da formal 13, que não estão registradas: `.checks/code-review/issue-25/coordinator-ci-temp-path-review.md`. A expressão `. '${script}'` da prova nativa nova (`governance-C48 ramo Windows das integrações no pwsh real`) não escapa a aspa simples do caminho: um caminho Windows válido com `'` fecha o literal e quebra o `-Command`. É defeito candidato da harness, não do produto nem da guarda do `RUNNER_TEMP` do workflow. O coordenador confirmou o registro do 17 → 1 sob o `-Command` e mandou manter o shell padrão e o sentido “não zero continua falha”, sem `-File` nem `[Environment]::Exit`. Só `scripts/governance-ci.test.mjs` muda; o workflow de `169e845`, o produto, os testes funcionais, os scripts, a configuração, o core e o `.verified.md` ficam só para leitura. Mesmas autorizações 6467154706 e 6442514838. Linha “Literal do caminho no `-Command` da prova nativa do C48” do Landing; 2º acréscimo do C48.
@@ -2264,3 +2266,40 @@ qualquer sondagem ou código):
   uma falha desse tipo nos logs da #25), sabendo que tratar EPERM como disputa mudaria a política de retry do AC7.
   Nada aqui afirma PASS, `ready`, CI verde, causa física ou impacto zero. Preservados: os gates de `be29203`, o FAIL21,
   os incidentes da R5 e da R21, a limpeza de 1.257/107 pastas e os auxiliares antigos em `/tmp`.
+
+Ciclo de vida do `follow` no T8-C19 (CI de `066bd98`) — novo autor Claude, fatia nova (registros e gates acima
+preservados; aberto antes de qualquer sonda ou código):
+
+- **Origem**: CI do HEAD publicado `066bd98`, depois do PASS 22 e da formal 13 `ready`. PR 40814315171: Windows e
+  agregado vermelhos só no I23-C6 Claude (produtor 7, `delivery_timeout`, `sync key` 601 ms, `close key` pendente na
+  saída; operação localizada, causa física desconhecida, não é defeito do produto demonstrado). Manual 40814471097:
+  Windows cancelado no teto de 20 min, integrações sem totais, último resultado 04:02:02 e cancelamento 04:11:42; dos
+  1.059 rótulos do PR, 39 não saíram, a partir do `T8-C19 trace walkthrough`. O reporter do Node pode reter resultados,
+  então a ausência não diz qual teste executava. Nada aqui atribui o cancelamento antes de evidência.
+- **Fronteira da fatia** (superfície nova, só o T8-C19): a harness em `tests/integrations/traces/demo.e2e.test.mjs` e
+  apoios estritamente necessários de `tests/integrations/helpers/`, regressões e evidências. Produto, guia, cripto,
+  chave, estado, formato, durabilidade, workflow, benchmark, governança, core, `package*`, configuração,
+  `AGENTS.md`/`CLAUDE.md` e `.verified.md` ficam só para leitura. O EOF de `68f84c4` e o produto de `322bcad` não são
+  tocados sem prova nova. `follow.cli.test.mjs` inicia `follow` com o mesmo padrão; fica fora desta fatia e, se a prova
+  o mostrar relevante, é comunicado, não corrigido aqui.
+- **Gates anteriores**: os de `407edc5` (autor anterior) e os da R22 (`2383c52`) não provam esta fatia. Os desta fatia
+  serão definidos depois do último código e antes de rodar, em `.checks/code-review/issue-25/builder-ci066-follow/`
+  (caminho absoluto, criação exclusiva, raízes por `mkdtemp` com registro e limpeza exata).
+- **Leitura**: ~70k tokens lidos (o handoff técnico inteiro, o contexto com 36 comentários, `AGENTS.md`, `CLAUDE.md`, o
+  `SKILL.md`; do checklist, Sources, Landing — linhas “Consumidor lento do I4-C16c”, “Processos da árvore” e
+  “Diagnóstico do T8-C20” inteiras —, o C46 (q)–(r), Swept e o bloco do T8-C20 do Handoff; o topo da R22; a seção do
+  T8-C20 do build; os logs CI 066 em trechos e a comparação de rótulos; `demo.e2e.test.mjs`, `follow.cli.test.mjs`,
+  `traces.mjs`, `producer-runs.mjs`, `privacy/follow.mjs` e o `privacy` do `cli.mjs`). Estimados mais ~50k para sondas,
+  código, provas e gates: ~120k, abaixo de 150k; uma fatia, um lote, sem fronteira interna.
+- **Decisões humanas já tomadas**: 6467154706 e 6442514838 (Sources). Ficam: prazos 1.000/750/650 ms, stdin 2.000 ms
+  (faixa 1.900–6.000), Hermes 5 s e os prazos existentes dos testes; 500 eventos/8 MiB/7 dias, 80 eventos/dois
+  produtores; cargas, contagens, payloads, ordem, retry e perdas; runner padrão (teto 8, CPU−1); jobs 20/10/5 e manual
+  10. Nenhum rerun dos 066 e nenhuma rodada nova registrada por este autor.
+- **Plano**: (1) diagnóstico sem tocar em rastreados — numa cópia `git archive` do HEAD, numa raiz própria, falhas
+  injetadas só na cópia do T8-C19 depois do spawn do `follow` (logo depois, no meio e depois dos cinco registros) e o
+  controle sem injeção; registrar a falha impressa, o estado do `follow` (pid, `exit`/`close`) e do processo do arquivo
+  antes e depois, o resultado do `after`, e quando o reporter imprime o resultado de um arquivo cujo processo continua
+  vivo; (2) se confirmado, Landing, refinamento do C46 e task antes do código, e a correção só do encerramento dos
+  filhos próprios; (3) RED na cópia do código anterior e GREEN no corrigido, com regressão e controle saudável; (4) alvos
+  A/B/C pelo fecho real da mudança e um D completo, depois do último código. Se não confirmado: registrar a ausência de
+  reprodução e propor a menor observação de início/fim do runner, com Landing e prova antes de qualquer código.
