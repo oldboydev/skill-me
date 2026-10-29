@@ -2114,3 +2114,63 @@ Literal do caminho no `-Command` da prova nativa do C48 — mesmo autor Claude, 
   - **pf-D**: um `npm test` completo, Windows 24.22.1, teto 8, nativos do Hermes, orçamento de 2 h na ferramenta,
     sem editar nada rastreado durante ele. Esperado, se nada falhar: 1.057/1.037/0/20, com as mesmas linhas de
     resultado do D de `a50870f`.
+- **Resultado dos gates em `9b087dc`** (árvore `b894f255…`; código de `0caf9be`; uma execução de cada, sem filtro e
+  sem repetição; logs em `builder-ci86-temp/path-fix/`):
+  - **pf-A** (22:16:24–22:17:07; Windows, Node 24.22.1, npm 11.19.1, checkout): `npm run test:governance`, **27
+    testes, 27 pass, 0 fail, 0 skip**, exit 0. O caso do pwsh real **executou**, com os controles com aspa (`✔` e
+    `ℹ pwsh: C:\Program Files\PowerShell\7\pwsh.exe`, 7.6.9). `npm_execpath` ausente; `RUNNER_TEMP` com 0 entradas
+    depois; status vazio antes e depois.
+  - **pf-B** (22:17:43–22:18:22): **27/27/0/0**, exit 0. Clone novo em `9b087dc`, árvore conferida,
+    `core.autocrlf=true` no `.git/config` dele; o workflow e o teste saíram em CRLF. Node 24.13.0 oficial
+    (`d14ba95c…`, zip `ca274269…` conferido), npm 11.6.2 adjacente, `npm_execpath` ausente. O caso do pwsh real
+    **executou**. `cli.mjs` com 0 CR antes e depois; status do clone vazio; clone removido pelo caminho exato, depois
+    de conferir toplevel, HEAD e status (`pf-B-clone-cleanup.txt`).
+  - **pf-C** (22:18:35–22:18:39; WSL `Ubuntu`, uid 1000): **27 testes, 26 pass, 0 fail, 1 skip**, exit 0. `git
+    archive` de `9b087dc` (6.440.960 bytes, `560874c3…`), árvore = `HEAD^{tree}`, 0 CR, `cli.mjs` 755. Node 24.13.0
+    copiado (`150946e4…`) num prefixo sem `sh`, npm 11.6.2. `env -i` com `HOME`, `LANG`, `PATH`, `RUNNER_TEMP`, `TMPDIR`
+    e `npm_config_update_notifier=false`; PATH sem `/usr/bin`, sem agentes e sem `pwsh`. O skip é o caso do pwsh real,
+    com o motivo de sempre. O scratch `/tmp/sm-b86p-C.qP2w0y` foi removido por caminho, pasta não link, uid 1000 e
+    inode 9361.
+  - **Nomes** (`path-fix/matrix-pf-ABC.txt`): os 27 nomes são iguais em pf-A, pf-B, pf-C e no A de `a50870f`; 26
+    `pass` nos três; o do pwsh real `pass` em pf-A e pf-B e `skip` em pf-C.
+  - **pf-D** (22:19:02–22:32:26; `npm test` completo, Windows, Node 24.22.1, teto 8; orçamento de 2 h na ferramenta,
+    em segundo plano só por isso, com espera em primeiro plano lendo só o registro): terminou sozinho com **exit 0**.
+    - **1.057 testes, 1.037 pass, 0 fail, 20 skip**: governança 27/27, motor 16/16, doctor 417 (410/0/7) e
+      integrações 597 (584/0/13). Nenhum `✖` nem `not ok`.
+    - Contra o D de `a50870f` (`pf-D-vs-a50870f.txt`): as 1.057 linhas de resultado são as mesmas, com as mesmas
+      marcas e os mesmos 20 skips e motivos.
+    - O caso do pwsh real rodou no D. Passaram os 11 nativos do Hermes com runtime, o I4-C35 sem o diagnóstico de
+      observação Hermes não executada e o I23-C8 pelo Python do sistema, que não conta como nativo
+      (`pf-D-hermes.txt`).
+    - HEAD e status iguais antes e depois; `RUNNER_TEMP` com 0 entradas depois; nenhum processo `node`, `pwsh`,
+      `python` ou `cmd` com o repositório ou as minhas raízes na linha de comando ficou vivo
+      (`processes-after-pf-D.txt`; também depois do pf-A, `processes-after-pf-A.txt`).
+  - **Durações** (observação, sem asserção que dependa delas): o pf-A levou 43 s contra 8 s do A de `a50870f`, e o
+    pf-D 13 min 24 s contra 8 min 30 s. A diferença está em todos os testes que criam processos, inclusive os `C50` e o
+    `governance-C4`, que não mudaram (413 → 3.306 ms), e já aparecia no RED. É do ambiente naquele momento; a causa
+    não foi demonstrada.
+  - **Temporário**: as raízes `sm-b86p-*` de pf-A, pf-B, pf-D, do RED, dos GREEN e dos mutantes foram removidas pelo
+    registro (o pf-D deixou 128 entradas dos testes); a do pf-C, por caminho, uid e inode. As pastas `runner-temp-*`
+    vazias saíram por `rmdir`. Nenhuma seleção por prefixo ou mtime; nenhum auxiliar no `/tmp` (Git Bash ou WSL) nem no
+    temporário global. A ferramenta guardou a própria cópia da saída do pf-D (`…\tasks\b02tsdmw7.output`); não é
+    auxiliar meu, e não a li nem apaguei.
+- **O que isso prova e o que não prova**:
+  - A prova nativa roda o mesmo `run` também de arquivos próprios com `'` e com `‘’‚‛` no nome, na forma
+    `-Command ". '<arquivo>'"`, com npm 0 → 0 e npm 17 → 1 e os mesmos `argv`/`env`. Sem o escape, ou com só a ASCII
+    dobrada, ela falha, e os casos sem aspa continuam passando.
+  - Os casos, entradas e asserções anteriores não mudaram; o workflow, o produto e os testes funcionais também não.
+  - Não prova o passo no runner da CI nem causa física; o D é deste computador. O `I4-C25m`, o `I4-C25l` e os 7 skips
+    do doctor não rodaram aqui; os skips POSIX do D continuam como carry do C da R19.
+  - **Limites de ambiente**, como antes: o npm de pf-A, pf-B e pf-D usou o cache do usuário, que não li (o aviso de
+    versão só consulta o registro com o carimbo vencido); o pwsh pode atualizar os próprios caches no `LocalAppData`.
+    Nesta revisão, todas as chamadas de pwsh tiveram a telemetria e a checagem de versão desligadas; o incidente de
+    telemetria registrado acima continua como está.
+- **O que se decidiu no caminho**: dobrar também as quatro aspas tipográficas, pela sondagem (Landing); escrever as
+  tipográficas no código como escapes Unicode do JavaScript, para não se confundirem com a aspa ASCII nem com a
+  vírgula. Nada novo com o coordenador nem com o usuário.
+- **O que foi abandonado**: dobrar só a aspa ASCII; um arquivo por aspa tipográfica; `-File`, `-EncodedCommand` ou o
+  caminho como argumento à parte; afirmar só o texto da string.
+- **Pendentes, com o coordenador**: o registro e o despacho da verificação 21 e da formal 13 sobre o conteúdo novo,
+  a publicação, a CI do novo HEAD, a medição e o merge, já autorizado só com toda a CI verde. Nada aqui afirma PASS,
+  `ready`, CI verde, causa física nem impacto zero. Preservados como estão: os gates de `a50870f`, o incidente da R5,
+  a limpeza de 1.257/107 pastas e os dois auxiliares pós-D em `/tmp` do Git Bash.

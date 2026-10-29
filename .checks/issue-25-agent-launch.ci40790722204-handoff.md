@@ -63,3 +63,8 @@ carga, paralelismo, retry, perdas, orçamentos, outros sistemas, jobs e a mediç
 - **Correção planejada**: só no teste, dobrando cada aspa simples que o PowerShell reconhece no literal do caminho,
   com dois arquivos próprios com aspas no nome e o mesmo `run` do YAML, npm 0 → 0 e npm 17 → 1 para cada um. O shell
   padrão, o `-Command`, o 17 → 1 e o workflow não mudam.
+- **Provas** (registro `0ae77b3`, código `0caf9be`, gates em `9b087dc`; detalhes no build e no Handoff do
+  checklist): RED com `passo ' literal.ps1` sem o escape (pwsh 1, npm não chamado; os casos sem aspa passaram antes);
+  GREEN; mutantes “sem escape” e “só a ASCII dobrada” recusados numa cópia descartável. Gates novos: pf-A 27/27/0/0 e
+  pf-B 27/27/0/0 (caso nativo executado), pf-C 27/26/0/1 (o skip é esse caso) e pf-D 1.057/1.037/0/20, exit 0, com as
+  mesmas linhas de resultado do D de `a50870f`. Os gates de `a50870f` ficam como estão e não provam esta correção.

@@ -2694,3 +2694,26 @@ restaurada e removida pelo caminho exato.
 **Gates** (`path-fix/plan.txt`, depois de `0caf9be` e antes de rodar): `pf-A`/`pf-B`/`pf-C` com `npm run
 test:governance` completo (esperado 27/27/0/0, 27/27/0/0 e 27/26/0/1), 10 min cada; `pf-D` com um `npm test` completo,
 2 h (esperado 1.057/1.037/0/20).
+
+**Gates em `9b087dc`** (árvore `b894f255…`, código de `0caf9be`; uma execução de cada, sem filtro; logs em
+`builder-ci86-temp/path-fix/`):
+
+| Gate | Ambiente | Início–fim | Testes | Pass | Fail | Skip |
+| --- | --- | --- | --- | --- | --- | --- |
+| pf-A | checkout principal, Windows, Node 24.22.1, npm 11.19.1, `npm_execpath` ausente, pwsh oficial 7.6.9 | 22:16:24–22:17:07 | 27 | 27 | 0 | 0 |
+| pf-B | clone git novo (`core.autocrlf=true` no `.git/config` dele; workflow e teste em CRLF), Node 24.13.0 oficial (`d14ba95c…`, zip conferido), npm 11.6.2 ao lado, `npm_execpath` ausente | 22:17:43–22:18:22 | 27 | 27 | 0 | 0 |
+| pf-C | WSL `Ubuntu`, uid 1000, `git archive` de `9b087dc` (árvore = `HEAD^{tree}`, 0 CR), Node 24.13.0 copiado num prefixo sem `sh`, `env -i` com `HOME`/`RUNNER_TEMP`/`TMPDIR` no scratch e `npm_config_update_notifier=false`, PATH sem `/usr/bin`, sem agentes e sem `pwsh` | 22:18:35–22:18:39 | 27 | 26 | 0 | 1 |
+| pf-D | `npm test` completo, Windows, Node 24.22.1, teto 8, nativos do Hermes | 22:19:02–22:32:26 | 1.057 | 1.037 | 0 | 20 |
+
+- **pf-A/pf-B/pf-C**: os 27 nomes iguais nos três e aos de `a50870f` (`matrix-pf-ABC.txt`); o caso do pwsh real, agora
+  com os controles com aspa, executou em pf-A e pf-B e é o único skip do pf-C, com o motivo.
+- **pf-D**: exit 0, sem interrupção; as 1.057 linhas de resultado são as do D de `a50870f` (`pf-D-vs-a50870f.txt`),
+  com os 20 skips e os 11 nativos do Hermes. Nenhum processo do repositório ficou vivo.
+- **Durações**: pf-A 43 s (8 s em `a50870f`) e pf-D 13 min 24 s (8 min 30 s); a lentidão atinge todos os testes que
+  criam processos, inclusive os inalterados. Causa não demonstrada; nenhuma asserção depende de duração.
+- **Limpeza**: raízes pelo registro; a do pf-C por caminho, uid e inode; o clone e a cópia dos mutantes pelo caminho
+  exato. Nenhum auxiliar no `/tmp` nem no temporário global.
+
+**O que fica demonstrado e o que não**: a prova nativa aceita caminhos próprios com aspas e falha sem o escape; os
+casos anteriores, o workflow e o produto não mudaram. O passo no runner e a causa das falhas da CI de `86c7677`
+**não** estão demonstrados. Pendentes, com o coordenador: verificação 21, formal 13, publicação, CI, medição e merge.
