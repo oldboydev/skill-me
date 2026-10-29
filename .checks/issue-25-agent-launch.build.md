@@ -2665,3 +2665,16 @@ completo, 2 h (esperado 1.057 testes se nada falhar).
 e os mutantes são recusados; o passo no runner, a causa das falhas da CI de `86c7677` e o efeito da troca do
 temporário nelas **não** estão demonstrados. Pendentes, com o coordenador: verificação 21, formal 13, publicação, CI
 do novo HEAD e merge.
+
+### Revisão do coordenador: literal do caminho no `-Command` da prova nativa do C48
+
+Mesmo autor, sobre `c68a392`. A revisão (`coordinator-ci-temp-path-review.md`) aponta que `. '${script}'` não escapa
+a aspa simples do caminho. Decisões do coordenador: manter o shell padrão, o `-Command` e o 17 → 1 (“não zero
+continua falha”). Só `scripts/governance-ci.test.mjs` muda.
+
+**Sondagem** (`path-fix/explore/`): sem escape, `passo ' literal.ps1` sai 1 e o script não roda; com a aspa dobrada,
+roda. `‘`, `’`, `‚` e `‛` (U+2018 a U+201B), que o PowerShell lê como aspa simples, também quebram e só funcionam com
+todas as cinco dobradas. Forma: `. '${file.replace(/['‘’‚‛]/g, "$&$&")}'`, `step` com o arquivo
+como 3º parâmetro (padrão `passo.ps1`) e dois arquivos próprios com o mesmo `run`, `passo ' literal.ps1` e
+`passo ‘’‚‛ literal.ps1`, cada um com npm 0 → 0 e npm 17 → 1 (Landing “Literal do caminho no `-Command` da prova
+nativa do C48”; 2º acréscimo do C48). RED, GREEN, mutantes e gates novos ficam abaixo, quando rodarem.

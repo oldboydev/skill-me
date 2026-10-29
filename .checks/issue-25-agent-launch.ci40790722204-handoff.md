@@ -54,3 +54,12 @@ carga, paralelismo, retry, perdas, orçamentos, outros sistemas, jobs e a mediç
   motivo) e D 1.057/1.037/0/20, exit 0, com os nativos do Hermes e os 20 skips da R20.
 - **Identidade**: fora de `.checks`/`.tasks`, só o workflow e `governance-ci.test.mjs` mudaram desde `86c7677`.
 - Nada aqui prova o passo no runner nem que as falhas deixam de ocorrer.
+
+## Revisão do coordenador: literal do caminho no `-Command` da prova nativa (mesmo autor, sobre `c68a392`)
+
+- **Achado**: a prova nativa monta `. '${script}'` sem escapar a aspa simples do caminho; um caminho Windows válido
+  com `'` quebra o `-Command`. Defeito da harness, não do produto nem do workflow.
+- **Confirmado na sondagem** com `passo ' literal.ps1`; as aspas tipográficas `‘ ’ ‚ ‛` quebram do mesmo jeito.
+- **Correção planejada**: só no teste, dobrando cada aspa simples que o PowerShell reconhece no literal do caminho,
+  com dois arquivos próprios com aspas no nome e o mesmo `run` do YAML, npm 0 → 0 e npm 17 → 1 para cada um. O shell
+  padrão, o `-Command`, o 17 → 1 e o workflow não mudam.
