@@ -1,3 +1,279 @@
+# Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 21)
+
+**Verdict (R21)**: **FAIL — o gate completo D falhou: 1.057 testes, 1.036 pass, 1 fail, 20 skip** (exit 1, término natural). HEAD `5a0f231`, 9 ACs. A falha é o teste antigo `T8-C20 … o exemplo é o que um hook com lock ocupado grava` (`tests/integrations/traces/docs.test.mjs:179`, `ENOENT` ao ler o arquivo de diagnóstico de entrega), sem diff na feature e verde na R20, no pf-D do autor e na CI86. O despacho e o S6/AC6 exigem o gate completo fresco sem falhas, então não há PASS. Não repeti nem corrigi.
+- **O que passou (verified at `5a0f231`)**: os 50 checks têm as provas nomeadas verdes. A mudança nova (C48: ramo Windows das integrações com `TEMP`/`TMP` no `RUNNER_TEMP`) confere com a decisão, com o Landing e com as asserções. `npm run test:governance` completo deu **A 27/27/0/0**, **B 27/27/0/0** e **C 27/26/0/1**. Em A e B, o caso nativo do pwsh executou, com os controles de aspas. Em C, o único skip é esse caso, com o motivo do próprio teste. No D, governança 27/27, com os dois `governance-C48` `✔`; motor 16/16; doctor 410/0/7; integrações 583/**1**/13.
+- **A falha (T8-C20)**: o hook Claude saiu com 0 e sem saída (`:178` passou), mas o arquivo indicado em `SKILL_ME_CAPTURE_REPORT` não existia na leitura (`:179`). O que **não** se sabe: se a gravação do diagnóstico perdeu a corrida com o prazo, se falhou em silêncio ou se houve outra coisa. A gravação é de melhor esforço até o prazo e engole erros (`delivery-report.mjs:33-45`, `:80`). O log não tem tempos desse hook. **Causa não demonstrada.** Detalhe abaixo.
+- **Carry por identidade**: fora de `.checks`/`.tasks`, de `6eb09ef` (R20) ao HEAD só mudaram `.github/workflows/governance.yml`, `scripts/governance-ci.test.mjs` e `code-review.config.json` (override). 246 dos 247 arquivos rastreados em `src`/`tests`/`scripts` têm o mesmo blob. As análises de C1–C47 e o A/B/C cross-platform deles vêm da R20 (`6eb09ef`) e da R19 (`5ee0e0f`), com a identidade registrada. O D desta rodada é novo e rodou tudo no Windows.
+- **Gates remotos**: pendentes e obrigatórios. Não executei Action, CI, `review:run`, commit, push nem merge.
+
+**Profile**: light (`AGENTS.md:138`). Rodada 21 sobre a faixa inteira e os 50 checks, com análise nova do C48, da governança e do diff desde a R20. Pelo perfil, não há fault injection, `Coverage`, `Test policy` nem fonte de UI. Não criei mutantes, sondas, testes nem correções. RED, GREEN, sondagens e os mutantes M1–M13, “sem escape” e “só a ASCII dobrada” são **provas do autor** (checklist `:1895-1948` e `:2067-2102`; build, seção nova). Li esses registros, mas não os reexecutei.
+
+**Diff range**: `63621c691f132dc8d591414269d36cfa18fca594..5a0f231c854c98cbb535f9f24a5637ddecb3fcf8`, a feature inteira: 144 commits, árvore `1e28decc…`. Desde a R20 (`6eb09ef`, relatório em `86c7677`), entraram:
+- `c7e8f14` (registro), `169e845` (workflow + prova), `a50870f`/`c68a392` (gates do autor);
+- `0ae77b3` (registro), `0caf9be` (**último código**: só `governance-ci.test.mjs`, o escape do caminho), `9b087dc`/`be29203` (gates do autor);
+- `5a0f231` (override 25/light 12 → 13).
+
+**Round**: **21** (light). Base: “Pode fazer quantas precisar” e “Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28”, com o escopo [6467154706](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706), a decisão operacional [6484289722](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6484289722) e o registro 21/13 [6485418583](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6485418583).
+- `context-round21.json` (sha256 `868aca78…`): 33 comentários e 9 ACs. O corpo e os comentários 1–31 são idênticos aos de `context-round20.json`. Os novos são o 32 (handoff da CI86) e o 33 (registro 21/13) (`r21/context-config.txt`).
+- `roundOverrides["25"]` = `{profile: "light", maxRounds: 13}`. O diff da configuração desde `86c7677` só toca `maxRounds` e `approval` do `25`. Os outros overrides e os perfis globais ficam iguais.
+- O `state.json` da revisão tem 12 tentativas (sha256 `7acee6b7…`). A formal 13 é do root, depois deste resultado. Não rodei `review:run`.
+
+**Verifier**: subagente novo e independente (Claude Opus 5.5). Não sou o autor nem o Verifier 20, e não herdei sessão. Produto, testes, apoios, scripts, workflow, planos, configuração e estado ficaram só para leitura. Escrevi este arquivo e os logs/scripts em `.checks/code-review/issue-25/verifier-round21/r21/`, pasta ignorada (`.gitignore:4`). Fora dela, só as raízes próprias dos gates e um arquivo meu na raiz por ~9 s, depois do D (incidente 2, abaixo). Não li `profile-before.json`, `profile-final.json` nem `profile-target-check.json`. De `profile-comparison-final.json`, li só o nível superior.
+
+Data: 28/10/2026 (-03).
+- **Plano**: alvo e orçamentos registrados às 22:41–22:43 (`r21/plan.txt`, mais os scripts), antes de qualquer gate.
+- **Horários**: A 22:43:11–22:43:26; B 22:43:56–22:44:41; C 22:45:00–22:45:05; D 22:45:29–22:55:59 (10 min 30 s).
+- **Estado**: o HEAD foi `5a0f231` do início ao fim. `git status` ficou vazio antes e depois de A e de D, e às 22:57:53. Às 22:57:44–22:57:53, depois do D, apareceu o meu `post-D-checks.txt` não rastreado na raiz (incidente 2). Em B, o status do clone ficou vazio. Em C, a árvore extraída é igual ao `HEAD^{tree}`.
+
+## Fontes lidas (R21)
+
+| Fonte | Como |
+| --- | --- |
+| `AGENTS.md`, `CLAUDE.md`, `tlc-implement/references/verify.md` | inteiros |
+| `.tasks/issue-25-agent-launch.md` | inteiro (771 linhas): critérios 1–42 e refinamentos, a exceção datada ao 40 do AC9 e a nova (`:760-766`), `Sources`, `Unresolved`, a ordem remota e a seção “Ambiente do passo de integrações no Windows” (`:730-771`) |
+| `.checks/issue-25-agent-launch.md` | inteiro (2.176 linhas): `Sources` (`:9-43`, com as duas entradas novas `:11`, `:13`), `Out of scope`, `Landing` (`:56-118`, com as linhas novas `:114`, `:115`, `:116`), C1–C50 (C48 `:697-762`), `Swept` (`:872-882`) e `Handoff` (`:884-2176`, com os blocos novos `:1854-2176`) |
+| `.checks/issue-25-agent-launch.verified.md` | o topo R20 inteiro (`:1-267`). O resto é histórico, atribuição sem nova execução |
+| build (seção nova, `git diff 86c7677..HEAD`), `ci40790722204-handoff.md` (inteiro), `coordinator-ci-temp-path-review.md` (inteiro) | **relato do autor e do coordenador** |
+| `context-round21.json` | 33 comentários e 9 ACs, comparado ao contexto 20 por `node -e` |
+| `git diff 86c7677..HEAD` | inteiro no código: o workflow (+17/−1) e `governance-ci.test.mjs` (+230/−1). Nos docs, só acréscimos |
+| `.github/workflows/governance.yml` e `scripts/governance-ci.test.mjs` | inteiros, no HEAD |
+| log da CI86 (`ci86-windows-manual40790906319.log`) | só as linhas `shell:` do runner e o T8-C20 |
+| `traces/docs.test.mjs:120-184`, `traces/delivery-report.mjs:1-80`, `traces/binding.mjs:60-84`, `observation.mjs:95-130`, `traces/delivery.mjs:62-104` | depois da falha do D, para o T8-C20 |
+
+## Prova Git (verified at `5a0f231`; `r21/blob-identity.txt`, `r21/c48-structure.txt`)
+
+- **Alterados de `6eb09ef` (R20) e de `86c7677` ao HEAD, fora de `.checks`/`.tasks`**:
+  - `.github/workflows/governance.yml`: `474a87b` → `f24e82d`;
+  - `scripts/governance-ci.test.mjs`: `bfe5a0c` → `5313dba`;
+  - `code-review.config.json`: `e334dc3` → `8c9ada6`, só o override.
+
+  Desde `0caf9be` (último código), só a configuração.
+- **Iguais a `6eb09ef` e a `86c7677`**:
+  - árvores: `src` `51f0c98`, `tests` `e77a618` (helpers `7931703`, fixtures `6591970`, doctor `bcedb83`), `docs` `d9f546f`, `scripts/code-review` `6b98d7c`;
+  - arquivos: `ci-lock-latency.mjs` `8c12894`, `ci-lock-latency.test.mjs` `75eeadd`, `test-integrations.mjs` `22824c4`, `ci-change-filter.mjs`, `ci-result.mjs`, `package.json` `8fd02fa`, `package-lock.json` `9ec32e0`, `.gitattributes`, `.gitignore`, `README.md`, `AGENTS.md` e `CLAUDE.md`.
+
+  Dos 247 arquivos rastreados em `src`/`tests`/`scripts`, 246 têm o mesmo blob de `86c7677`. O outro é `governance-ci.test.mjs`.
+- **Core vendorizado**: os 5 arquivos de `scripts/code-review/` têm os mesmos blobs na base e no HEAD (`25e5284`, `c6a4abc`, `1bda8e4`, `216125c`, `b02001e`).
+- **Alcance**: o workflow só é lido por `governance-ci.test.mjs` (`:244`, `:318`, `:368`, `:445`) e por `tests/integrations/fixtures-inventory.test.mjs:56-57`. O I4-C47 exige um passo do `verify` com `run === "npm run test:integrations"`, e o ramo dos outros sistemas o mantém literal. O I4-C47 passou no D (`D.log:611`). Nenhum outro executável mudou, então o alvo de A/B/C (governança) e o D completo cobrem o alcance.
+- **C48 contra `d0d5a7f`** (`git diff d0d5a7f HEAD -- .github/workflows/governance.yml`). O topo do workflow e os jobs `changes` e `ci` são idênticos. No `verify`, só mudam o `timeout-minutes` (`10` → `${{ matrix.os == 'windows-latest' && 20 || 10 }}`) e a troca do passo de integrações pelos dois ramos. O `lock_diagnostics` entra no fim, inteiro. O workflow só foi tocado por `52b22cd`, `3843867` e `169e845`.
+
+## C48 — análise fresca do workflow e das provas (verified at `5a0f231`)
+
+**Workflow contra a decisão e o Landing `:114`** (`governance.yml:56-72`):
+
+| Exigência | Código | Confere |
+| --- | --- | --- |
+| outros sistemas: o passo de antes, sem `env`/`shell` | `:56-57` `- if: matrix.os != 'windows-latest'` / `run: npm run test:integrations` | sim |
+| Windows: só `if` e `run`, shell padrão (pwsh) | `:63-64`, sem `shell:` nem `env:` | sim |
+| `RUNNER_TEMP` ausente, vazio, não totalmente qualificado ou que não é pasta → `throw` antes do npm, sem fallback | `:65-68`: `-not $destino -or -not [IO.Path]::IsPathFullyQualified($destino) -or -not (Test-Path -LiteralPath $destino -PathType Container)` e `throw 'RUNNER_TEMP precisa ser o caminho absoluto de uma pasta existente'` (texto literal do Landing) | sim |
+| `TEMP`/`TMP` = esse valor, só no processo do passo e nos filhos | `:69-70` `$env:TEMP = $destino`, `$env:TMP = $destino` | sim |
+| o mesmo comando, sem argumento a mais; exit propagado | `:71` `npm run test:integrations`, `:72` `exit $LASTEXITCODE` | sim |
+| nada em `GITHUB_ENV`/`GITHUB_PATH`/registro; nada apagado do `RUNNER_TEMP` | nenhuma ocorrência no `run` | sim |
+| comentário com o porquê e o limite da medição | `:58-62` | sim |
+| orçamentos 20/10/5 e 10, matriz, `ci.needs`, `lock_diagnostics` iguais | `:43`, `:21`, `:79`, `:100`, `:41`, `:76`, `:96-111` | sim |
+
+O runner da CI86 roda os passos Windows como `C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"` (log `:130`, `:141`, `:182`, `:214`, `:647`). É a forma que o Landing registra e a prova nativa usa.
+
+**Asserções** (`scripts/governance-ci.test.mjs`, blob `5313dba`):
+
+| Exigência do C48 | Asserção (`file:line`) | Erro plausível que ela distingue |
+| --- | --- | --- |
+| (a) passos depois de `checkout`/`setup-node`, exatos | `:373-379`: `deepEqual(commands.slice(0, -1), [{run: "npm ci --ignore-scripts"}, …, {if: "matrix.os != 'windows-latest'", run: "npm run test:integrations"}])` | `env` nos outros sistemas; passo a mais ou a menos |
+| (a) ramo Windows só com `if`/`run` | `:381` `deepEqual(Object.keys(windows).sort(), ["if", "run"])`; `:382` `if` literal | `shell: pwsh -File {0}` ou `env:` |
+| (a) um só ramo por sistema da matriz | `:385-399`: só as formas `matrix.os ==/!= '<x>'`, com `[true, false]` em ubuntu/macOS e `[false, true]` no windows | sistema sem integrações ou com as duas |
+| (a) a única linha `npm` | `:402-408` `["npm run test:integrations"]` | argumento a mais (`--test-concurrency`, filtro) |
+| (a) só `RUNNER_TEMP`/`TEMP`/`TMP`; sem persistência | `:409-418` o conjunto exato; `:419-422` sem `GITHUB_ENV`, `GITHUB_PATH`, `SetEnvironmentVariable`, `setx` | variável extra ou escrita persistente |
+| (a) sem `env`/`defaults` no workflow e no `verify` | `:423-426` | `TEMP` no job ou no workflow |
+| (a) orçamentos | `:427-433`: `verify` `${{ matrix.os == 'windows-latest' && 20 \|\| 10 }}`, `changes` 5, `ci` 5, `lock_diagnostics` 10 | orçamento alterado |
+| (b) o `run` real do YAML, não uma cópia | `:444-450` lê `governance.yml` e acha o ramo pelo `if`; `:499` grava esse `windows.run` em `passo.ps1` e nos dois arquivos com aspas | teste que espelha um script copiado |
+| (b) pwsh do PATH, forma do runner, sem perfil | `:453-457` (o 1º `pwsh.exe` do PATH; `t.diagnostic`); `:507-512` `-NoProfile -NonInteractive -Command ". '<arquivo>'"` | outro shell |
+| (b) nunca o npm real | `:487-490` `npm.cmd` falso que chama o Node da prova; `:519-522` PATH = `bin` próprio + `System32` | npm real executado |
+| (b) válido + npm 0 | `:546-553` `{status: 0, npm: {argv: ["run", "test:integrations"], TEMP: runnerTemp, TMP: runnerTemp, RUNNER_TEMP: runnerTemp, SKILL_ME_SENTINELA: "inalterada"}}`; `TEMP`/`TMP` do pai são pastas distintas (`:466-468`, `:526-527`) | `TEMP` não trocado; argumentos alterados; variável alheia perdida |
+| (b) npm 17 → falha 1 | `:556` `{status: 1, npm: received}` | CI verde com falha do npm (M3/M4 do autor) |
+| (b) ausente, vazio, relativo, inexistente, arquivo → 1 sem npm | `:557-564` `{status: 1, npm: null}`, com rótulo; o relativo `"runner-temp"` existe no `cwd` do pwsh (`:514`, `:560`) | fallback; validar só com `Test-Path` |
+| (b) nada sobrevive ao passo | `:577-580` `GITHUB_ENV`/`GITHUB_PATH` vazios; `:581` `RUNNER_TEMP` só com `sentinela.txt`; `:582` `TEMP`/`TMP` do processo da prova iguais | persistência ou limpeza do `RUNNER_TEMP` |
+| 2º acréscimo: literal escapado | `:511` `` `. '${file.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'` `` | caminho com aspa que fecha o literal |
+| 2º acréscimo: dois arquivos com aspas, 0 → 0 e 17 → 1 | `:495-498` `passo ' literal.ps1` e `passo \u2018\u2019\u201A\u201B literal.ps1`; `:565-576` `{status: 0, npm: received}` e `{status: 1, npm: received}` por arquivo, com o nome como rótulo | escape só da ASCII; nomes sem aspa |
+| exceção ao C48 no `governance-C1 C3` | `:271-283`: a mesma lista dos cinco `run`, na ordem, sem o ramo identificado pelo `if` literal (`:274`). Fora isso, o diff só acrescenta os dois testes novos no fim; o C49 (`:316-364`) não mudou | lista enfraquecida |
+
+- **Executou**: em A e B, `✔ governance-C48 ramo Windows … no pwsh real` (`A.log:31`, 8,2 s; `B.log:31`) com `ℹ pwsh: C:\Program Files\PowerShell\7\pwsh.exe` (`:32`). As asserções são sequenciais, então todas, inclusive as dos dois arquivos com aspas, rodaram. Em C, `﹣ … # o ramo roda no pwsh do runner Windows; fora dele, só a estrutura (governance-C48 integrações)` (`C.log:31`), e o estrutural `✔`. No D, os dois `✔` (`D.log:34-36`).
+- **B com CRLF**: no clone com `core.autocrlf=true`, o workflow saiu `w/crlf` (111 CR) e foi lido e executado igual.
+- **O que não provo**: o passo no runner da CI (é da CI do novo HEAD), a causa física das falhas da CI86 e que elas deixam de ocorrer. O D é deste computador. Não alego prova física a partir do C local.
+
+## A falha do gate D — T8-C20 (verified at `5a0f231`; `r21/D.log:1118`, `:1164-1185`)
+
+- **Teste**: `tests/integrations/traces/docs.test.mjs:134-184`, da #8. Blob `d52de03` na base e no HEAD, sem diff na feature.
+  - Com o par manual e `SKILL_ME_CAPTURE_REPORT` num arquivo com espaço e acento, um `.lock` alheio (`:173`) e o hook Claude real (`:174-177`), a prova exige o hook com `[0, "", ""]` (`:178`) e depois a linha do diagnóstico igual ao exemplo do guia (`:179-183`).
+- **O que saiu**: `:178` passou. Em `:179`, `ENOENT: no such file or directory, open '…\sm-v21-D-9tan2b\skill-me i4 t8 c20 guia ação-JeYAtg\diagnóstico de entrega.ndjson'`. O teste levou 2,90 s; na R20, 1,94 s; no pf-D do autor, 2,33 s. Isso é observação, não causa.
+- **Caminho, por leitura**:
+  - `captureDeliveryFor` (`binding.mjs:68-84`) entrega pela captura manual e depois `publish` (`:78-82`).
+  - `appendDeliveryReport` corre a gravação contra o prazo (`delivery-report.mjs:35-45`), e `appendLine` engole qualquer erro (`:68-80`).
+  - O prazo do `flush` é a chamada + `REPORT_DEADLINE_MS` 1.000 ms (`observation.mjs:39`, `:118-122`), e o `settle` da entrega vem antes (prazo de 650 ms com o lock alheio).
+  - `delivery-report.mjs` (`42b759b`) e `observation.mjs` (`45192e7`) não mudaram na feature.
+  - No caminho, a feature mudou só `binding.mjs` (`7bb3f45`: a leitura do par `SKILL_ME_LAUNCH_*` antes do manual, ausente aqui) e `untilDeadline` (`322bcad`, `delivery.mjs:72-104`). Com o lock alheio o prazo inteiro, antes e depois de `322bcad` a entrega termina no prazo com `lock_present`, e eu não vejo mudança de duração. Isso é leitura, não medição.
+- **Não se sabe**: se a gravação perdeu a corrida com o prazo, se falhou em silêncio (código de E/S) ou se algo diferente ocorreu. A prova não usa a pré-carga de tempos, e o log não traz dados do hook. Os dois mecanismos são compatíveis com o código e com o contrato documentado (“o diagnóstico se perde e nada muda para o agente”, que a própria prova cita em `:153`), e nenhum foi demonstrado. Não atribuo a carga, antivírus, disco nem relógio.
+- **Histórico**: verde no D da R20 (`verifier-round20/r20/D.log:1115`), no pf-D do autor (`builder-ci86-temp/path-fix/pf-D.log:1118`) e na manual 40790906319 do Windows (`ci86-windows-manual40790906319.log:1243`). Não há `✖ T8-C20` em outro log de `.checks/code-review/issue-25/` (busca por `✖ T8-C20`). O único registro anterior de falha dele é da #8 (`issue-8-traces.build.md:1337-1341`): duas falhas do `Proof:` num sandbox local, com **outro sintoma** (`start: io_failure` na criação da captura), atribuídas pelo autor da #8 ao acesso do sandbox. Não é o sintoma desta rodada.
+- **Tratamento**: FAIL registrado, sem repetição, sem correção e sem reclassificação. A decisão do que fazer é do root e do proprietário.
+
+## Execuções — verified at `5a0f231`
+
+A ordem foi A, B, C e D, em sequência, cada um uma vez, sem filtro e sem repetição. O alvo e os orçamentos foram registrados antes (`r21/plan.txt`).
+- **Forma comum**:
+  - `RUNNER_TEMP` numa pasta própria, vazia antes e com 0 entradas depois;
+  - temporário dos testes numa raiz própria `sm-v21-<rótulo>-…`, criada por `mkdtemp` e registrada (caminho real, `dev`, `ino`), só no `TEMP`/`TMP` do processo do gate (A, B, D) ou no `TMPDIR` do scratch (C);
+  - `npm_execpath` ausente;
+  - `npm_config_update_notifier=false` no processo do gate, para o npm não consultar a rede. Isso não muda nenhuma asserção.
+- **PATH de A, B e D**: `C:\Program Files\PowerShell\7` na frente. É o pwsh oficial, o mesmo caminho do runner. Sem isso, o 1º `pwsh.exe` do PATH da sessão seria o do runtime do Codex.
+- **Scripts** (escritos por mim): `isolated-root.mjs`, `run-gov.sh`, `make-clone-B.sh`, `remove-clone-B.sh`, `wsl-run.sh`, `run-npm-test.sh`, `matrix.mjs` e `d-summary.mjs`.
+
+| # | Ambiente | Resultado |
+| --- | --- | --- |
+| A | Windows 11, checkout principal, Node **v24.22.1** (`C:\nvm4w\nodejs\node.exe`), npm 11.19.1; workflow e teste iguais aos blobs do HEAD. 22:43:11–22:43:26 | `npm run test:governance`: **27 testes, 27 pass, 0 fail, 0 skip**, exit 0. O caso nativo **executou** (`A.log:31-32`). Status vazio antes e depois; `RUNNER_TEMP` com 0 entradas. Raiz `sm-v21-A-uF9C8U` (1 entrada dos testes) conferida e removida pelo registro |
+| B | **Clone git novo** em `r21/B-clone` (`--no-hardlinks --no-checkout --config core.autocrlf=true`, sem rede; o `gitconfig` do sistema já tinha `true`; nada global mudou), HEAD `5a0f231`, árvore `1e28decc…` conferidos. Node **v24.13.0 oficial**: zip `ca274269…` igual à linha do `SHASUMS256.txt`, `node.exe` `d14ba95c…` igual ao do zip; npm **11.6.2** adjacente. `cli.mjs` `i/lf w/lf attr/text eol=lf`, **0 CR antes e depois**; workflow, `governance-ci.test` e `ci-lock-latency.test` `i/lf w/crlf`. Status vazio antes e depois do `node_modules` copiado. 22:43:56–22:44:41 | **27: 27 pass, 0 fail, 0 skip**, exit 0. O caso nativo **executou** (`B.log:31-32`). Status do clone vazio depois. Raiz `sm-v21-B-6q6vzu` (1 entrada) removida pelo registro. O clone foi removido pelo caminho exato, depois de conferir pasta não link, toplevel, HEAD e status vazio (`B-clone-cleanup.txt`) |
+| C | WSL `Ubuntu`, `oldboydev`, uid 1000. `git -c core.autocrlf=false archive` do HEAD: 6.451.200 bytes, sha256 `ad854885…`, `get-tar-commit-id` = `5a0f231…`. Árvore extraída `1e28decc…` = `HEAD^{tree}` (git com `HOME` do scratch e `GIT_CONFIG_NOSYSTEM`); 0 CR em `src/`, `tests/`, `scripts/` e `.github/`; `cli.mjs` 755. Node **v24.13.0** copiado de `/usr/bin/nsolid` (`150946e4…`, igual) num prefixo `node npm npx`, **sem `sh`**; npm 11.6.2. `env -i` só com `HOME`, `LANG`, `PATH`, `RUNNER_TEMP`, `TMPDIR` e `npm_config_update_notifier`. `PATH` = prefixo + `tools` (links para `/usr/bin/{sh,git,python3,id,grep,mkfifo}`), **sem `/usr/bin`**, sem `codex`/`claude`/`hermes`/`gemini`/`pwsh`. 22:45:00–22:45:05 | **27: 26 pass, 0 fail, 1 skip**, exit 0. O skip é o caso nativo, com o motivo do teste. Os 18 `C50` (inclusive a supervisão real de filhos) e o `governance-C49` rodaram. `RUNNER_TEMP` com 0 entradas. Scratch `/tmp/sm-v21-C.sEvW3y` removido pelo caminho exato, pasta não link, uid 1000 e inode 11462 |
+| D | `npm test`, sem argumentos, no checkout principal: Windows, Node v24.22.1, npm 11.19.1, Python 3.12.10, `SKILL_ME_HERMES_PYTHON` ausente, `availableParallelism` 32 → `MAX_PARALLEL_FILES = 8`. O script recusa começar com o checkout sujo; estava limpo. Orçamento de **2 h** (7.200.000 ms), definido no plano e passado à ferramenta. 22:45:29–22:55:59 | **1.057 testes: 1.036 pass, 1 fail, 20 skip**, **exit 1**, terminado sozinho. Por suíte: governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7, integrações 597/583/**1**/13. HEAD igual e status vazio antes e depois; `RUNNER_TEMP` com 0 entradas. Raiz `sm-v21-D-9tan2b` (128 entradas dos testes) removida pelo registro |
+
+**Nomes de A/B/C** (`r21/matrix-ABC.txt`): os 27 nomes de topo são iguais nos três e sem duplicado. São 9 `governance-…` e 18 `C50 …`. Há 26 `pass` em cada; o caso nativo é `pass` em A e B e `skip` em C.
+
+**D** (`r21/D-summary.txt`, comparado nome a nome com `verifier-round20/r20/D.log`):
+- **Contra a R20**: as linhas novas são os dois `governance-C48` `✔`. A única linha da R20 que não se repete é `✔ T8-C20 … o exemplo é o que um hook com lock ocupado grava`, que agora é `✖`. Nenhuma outra mudou de marca nem sumiu.
+- **Nomes por check**: cada prefixo de `I25-C1 ` a `I25-C47 ` tem ao menos um `✔`, salvo `I25-C6` e `I25-C15`, que no Windows só têm skip.
+  - Somam 28 `I25-C46` (7 `evidência comum`, 8 `prazo da entrega`), 6 `I25-C47`, 9 `T8-C16`, 3 `I4-C16`, `I4-C17`, `I4-C35`, `I4-C36`, `I4-C47`, 7 `I23-C4`, `I23-C10` e `T8-C2`/`C3`/`C8`/`C12`/`C13`/`C14`/`C15`/`C18`, todos `✔`.
+  - Os 9 `governance-…` e os 18 `C50` também passaram, com `RUNNER_TEMP` presente.
+- **Hermes** (`r21/D-hermes.txt`):
+  - os **11 nativos com runtime** passaram: `I4-C18`–`C23`, `C37`, `C44b`, `I25-C40 harness nativa` e os dois `I23-C8` com runtime (`D.log:622-631`, `:633`);
+  - o **ramo Hermes do `I4-C35`** passou (`:1077`), sem `observação Hermes não executada` nem `hermes-runtime-ausente` no log;
+  - o `I23-C8 … pelo Python do sistema` (`:632`) passou, mas não é runtime do Hermes.
+
+  A CI não tem o runtime do Hermes; lá os nativos não rodam.
+- **Skips (20)**: os mesmos da R20 em nomes e motivos.
+  - **Doctor (7)**, POSIX/FIFO: não rodaram em ambiente nenhum.
+  - **Integrações (13)**: `I4-C15`, `I4-C25b`/`j`/`k`, `I25-C5`/`C6`/`C15`/`C33`/`C42`/`C45` POSIX e `T8-C4` são **carry do C da R19** (`5ee0e0f`), com os blobs iguais. `I4-C25m` (macOS) e `I4-C25l` não rodaram em ambiente nenhum.
+- O D é Windows. Não o chamo de POSIX nem de macOS porque o C passou.
+
+## Checks — provas nomeadas: 50/50; gate completo: FAIL
+
+Fonte da prova:
+- **D21**: o nome real passou no D fresco desta rodada.
+- **G21**: fresco em A, B, C e D (governança).
+- **R19/R20**: A/B/C cross-platform carregados por identidade de blob (`5ee0e0f`/`6eb09ef`).
+
+As citações dos arquivos sem diff são as da R20, com as mesmas linhas, porque os blobs são iguais. As de `governance-ci.test.mjs` foram renovadas no HEAD.
+
+| Check | Asserção decisiva (`file:line` no HEAD) | Prova | Result |
+| --- | --- | --- | --- |
+| C1 | `command.cli:48-49` `private`/`bin`; `:65` `[0, SKILL_ME_HELP, ""]`; `:77` `gitStatus() === before` | D21; ABC R19 (B em clone `autocrlf=true`). O B desta rodada conferiu de novo o bin LF/0 CR antes e depois | provado |
+| C2 | `command.cli:96-98` `argv: LITERAL_ARGS` | D21; ABC R19 | provado |
+| C3 | `command.cli:105` `{0: 0, 7: 7}` | D21; ABC R19 | provado |
+| C4 | `command.cli:130-133` 127 `launcher_requires_shell`; `agent.unit` `I25-C4` | D21 (3 `✔`); ABC R19 | provado |
+| C5 | `command.cli:228` POSIX; `:244-245` `CTRL_C_EVENT` → `["SIGINT"]` | console em D21; POSIX em C R19 | provado |
+| C6 | `command.cli:267` `signals: ["SIGTERM"]` | C R19 (skip POSIX no D) | provado |
+| C7–C14 | `prepare.cli:93-94`, `:122-126`, `:163-168`, `:189-191`, `:200`, `:223`, `:238`, `:250` | D21; ABC R19 | provado |
+| C15 | `prepare.cli:408` (pty) | C R19 (skip no D) | provado |
+| C16–C23 | `session.e2e:67`, `store.unit:79`, `session.e2e:111`, `:161`, `:190-192`, `:208-211`, `:230`, `:282` | D21; ABC R19 | provado |
+| C24 | `store.unit:168` | D21; ABC R19 | provado |
+| C25–C28 | `end.e2e:80-89`, `:101-109`, `:120` (e `store.unit` `I25-C27`), `:164-165` e `:194` `["EIO"]` | D21; ABC R19 | provado |
+| C29–C31 | `command.cli:278`, `:342`; `end.e2e:205-215` | D21; ABC R19 | provado |
+| C32 | `end.e2e:320`; `store.unit:715` | D21 (9 `✔`); ABC R19 | provado |
+| C33 | `end.e2e:460`; `:493-494` (arranjo POSIX) | D21; arranjo em C R19 | provado |
+| C34–C35 | `report.cli:159`, `:252-259` | D21; ABC R19 | provado |
+| C36–C38 | `command.cli:350`; `docs.test:82` (os limites); `prepare.cli:355` | D21; ABC R19 | provado |
+| C39–C40 | `hermes-harness.unit:90`; `:220`, `:320`, `:324`, `:327`; nativo `hermes-plugin.native:336` | D21 (os 11 nativos, `harness nativa`, `fixture do plugin`); ABC R19 | provado |
+| C41–C45 | `store.unit:327-523`, `end.e2e:518`; `agent.unit` `I25-C42`, `command.cli:456`/`:424`; `store.unit:598`; `hermes-harness.unit:288`, `:291`; `agent.unit:132-146`, `command.cli:166-186` | D21 (17, 3, 12, 3, 2 `✔`); POSIX em C R19 | provado |
+| C46 | T8-C15 `concurrency.cli:220`, `:234`, `:256`; (a)–(c) `:283`–`:360`; (d)–(g) `live-capture:341`, `:348`, `:356`, `:367`, `replay.unit:161`, `:100`; (h) `live-capture:227-248`; (i) `follow.cli:195`, `:203-206`; (j) `:215`, `:225-236`; (k) `evidence.unit:54-148`; (l) `failure-matrix.cli:116-119`; (m) `evidence.unit:254-263` e `:287-298` (`:297` `processo 3 de 3`); (n) `:303-305`, `:312`; (o) `delivery.unit:52-113`; (p) `concurrency.cli:956-1018`, T8-C16 `:920-928`; (q) `codex-run.cli:289-348` | D21 (28 `I25-C46`, 9 `T8-C16`, T8-C2/C3/C8/C12/C13/C14/C15/C18 e o controle positivo do C46 em `concurrency.cli:1008`); ABC R19/R20 | provado |
+| C47 | I23-C10 `agents.e2e:315`; (a) `:427`, `:429`; (b) `:442`, `:444`; (c) `control.cli:1071-1077`; (d) `:1097-1105`; `evidence.unit:150-225` | D21 (6 `✔`, 7 `I23-C4` incluindo `:547` e `:906`); ABC R19/R20 | provado |
+| **C48** | estrutura contra `d0d5a7f` (acima); `governance-ci:373-433` (estrutural), `:444-582` (nativo), `:511` (escape), `:565-576` (aspas); `governance-C1 C3` `:271-283` | **G21**: A/B executado, C estrutural + skip com motivo, D os dois `✔` | **provado (fresco)** |
+| C49 | `governance-ci:322-329` (chaves do job), `:330-334`, `:337-348` (mesmos `uses`, `persist-credentials: false`, Node 24.13.0 sem cache, os dois comandos), `:350-356` (`ci.needs`, sem `needs`/`continue-on-error`), `:359-362` (`test:governance`); `:299-304` (jobs = os quatro) | **G21** | **provado (fresco)** |
+| C50 | `ci-lock-latency.test:127` (percentis/faixas exatos), `:68` e `:137` (sem amostras), `:160-161`, `:187` (caminhos/fases), `:190-215` (E/S), `:217-240` (teto, término parcial), `:247` (protocolo), `:250-303` (limpeza; `:303` `{removidas: 2, recusadas: [], falhas: ["EBUSY"]}`), `:315-373` (início parcial `EEXIST`, erro assíncrono `ENOENT`), `:377` (fronteira real 15/15), `:393-396` (relatório), `:406-434` (fonte do `RUNNER_TEMP`), `:443` (constantes 3/500/3/65.536/120.000) | **G21**: 18 `✔` em A, B, C e D, com `RUNNER_TEMP` presente | **provado (fresco)** |
+
+- **Critérios não reduzidos**: as constantes do contrato estão no código sem diff:
+  - `DELIVERY_DEADLINE_MS = 750` e `ATTEMPT_MS = 750 − 100` (`traces/delivery.mjs:12`, `:17-18`);
+  - `HOOK_STDIN_DEADLINE_MS = 2000` (`hook-command.mjs:7`);
+  - a faixa 1.900 ≤ ms < 6.000 do I4-C36 (`failure-matrix.cli:83`, `:119`);
+  - `settleMaxMs`, com padrão 5.000 (`settle.py:41`; `hermes-harness.unit:213`);
+  - `PRIVACY_LIMITS` 500 eventos/8 MiB (`privacy/lifecycle.mjs:5`);
+  - `MAX_PARALLEL_FILES = 8` (`test-integrations.mjs:14`).
+
+  Testes funcionais, eventos, payloads, contagens, argumentos, perdas, retry e concorrência estão nos blobs iguais. O diff de `governance-ci.test` só acrescenta testes e adapta o filtro da lista do C1 C3, como a exceção fixa. Os jobs 20/10/5 e o manual 10 são afirmados em `:427-433`.
+- **AC → checks** (9 ACs): AC1–AC6 com C1–C45; AC7 com C46; AC8 com C47 e C48; AC9 com C49 e C50. **O gate completo exigido no AC6/S6 e no despacho falhou** (T8-C20). A execução remota da medição e os cinco checks regulares continuam como condição de merge.
+
+## Swept `existing` (carry R20/R19; `src` igual)
+
+As linhas são as da R19 e da R20, com os blobs iguais:
+- idempotência: `privacy/lifecycle.mjs:23-24`;
+- sem reenvio: `traces/delivery.mjs:57`, `:123`;
+- falha de entrega não bloqueia: `traces/delivery.mjs:156`;
+- `privacy prune`: `privacy/command.mjs:56-57`.
+
+## Observações (não bloqueantes; nada corrigido)
+
+- **O1 — prefixo e sufixo do runner fora da prova nativa.** O runner acrescenta `$ErrorActionPreference = 'stop'` antes e `if ((Test-Path -LiteralPath variable:\LASTEXITCODE)) { exit $LASTEXITCODE }` depois de cada script `pwsh`. A prova (`:499`, `:507-512`) roda só o `run` pela forma `-Command ". '<arquivo>'"`, que é a que o C48 (b) fixa.
+  - Pela leitura, nos casos afirmados o resultado não muda. O `throw` já encerra o script, e o `exit $LASTEXITCODE` encerra antes do sufixo. Com a preferência `stop`, um npm 17 que virasse erro terminante sairia 1 do mesmo jeito.
+  - A sondagem do autor com o prefixo e o sufixo deu os mesmos códigos (checklist `:1901-1902`). Isso é atribuído ao autor, não executado por mim.
+  - Um caso fora do contrato (npm ausente no PATH) daria 1 no runner por causa do `stop` e não é exercitado pela prova. É só nota.
+- **O2 — anteriores**: as observações O1–O2 da R20, as O1–O3 da R19 e as O2–O5 da R17 continuam como estão. O código delas não mudou.
+
+## Gates remotos — pendentes e obrigatórios (nenhum ocorreu aqui)
+
+Com este FAIL, a ordem aprovada não avança daqui:
+1. PASS de uma verificação independente;
+2. formal 13;
+3. publicação;
+4. **uma** execução manual com a medição nos padrões originais;
+5. os **cinco checks regulares verdes** nas matrizes PR e manual do HEAD aprovado;
+6. o merge, já autorizado só com tudo isso.
+
+Pelo registro 21/13, o HEAD publicado continua `86c7677`. O PR 40790722204 verde e a manual 40790906319 vermelha no Windows e no agregado ficam **como história**. A medição saudável de `86c7677` não cumpre a do novo HEAD. Não disparei nada e não declaro verde nenhuma CI futura.
+
+## Processo, limites e limpeza da R21
+
+**Executado.**
+- **git**, só de leitura: `rev-parse`, `status`, `log`, `diff`, `ls-files --eol`, `grep`, `check-ignore`, `merge-base`, `hash-object` e `get-tar-commit-id`. Também:
+  - `git -c core.autocrlf=false archive` do HEAD para `r21/head.tar`;
+  - um `git clone --no-hardlinks --no-checkout --config core.autocrlf=true` do repositório local, sem rede, com a configuração só no clone.
+- **Leitura**: `node` só de leitura (contexto, config, logs, auditoria), `sha256sum`, `python -I` (sha do zip oficial e CR) e `stat`. Depois do D, uma consulta `Get-CimInstance Win32_Process` pelo Windows PowerShell 5.1 (`powershell.exe -NoProfile`, com `POWERSHELL_TELEMETRY_OPTOUT=1`), filtrada por `node`/`pwsh`/`python`/`cmd` com o repositório ou `sm-v21` na linha de comando: nenhum processo.
+- **Gates**: A, B, C e D, uma vez cada, sem repetição. O WSL foi chamado com `wsl.exe -d Ubuntu -u oldboydev --exec /bin/bash --noprofile --norc` e `MSYS_NO_PATHCONV=1`. Fora do gate, só versões e caminhos de sistema, nada do perfil.
+- **Modo do D**: o orçamento de 2 h só é aceito com `run_in_background`, e usei esse modo só por isso. Esperei o término real com um laço em primeiro plano que lia só `r21/D-run.txt`. Durante o D não rodei nada que tocasse o checkout. A ferramenta guardou a própria cópia da saída (`…\tasks\buct0y8ha.output`); não a li nem apaguei.
+
+**Incidentes meus** (`r21/incidents.txt`):
+1. **pwsh sem opt-out (22:41)**. Numa listagem de ferramentas, antes dos gates, o comando incluiu por engano `"/c/Program Files/PowerShell/7/pwsh.exe" -? >/dev/null 2>&1`. Isso iniciou uma vez o pwsh oficial com o ambiente da sessão, sem `POWERSHELL_TELEMETRY_OPTOUT`/`POWERSHELL_UPDATECHECK`. O eco seguinte (“não executei pwsh”) estava errado. Nenhum conteúdo do repositório foi passado. Não verifiquei se houve telemetria ou checagem de versão e não afirmo que não houve. Foi o único pwsh fora das provas versionadas, cujo filho desliga as duas coisas.
+2. **Arquivo na raiz do checkout (22:57:44–22:57:53)**. Depois do fim real do D (22:55:59), a conferência pós-D gravou `post-D-checks.txt` na raiz do checkout em vez de `r21/` (diretório atual errado). Conferi que era o meu (regular, não link, carimbo meu) e o movi para `r21/`. O status voltou a vazio. Não alcançou nenhum gate, e nenhum rastreado mudou.
+
+**Não executado.**
+- RED, mutantes, sondas, testes novos e a sondagem do pwsh do autor (com o prefixo e o sufixo).
+- Agentes reais, `--help`/`--version` de agente, perfis, credenciais, banco, modelo, rede (salvo o incidente 1), relógio do host, antivírus, Git global, TEMP global e runtimes fora das provas. O Hermes real rodou só pelas provas nativas versionadas do D.
+- Actions, CI, `review:run`, commit, push, PR, merge, alteração de limites e subagentes.
+- **Os 43 arquivos de integração da lista da R19 em A/B/C** não rodaram aqui. São carry com os blobs iguais: 42 da R19 (`5ee0e0f`) e `evidence.unit` da R20 (`6eb09ef`). O D desta rodada os rodou no Windows. Os skips POSIX do D também não rodaram aqui; são carry do C da R19.
+- **Incidentes anteriores**: o incidente da R5 (`ffc5937`: até 5 inícios do Codex no WSL e 12 mtimes sem linha de base de conteúdo) não foi desfeito nem repetido. A limpeza antiga (1.257 pastas no Windows e 107 no WSL, por prefixo/tipo/janela, sem prova de proveniência, sem os nomes do Windows) e os dois auxiliares `/tmp/d4.skips`/`/tmp/d-old.skips` no temporário global do Windows, sem inventário anterior, ficam como estão. Também fica o incidente de telemetria do autor (checklist `:1956-1961`). Não li, apaguei nem restaurei nada disso, e não afirmo impacto zero.
+
+**Auditoria externa 21 (do root, só metadados do perfil WSL).** `../profile-comparison-final.json` foi gravado pelo root às 22:56:56, depois do fim do meu D (22:55:59). Eu o li às 22:58:06, só no nível superior (`r21/profile-summary-external.txt`), sem abrir `profile-before.json`, `profile-final.json`, `profile-target-check.json` nem listas de entradas:
+- **escopo declarado**: “External metadata-only audit from the Round20 final snapshot before the CI-temp author through completion of independent Round21 proofs; not a content audit, not temporary-file provenance, or undo for Round5”;
+- **janela**: linha de base às 20:41:38 (-03), o fechamento da R20, que inclui a formal 12 e todo o autor; fechamento às 22:56:55 (-03);
+- **resultado**: `baselineEntries` 12.113, `afterEntries` 12.113, e `errors`, `added`, `removed` e `modified` vazios.
+
+É resultado externo do root, não meu. Pelo escopo que ele declara, não é auditoria de conteúdo, de temporários, do Windows nem de configuração global, e não desfaz a R5.
+
+**Limites.**
+- **macOS**: o `I4-C25m` não rodou em ambiente nenhum.
+- **D no Windows**: os 7 skips do doctor e o `I4-C25l` não rodaram em ambiente nenhum.
+- **Runtime do Hermes**: só no D.
+- **C desta rodada**: só a governança.
+- **Causas**: as históricas (CI 93, CI86, T8-C4, o D interrompido de `dc0db9b`) e a do T8-C20 deste D continuam desconhecidas.
+
+**Limpeza** (`A-run.txt`, `B-run.txt`, `B-clone-cleanup.txt`, `C.run.txt`, `D-run.txt`, `post-D-checks.txt`):
+- as raízes `sm-v21-A`/`B`/`D` foram removidas só pelo registro (caminho real absoluto, filha direta do temporário, nome, pasta não link, mesmo `dev`/`ino`), e estavam ausentes na conferência pós-D;
+- o scratch do C foi removido por caminho exato, uid 1000 e inode;
+- o clone do B, por caminho, toplevel, HEAD e status;
+- `runner-temp-A`/`B`/`D`, vazias, por `rmdir`;
+- nenhuma seleção por prefixo ou mtime, e nenhum auxiliar no `/tmp` (Git Bash ou WSL) nem no temporário global. Logs, tar, scripts e a cópia do `.verified.md` anterior ficam em `r21/`;
+- nenhum processo meu ficou vivo, e nenhum alheio foi encerrado.
+
+**Integridade do histórico abaixo.** O texto depois da linha `---` que fecha esta rodada (e da linha em branco seguinte) é, byte a byte, o `.verified.md` de `86c7677`, o mesmo no HEAD: blob `444a2e2`, 256.130 bytes, sha256 `e8708e83…`, 0 CR (`r21/verified-integrity.txt`). Nele estão o **PASS 20** (50/50 em `6eb09ef`), o **FAIL 19** e os relatórios anteriores, sem rebatizar nenhum resultado.
+- O PASS 20 estava certo para `6eb09ef`.
+- Este FAIL 21 é do conteúdo de `5a0f231`. A mudança nova (C48) está provada, mas o gate completo fresco teve uma falha.
+
+---
+
 # Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 20)
 
 **Verdict (R20)**: **PASS — 50/50 checks provados como escritos**, 9 ACs, HEAD `6eb09ef`. O F1 da R19 (C46 (m)) está resolvido pela prova nova da 3ª linha, com valores literais. O caso da 1ª linha continua intacto, como controle. Nenhum gate fresco falhou, e o produto não mudou desde `322bcad`.
