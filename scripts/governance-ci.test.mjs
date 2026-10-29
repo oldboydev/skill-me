@@ -489,14 +489,27 @@ test(
         `@"${process.execPath}" "${fakeNpm}" %*\r\n`,
       );
       const script = path.join(scratch, "passo.ps1");
-      writeFileSync(script, windows.run);
+      // Um caminho Windows válido pode ter aspa simples, inclusive as tipográficas
+      // que o PowerShell também lê como aspa; os casos válidos rodam o mesmo `run`
+      // também de arquivos assim.
+      const quoted = [
+        "passo ' literal.ps1",
+        "passo \u2018\u2019\u201A\u201B literal.ps1",
+      ].map((name) => path.join(scratch, name));
+      for (const file of [script, ...quoted]) writeFileSync(file, windows.run);
       const parent = { TEMP: process.env.TEMP, TMP: process.env.TMP };
-      const step = (runnerTempValue, npmCode) => {
+      const step = (runnerTempValue, npmCode, file = script) => {
         rmSync(record, { force: true });
         const result = spawnSync(
           pwsh,
-          // A forma do runner, `pwsh -command ". '{0}'"`, sem perfil.
-          ["-NoProfile", "-NonInteractive", "-Command", `. '${script}'`],
+          // A forma do runner, `pwsh -command ". '{0}'"`, sem perfil. No literal
+          // de aspas simples, cada aspa simples que o PowerShell reconhece vai dobrada.
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `. '${file.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'`,
+          ],
           {
             cwd: scratch,
             encoding: "utf8",
@@ -549,6 +562,18 @@ test(
         ["arquivo", sentinel],
       ])
         assert.deepEqual(step(value, 0), { status: 1, npm: null }, label);
+      for (const file of quoted) {
+        assert.deepEqual(
+          step(runnerTemp, 0, file),
+          { status: 0, npm: received },
+          path.basename(file),
+        );
+        assert.deepEqual(
+          step(runnerTemp, 17, file),
+          { status: 1, npm: received },
+          path.basename(file),
+        );
+      }
       assert.deepEqual(
         [readFileSync(githubEnv, "utf8"), readFileSync(githubPath, "utf8")],
         ["", ""],
