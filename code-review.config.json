@@ -16,20 +16,25 @@
     }
   },
   "roundOverrides": {
-    "3": {
-      "profile": "light",
-      "maxRounds": 9,
-      "approval": "Proprietário autorizou em 13/10/2026: pode fazer as revisoes necessarias. Registro em .checks/issue-3-agent-diagnostics.linux.md; exclusivo da issue #3, preservando histórico."
-    },
     "4": {
       "profile": "light",
       "maxRounds": 10,
       "approval": "Proprietário autorizou em 17/10/2026: use quantas rodadas precisar. Registro e autorização de merge em .tasks/issue-4-integracoes.md; exclusivo da issue #4, preservando o histórico e o máximo de 10 suportado pelo motor."
     },
+    "3": {
+      "profile": "light",
+      "maxRounds": 9,
+      "approval": "Proprietário autorizou em 13/10/2026: pode fazer as revisoes necessarias. Registro em .checks/issue-3-agent-diagnostics.linux.md; exclusivo da issue #3, preservando histórico."
+    },
     "5": {
       "profile": "light",
       "maxRounds": 10,
       "approval": "Proprietário autorizou em 18/10/2026: autorizo quantos precisaram para resolver. Registro literal em .checks/issue-5-privacidade.approval.md e .tasks/issue-5-privacidade.md; exclusivo da issue #5, preservando histórico e usando o máximo de 10 suportado pelo motor. Merge permanece humano."
+    },
+    "8": {
+      "profile": "light",
+      "maxRounds": 3,
+      "approval": "Proprietário autorizou em 19/10/2026 a terceira tentativa formal da issue #8 após falha técnica de capacidade do modelo na segunda; registro em https://github.com/oldboydev/skill-me/issues/8#issuecomment-6265279482. Exclusivo da issue #8, preservando as duas tentativas anteriores. Merge permanece humano."
     },
     "6": {
       "profile": "light",
@@ -40,11 +45,6 @@
       "profile": "light",
       "maxRounds": 35,
       "approval": "Proprietário autorizou até 35 tentativas formais exclusivas da issue #7 após consumir as 30 anteriores, preservando todo o histórico e mantendo os pilotos intocados; registro em https://github.com/oldboydev/skill-me/issues/7#issuecomment-6342492981. Revisões adicionais somente conforme necessárias; push, PR e merge somente após verificação atualizada e status ready."
-    },
-    "8": {
-      "profile": "light",
-      "maxRounds": 3,
-      "approval": "Proprietário autorizou em 19/10/2026 a terceira tentativa formal da issue #8 após falha técnica de capacidade do modelo na segunda; registro em https://github.com/oldboydev/skill-me/issues/8#issuecomment-6265279482. Exclusivo da issue #8, preservando as duas tentativas anteriores. Merge permanece humano."
     },
     "23": {
       "profile": "light",
