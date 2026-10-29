@@ -950,3 +950,37 @@ publicação, a medição manual e os cinco checks verdes antes do merge já aut
 
 Detalhes no bloco S14 do `Handoff` e no build. Pendentes: a verificação independente 25, a formal 14, a publicação, a
 medição manual e os cinco checks verdes. Não é PASS global.
+
+## Lock tardio na prova do C46 (p) — 29/10/2026 (F1 da verificação 25; item do refinamento do critério 38 de `cd4afc2`; sem critério novo)
+
+A verificação independente 25 terminou **FAIL** em `80cfccf` (relatório preservado em `8545051`): A 643/630/0/13 natural,
+B 643/628/2/13 natural, C e D não executados. **F1**: no B, o `I25-C46 prazo da entrega: lock obtido com o relógio no prazo ou
+depois…` (`concurrency.cli.test.mjs:992`) viu `[3, 1]` em vez de `[3, 2]` liberações logo depois da entrega, com o relatório
+certo. **F2**: o T8-C8 perdeu as 2 entregas do wrapper Codex com `delivery_timeout`, depois de um `open lock` de 26,7 s.
+
+Um probe em processo, só com interfaces públicas e o `io`/`clock` já injetáveis, rodou uma vez em cada Node (Windows 24.22.1
+e 24.13.0, 117 entregas cada, 0 divergências). Ele demonstrou, **em reprodução controlada**, que o mesmo `[3, 1]` sai quando o
+timer real resolve a corrida com a operação do store ainda em voo; a liberação termina depois, sem nova tentativa nem
+gravação. Com a liberação falhando, o estado fica e a forma nova da prova continua vermelha. Sem intervenção (200 entregas),
+as 2 liberações já estavam concluídas no retorno, o que não prova quem resolveu a corrida. O que ocorreu no B — o timer em voo
+ou uma liberação que falhou — **não está discriminado**.
+
+A correção é só da prova, dentro da regra já aprovada (plano `:73`): esperar, com o apoio existente, o fim da liberação antes
+das mesmas asserções exatas, com um diagnóstico só descritivo e o nome do teste verdadeiro (“antes do `onLock`”, que o roteiro
+garante, em vez de “antes de o timer rodar”, que ele não controla). Produto, apoios, prazos (750/650 ms, 10 ms), cargas,
+contagens, política de perdas, o `delivery.unit` (que prova o defeito 2 de forma determinística) e o T8-C8 não mudam.
+Detalhes: linha “Fim da liberação esperado na prova do lock tardio” do Landing, refinamento F1 da verificação 25 do C46 (p) e o
+bloco “Lock tardio na prova do C46 (p)” do `Handoff`.
+
+**Limites.** Esta espera não corrige nem demonstra a causa do vermelho do B, e o item deste refinamento que pede causa
+demonstrada para uma correção (`:332-334`) fica registrado como tensão para o coordenador: aqui se sincroniza a prova com o
+contrato, sem mudar o produto. O F2 continua FAIL com causa física desconhecida; as provas da identidade nova incluem o T8-C8
+inalterado, o que não resolve o F2 histórico. Não muda o veredito da R25 nem dispensa a verificação independente 26, a formal
+14, a publicação, a medição manual e os cinco checks verdes antes do merge já autorizado.
+
+**Decisão do coordenador Root sobre a tensão registrada (antes do código).** A causa do defeito que esta fatia corrige
+é demonstrada: nos 32 controles K1–K3, um caminho permitido pelo contrato devolve o relatório enquanto a operação ainda
+está em voo, e a asserção síncrona acusa falta da segunda liberação; depois da conclusão, todas as mesmas pós-condições
+são verdadeiras. Os dois K4 continuam recusados. Isso autoriza sincronizar a prova, preservando o critério 38. Não
+autoriza atribuir ao B histórico H1 em vez de H3, nem declarar corrigidas as duas falhas daquele gate. A falha real de
+limpeza continua vermelha, o F2 não muda e a identidade nova exige provas próprias que incluam ambos os casos.

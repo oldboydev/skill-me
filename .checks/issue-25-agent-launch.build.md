@@ -3399,3 +3399,47 @@ o produto `13ecc07` e as provas da S13 são os mesmos, por identidade.
   efetivos são 30 min em A/B/C e 2 h no D.
 - Produto `13ecc07` sem mudança, e as provas da S13 valem por identidade.
 - Nada disto é PASS global, `ready` ou CI verde.
+
+## Lock tardio na prova do C46 (p) (F1 da verificação 25; refinamento do C46 (p)) — diagnóstico e probe, antes do código
+
+Autor/diagnosticador Claude novo (S15), não o autor S13/S14 nem o Verifier 25. Linha “Fim da liberação esperado na prova do lock
+tardio” do Landing; detalhes no bloco “Lock tardio na prova do C46 (p)” do `Handoff`. Arquivos em
+`.checks/code-review/issue-25/builder-round25-diagnostic/`: `findings.md` (hipóteses, método e retificação 1), `probe.mjs`
+(SHA `8e8f31ac…`), `probe-{A,B}.log`, `probe-{A,B}-result.json`, `-claimed.json`, `-identity.json` e o resumo de metadados do
+Root `probe-summary-root.json` (não é prova nova).
+
+### Execuções (controlador do Root `worker-guard/diagnostic25-controller.mjs`, manifesto `diagnostic25-probe-manifest.json`)
+
+| Etapa | Node | Período (UTC) | Resultado |
+| --- | --- | --- | --- |
+| A | Windows v24.22.1 | 21:18:10–21:18:48 | `--check` 0; exit 0 natural; 117 entregas; 0 divergências |
+| B | Windows v24.13.0 (zip conferido) | 21:18:51–21:19:31 | `--check` 0; exit 0 natural; 117 entregas; 0 divergências |
+
+Iguais nas duas versões:
+
+| Caso | Entregas | Estado no retorno de `settle()` | Relatório | Liberações no retorno → depois | Tempo da entrada ao retorno | Atual × nova |
+| --- | --- | --- | --- | --- | --- | --- |
+| K0 sem intervenção, as 4 iterações | 100 | 2 liberações concluídas, nada em voo (sem vencedor) | o código de cada iteração, 1/0/0/1 | 2 → 2 | A 4–48,2 ms; B 5,3–45,3 ms | passa × passa |
+| K1 `rmdir` da reserva parado | 8 | em voo: `rmdir` da reserva | `lock_present` ou `delivery_timeout`, 1/0/0/1 | 1 → 2 (espera 30–31 ms) | A 660,5–687,3; B 658,0–688,3 ms; **≤ 750 nas 16** | falha × passa |
+| K2 criação do lock parada | 4 | em voo: `writeExclusive` do lock | `lock_present` 1/0/0/1 | 1 → 2 | A 679,1–693,5; B 678,7–686,1 ms (só registrado) | falha × passa |
+| K3 laço bloqueado 700 ms, sem disco lento | 4 | em voo: `mkdtemp` da reserva | `lock_present` 1/0/0/1 | 1 → 2 | A 720,9–733; B 722–738 ms (só registrado) | falha × passa |
+| K4 `rmdir` da reserva com EPERM simulado | 1 | passo do lock com erro, nada em voo | `lock_present` 1/0/0/1 | 1 → 1 (espera esgotou: 15.014 / 15.019 ms) | A 39,3; B 35,4 ms | falha × **falha** |
+
+Em todas: nenhuma criação a mais, nenhum `.lock` no fim, árvore da captura igual, `persisted` 0, export vazio; a única sobra
+é a reserva vazia do K4, efeito esperado da falha.
+
+### Leitura e limites
+
+- Demonstrado só em reprodução controlada: o timer real que resolve a corrida com a operação em voo produz o `[3, 1]` do B,
+  e a tentativa devolve o lock depois, sem gravar nem repetir (classe H1a/H1b). O B não está discriminado entre H1 e H3
+  (liberação que falhou); não guardou o estado do io.
+- O K0 (200 entregas) não reproduz o B e, com 2 liberações no retorno, não diz quem resolveu a corrida.
+- O ≤ 750 ms do K1 vem com o relógio injetado parado em 0, em que o produto não garante esse limite; a menor folga foi
+  ~62 ms. K2 e K3 não têm limite: são experimentos controlados.
+- O RED é comportamental, do probe (forma síncrona × forma sincronizada); não há RED natural do teste versionado.
+- Processo: só os dois comandos do controlador foram executados. Uma tentativa minha de `node -e` para resumir os logs foi
+  bloqueada pelo guard antes de executar. O controlador confere o SHA do Node antes do spawn (não depois) e as fontes, HEAD e
+  status antes e depois; raízes retidas, sem limpeza; não é controle de sistema de arquivos do SO.
+- F2 (T8-C8): FAIL com causa física desconhecida, fora do probe, sem nenhuma mudança.
+- Nenhum produto, teste, apoio ou prazo mudou nesta etapa. Pendentes: a edição de `concurrency.cli.test.mjs` e os gates do
+  autor (bloco do `Handoff`), a verificação independente 26, a formal 14 sem uso. Nada é PASS, `ready` ou CI.
