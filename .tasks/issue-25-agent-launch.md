@@ -803,3 +803,37 @@ mediu (1 de 5 gravou a linha).
 Se uma falha futura do T8-C20 mostrar, com essa evidência, a gravação parada até o prazo sob carga, a prova
 positiva continuaria dependente do melhor esforço; resolver isso exigiria renegociar prazo, carga ou asserção, o
 que fica com o coordenador e o proprietário.
+
+## Ciclo de vida do `follow` no T8-C19 — 29/10/2026 (CI de `066bd98`; sem critério novo)
+
+Na CI do HEAD publicado `066bd98` (Verifier 22 PASS, formal 13 `ready`), o PR 40814315171 falhou só no I23-C6
+Claude (`delivery_timeout` do produtor 7, `sync key` 601 ms; não é defeito do produto demonstrado), e a execução
+manual 40814471097 teve o Windows cancelado no teto de 20 min, sem totais das integrações. Dos 1.059 rótulos do PR,
+39 não saíram, a partir do `T8-C19 trace walkthrough`.
+
+**Diagnóstico** (sondas próprias numa cópia do HEAD, com o T8-C19 instrumentado só na cópia; detalhes na linha
+“Ciclo de vida do `follow` no T8-C19” do Landing e no build): numa falha do T8-C19 antes do `stop`, o filho
+`privacy follow` continua vivo até a limpeza do arquivo apagar a pasta, o que o encerra por acaso; em 1 de 20 a
+limpeza colidiu com ele (`ENOTEMPTY`), e, quando ela não o alcança, o processo do arquivo fica vivo e o reporter
+retém os resultados dos arquivos seguintes. Nenhuma falha natural prendeu o processo. A causa do cancelamento
+continua desconhecida: o log não distingue entre o processo do `delivery.unit` (último arquivo impresso) ainda vivo,
+o T8-C19 sem terminar ou o `demo.e2e` sem começar.
+
+**Decisão** (dentro das autorizações 6467154706 — “Pode fazer a medição comparativa. Mantém os testes e prazos e
+segue até a CI ficar toda verde para fazer o merge do PR #28.” — e 6442514838 — “Pode fazer quantas precisar”): a
+correção fica só na harness do T8-C19. O corpo vira uma rotina do próprio arquivo, e o follow que ela inicia é
+encerrado pelo próprio objeto, com o `close` real esperado, em toda saída da rotina, sem engolir a falha. Um controle
+com a injeção existente da pré-carga no hook prova o mesmo erro e o follow já fechado quando a falha sai. O T8-C19,
+o produto, os prazos, as cargas, as contagens, o paralelismo e o runner não mudam. O C46 recebe o refinamento (s).
+
+Alternativas rejeitadas: `t.after` ou o `after` do arquivo (dependem do fim do corpo ou da limpeza); só enviar o
+sinal; encerrar pelo pid, pela árvore ou por prefixo; `--test-force-exit` ou timeout novo; apoio comum com o
+`follow.cli.test.mjs`, que tem o mesmo padrão e fica fora desta fatia (comunicado, não corrigido).
+
+**Pendente com o coordenador — observação do runner** (proposta, não implementada): esta correção não localiza o
+pendente de uma futura execução cancelada. A menor observação medida é um 2º reporter em `scripts/test-integrations.mjs`,
+com destino stderr, que imprime uma linha com a hora para cada `test:dequeue` e `test:complete` de nível 0 (arquivo e
+teste de topo), mantendo o reporter padrão em stdout, a seleção, o teto 8/CPU−1, os atores e o código de saída. Esses
+eventos chegam a um reporter em tempo real, enquanto os resultados ficam retidos na ordem dos arquivos (sondado).
+Toca o runner das integrações e as provas da governança dele, fora desta fatia, e exige Landing e prova antes do
+código.
