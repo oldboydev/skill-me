@@ -696,6 +696,12 @@ follow no T8-C19: …`):
   declarado nesse trecho é lido depois (`lines.slice(0, 5)` contra `exported.records`); fechar o `try` antes exigiria
   tirar o `const` dessa linha. No caminho positivo nada muda: o follow já fechou com 0 nessa asserção, e o `finally`
   só espera o `close` já ocorrido, sem sinal.
+- **Acréscimo do autor depois do código** (gates B e C; o texto acima e a linha do Landing ficam como estavam): o
+  “nenhuma falha natural prendeu o processo” vale para o Node 24.22.1 das sondas. No Node 24.13.0 da CI, no Windows,
+  `rmSync` recursivo de um caminho não ASCII volta sem erro e não remove nada; no código anterior, a falha do T8-C19
+  antes do `stop` prendeu o processo do arquivo em 3 de 3 até o vigia da sonda (20 s). Com a correção, o follow sai
+  `SIGTERM` pela rotina e o arquivo termina. Isto confirma o candidato no runtime da CI, sem atribuir o cancelamento
+  da manual 40814471097 (build, seção do C46 (s)).
 
 Proof: `node --test tests/integrations/traces/demo.e2e.test.mjs`
 
@@ -2327,3 +2333,31 @@ preservados; aberto antes de qualquer sonda ou código):
   filhos próprios; (3) RED na cópia do código anterior e GREEN no corrigido, com regressão e controle saudável; (4) alvos
   A/B/C pelo fecho real da mudança e um D completo, depois do último código. Se não confirmado: registrar a ausência de
   reprodução e propor a menor observação de início/fim do runner, com Landing e prova antes de qualquer código.
+
+- **Onde a fronteira caiu**: abertura `46f949d`; Landing “Ciclo de vida do `follow` no T8-C19”, C46 (s), Swept e
+  task `b90abdd`; retificação aditiva do (s) `1b7b561`; código `19a5a5c` (`demo.e2e.test.mjs` `63a4d8e` → `3838b03`);
+  diagnóstico, RED, GREEN, mutantes e gates declarados `aa934df`; resultados, o acréscimo do Node 24.13.0 e este
+  fechamento no commit seguinte, só docs. Produto, guia, apoios, workflow, governança, core, `package*` e configuração
+  iguais a `066bd98` (246 de 247 blobs de `src`/`tests`/`scripts`).
+- **Diagnóstico**: no Node 24.22.1, nenhuma falha natural prendeu o processo do arquivo (32 de 32), porque o `after`
+  apaga a pasta e o follow sai 3; em 1 de 20 essa limpeza colidiu com ele (`ENOTEMPTY`). No **Node 24.13.0 da CI**, o
+  `rmSync` de caminho não ASCII não remove nada no Windows, e a falha do T8-C19 antes do `stop` prendeu o processo do
+  arquivo em 3 de 3 (até o vigia de 20 s da sonda). Com a correção, o follow sai `SIGTERM` pela rotina em qualquer
+  saída. O cancelamento da manual 40814471097 continua sem causa atribuída: o `✖` do T8-C19 não está no log.
+- **Gates em `aa934df`**: A 2/2/0/0, B 2/2/0/0, C 2/2/0/0 (fecho da mudança: `demo.e2e.test.mjs` inteiro), D
+  1.060/1.040/0/20 (exit 0, término natural, teto 8, 11 nativos Hermes e o ramo Hermes do I4-C35; contra o D da R22,
+  só a linha do controle novo entra).
+- **O que se decidiu no caminho**: a forma da correção e do controle (Landing); o `try` até o fim da rotina
+  (`1b7b561`); o acréscimo do 24.13.0 no (s). Nada novo com o coordenador nem com o usuário.
+- **O que foi abandonado**: `t.after`; encerrar no `after` do arquivo; `kill()` sem esperar o `close`; `catch` sem
+  relançar; encerrar por pid, árvore ou prefixo; `--test-force-exit` ou timeout novo; apoio comum com
+  `follow.cli.test.mjs`; a variante `spawn` como prova do código novo (artefato: injeção antes do `try`); o mutante
+  que sempre envia o sinal (equivalente: `kill()` depois do `exit` não envia nada).
+- **Pendente, com o coordenador**: (1) a observação do runner proposta na task (2º reporter de `test:dequeue`/
+  `test:complete` em stderr), fora desta fatia, com Landing e prova antes do código; (2) o `rmSync` do 24.13.0 deixa
+  as pastas de todas as provas no `RUNNER_TEMP` da CI Windows, e `follow.cli.test.mjs` tem o mesmo padrão do follow,
+  que nesse runtime prenderia o arquivo numa falha — corrigir ali exige nova fatia autorizada, e trocar o Node da CI
+  seria mudança de runtime/infraestrutura, vetada aqui; (3) Verifier 23 sobre C1–C50, formal 14, publicação, uma
+  manual nova com os cinco checks regulares verdes e a medição no HEAD aprovado. Nada aqui afirma PASS, `ready`, CI
+  verde, causa física do cancelamento ou impacto zero. Preservados: os gates de `407edc5`, o PASS 22, as CI 066, os
+  incidentes da R5 e da R21, a limpeza de 1.257/107 pastas e os auxiliares antigos em `/tmp`.

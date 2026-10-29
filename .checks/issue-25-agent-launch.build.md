@@ -2934,3 +2934,76 @@ de `src`/`tests`/`scripts` diferente de `066bd98` (`blob-identity.txt`); o resto
   proposta ao coordenador, não implementada (task, seção nova).
 - Incidente meu, sem efeito fora da pasta: a 1ª execução do `make-copy.sh` parou no `tar` (`Cannot connect to C:`),
   antes de extrair; a pasta vazia e o `.tar` que ele criou foram removidos pelo caminho exato (`incidents.txt`).
+
+### Acréscimo depois do código: o Node 24.13.0 da CI (gates B e C; sondas `inv-*`, `rmsync-*`, `o13-*`, `x13-*`)
+
+Nos gates B e C (Node 24.13.0) a raiz temporária própria terminou com entradas (B 26, C 1 no TMPDIR), e no A
+(24.22.1) com nenhuma. O inventário só de nomes (`inventory-probe.mjs`, `inv-2413.inventory.txt`,
+`inv-24221.inventory.txt`) mostrou, com o 24.13.0, as duas pastas de scratch do arquivo inteiras depois de 2/2 verdes
+(`skill-me i4 t8 c19 demonstração ação-…`, com `.claude`, `capturas ação`, `store.json`, a captura com `key` e
+`state.json`), e nada com o 24.22.1. Causa isolada (`rmsync-probe.mjs`, `rmsync-probe.out.txt`): no **Node 24.13.0 do
+Windows**, `rmSync(dir, {recursive: true})` com um caminho **não ASCII** volta sem erro e não remove nada, com `force`
+`true` ou `false`; ASCII e espaço são removidos; o 24.22.1 remove todos. A CI usa o 24.13.0
+(`.github/workflows/governance.yml:31`, `:50`, `:86`, `:109`; `ci066-windows-manual40814471097.log:115`).
+
+Consequência para o T8-C19, reproduzida com o 24.13.0 oficial na cópia instrumentada do código **anterior**
+(`46f949d`): sem injeção, passa; com a asserção falhando depois dos cinco registros (2 de 2) ou com `SEGMENT_EIO=1` no
+hook (1 de 1), o `after` registra o `rmSync` sem erro, a pasta fica, o follow continua sondando a captura ativa, e o
+processo do arquivo só saiu quando o vigia da sonda encerrou o follow aos 20 s (23,5–27,0 s no total); sem o vigia,
+ficaria preso indefinidamente. O `✖` do T8-C19 saiu na hora, ~20 s antes do fim do processo. Com o código
+**corrigido** (`19a5a5c`) e o mesmo 24.13.0: sem injeção, passa (o follow do controle sai `SIGTERM`); com a falha
+depois dos cinco registros (2 de 2), o follow sai `SIGTERM` pela rotina e o arquivo termina em 8,5–8,6 s. A variante
+`spawn` dessa cópia travou até o vigia e o teto de 90 s da sonda: é artefato da instrumentação, porque no código novo
+o ponto de injeção fica antes do `try` (entre o spawn e o `try` só há `on`, `new Promise` e `Object.assign`); os três
+pids dessa execução estavam mortos depois (`x13-spawn-pids.txt`).
+
+Isto **confirma o candidato no runtime da CI**: uma falha do T8-C19 antes do `stop` prende o processo do arquivo
+indefinidamente no Windows com o 24.13.0, e a correção remove essa dependência da limpeza. **Não atribui** o
+cancelamento da manual 40814471097: o log não tem o `✖` do T8-C19, que nas duas versões sai assim que o arquivo é o da
+vez; ele só é compatível com este mecanismo se o processo do `delivery.unit` ainda estivesse vivo, e o log não
+distingue isso de um T8-C19 que não terminou ou de um `demo.e2e` que não começou.
+
+### Resultado dos gates em `aa934df` (árvore `375cffd8…`; código de `19a5a5c`; uma execução de cada, sem filtro e sem repetição; logs em `builder-ci066-follow/`)
+
+| Gate | Ambiente | Início–fim | Testes | Pass | Fail | Skip |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | checkout principal, Windows, Node 24.22.1, `npm_execpath` ausente, temporário e `RUNNER_TEMP` próprios | 04:53:29–04:53:31 UTC | 2 | 2 | 0 | 0 |
+| B | clone git novo (`core.autocrlf=true` no `.git/config` dele; `demo.e2e` em CRLF, 149 CR; bin em LF, 0 CR antes e depois), Node 24.13.0 oficial (zip `ca274269…` igual ao `SHASUMS256.txt`, `node.exe` `d14ba95c…` igual ao do zip), npm 11.6.2 adjacente na frente do PATH | 04:54:03–04:54:12 UTC | 2 | 2 | 0 | 0 |
+| C | WSL `Ubuntu`, uid 1000, `git archive` de `aa934df` (`get-tar-commit-id` igual; árvore extraída = `HEAD^{tree}`; 0 CR; `cli.mjs` 755), Node 24.13.0 copiado (`150946e4…`) num prefixo sem `sh`, npm 11.6.2, `env -i`, PATH sem `/usr/bin` e sem agentes/pwsh | 01:55:02–01:55:03 (-03) | 2 | 2 | 0 | 0 |
+| D | `npm test` completo, Windows, Node 24.22.1, npm 11.19.1, teto 8 (`availableParallelism` 32), Hermes pelas provas versionadas, pwsh oficial só no PATH, `SKILL_ME_HERMES_PYTHON` ausente | 02:02:27–02:11:25 (-03) | 1.060 | 1.040 | 0 | 20 |
+
+- **A/B/C**: o T8-C19 (com as nove linhas de diagnóstico: `privacy start`, `hook Claude`, `ingest Hermes`,
+  `integrations run --agent codex`, `privacy list`, `privacy export`, `privacy follow`, `privacy stop`, `replayCapture`)
+  e o controle novo rodaram e passaram nos três; nenhum skip. HEAD e status iguais e vazios antes e depois em A e no
+  clone B; clone removido pelo caminho, toplevel, HEAD e status (`B-clone-cleanup.txt`); scratch do C removido por
+  caminho, pasta não link, uid 1000 e inode 1436 (`C.run.txt`). As entradas deixadas nas raízes de B e C são as do
+  `rmSync` do 24.13.0 acima, removidas com as raízes.
+- **D**: terminou sozinho com exit 0. Governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7, integrações
+  600/587/0/13. Contra o D da R22 (`D-summary.txt`, linhas de resultado sem a duração): só entra
+  `✔ I25-C46 ciclo de vida do follow no T8-C19 …`; nenhuma linha sai; as mesmas marcas e os mesmos 20 skips, cada um
+  com o motivo (os 7 POSIX/FIFO do doctor; I4-C15, I4-C25b/j/k/l/m, I25-C5/C6/C15/C33/C42/C45 e o sinal do T8-C4).
+  O T8-C19 levou 6.764 ms e o controle 2.617 ms. Hermes: os 11 nativos com runtime (I4-C18–C23, C37, C44b, I25-C40
+  harness nativa e os dois I23-C8 com runtime) e o I23-C8 pelo Python do sistema, que não conta como nativo, passaram;
+  o ramo Hermes do I4-C35 passou, sem diagnóstico de Hermes ausente ou de revisão diferente. HEAD igual e status vazio
+  antes e depois; `RUNNER_TEMP` com 0 entradas; raiz `sm-c066f-D-0Y50Q1` (1.356 entradas recursivas dos testes)
+  removida pelo registro.
+- **Processos e temporários**: todas as raízes `sm-c066f-*` (sondas, GREEN, mutantes, inventários, A, B e D) foram
+  removidas pelo registro (`roots.ndjson`, `cleanup-roots.txt`), as `runner-temp-*` vazias por `rmdir`, as quatro
+  cópias pelo caminho exato (`copies-cleanup.txt`) e o clone B como acima. Os pids registrados pelas sondas estavam
+  mortos depois de cada execução. Não fiz inventário de processos por PowerShell; o D e todas as execuções terminaram
+  sozinhos, e nenhuma tarefa em segundo plano ficou. Nenhuma seleção por prefixo ou mtime; nada no `/tmp` fora do
+  scratch do C nem no temporário global fora das raízes registradas.
+- **O que isso prova e o que não prova**: o encerramento do follow nas saídas de falha está provado (controle, RED,
+  M2, M3) nos três ambientes e no D, e, no 24.13.0, a falha que prendia o processo do arquivo deixa de prendê-lo.
+  Não prova a causa do cancelamento da manual 40814471097 nem que a CI fique verde; o D é deste computador e não mede
+  o runner.
+
+### Achados fora desta fatia (comunicados, não corrigidos)
+
+- **`rmSync` do Node 24.13.0 no Windows**: toda limpeza de `makeScratch` (nomes com `ação`) é um no-op silencioso na
+  CI Windows; as pastas das provas ficam no `RUNNER_TEMP`, e qualquer prova que dependa dessa remoção para encerrar um
+  filho prende o processo do arquivo numa falha.
+- **`follow.cli.test.mjs`**: inicia o follow com o mesmo padrão (scratches também com `ação`); com o 24.13.0, uma
+  falha do T8-C12 antes do `stop`, ou do T8-C13 com o follow parado no portão, deixaria o follow vivo e prenderia o
+  arquivo da mesma forma (o controle `I25-C46 diagnóstico do T8-C12` já encerra o dele). A mesma correção ali exige
+  nova fatia autorizada.

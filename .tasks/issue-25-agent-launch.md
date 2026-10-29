@@ -837,3 +837,11 @@ teste de topo), mantendo o reporter padrão em stdout, a seleção, o teto 8/CPU
 eventos chegam a um reporter em tempo real, enquanto os resultados ficam retidos na ordem dos arquivos (sondado).
 Toca o runner das integrações e as provas da governança dele, fora desta fatia, e exige Landing e prova antes do
 código.
+
+**Acréscimo depois do código** (gates B e C; o texto acima fica como estava): o “nenhuma falha natural prendeu o
+processo” vale para o Node 24.22.1 das sondas. No Node 24.13.0, que a CI usa, `rmSync` recursivo de um caminho com
+acento não remove nada no Windows e não dá erro. Por isso, no código anterior, uma falha do T8-C19 antes do `stop`
+prendeu o processo do arquivo em 3 de 3, até a sonda encerrar o follow; com a correção, a rotina o encerra e o arquivo
+termina. Isso confirma o mecanismo no runtime da CI sem atribuir o cancelamento da manual 40814471097. Ficam
+comunicados, fora desta fatia: as pastas das provas deixadas no `RUNNER_TEMP` por esse `rmSync`, e o mesmo padrão do
+follow em `follow.cli.test.mjs`, que nesse runtime prenderia o arquivo numa falha.
