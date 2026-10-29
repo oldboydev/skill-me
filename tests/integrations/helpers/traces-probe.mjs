@@ -30,6 +30,15 @@
 // do `.lock`, prende o laço de eventos de forma síncrona por <ms> — processo
 // parado, não disco (só a prova do diagnóstico das entregas T8, issue #25).
 //
+// SKILL_ME_TEST_TRACES_STALL_REPORT=1: o `open` do arquivo de diagnóstico do
+// usuário (o caminho exato de SKILL_ME_CAPTURE_REPORT) nunca termina — a
+// gravação perde a corrida com o prazo do relatório.
+//
+// SKILL_ME_TEST_TRACES_REPORT_EIO=1: o `open` desse arquivo falha com EIO sem
+// tocar no disco — o diagnóstico se perde em silêncio. Os dois só servem aos
+// controles do diagnóstico do T8-C20 (issue #25, linha "Diagnóstico do T8-C20"
+// do Landing), que se distinguem só pela evidência.
+//
 // SKILL_ME_TEST_TRACES_TIMING=<arquivo>: só observa. Mede cada operação de disco
 // do processo e, na saída, acrescenta ao arquivo uma linha
 // `{"ops":[[operação, tipo do arquivo, início ms, duração ms, código do erro?]…],"cpuMs":n,
@@ -46,7 +55,9 @@
 // espera de E/S ou do sistema; laço parado, com o processo parado ou sem CPU —
 // evidências, não a causa (issue #25, linhas "Diagnóstico das entregas de um
 // produtor nas provas T8" e "Evidência comum dos produtores e formatter legado"
-// do Landing). Os tipos de arquivo vêm de helpers/trace-kinds.mjs.
+// do Landing). Os tipos de arquivo vêm de helpers/trace-kinds.mjs; o arquivo de
+// diagnóstico do usuário sai `diagnóstico`, pelo valor exato da variável que o
+// produtor recebe, porque o nome dele é escolhido por cada prova.
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
@@ -133,6 +144,20 @@ if (blockAt > 0) {
   };
 }
 
+const reportFile = env.SKILL_ME_CAPTURE_REPORT;
+const isReport = (file) => typeof reportFile === "string" && reportFile !== "" && file === reportFile;
+const stallReport = env.SKILL_ME_TEST_TRACES_STALL_REPORT === "1";
+const reportEio = env.SKILL_ME_TEST_TRACES_REPORT_EIO === "1";
+if (stallReport || reportEio) {
+  const realOpen = fsp.open;
+  fsp.open = async function faultyReportOpen(file, flags, mode) {
+    if (!isReport(file)) return realOpen(file, flags, mode);
+    if (stallReport) return new Promise(() => {});
+    throw Object.assign(new Error("EIO injetado pelo teste"), { code: "EIO" });
+  };
+}
+const kindOf = (file) => (isReport(file) ? "diagnóstico" : fileKind(file));
+
 const timingFile = env.SKILL_ME_TEST_TRACES_TIMING;
 
 const tenth = (ms) => Math.round(ms * 10) / 10;
@@ -166,14 +191,14 @@ if (timingFile) {
   for (const name of ["lstat", "stat", "realpath", "readdir", "rename", "rmdir", "unlink", "mkdir"]) {
     const real = fsp[name];
     fsp[name] = function timedFs(file, ...rest) {
-      return timed(name, fileKind(file), () => real.call(this, file, ...rest));
+      return timed(name, kindOf(file), () => real.call(this, file, ...rest));
     };
   }
   const handleKinds = new WeakMap();
   let handlePatched = false;
   const realOpen = fsp.open;
   fsp.open = function timedOpen(file, ...rest) {
-    const kind = fileKind(file);
+    const kind = kindOf(file);
     return timed("open", kind, () => realOpen.call(this, file, ...rest)).then((handle) => {
       if (!handlePatched) {
         handlePatched = true;
