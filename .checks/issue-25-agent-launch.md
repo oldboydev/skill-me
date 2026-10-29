@@ -2077,3 +2077,40 @@ Literal do caminho no `-Command` da prova nativa do C48 — mesmo autor Claude, 
   ficam em `path-fix/`); GREEN com o escape; depois do commit, numa cópia descartável, os mutantes “sem escape” e
   “só a ASCII dobrada”. Gates A/B/C/D novos, com rótulos, raízes e scripts novos em `path-fix/`, definidos depois do
   último código e antes de rodar.
+- **Onde a fronteira caiu**: registro em `0ae77b3`; código em `0caf9be`. Só `scripts/governance-ci.test.mjs` (blob
+  `971e866` → `5313dba`, +29/−4), no teste `governance-C48 ramo Windows das integrações no pwsh real: …`: a lista
+  `quoted` com os dois arquivos, o 3º parâmetro `file = script` de `step`, o literal com as aspas dobradas e os
+  controles depois dos casos inválidos. No código, as quatro aspas tipográficas aparecem como sequências de escape
+  Unicode do JavaScript (barra invertida, `u` e o código, de 2018 a 201B), no nome do arquivo e no regex: o mesmo
+  conjunto que a linha do Landing mostra com os caracteres. O workflow continua `f24e82d`.
+- **RED** (`path-fix/pf-red.*`, `red.patch` com sha256 `1ec6a548…18d3`; Windows 24.22.1, checkout, temporário
+  isolado; a prova com os controles e **sem** o escape, sem commit): 9 testes, 8 pass, 1 fail — o do pwsh real, em
+  `governance-ci.test.mjs:560`, com o rótulo `passo ' literal.ps1`: `{status: 1, npm: null}` no lugar de
+  `{status: 0, npm: <o recebido>}`. As asserções vêm em sequência, então rodaram e passaram antes dela: npm 0 → 0 e
+  npm 17 → 1 com `passo.ps1` e os cinco inválidos. As conferências finais não chegaram a rodar.
+- **GREEN**: com o escape, antes do commit, 9/9 (`pf-green-pre-commit.*`; de novo depois de trocar os caracteres pelas
+  escapes, `pf-green-pre-commit2.*`, 9/9); no commit, o Proof do C48 deu 3/3 (`pf-green-0caf9be.*`), com
+  `ℹ pwsh: C:\Program Files\PowerShell\7\pwsh.exe`. Os 9 testes e os nomes não mudaram.
+- **Prova discriminante** (`path-fix/mutants.mjs`, `mutation.json`, `pf-mutants-0caf9be.*`; cópia do `git archive` de
+  `0caf9be`, sha256 `168c8e04…1ac6`, com o `node_modules` do checkout):
+  - controle: 9/9;
+  - **sem escape** (o literal com o caminho como está): 1 fail, o do pwsh real, no rótulo `passo ' literal.ps1`, com
+    `status: 1` e `npm: ~` (não chamado) no lugar de `status: 0` e o recebido. Os casos sem aspa passaram antes;
+  - **só a ASCII dobrada**: 1 fail, o do pwsh real, no rótulo `passo ‘’‚‛ literal.ps1`, também com `status: 1` e o npm
+    não chamado. O arquivo `passo ' literal.ps1` (0 e 17) e os casos sem aspa passaram antes.
+  - A cópia foi restaurada depois de cada mutante (o teste dela voltou ao blob `5313dba`) e removida pelo caminho
+    exato, depois de conferir pasta, não link e sem `.git` (`path-fix/copy-cleanup.txt`). O checkout não foi mutado.
+- **Identidade** (`path-fix/blob-identity.txt`): de `169e845` a `0caf9be`, fora de `.checks`/`.tasks`, só
+  `governance-ci.test.mjs`; contra `86c7677`, só ele e o workflow `f24e82d`. `src`, `tests`, `docs`, o core,
+  `ci-lock-latency.*`, `test-integrations.mjs`, `package*`, configuração, `.gitattributes` e `.gitignore` iguais; 246
+  dos 247 arquivos rastreados em `src`, `tests` e `scripts` com o mesmo blob de `86c7677`.
+- **Gates definidos depois do último código (`0caf9be`) e antes de rodar** (`path-fix/plan.txt`): rótulos `pf-A`,
+  `pf-B`, `pf-C` e `pf-D`, raízes `sm-b86p-*` e scripts novos em `path-fix/`, derivados dos de `builder-ci86-temp/` só
+  nos caminhos, prefixos e rótulos. A repetição se justifica pela mudança da harness; os gates de `a50870f` ficam como
+  estão e não provam esta correção.
+  - **pf-A/pf-B/pf-C**: `npm run test:governance` completo, uma invocação sem filtro por ambiente, nas formas de A, B
+    e C acima (C com `npm_config_update_notifier=false` no `env -i`). Esperado 27/27/0/0 em A e B, com o caso do pwsh
+    real executado, e 27/26/0/1 em C (o skip é esse caso). Orçamento de 10 min por gate na ferramenta.
+  - **pf-D**: um `npm test` completo, Windows 24.22.1, teto 8, nativos do Hermes, orçamento de 2 h na ferramenta,
+    sem editar nada rastreado durante ele. Esperado, se nada falhar: 1.057/1.037/0/20, com as mesmas linhas de
+    resultado do D de `a50870f`.

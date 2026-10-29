@@ -2678,3 +2678,19 @@ todas as cinco dobradas. Forma: `. '${file.replace(/['‘’‚‛]/g, "$&$&")}'
 como 3º parâmetro (padrão `passo.ps1`) e dois arquivos próprios com o mesmo `run`, `passo ' literal.ps1` e
 `passo ‘’‚‛ literal.ps1`, cada um com npm 0 → 0 e npm 17 → 1 (Landing “Literal do caminho no `-Command` da prova
 nativa do C48”; 2º acréscimo do C48). RED, GREEN, mutantes e gates novos ficam abaixo, quando rodarem.
+
+**Código** (`0caf9be`; registro em `0ae77b3`): só `governance-ci.test.mjs` (`971e866` → `5313dba`, +29/−4). No
+código, as quatro aspas tipográficas estão como escapes Unicode do JavaScript (o mesmo conjunto do Landing).
+
+**RED** (prova com os controles e sem o escape, sem commit; `path-fix/pf-red.*`, `red.patch`): 9 testes, 8 pass,
+1 fail — o do pwsh real, em `:560`, no rótulo `passo ' literal.ps1`, com `{status: 1, npm: null}`. Antes dele, os
+casos com `passo.ps1` (0, 17 e os cinco inválidos) passaram. **GREEN**: 9/9 antes do commit; Proof do C48 3/3 no
+commit.
+
+**Mutantes** (cópia do `git archive` de `0caf9be`): controle 9/9; sem escape, falha o controle `passo ' literal.ps1`;
+só a ASCII dobrada, ele passa e falha o `passo ‘’‚‛ literal.ps1`. Nos dois, o pwsh sai 1 e o npm não roda. Cópia
+restaurada e removida pelo caminho exato.
+
+**Gates** (`path-fix/plan.txt`, depois de `0caf9be` e antes de rodar): `pf-A`/`pf-B`/`pf-C` com `npm run
+test:governance` completo (esperado 27/27/0/0, 27/27/0/0 e 27/26/0/1), 10 min cada; `pf-D` com um `npm test` completo,
+2 h (esperado 1.057/1.037/0/20).
