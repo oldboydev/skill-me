@@ -2854,3 +2854,83 @@ nem agentes). A governança não mudou e carrega os A/B/C da R21 por identidade.
   distingue o prazo da falha de E/S. Não prova a causa da R21 nem que o T8-C20 não volte a falhar; o D é deste
   computador e não mede o runner da CI. A fatia **não** fecha inteira verde: o gate B tem a falha acima, não
   atribuível a esta mudança e fora do escopo dela.
+
+## Ciclo de vida do `follow` no T8-C19 (CI de `066bd98`; C46 (s))
+
+Novo autor Claude, fatia nova (abertura `46f949d`; Landing, C46 (s), Swept e task `b90abdd`; retificação aditiva do
+(s) `1b7b561`; código `19a5a5c`). Origem: na CI do HEAD publicado `066bd98`, o PR 40814315171 falhou só no I23-C6
+Claude e a manual 40814471097 teve o Windows cancelado no teto de 20 min, sem totais das integrações, com 39 rótulos
+não impressos a partir do `T8-C19 trace walkthrough`. Autorizações 6467154706 e 6442514838. Scripts, logs e saídas
+em `.checks/code-review/issue-25/builder-ci066-follow/`.
+
+### Diagnóstico (sem tocar em rastreados)
+
+**Sonda** (`run-probe.mjs`, `instrument.mjs`, `instrument-eio.mjs`; cópia `git archive` de `46f949d` com o T8-C19
+instrumentado só na cópia: eventos do processo do arquivo e do follow, falha injetada por variável e um vigia sem
+referência de 20 s que só age se o processo do arquivo continuar vivo; uma raiz temporária própria por execução,
+registrada e removida pelo registro; Windows, Node 24.22.1; `summary.ndjson`, `*.events.ndjson`, `*.out.ndjson`):
+
+| Variante | Execuções | O que se viu |
+| --- | --- | --- |
+| sem injeção | 1 | follow sai 0 com as 6 linhas antes do `after`; o processo do arquivo sai logo depois |
+| asserção falha logo depois do spawn | 3 | a falha original; follow vivo no início do `after`; sai 3 depois de o `after` apagar a pasta |
+| asserção do passo do hook falha (`persisted` 2 em vez de 1) | 3 | idem |
+| `SEGMENT_EIO=1` só no hook (injeção existente) | 3 | a falha original `0 !== 1`; idem |
+| asserção falha depois dos cinco registros | 3 + 20 | idem; em 1 de 20 o `rmSync` do `after` falhou com `ENOTEMPTY` (2ª falha atribuída ao arquivo, 4 entradas deixadas no temporário), e o follow saiu 3 mesmo assim |
+| limpeza desligada só na cópia (sintética), com um 2º arquivo rápido | 2 | o processo do arquivo ficou vivo até o vigia encerrar o follow aos 20 s; o `✖` do T8-C19 saiu na hora, e o `✔` do 2º arquivo (terminado em menos de 1 s) só depois disso |
+
+Nas 32 falhas naturais, o follow estava vivo no início do `after` em 32 e saiu 3 entre 1 e 223 ms depois do fim do
+`rmSync`; nenhuma prendeu o processo do arquivo (maior duração 1.937 ms). Um reporter próprio (`events-reporter.mjs`)
+mostrou que `test:dequeue` e `test:complete` chegam em tempo real, enquanto os `test:pass`/`test:fail` do arquivo
+seguinte ficam retidos até o processo do anterior sair. Na manual, o último resultado impresso é o último teste do
+`delivery.unit` (no PR ele é seguido do T8-C19): às 04:11:42, ou o processo do `delivery.unit` não tinha saído, ou o
+T8-C19 não tinha terminado, ou o `demo.e2e` não tinha começado. **A causa do cancelamento continua desconhecida.**
+**Defeito demonstrado** (harness): numa falha antes do `stop`, o follow, filho do teste, segue vivo até a limpeza do
+arquivo, que o encerra por acaso e pode colidir com ele. Sobre o `ChildProcess` (`spawn-error-probe.mjs`): o spawn
+de um executável ausente emite `error` e depois `close` (-4058); `kill()` depois do `exit` devolve `false`; um filho
+vivo morto emite `exit` e `close` com `SIGTERM`.
+
+### Correção (só `tests/integrations/traces/demo.e2e.test.mjs`, `63a4d8e` → `3838b03`)
+
+O corpo do T8-C19 virou `walkthrough(t, hookEnv = {}, seen = {})`, com as mesmas linhas (`git diff -w`: só o import
+de `TRACES_PROBE`, `boundEnv(root, id, hookEnv)` no hook, `Object.assign(seen, …)`, o `try`/`finally` e a divisão
+rotina/teste). Do spawn ao fim da rotina, o `finally` chama `endFollow`: `follow.kill()` só se `exitCode` e
+`signalCode` são nulos, e espera o `close` real; sem `catch`. Controle `I25-C46 ciclo de vida do follow no T8-C19: …`
+com `SEGMENT_EIO=1` e a pré-carga só no hook. Retificação antes do código (`1b7b561`): o `try` vai até o fim da
+rotina, para manter o `const exported` intacto.
+
+### RED, GREEN e prova discriminante
+
+- **GREEN** antes do commit (`green-pre.*`, checkout, Windows 24.22.1, temporário próprio): 2/2.
+- **RED e mutantes** (`mutants.mjs`, `mut-mutation.json`, `mut-*.log`; cópia `git archive` de `19a5a5c`, arquivo
+  restaurado e conferido por sha256 depois de cada variante; cópias removidas pelo caminho exato, `copies-cleanup.txt`):
+
+| Variante | T8-C19 | Controle |
+| --- | --- | --- |
+| controle (sem mudança) | ✔ | ✔ |
+| RED: rotina sem o encerramento (o ciclo de vida anterior) | ✔ | ✖ `'pendente' !== 'close'` |
+| M2: `kill()` sem esperar o `close` | ✔ | ✖ `'pendente' !== 'close'` |
+| M3: `catch` que engole a falha | ✔ | ✖ `a asserção do passo do hook continua vermelha: null` |
+
+Limite do RED: o código anterior não tem a rotina, então o controle não roda nele; o RED é a rotina extraída sem o
+encerramento, que reproduz o ciclo de vida anterior (mesmo método do C46 (q)). Um mutante que sempre envia o sinal
+não foi rodado: num filho que já saiu, `kill()` não envia nada (sondado), então ele é equivalente ao código.
+
+### Gates (`builder-ci066-follow/plan.txt`, depois de `19a5a5c` e antes de rodar)
+
+A/B/C: o fecho real da mudança, `tests/integrations/traces/demo.e2e.test.mjs` inteiro, numa invocação por ambiente,
+10 min cada (A Windows 24.22.1 no checkout; B clone novo, Node 24.13.0 oficial, npm 11.6.2, `core.autocrlf=true` só no
+clone; C WSL uid 1000, `git archive`, Node 24.13 copiado, `env -i`, PATH sem `/usr/bin` nem agentes). É o único arquivo
+de `src`/`tests`/`scripts` diferente de `066bd98` (`blob-identity.txt`); o resto carrega a R22 por identidade. D: um
+`npm test` completo, Windows 24.22.1, teto 8, Hermes, 2 h; esperado, se nada falhar, 1.060/1.040/0/20.
+
+### Limites
+
+- Nada aqui prova a causa do cancelamento da manual 40814471097 nem que ele não volte a ocorrer; nenhuma falha natural
+  prendeu o processo do arquivo. A correção fecha a colisão e o encerramento por acaso, medidos.
+- `follow.cli.test.mjs` inicia o follow com o mesmo padrão (sem encerramento por teste nas saídas de falha); fora
+  desta fatia, comunicado, não corrigido.
+- A observação do runner que localizaria o pendente (um 2º reporter de `test:dequeue`/`test:complete` em stderr) fica
+  proposta ao coordenador, não implementada (task, seção nova).
+- Incidente meu, sem efeito fora da pasta: a 1ª execução do `make-copy.sh` parou no `tar` (`Cannot connect to C:`),
+  antes de extrair; a pasta vazia e o `.tar` que ele criou foram removidos pelo caminho exato (`incidents.txt`).
