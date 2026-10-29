@@ -873,3 +873,51 @@ Alternativas rejeitadas: `t.after`, `afterEach` ou o `after` do arquivo; só env
 árvore ou por prefixo; `--test-force-exit`, timeout novo, prazo menor do portão ou o `go` escrito na saída; um apoio
 comum com o `demo.e2e.test.mjs`, que mudaria aquele arquivo, verde em `19a5a5c`, e um apoio importado por muitas provas
 (a repetição de duas linhas fica justificada no Landing); uma injeção nova para falhar o `stop`.
+
+## Liberação segura do lock — 29/10/2026 (D1–D3 aprovados; refinamento dos critérios 38 e 42; sem critério novo)
+
+A verificação 23 terminou **FAIL 49/50** em `6204613` (relatório em `d80b246`): no D, o T8-C15 saudável teve
+`open lock EPERM (tomada do lock)` no produtor `b` e capturou 79/80. O diagnóstico isolado
+(`builder-eperm-diagnostic/`, ignorado pelo Git) demonstrou no Windows a janela entre a marca de exclusão do `.lock` e o
+fechamento do handle: nela, a tomada normal de outro processo recebe `EPERM`. Não atribuiu as falhas históricas. O
+plano versionado `.tasks/issue-25-lock-release-proposal.md` (`2c276d5`) foi aprovado pelo proprietário em
+[6502294779](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6502294779): “Pode aplicar o plano completo nas
+três plataformas, mantendo os testes e prazos, e seguir até a CI ficar toda verde para fazer o merge e finalizar.” A
+aprovação cobre D1–D3 e todos os ajustes do Root, que prevalecem sobre as recomendações do `release-plan-proposal.md`
+ignorado. Não dispensa prova, verificação, revisão nem CI.
+
+**Refinamento do critério 38 (C46 (u)).** Continuam iguais a tomada (`wx`, bytes com `pid` e nonce, sem flush), a
+prioridade do erro do callback, a repetição de 10 ms só em `lock_present`, o `EPERM` real como `io_failure`, os prazos
+750/650 ms, 1.000 ms com o settle de 650, 2.000 ms do stdin (faixa 1.900–6.000), 5 s do Hermes, 500 eventos/8 MiB/7 dias,
+o T8-C15 (80 eventos, 40 por produtor, 2 produtores sobrepostos, 4 linhas intercaladas, payloads, export 80), o T8-C16
+(3 criações do lock), o runner min(CPU−1, 8), os jobs 20/10/5 e o manual 10. O que muda e se observa:
+
+1. A liberação do lock do store e do lock do home é a mesma, em Windows, Linux e macOS: uma pasta nova reservada ao lado
+   do lock (`<nome do lock>-release-XXXXXX`), o `.lock` conferido e **renomeado** para dentro dela — o instante da
+   liberação —, depois o arquivo retirado relido e apagado e a pasta removida. Numa liberação bem-sucedida não sobra
+   nada.
+2. Cada etapa roda no máximo uma vez; nenhuma falha é repetida, convertida em sucesso ou escondida. Vale o erro do
+   callback e, depois dele, a primeira falha da liberação. Uma falha de E/S sai `io_failure` (no launcher, `lockLeft:
+   true`). Bytes alheios no lock, ou no arquivo retirado, continuam o código fechado de hoje (`root_changed` no store,
+   `foreign_entry` no home), e o alheio nunca é movido de volta nem apagado. Uma pasta reservada que não é pasta real,
+   que é link ou cuja identidade mudou nunca é atravessada nem limpa; sai como erro interno, na fronteira `io_failure`
+   com `lockLeft: true`, porque antes da retirada o lock da operação ficou.
+3. Uma queda antes do rename deixa o lock (como hoje) e talvez a pasta vazia; depois do rename, o lock está livre e pode
+   sobrar a pasta, vazia ou com o arquivo retirado (`pid` e nonce, sem chave nem conteúdo). Nada as remove sozinho, nem
+   pela retenção de 7 dias das capturas. Com `store.json`, a sobra não muda nenhum comando; sem ele, a criação do store
+   sai `store_invalid` até a remoção manual (D2). `docs/traces.md` diz como conferir e remover.
+4. A evidência das provas mostra a reserva, o rename, a releitura, o apagamento e o `rmdir`, com os erros, e, depois de um
+   rename com erro, a posse **indeterminada** em vez de “fora do lock”. As injeções existentes de lock que fica e de
+   confirmação perdida passam do `unlink` para o rename que libera, com os mesmos efeitos e contagens.
+5. Uma prova de disputa real (dois processos no mesmo `.lock`), estatística e declarada como tal, termina sem nenhum erro
+   que não seja `lock_present`; no Windows ela é vermelha no código anterior.
+
+**Refinamento do critério 42 (C50 (o)).** A medição continua a do critério 42 (3 produtores × 500 ciclos, cada um no
+próprio lock, 3 cargas de 64 KiB com flush, 120 s, faixas 600/650 só diagnósticas) e passa a declarar que o namespace é
+individual (não mede disputa), a separar a retirada, a reserva, o rename, a remoção do retirado e o `rmdir`, e a chamar a
+liberação de completa. A operação antiga `remocao` sai do esquema, que passa à versão 2.
+
+**Limites.** Não demonstra a causa das falhas da R23 e do B de `407edc5`, nem garante uma CI futura verde. O POSIX só é
+provado pelo gate C (WSL) e pela CI. O custo é medido no código final, nas condições do E5 declaradas antes; os números
+do protótipo não são do produto. Detalhes: linha “Liberação do lock por reserva exclusiva” do Landing, C46 (u), C50 (o)
+e o bloco “Liberação segura do lock” do `Handoff`.

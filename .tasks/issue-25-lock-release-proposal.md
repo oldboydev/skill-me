@@ -2,6 +2,8 @@
 
 **Status: plano completo aprovado pelo proprietário, incluindo D1–D3 e os ajustes do Root, nas três plataformas.** Autorização literal: “Pode aplicar o plano completo nas três plataformas, mantendo os testes e prazos, e seguir até a CI ficar toda verde para fazer o merge e finalizar.” Registro: [6502294779](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6502294779). Autoriza a implementação deste escopo, preservando os gates e todo o histórico.
 
+**Progresso (29/10/2026, acréscimo):** implementação iniciada por um novo autor Claude na mesma branch, a partir de `1613e23`. A forma literal, os refinamentos observáveis, as provas e o corte em fatias foram registrados antes do código no plano principal (seção “Liberação segura do lock”), no Landing (“Liberação do lock por reserva exclusiva”), no C46 (u), no C50 (o), no `Swept` e no `Handoff` de `.checks/issue-25-agent-launch.md`. Este registro não é resultado: nenhuma prova, gate, verificação ou CI desta implementação existe ainda.
+
 Este plano aprovado complementa `.tasks/issue-25-agent-launch.md`. A decisão explícita acima resolve a alteração do layout e do ciclo de vida descrita aqui, conforme `AGENTS.md:86-98` e o retorno ao proprietário previsto no plano principal, `:332-334`. As decisões abaixo ficam registradas na forma em que foram propostas e aprovadas.
 
 ## Problema e evidência
