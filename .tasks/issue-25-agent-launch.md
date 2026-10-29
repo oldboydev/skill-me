@@ -984,3 +984,17 @@ está em voo, e a asserção síncrona acusa falta da segunda liberação; depoi
 são verdadeiras. Os dois K4 continuam recusados. Isso autoriza sincronizar a prova, preservando o critério 38. Não
 autoriza atribuir ao B histórico H1 em vez de H3, nem declarar corrigidas as duas falhas daquele gate. A falha real de
 limpeza continua vermelha, o F2 não muda e a identidade nova exige provas próprias que incluam ambos os casos.
+
+**Fechamento do autor (S15).** Código em `eb6999e` (registro antes do código em `d4687eb`).
+- **Provas**: o probe (2 × 117 entregas) mostrou a causa do defeito da prova em 32 controles e manteve vermelhos os 2 K4. O
+  B histórico continua não discriminado entre H1 e H3.
+- **Gates do último código**, término natural:
+  - A 34/33/0/1, B 34/33/0/1 e C 34/34/0/0, nos três arquivos inteiros.
+  - O D original **FAIL** 43/41/2, com C5/C6 `Filename too long` sob o TEMP de 130 caracteres; doctor e integrações não
+    rodaram.
+  - A comparação controlada deu 130 → 2 falhas e 68 → 2 passes, sem mudança no core.
+  - O D2, com TEMP curto, deu **1.076/1.056/0/20**, com os 11 nativos do Hermes e o I4-C35.
+- **Desvio de método**: o D2 foi chamado em segundo plano, com 2 h de limite, e não em primeiro plano com 900000 ms.
+
+Detalhes no bloco S15 do `Handoff` e no build. O F2 continua com causa desconhecida. Pendentes: a verificação independente
+26, a formal 14, a publicação, a medição manual e os cinco checks verdes. Não é PASS global.

@@ -2958,3 +2958,52 @@ de qualquer sonda ou código):
   (não registrada) da feature inteira; a auditoria 25 do Root sem final, porque o D 25 não rodou; a formal 14 sem uso (13
   tentativas preservadas, teto 14); `ready`, push, a medição manual e os cinco checks verdes antes do merge já autorizado.
   Nada aqui é PASS, `ready` ou CI.
+
+- **Onde a fronteira caiu**: a S15 inteira num lote, fechada pelo autor. Registro antes do código `d4687eb`; código
+  `eb6999e` (commit do Root, edição minha só em `concurrency.cli.test.mjs`, árvore `e90e0d65…`; segundo o Root, 11 linhas a
+  mais e 3 a menos), sem mudança de asserção, valor, prazo, skip, perda ou concorrência. O nome “antes do onLock” é o que o
+  roteiro garante; o `delivery.unit` “antes de o timer rodar” não mudou. Gates no último código (`author-s15/`, controlador do
+  Root, execução minha, uma vez cada, término natural; HEAD e status iguais antes e depois):
+  - **A** Windows, Node 24.22.1, concorrência 8, 21:36:50–21:37:30 UTC: **34/33/0/1**.
+  - **B** clone novo `autocrlf=true`, Node 24.13.0 oficial, npm 11.6.2, concorrência 8, 21:37:33–21:39:21: **34/33/0/1**.
+  - **C** WSL uid 1000, `env -i`, Node 24.13.0 copiado, árvore com 0 CR, concorrência 7, 21:39:24–21:39:52: **34/34/0/0**.
+    Os três arquivos inteiros, sem filtro. O skip de A/B é o `T8-C4 … sinal POSIX` (`posix-signals`).
+  - **D original** `npm test`, 21:39:55–21:40:32: **FAIL, exit 1 natural**, 43/41/2/0. Governança 27/27; motor 16/14/2 (C5 e
+    C6, `git diff … Filename too long` sob o TEMP de 130 caracteres); doctor e integrações **não rodaram**. Preservado.
+  - **Comparação controlada** (infra do Root, execução minha, `core-path-comparison-result.json`): os mesmos C5/C6, Node,
+    argumentos e fixtures; TEMP de 130 caracteres → 2 falhas `Filename too long`; TEMP de 68 → 2 passes. Os 5 arquivos do
+    core são iguais à base. Mostra que o comprimento basta neste host; **não** é limite universal nem diz qual camada do Git
+    falha. Nenhum `longpaths`, config global ou core mudou.
+  - **D2** (o Root mudou só o TEMP do controlador, antes da execução e depois da comparação: pai curto `t-cC8CC0`, 68
+    caracteres, registrado e retido; TEMP efetivo de 92), 21:52:18–22:00:22: **1.076/1.056/0/20**, exit 0 natural —
+    governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7, integrações 616/603/0/13. Artefatos próprios `D2*`, sem
+    sobrescrever o D. Não é repetição inalterada.
+  - **Skips do D2**: doctor 7, todos `{ skip: process.platform === "win32" }` na fonte, sem texto de motivo (o log mostra só
+    `# SKIP`): `agent-resolution.unit:279,589`, `fifo-config.cli:30,75`, `fs-adapter.posix:36,53,75` (POSIX, FIFO, symlink).
+    Integrações 13, com motivo: `posix-signals` (I4-C15, T8-C4, I25-C5 POSIX, I25-C6, I25-C42), `posix-acl` (I4-C25j/k/l),
+    `posix-modes` (I4-C25b), `macos-acl` (I4-C25m), PATH vazio POSIX (I25-C45), `npm run` com `sh` (I25-C33), pty (I25-C15).
+  - **No D2 passaram**: os 11 nativos do Hermes (I4-C18–C23, I4-C37, `I25-C40 harness nativa`, os dois I23-C8 com runtime,
+    I4-C44b) e o I4-C35; o `I23-C8 … pelo Python do sistema` também passou e não é runtime Hermes. Nenhum modelo real foi
+    chamado. O T8-C8 positivo inalterado passou em A, B, C e D2, o que não resolve a causa do F2 histórico. O C46 (p) passou
+    em A, B, C e D2: 16 iterações, todas com 2 de 2 liberações no retorno — sem indicar quem resolveu a corrida.
+- **O que se decidiu no caminho**: a causa do defeito da **prova** está demonstrada nos 32 controles K1–K3 do probe (2 × 117
+  entregas; os 2 K4 vermelhos; as 200 do K0 sem reprodução), dentro do contrato do produto; o B histórico continua **não
+  discriminado** entre H1 e H3, sem correção de produto e sem afirmação causal sobre o F2. A tensão com a task foi resolvida
+  pela decisão do Root antes do código. O D2 só existiu depois da comparação controlada.
+- **O que foi abandonado ou ficou como desvio**: o D2 foi chamado por mim com `run_in_background: true` e `timeout: 7200000`,
+  e não em primeiro plano com 900000 ms como pedido — **desvio de método**, confirmado pelo Root nos parâmetros da chamada.
+  Esperei o fim real pela notificação; a CLI fechou depois sem processo em segundo plano. Minha justificativa (“a ferramenta
+  corta em primeiro plano aos 600000 ms”) era leitura da descrição da ferramenta, não limite demonstrado; o D2 durou ~8 min.
+  O prazo do controlador (2 h) e os do produto não mudaram. Antes, na fase do probe, uma tentativa minha de `node -e` foi
+  bloqueada pelo guard antes de executar.
+- **Continua**: o autor fechou a S15 verde, **não** PASS global. A verificação independente 26 da feature inteira (incluindo a
+  R25 parcial e a S15), com leitura completa das fontes obrigatórias antes dos gates, não foi iniciada; os carries da R24
+  valem por identidade, não por afirmação do autor. A auditoria 25 do Root só tem a linha de base (12113, desde o final 24 às
+  18:39:10), porque o D 25 não rodou; a 26 parte dela e só fecha depois do D 26. A formal 14 continua sem uso (13 tentativas,
+  teto 14); os 5 arquivos do core são iguais à base. Depois: PASS 26, `ready`, push, uma execução manual com a medição
+  (esquema 2) e os cinco checks verdes em PR e manual no mesmo HEAD; só então o merge já autorizado. O `Temp\x` global
+  (preexistente, sobrescrito sem cópia conhecida, impacto desconhecido, nem lido nem tocado de novo) e a recusa automática da
+  retomada ampla continuam registrados; as fases restritas são controle de ferramentas, não sandbox do SO.
+- **Atribuição**: execuções, logs e análise são meus. Controladores, manifestos, raízes, comparação e resumos de metadados são
+  do Root. A infraestrutura de limpeza remove só as raízes próprias de A, B e D/D2, o clone B e o scratch C, com as guardas
+  de identidade; os probes e os pais da comparação e do D2 ficam retidos.

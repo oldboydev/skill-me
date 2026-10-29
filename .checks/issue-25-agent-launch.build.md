@@ -3443,3 +3443,31 @@ Em todas: nenhuma criação a mais, nenhum `.lock` no fim, árvore da captura ig
 - F2 (T8-C8): FAIL com causa física desconhecida, fora do probe, sem nenhuma mudança.
 - Nenhum produto, teste, apoio ou prazo mudou nesta etapa. Pendentes: a edição de `concurrency.cli.test.mjs` e os gates do
   autor (bloco do `Handoff`), a verificação independente 26, a formal 14 sem uso. Nada é PASS, `ready` ou CI.
+
+### Correção e gates do autor (`eb6999e`, árvore `e90e0d65…`; `author-s15/`, controlador do Root, execução minha)
+
+- **O que mudou**: só o teste `I25-C46 prazo da entrega: lock obtido … antes do onLock …` e o comentário de `lockTakenAt`, em
+  `tests/integrations/traces/concurrency.cli.test.mjs`. A mudança espera as 2 liberações com o `waitUntil` existente e
+  registra o estado observado no retorno; as asserções exatas ficam como estavam.
+
+| Gate | Ambiente | Período (UTC) | Resultado |
+| --- | --- | --- | --- |
+| A | Windows, Node 24.22.1, npm 11.19.1, concorrência 8; os 3 arquivos inteiros | 21:36:50–21:37:30 | **34/33/0/1**, exit 0 natural |
+| B | clone novo `autocrlf=true`, Node 24.13.0 oficial, npm 11.6.2, concorrência 8 | 21:37:33–21:39:21 | **34/33/0/1**, exit 0 natural |
+| C | WSL uid 1000, `env -i`, Node 24.13.0 copiado, 0 CR, concorrência 7 | 21:39:24–21:39:52 | **34/34/0/0**, exit 0 natural |
+| D | `npm test` completo, Windows 24.22.1, runner 8, TEMP de 130 caracteres | 21:39:55–21:40:32 | **FAIL**, exit 1 natural: 43/41/2; motor C5/C6 `Filename too long`; doctor e integrações não rodaram |
+| Comparação | os mesmos C5/C6, Node, argumentos e fixtures; só o comprimento do TEMP | 21:48:12–21:48:29 | 130 → 2/0/2; 68 → 2/2/0 |
+| D2 | igual ao D, com TEMP sob o pai curto `t-cC8CC0` (68; efetivo 92) | 21:52:18–22:00:22 | **1.076/1.056/0/20**, exit 0 natural: governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7, integrações 616/603/0/13 |
+
+- **Skips do D2**: os 7 do doctor são `{ skip: process.platform === "win32" }` na fonte, sem texto de motivo. Os 13 das
+  integrações têm motivo de plataforma e estão listados no `Handoff`. O skip de A/B é o `T8-C4 … sinal POSIX`.
+- **No D2 passaram**: os 11 nativos do Hermes, o I4-C35 e o `I23-C8 … pelo Python do sistema`, que não é runtime Hermes.
+  Nenhum modelo real foi chamado.
+- **C46 (p)**: 16 iterações (A, B, C e D2), todas com 2 de 2 liberações concluídas no retorno; isso não indica vencedor.
+- **T8-C8 positivo**: passou em A, B, C e D2, o que não resolve o F2 histórico.
+- **Limites**: a comparação 68 × 130 e o efetivo de 92 não são limite universal nem mostram qual camada do Git falha. O
+  core é igual à base, sem `longpaths` nem config global.
+- **Desvio de método**: o D2 foi chamado em segundo plano (`timeout` 7.200.000) em vez de em primeiro plano com 900.000;
+  esperei o fim real. A justificativa dos 600.000 ms era leitura da ferramenta, não limite demonstrado.
+- **Pendentes**: verificação independente 26, formal 14 sem uso (13 tentativas, teto 14), publicação, medição manual e cinco
+  checks. Não é PASS global.
