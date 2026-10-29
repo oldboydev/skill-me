@@ -3378,3 +3378,24 @@ o produto `13ecc07` e as provas da S13 são os mesmos, por identidade.
 - **Pendente**: o commit do código e dos registros (Root), os gates A/B/C/D do novo HEAD por comandos fixos, a verificação
   independente 25 (não iniciada) e a formal 14 (sem uso). Nada aqui é PASS global, `ready`, CI ou merge, nem afirma impacto
   global zero.
+
+### Gates no último código (`a1156da`, árvore `bdd35fe2…`; `author-s14/`, controlador do Root; uma execução de cada)
+
+| Gate | Ambiente | Período (UTC) | Resultado |
+| --- | --- | --- | --- |
+| A | Windows, Node 24.22.1, npm 11.19.1, concorrência 8 | 20:04:51–20:12:09 | **643/630/0/13**, exit 0 natural; status vazio antes e depois; raiz removida por `dev`/`ino` |
+| B | clone novo `autocrlf=true`, Node 24.13.0 oficial (zip = SHASUMS256), npm 11.6.2, concorrência 8 | 20:12:20–20:19:17 | **643/630/0/13**, exit 0 natural; clone conferido e removido por caminho real, `dev`/`ino`, toplevel e HEAD |
+| C (inicial) | WSL | 20:19:37–20:19:40 | **não iniciado**, 0 testes (wrapper 1, controlador 2). Erro de infraestrutura do Root: archive com CRLF (árvore `f0fda628…`) e concorrência 8 declarada contra 7 |
+| C2 | WSL, uid 1000, `env -i`, Node 24.13.0 copiado, PATH sem `/usr/bin`, sem agentes nem pwsh, concorrência 7 | 20:22:01–20:23:18 | **643/621/0/22**, exit 0 natural; árvore `bdd35fe2…`, 0 CR; scratch removido por uid, dev e inode (`C2/C.log`, `C2/C.run.txt`) |
+| D | `npm test` completo, Windows, Node 24.22.1, runner 8 | 20:23:30–20:31:55 | **1.076/1.056/0/20**, exit 0 natural: governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7, integrações 616/603/0/13 |
+
+- A concorrência sai do mesmo contrato, min(CPU−1, 8): 8 no Windows e 7 no WSL.
+- Os três testes novos passaram em A, B, C2 e D.
+- No D, passaram os 11 nativos com runtime Hermes e o I4-C35; o caso pelo Python do sistema também passou, sem ser runtime
+  Hermes.
+- Skips: os mesmos IDs e motivos do bloco S14 do `Handoff`.
+- O C2 mudou só a infraestrutura do Root (archive com `core.autocrlf=false`, guarda de árvore igual e concorrência 7); o C
+  original fica preservado. Os `budgetMs: 1200000` dos manifestos e claims de A/B/C eram metadado obsoleto; os limites
+  efetivos são 30 min em A/B/C e 2 h no D.
+- Produto `13ecc07` sem mudança, e as provas da S13 valem por identidade.
+- Nada disto é PASS global, `ready` ou CI verde.

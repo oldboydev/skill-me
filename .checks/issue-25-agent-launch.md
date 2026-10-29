@@ -2810,3 +2810,64 @@ de qualquer sonda ou código):
 - **Por identidade, sem nova execução**: o produto `13ecc07`, as provas da S13, o E5 e os 14 mutantes. A formal 14 continua
   sem uso, e a verificação independente 25 não começou. Nada aqui é PASS global, `ready`, CI ou merge. **Próximo**: o Root
   revisa e faz o commit do código e dos registros, e depois dá os comandos fixos de A/B/C/D para o novo HEAD.
+
+- **Onde a fronteira caiu**: a S14 inteira num lote só, fechada pelo autor. Abertura `e06e4dd`; código e registros
+  `a1156da` (commit do Root; implementação e testes meus), árvore `bdd35fe2…`. O produto `13ecc07` não mudou, e os limites da
+  S13 valem por identidade. **Gates no último código** (`author-s14/`, controlador do Root, uma execução de cada, término
+  natural, exit 0; HEAD `a1156da` e status vazio antes e depois de todos; A e B não foram repetidos):
+  - **A**: Windows, Node 24.22.1, concorrência 8; 20:04:51–20:12:09 UTC; **643/630/0/13**.
+  - **B**: clone novo `autocrlf=true`, Node 24.13.0 oficial, npm 11.6.2, concorrência 8; 20:12:20–20:19:17; **643/630/0/13**.
+  - **C2**: WSL, uid 1000, `env -i`, Node 24.13.0 copiado, concorrência 7; 20:22:01–20:23:18; **643/621/0/22**.
+  - **D**: `npm test` completo, Windows, Node 24.22.1, runner 8; 20:23:30–20:31:55; **1.076/1.056/0/20** = governança 27/27/0/0,
+    motor 16/16/0/0, doctor 417/410/0/7 e integrações 616/603/0/13.
+
+  A concorrência sai do mesmo contrato, min(CPU−1, 8): 8 no Windows (32 CPUs) e 7 no WSL (8 CPUs). Os três testes novos
+  passaram nos quatro. No D passaram os 11 nativos com runtime Hermes (I4-C18–C23, I4-C37, `I25-C40 harness nativa`, os dois
+  I23-C8 com runtime, I4-C44b) e o I4-C35; o `I23-C8 … pelo Python do sistema` também passou, mas não é runtime Hermes.
+
+  **Skips**:
+  - A e B (13), POSIX ou macOS: I4-C15, I4-C25b/j/k/l/m, I25-C5, C6, C15, C33, C42, C45 e T8-C4;
+  - C2 (22): 11 `hermes-runtime-ausente`, o `governance-C48` do ramo Windows, I4-C25g/h/i (DACL), I4-C25m (macOS) e
+    I25-C4, C5, C8, C38, C42 e C45 (Windows);
+  - D (20): 7 do doctor (POSIX/FIFO) e os mesmos 13 de A.
+
+  **Gate C inicial, erro de infraestrutura do Root, preservado**: 0 testes, **não iniciado** (wrapper 1, controlador 2). O
+  arquivo veio de um `git archive` sem `core.autocrlf=false`: árvore `f0fda628…` em vez de `bdd35fe2…`, com 59.421 CR. E a
+  concorrência declarada era 8, contra 7 no WSL; foi essa recusa do guarda que impediu o início. Na minha declaração antes dos
+  gates eu também tinha escrito 8 para o C. Não é execução de teste nem FAIL natural do produto. O **C2** mudou só a
+  infraestrutura do Root: `git -c core.autocrlf=false archive`, guarda de árvore igual antes dos testes e concorrência
+  calculada 7. A árvore saiu `bdd35fe2…`, com 0 CR. Logs em `author-s14/C2/C.log` e `C2/C.run.txt`; os arquivos do C
+  original ficam como estão.
+
+  **Orçamentos**: os campos `budgetMs: 1200000` dos manifestos e dos claims de A, B e C eram metadado obsoleto. Os limites
+  efetivos do controlador sempre foram 30 min em A/B/C e 2 h no D, e os claims de C2 e D já os registram. Nenhum prazo de job,
+  produto ou teste mudou.
+- **O que se decidiu no caminho**:
+  - a forma do RED do `evidence.unit` (importação dentro do teste, só ele vermelho);
+  - a recusa do primeiro K3, antes de qualquer execução, e a correção do Root só no manifesto;
+  - a contagem de 16 antigos (10 + 6), corrigida no relato;
+  - a sessão 83978 com exit −1 (interrupção do Root, sem gate iniciado).
+
+  Nada novo com o usuário: a aprovação 6502294779 e “Pode fazer quantas precisar” bastaram.
+- **O que foi abandonado**:
+  - corrigir o `placeOf` local com `UNSURE_PLACE`, porque criaria uma terceira cópia da decisão;
+  - trocar o `hookTiming` por `producerTrace`, que mudaria os literais do C47;
+  - uma injeção nova na pré-carga;
+  - o K3 com `() => UNSURE_PLACE`, que não discriminava.
+
+  **Continuam valendo**:
+  - o incidente do `Temp\x` global: já existia, foi sobrescrito sem cópia, impacto desconhecido, não tocado de novo;
+  - a interrupção com exit −1;
+  - a recusa automática da retomada ampla;
+  - as fases restritas, que são controle de ferramentas e não sandbox do SO, e o `/tmp` do Git Bash, que continua global
+    mesmo com o `TEMP` privado;
+  - todos os FAILs, auditorias e atribuições anteriores.
+
+  **Pendente, com o coordenador**:
+  - a verificação independente 25 da feature inteira (`63621c69..HEAD`), ainda não registrada; a auditoria do Root 25 só
+    tem a linha de base até o D do Verifier;
+  - a formal 14, sem uso (13 tentativas preservadas, teto 14) e só depois de um PASS legítimo;
+  - `ready`, push, uma execução manual nova com a medição (esquema 2) e os cinco checks verdes em PR e manual no mesmo HEAD;
+  - o merge já autorizado.
+
+  Este fechamento é o verde da fatia do autor. **Não é PASS global**, nem `ready`, nem CI verde.

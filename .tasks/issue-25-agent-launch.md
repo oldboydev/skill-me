@@ -941,3 +941,12 @@ refinamento F1 do C46 (u) e o bloco de mesmo nome do `Handoff`.
 
 **Limites.** Não muda o veredito da R24 retroativamente nem dispensa a verificação independente 25, a formal 14, a
 publicação, a medição manual e os cinco checks verdes antes do merge já autorizado.
+
+**Fechamento do autor (S14).** Código em `a1156da`.
+- **Provas da correção**: RED 19/16/3, GREEN 19/19 e os controles K1–K3 vermelhos.
+- **Gates do último código**, uma execução de cada, término natural: A 643/630/0/13, B 643/630/0/13, C2 643/621/0/22 e D
+  1.076/1.056/0/20, com os 11 nativos do Hermes e o I4-C35.
+- **Gate C inicial**: não iniciado, por erro de infraestrutura do Root, e preservado.
+
+Detalhes no bloco S14 do `Handoff` e no build. Pendentes: a verificação independente 25, a formal 14, a publicação, a
+medição manual e os cinco checks verdes. Não é PASS global.
