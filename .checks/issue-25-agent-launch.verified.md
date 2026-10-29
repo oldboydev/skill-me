@@ -1,3 +1,359 @@
+# Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 22)
+
+**Verdict (R22)**: **PASS — 50/50 checks considerados e provados; gates frescos sem falha.** HEAD `2383c52`, último código `cad647a`, 9 ACs. Primeira verificação independente do código novo do T8-C20.
+- **Gates frescos (verified at `2383c52`)**, uma vez cada, sem filtro e sem repetição:
+  - **A** Windows Node 24.22.1: 116/110/0/6;
+  - **B** clone novo com `autocrlf=true`, Node 24.13.0 oficial: 116/110/0/6;
+  - **C** WSL isolado, Node 24.13: 116/112/0/4;
+  - **D** `npm test` completo: **1.059 testes, 1.039 pass, 0 fail, 20 skip**, exit 0, término natural.
+
+  Em todos, os 4 testes do `docs.test` (os dois T8-C20 e os dois controles do C46 (r)) e o T8-C15 com os 3 controles rodaram e passaram. No D, os 11 nativos do Hermes com runtime passaram, e a governança deu 27/27 com o caso nativo do pwsh executado.
+- **O que isto não é**:
+  - não desfaz o **FAIL 21** (`3a15d79`, D de `5a0f231` com o T8-C20 vermelho), que fica como está;
+  - não transforma em PASS o **B vermelho do autor** em `407edc5` (`open lock EPERM` não injetado no T8-C15), analisado e preservado abaixo;
+  - não demonstra a causa de nenhum dos dois, nem que deixem de ocorrer. Este verde é uma execução deste computador neste HEAD.
+- **Mudança nova**: só prova e pré-carga de provas (`docs.test.mjs`, `traces-probe.mjs`). Produto, guia, workflow, governança, core e `package*` são iguais a `5a0f231`. Ela confere com o C46 (r) e com a retificação aditiva `fce5c59`. O T8-C20 positivo manteve o hook real, o arquivo Unicode e as asserções literais.
+- **Carry por identidade**: 245 dos 247 arquivos rastreados de `src`/`tests`/`scripts` têm o blob de `5a0f231`. As análises de C1–C47 sem diff vêm da R21, da R20 e da R19. A governança (C48–C50) traz o A/B/C da R21, e o D desta rodada a executa de novo.
+- **Gates remotos**: pendentes e obrigatórios. Não executei Action, CI, `review:run`, commit, push nem merge.
+
+**Profile**: light (`AGENTS.md:138`). Por isso não há fault injection, `Coverage`, `Test policy` nem fonte de UI. Não criei mutantes, sondas, testes nem correções. O diagnóstico, as sondas, o RED (`red2-run.txt`), o GREEN e os mutantes M1–M3 do T8-C20 são **provas do autor**, só atribuídas (`builder-r21-t8c20/`; checklist `:646-675`; build, seção nova).
+
+**Diff range**: `63621c691f132dc8d591414269d36cfa18fca594..2383c52a79627e80621fcd9a49d61f970dde9b06`, a feature inteira: 152 commits, árvore `790bdac3…`. Desde a R21 (`5a0f231`, relatório em `3a15d79`), entraram:
+- `648458f` (abertura) e `22c1161` (Landing, C46 (r), Swept e task);
+- `fce5c59` (retificação aditiva do (r));
+- `cad647a` (**último código**);
+- `407edc5`/`46a5b35` (gates do autor);
+- `2383c52` (`approval` do override 25; `maxRounds` continua 13).
+
+**Round**: **22** (light). Autorizações: “Pode fazer quantas precisar” e “Pode fazer a medição comparativa. Mantém os testes e prazos e segue até a CI ficar toda verde para fazer o merge do PR #28”. Escopo [6467154706](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6467154706), [bloqueio T8-C20](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6485905666) e registro 22 [6486798702](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6486798702).
+- `context-round22.json` (sha256 `580d6970…`) tem 35 comentários e 9 ACs. O corpo e os comentários 1–33 são iguais aos de `context-round21.json`. Os novos são o 34 (FAIL 21) e o 35 (registro 22). O `round22-registration.md` é igual ao comentário 35, sem placeholders (`r22/context-config.txt`).
+- `roundOverrides["25"]` = `{profile: "light", maxRounds: 13}`, igual à R21. O diff desde `5a0f231` só troca o texto `approval`.
+- O `state.json` da revisão tem 12 tentativas, sha256 `7acee6b7…`, o mesmo da R21. A formal 13 continua sem uso e é do root, depois deste resultado.
+
+**Verifier**: subagente novo e independente (Claude Opus 5.5). Não sou o autor nem o Verifier 21, e não herdei sessão.
+- Produto, testes, apoios, scripts, workflow, planos, configuração e estado ficaram só para leitura.
+- Escrevi este arquivo e as evidências em `.checks/code-review/issue-25/verifier-round22/r22/`, pasta ignorada (`.gitignore:4`). Fora dela, só as raízes próprias dos gates.
+- Não li `profile-before.json`, `profile-final.json` nem o resto de `profile-target-check.json`.
+
+Data: 29/10/2026 (-03).
+- **Plano**: a identidade (`r22/blob-identity.txt`, 00:15–00:16) e o alvo com os orçamentos (`r22/plan.txt`, 00:17:04) foram gravados antes de qualquer gate.
+- **Horários**: A 00:17:32–00:20:39; B 00:21:09–00:23:33; C 00:23:56–00:25:09; D 00:25:36–00:35:06 (9 min 30 s).
+- **Estado**: o HEAD foi `2383c52` do início ao fim. O `git status` ficou vazio antes e depois de A e do D, e às 00:35:38. Em B, o status do clone ficou vazio. Em C, a árvore extraída é igual ao `HEAD^{tree}`.
+
+## Fontes lidas (R22)
+
+| Fonte | Como |
+| --- | --- |
+| `AGENTS.md`, `CLAUDE.md`, `tlc-implement/references/verify.md` | inteiros |
+| `.tasks/issue-25-agent-launch.md` | inteiro (805 linhas): critérios 1–42 e refinamentos, `Sources`, `Unresolved`, a ordem remota, “Ambiente do passo de integrações no Windows” e a seção nova “Diagnóstico do T8-C20 do D da verificação 21” (`:773-805`) |
+| `.checks/issue-25-agent-launch.md` (2.266 linhas) | `Sources` (`:9-45`, com a entrada nova `:11`), `Out of scope`, `Landing` (`:58-121`, com a linha nova “Diagnóstico do T8-C20” `:119`), o C46 inteiro (`:426-675`, com o (r) `:646-675` e a retificação `:665-672`), os cabeçalhos de C47–C50, `Swept` (`:906-917`, com o acréscimo `:917`) e o bloco novo do `Handoff` (`:2213-2266`). Os demais blocos do `Handoff` são histórico e ficam como carry da R21 |
+| `.checks/issue-25-agent-launch.verified.md` | o topo R21 inteiro (`:1-275`) e o processo da R20 (`:496-543`). O resto é histórico, atribuído sem nova execução |
+| build (seção nova, `git diff 3a15d79..HEAD`), `builder-r21-t8c20/{plan.txt, build-results.md, B-failure.txt}`, `B.log` (só a falha), `D-hermes.txt` e `coordinator-t8c20-retification-note.md` | **relato do autor e do coordenador**, só atribuição |
+| `git diff 5a0f231..HEAD` | inteiro no código: `docs.test.mjs` (+107/−23), `traces-probe.mjs` (+28/−3) e a configuração |
+| código lido para a análise | `traces-probe.mjs:1-60`, `:140-210`; `producer-runs.mjs:1-80`; `traces.mjs:150-199`, `:280-309`, `:380-440`; `trace-kinds.mjs`; `concurrency.cli.test.mjs:120-160`, `:180-335`, `:395-430`; `delivery.mjs:51-104`; `store.mjs:190-209`; `privacy/fs.mjs:34-42`; `docs/traces.md:548-556`; `hermes-runtime.mjs:1-60` |
+
+## Prova Git (verified at `2383c52`; `r22/blob-identity.txt`, `r22/context-config.txt`)
+
+- **Alterados de `5a0f231` ao HEAD, fora de `.checks`/`.tasks`**:
+  - `tests/integrations/traces/docs.test.mjs`: `d52de03` → `852616a`;
+  - `tests/integrations/helpers/traces-probe.mjs`: `a6440dd` → `292c319`;
+  - `code-review.config.json`: `8c9ada6` → `40f9fd8`, só o `approval`.
+
+  `cad647a` tocou só os dois arquivos de teste. Desde ele, mudou só a configuração.
+- **Iguais a `5a0f231`**:
+  - árvores: `src` `51f0c98`, `docs` `d9f546f`, `scripts` `ab2df5a`, `scripts/code-review` `6b98d7c`, `.github` `6a0b533`, `tests/integrations/fixtures` `6591970`, `tests/doctor` `bcedb83`;
+  - arquivos: `package.json` `8fd02fa`, `package-lock.json` `9ec32e0`, `.gitattributes`, `.gitignore`, `README.md`, `AGENTS.md`, `CLAUDE.md`, o workflow `f24e82d`, `test-integrations.mjs` `22824c4`, `governance-ci.test.mjs` `5313dba` e `ci-lock-latency{,.test}.mjs` (`8c12894`/`75eeadd`);
+  - apoios: `trace-kinds.mjs` `96a67e9`, `producer-runs.mjs` `13cd7c6`, `traces.mjs` `b71938f`;
+  - dez dos onze arquivos do alvo têm o mesmo blob. O outro é `docs.test`.
+
+  Dos 247 rastreados de `src`/`tests`/`scripts`, 245 têm o blob de `5a0f231`.
+- **Permanecem**:
+  - o **produto `322bcad`**: `git diff 322bcad HEAD -- src` vazio, `delivery.mjs` `e1cf25a` nos dois;
+  - o **EOF `68f84c4`**: `codex-run.cli.test.mjs` `ff47369` nos dois;
+  - o **terceiro produtor `2473632`**: `evidence.unit.test.mjs` `6ccbf48` nos dois.
+- **Core vendorizado**: os 5 arquivos de `scripts/code-review/` têm o blob da base no HEAD (`25e5284`, `c6a4abc`, `1bda8e4`, `216125c`, `b02001e`).
+- **Alcance** (por busca, não pela lista do autor):
+  - `traces-probe.mjs` só é carregado por `--import`, pelo `TRACES_PROBE` de `producer-runs.mjs:14`;
+  - os consumidores são o `recordedProducer` num registro (`:37-58`), o `timedEnv` (`traces.mjs:116`) ou o `--import` direto;
+  - os arquivos de teste que o carregam são **exatamente os 11 do alvo** (busca por `recordProducersInEachTest`, `recordingProducers`, `recordedProducer`, `timedEnv`, `TRACES_PROBE`, `traces-probe`, `SKILL_ME_TEST_TRACES_` e `NODE_OPTIONS` em `tests`/`scripts`/`src`);
+  - nenhum outro teste lê `traces-probe.mjs` ou `docs.test.mjs`. O `fixtures-inventory` lê só `tests/integrations/fixtures`;
+  - a governança (`test:governance`) importa só `scripts/*.mjs`, `src` e `yaml`, todos iguais. O C48–C50 pode, então, carregar a R21 (abaixo).
+
+## Análise da mudança `cad647a` contra o C46 (r) e a retificação (verified at `2383c52`, por leitura; as provas estão nos gates)
+
+**1. O T8-C20 positivo continua o mesmo** (`docs.test.mjs`):
+- O trecho “Seguindo o guia” virou `followGuide` (`:146-168`), chamado sem `extra` (`:202`). Mantém:
+  - o mesmo scratch `t8 c20 guia`, a raiz `capturas ação`, `startCapture`, o arquivo `diagnóstico de entrega.ndjson` e o `.lock` alheio `"lock alheio\n"` (`:148-154`);
+  - o mesmo `runIntegrations(["hook", "--agent", "claude"])` síncrono, com `claudePayload("pre_tool_bash")` (`:156-161`).
+- **Ambiente**: `recordedProducer("hook claude", baseEnv({ROOT, ID, REPORT, ...extra}))` (`:155`). Sem `extra`, são as mesmas três variáveis.
+  - Num registro, só entram `NODE_OPTIONS=--import=<traces-probe>` e `SKILL_ME_TEST_TRACES_TIMING=<arquivo próprio>` (`producer-runs.mjs:37-58`). O `settle` só guarda o `run` e o devolve (`:52-56`).
+  - Não há fd extra (é `runIntegrations`, não `runInternal`; a evidência diz `entrega sem relatório`). Não há outra escrita no prazo do hook: a linha de tempos é gravada na saída do processo.
+- **Asserções literais**, as mesmas, nas linhas novas:
+  - `:162` `[run.status, run.stdout, run.stderr]` = `[0, "", ""]`;
+  - `:163` `readFileSync(file, "utf8")`;
+  - `:164` uma linha;
+  - `:166` `ISO_MS`;
+  - `:167` o exemplo do guia, a menos do ID e do instante.
+
+  As de prosa e tabela (`:170-200`) não mudaram, e `exampleLine` (`:141`) é a mesma busca.
+
+**2. A pré-carga** (`traces-probe.mjs`):
+- `isReport` compara o caminho **exato** com `SKILL_ME_CAPTURE_REPORT` não vazio (`:147-148`). `kindOf` dá `diagnóstico` só nele e `fileKind` nos outros (`:159`). A pasta continua `pasta`.
+- Os knobs só trocam o `fsp.open` com o valor `"1"` (`:149-157`):
+  - `STALL_REPORT` devolve uma promessa que nunca resolve;
+  - `REPORT_EIO` lança `EIO` sem chamar o `open` real.
+
+  O `timedOpen` (`:200`) envolve esse wrapper e mede a operação parada ou com erro.
+- Sem as duas variáveis, o `fsp.open` não é trocado e `kindOf(file) === fileKind(file)` fora do valor exato de `SKILL_ME_CAPTURE_REPORT`. Nos produtores sem essa variável, a linha da pré-carga é a de `a6440dd`. É o caso do T8-C15 (`boundEnv(root, id, {...timedEnv, ...injected})`, `concurrency.cli.test.mjs:127`).
+- Os produtores com `SKILL_ME_CAPTURE_REPORT` dentro de um registro (os T8-C16 de `concurrency.cli`) passam a rotular esse arquivo `diagnóstico`, em vez de `pasta`. Nenhuma asserção dependia do rótulo antigo: busca por `<op> pasta` nos 11 arquivos; o `evidence.unit:57` usa uma linha sintética.
+
+**3. Os controles do C46 (r)** (`docs.test.mjs:205-274`):
+- **Mesmo erro**: `guideFailure` roda `followGuide` com o knob dentro de `recordingProducers`.
+  - `:218` `[code, syscall]` = `["ENOENT", "open"]`;
+  - `:225` a mensagem começa pela original (relida do mesmo caminho, `:219-224`) seguida de `\nevidência dos produtores deste teste (`;
+  - `:226` o `stack` traz a mensagem nova.
+- **Privacidade** (`:228-235`). A evidência não traz:
+  - a base, a raiz, o nome do scratch, `capturas ação`, `diagnóstico de entrega` nem `lock alheio`;
+  - o ID nem a chave (hex/base64/base64url);
+  - o `tmpdir()` nem o `PATH`;
+  - nenhum `[0-9a-f]{32}`.
+- **Nos dois** (`assertHookAndRoot`, `:253-259`):
+  - `:254` `evidência dos produtores deste teste (1):`;
+  - `:255` `produtor 1 hook claude: status 0, sinal nenhum; entrega sem relatório`;
+  - `:256` `lock ocupado \(EEXIST, repetido\) [1-9]\d*x` (n ≥ 1);
+  - `:257` `processo: iniciado `;
+  - `:258` a linha da raiz **inteira**: `raiz 1 (produtores 1): lock presente, ilegível [SyntaxError; 12 bytes]; capturas indisponível [lock_present]; pasta das capturas 0 segmento(s), 0 temporário(s)`. É mais que o literal do (r), que não fixa a pasta.
+- **Prazo** (`:261-267`): `:264` os pendentes na saída contêm `open diagnóstico (fora do lock) há `; `:266` a lista `falhas` não tem `diagnóstico`.
+- **E/S** (`:269-274`): `:272` as `falhas` contêm `open diagnóstico EIO (fora do lock)`; `:273` os pendentes não têm `diagnóstico`.
+- **Leitura das listas** (`failuresOf`/`pendingOf`, `:240-251`), pelo formato do apoio (`traces.mjs:165-171`, `:306-309`):
+  - `falhas` vai de `; falhas ` a `; CPU do processo `;
+  - os pendentes vão até o fim da linha;
+  - `última concluída` e `ausências conferidas` ficam fora das duas listas.
+
+  Um knob trocado, o tipo `pasta` no lugar de `diagnóstico` ou o hook fora do registro reprovam essas asserções. É o que os mutantes M1–M3 do autor mostram (atribuição, não execução minha).
+
+**4. A retificação `fce5c59`** é aditiva e veio antes do commit de código `cad647a`. O texto original do (r) fica.
+- **O que mudou**: o (r) inicial exigia `pendentes na saída: nenhuma` no controle de E/S. O GREEN anterior ao commit (`builder-r21-t8c20/green-pre2.log`) mostrou `stat store.json (fora do lock)` ainda pendente na saída.
+- **Por que a suposição era errada**: a tentativa da entrega abandonada no prazo continua em segundo plano. O `untilDeadline` não cancela a operação (`delivery.mjs:57-62`, `:85-99`), e uma E/S já iniciada não é cancelável.
+- **O que a correção confere**: só o objeto que separa os controles, o diagnóstico pendente × o diagnóstico com falha. `pendingOf`/`failuresOf` leem cada lista inteira e só testam a presença ou a ausência de `diagnóstico`. Nenhuma outra operação é filtrada, descartada ou escondida.
+- **O que não mudou**: nenhuma asserção do T8-C20 original foi reduzida. O prazo de 1.000 ms (`REPORT_DEADLINE_MS`, `observation.mjs:39`, `:118`; blob `45192e7` igual) e o melhor esforço (`delivery-report.mjs` `42b759b` igual; `docs/traces.md:553-555`) também não.
+- **Atribuição**: a justificativa é do autor e do coordenador (`coordinator-t8c20-retification-note.md`). Não é autorização humana nova. Eu a aceito como correção de uma suposição nova e errada do próprio controle, sem efeito no contrato (`AGENTS.md:73-74`).
+
+**5. Prazo**: `REPORT_DEADLINE_MS` conta do `flush` e já inclui a espera da entrega (650 ms por entrada, disputando o lock alheio). Não são 1.000 ms novos depois do `settle`.
+- A sonda do autor (20/20 com ~335–349 ms de margem; quatro classes com o mesmo sintoma da R21) é atribuição. Mostra classes compatíveis, não a causa da R21.
+- Nenhum defeito do produto foi demonstrado, e não alego que a intermitência acabou.
+- No D desta rodada, o T8-C20 levou 2.218,9 ms. O apoio do C16 mediu 696 ms do fim do stdin à saída do hook (`D.log:1087`, 1118).
+
+## O B vermelho do autor em `407edc5` — analisado e preservado (não é resultado meu)
+
+- **O que o log mostra** (`builder-r21-t8c20/B.log:67`, `:139-175`; `B-failure.txt`):
+  - clone novo, Node 24.13.0 oficial, 116/109/1/6;
+  - falhou só `I25-C46 diagnóstico do T8-C15: confirmação perdida depois do commit …` (`concurrency.cli.test.mjs:321`, asserção `:283`);
+  - o produtor `a`, **sem injeção**, saiu `io_failure` 40/39/39/1, com `falhas open lock EPERM (tomada do lock)` e `lock ocupado (EEXIST, repetido) 16x`;
+  - o `b` (injeção `LOST_CONFIRMATION=2`) saiu `io_failure` 40/33/33/7 com `unlink lock EIO`, como o controle espera;
+  - a captura ficou `manual active accepted 79 persisted 79`, com lock ausente, 1 segmento e 0 temporário;
+  - o controle confere `a` primeiro (`assertProducersConfirmed`, `:215-222`), por isso o `actual` em `:283` é o de `a`.
+- **Política do produto, por leitura**:
+  - `holdLockFile` só converte o `EEXIST` da criação exclusiva do `.lock` em `lock_present`, e relança qualquer outro erro (`store.mjs:196-203`). A criação é `writeExclusive` = `open(file, "wx", 0o600)` (`privacy/fs.mjs:34-35`);
+  - `codeOf` dá `io_failure` a todo erro que não é `StoreError` (`delivery.mjs:51`), e só `lock_present` é repetido até o prazo (`:100-102`);
+  - a base `63621c6` tem a mesma regra (`store.mjs:169`; `delivery.mjs:51`, `:90`).
+
+  Então um `EPERM` na tomada do lock vira `io_failure` sem nova tentativa, como manda o AC7 (“sem retry novo”). Não proponho mudança dessa política.
+- **Relação com `cad647a`**: nenhuma demonstrável, e eu também não demonstro que não haja relação. Pela leitura, os produtores do T8-C15 não recebem `SKILL_ME_CAPTURE_REPORT` nem os knobs novos (`concurrency.cli.test.mjs:127`). Então a pré-carga de `292c319` não troca o `fsp.open` deles e dá a mesma linha de `a6440dd` (item 2 acima).
+- **Ocorrência**: procurei `lock EPERM` em todos os `.log`/`.txt` de `.checks/code-review/issue-25/`. Só aparecem o `B.log`/`B-failure.txt` do autor e os textos de despacho da R22. As falhas antigas do T8-C15 (R9) não tinham errno. Nos meus A/B/C/D não houve `EPERM`.
+- **Causa**: **não demonstrada**. Um `EPERM` do `open` exclusivo no Windows é compatível, por exemplo, com o nome do `.lock` ainda pendente de remoção depois da liberação do outro produtor. Mas nada no log distingue essa classe de outras (outro processo do sistema, disco). Não atribuo a antivírus, indexador, disco ou hardware.
+- **O que esta rodada fez**: rodou o alvo inteiro de novo, uma vez por ambiente, sem filtro e sem repetição. O B desta rodada (mesmo Node, clone novo) passou, inclusive esse controle (`B.log:67`).
+  - Esse verde **não** apaga, não explica e não corrige o B do autor.
+  - O risco de nova ocorrência, no local ou na CI, continua aberto. A decisão fica com o coordenador e o proprietário, com as opções registradas pelo autor (checklist `:2261-2264`).
+
+## Execuções — verified at `2383c52`
+
+A ordem foi A, B, C e D, em sequência, uma vez cada, sem filtro e sem repetição. O alvo e os orçamentos foram registrados antes (`r22/plan.txt`).
+- **Alvo de A/B/C**: os 11 arquivos inteiros, numa invocação: `node --test --test-concurrency=4` + `launch/command.cli`, `launch/end.e2e`, `observe/agents.e2e`, `observe/control.cli`, `traces/concurrency.cli`, `traces/docs`, `traces/evidence.unit`, `traces/follow.cli`, `traces/live-capture.cli`, `traces/query.cli` e `traces/replay.unit`.
+- **Forma comum**:
+  - `RUNNER_TEMP` numa pasta própria, vazia antes e com 0 entradas depois;
+  - temporário dos testes numa raiz própria `sm-v22-<rótulo>-…`, criada por `mkdtemp` e registrada (caminho real, `dev`, `ino`), só no `TEMP`/`TMP` do processo do gate (A, B, D) ou no `TMPDIR` do scratch (C);
+  - `npm_execpath` ausente e `npm_config_update_notifier=false`;
+  - em A, B e D, `POWERSHELL_TELEMETRY_OPTOUT=1` e `POWERSHELL_UPDATECHECK=Off` só no processo. Nenhum muda asserção.
+- **Scripts** (escritos por mim, em `r22/`): `isolated-root.mjs`, `run-target.sh`, `make-clone-B.sh`, `remove-clone-B.sh`, `wsl-run.sh`, `run-npm-test.sh`, `matrix.mjs` e `d-summary.mjs`.
+
+| # | Ambiente | Resultado |
+| --- | --- | --- |
+| A | Windows 11, checkout principal, Node **v24.22.1** (`C:\nvm4w\nodejs\node.exe`), npm 11.19.1; `docs.test`/`traces-probe` iguais aos blobs do HEAD. 00:17:32–00:20:39 | **116 testes, 110 pass, 0 fail, 6 skip**, 0 cancelled, exit 0. Status vazio antes e depois; `RUNNER_TEMP` com 0 entradas. Raiz `sm-v22-A-gs8fJf` (1 entrada dos testes) conferida e removida pelo registro |
+| B | **Clone git novo** em `r22/B-clone` (`--no-hardlinks --no-checkout --config core.autocrlf=true`, sem rede; o `gitconfig` do sistema já tinha `true`; nada global mudou). HEAD `2383c52`, árvore `790bdac3…` e toplevel conferidos. Node **v24.13.0 oficial**: zip `ca274269…` igual à linha do `SHASUMS256.txt`, `node.exe` `d14ba95c…` igual ao do zip, npm **11.6.2** adjacente, na frente do PATH. `cli.mjs` `i/lf w/lf attr/text eol=lf`, **0 CR antes e depois**; `docs.test` e `traces-probe` `i/lf w/crlf` (274 CR no `docs.test`). Status vazio antes e depois do `node_modules` copiado. 00:21:09–00:23:33 | **116: 110 pass, 0 fail, 6 skip**, exit 0. Depois: HEAD, árvore e toplevel iguais, bin LF/0 CR, status vazio. Raiz `sm-v22-B-RoZOXx` (362 entradas dos testes, o mesmo número do B do autor) removida pelo registro. Clone removido pelo caminho exato, depois de conferir pasta não link, toplevel, HEAD e status vazio (`B-clone-cleanup.txt`) |
+| C | WSL `Ubuntu`, `oldboydev`, uid 1000. `git -c core.autocrlf=false archive` do HEAD: 6.522.880 bytes, sha256 `c451ac8f…`, `get-tar-commit-id` = `2383c52…`. Árvore extraída `790bdac3…` = `HEAD^{tree}` (git com `HOME` do scratch e `GIT_CONFIG_NOSYSTEM`); 0 CR; `cli.mjs` 755; sha256 de `docs.test` `a0f60c5d…` e de `traces-probe` `6ee19269…`, iguais aos blobs. Node **v24.13.0** copiado de `/usr/bin/nsolid` (`150946e4…`, igual) num prefixo `node npm npx`, **sem `sh`**; npm 11.6.2. `env -i` só com `HOME`, `LANG`, `PATH`, `RUNNER_TEMP`, `TMPDIR` e `npm_config_update_notifier`. `PATH` = prefixo + `tools` (links para `/usr/bin/{sh,git,python3,id,grep,mkfifo}`), **sem `/usr/bin`**, sem `codex`/`claude`/`hermes`/`gemini`/`pwsh`. 00:23:56–00:25:09 | **116: 112 pass, 0 fail, 4 skip**, exit 0. `RUNNER_TEMP` 0 entradas, `HOME` 0. Scratch `/tmp/sm-v22-C.BwwGqd` removido pelo caminho exato, pasta não link, uid 1000 e inode 1712 |
+| D | `npm test`, sem argumentos, no checkout principal: Windows, Node v24.22.1, npm 11.19.1, `SKILL_ME_HERMES_PYTHON` ausente, `availableParallelism` 32 → `MAX_PARALLEL_FILES = 8`. `C:\Program Files\PowerShell\7` na frente do PATH: é o pwsh oficial já instalado, só o caminho, sem iniciá-lo para inspeção. Orçamento de **2 h** (7.200.000 ms), definido no plano e passado à ferramenta. Checkout commitado e limpo. 00:25:36–00:35:06 | **1.059 testes: 1.039 pass, 0 fail, 20 skip**, **exit 0**, término natural. Por suíte: governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7, integrações 599/586/0/13. HEAD igual e status vazio antes e depois; `RUNNER_TEMP` com 0 entradas. Raiz `sm-v22-D-sr1ywn` (128 entradas dos testes) removida pelo registro |
+
+**Nomes de A/B/C** (`r22/matrix-ABC.txt`):
+- os 116 nomes de topo são iguais nos três ambientes, sem duplicado, e iguais aos do A, do B e do C do autor. O B do autor tem 117 linhas porque repete o `✖` no resumo; são 116 nomes únicos;
+- os 4 do `docs.test` (`A.log:89-92`, `B.log:89-92`, `C.log:88-91`) e o T8-C15 com os 3 controles (`:65-68` nos três) passaram;
+- **skips com motivo**:
+  - em A e B, os 6 POSIX: `I25-C45` (componente vazio do PATH é semântica POSIX), `I25-C5`, `I25-C6` e `I25-C42` (sinais POSIX), `I25-C33` (o npm do Windows usa o `ComSpec`) e `T8-C4` (sinal POSIX do filho);
+  - em C, os 4 só do Windows: `I25-C4`, `I25-C5` console, `I25-C42` console (`PATHEXT`, `.cmd` e o console só existem no Windows) e o controle do `I25-C45` no Windows;
+  - cada caso de plataforma rodou no outro ambiente.
+
+**D** (`r22/D-summary.txt`, comparado nome a nome):
+- **Contra o D do autor (`407edc5`)**: as mesmas 1.059 linhas de resultado, com as mesmas marcas. Nenhuma linha só de um lado.
+- **Contra o D da R21 (`5a0f231`)**: entram os dois controles `I25-C46 diagnóstico do T8-C20`. O `T8-C20 … grava`, que era `✖`, agora é `✔`.
+- **Nomes por check**: cada prefixo de `I25-C1 ` a `I25-C47 ` tem ao menos um `✔`, salvo `I25-C6` e `I25-C15`, que no Windows só têm skip.
+  - O `I25-C46` soma 30 `✔`: 2 do T8-C20, 3 do T8-C15, 7 de `evidência comum` e 8 de `prazo da entrega`, entre outros.
+  - Também passaram: 6 `I25-C47`, 9 `T8-C16`, 3 `I4-C16`, `I4-C17`, `I4-C35`, `I4-C36`, `I4-C47`, 7 `I23-C4`, `I23-C10` e `T8-C2`/`C3`/`C8`/`C12`/`C13`/`C14`/`C15`/`C18`/`C20`.
+  - Os 9 `governance-…` (os dois `governance-C48` em `D.log:34-35`, com `ℹ pwsh: C:\Program Files\PowerShell\7\pwsh.exe` em `:36`) e os 18 `C50` também, com `RUNNER_TEMP` presente.
+- **Hermes** (`r22/D-hermes.txt`):
+  - os **11 nativos com runtime** passaram: `I4-C18`–`C23`, `C37`, `C44b`, `I25-C40 harness nativa` e os dois `I23-C8` com runtime (`D.log:622-631`, `:633`). O runtime é o venv local 0.21.4, conferido por hash (`hermes-runtime.mjs:30-56`), com `HERMES_HOME` temporário;
+  - o **ramo Hermes do `I4-C35`** passou (`:1077`), sem nenhum diagnóstico de Hermes ausente ou de revisão diferente no log;
+  - o `I23-C8 … pelo Python do sistema` (`:632`) passou, mas não é runtime do Hermes. Os `I25-C40` de `hermes-harness.unit` (`:616-621`) são da harness.
+
+  A CI não tem o runtime do Hermes; lá os nativos não rodam.
+- **Skips (20)**: os mesmos do D do autor, em nome e motivo.
+  - **Doctor (7)**: `{ skip: process.platform === "win32" }` (POSIX/FIFO; o reporter mostra `# SKIP`). Não rodaram em ambiente nenhum desta rodada.
+  - **Integrações (13)**:
+    - `I25-C5`/`C6`/`C33`/`C42`/`C45` POSIX e `T8-C4` rodaram no meu C;
+    - `I4-C15`, `I4-C25b`/`j`/`k` e `I25-C15` são carry do C da R19 (`5ee0e0f`), com os blobs iguais;
+    - `I4-C25m` (macOS) e `I4-C25l` não rodaram em ambiente nenhum.
+
+## Checks — 50/50
+
+Fontes da prova:
+- **A/B/C22**: os 11 arquivos inteiros, frescos nos três ambientes;
+- **D22**: o nome real passou no D fresco;
+- **G21**: a governança A/B/C da R21, carregada por identidade (workflow, teste, scripts, `package.json` e `src` com os mesmos blobs; mesmos comandos e orçamentos);
+- **R19/R20**: o A/B/C cross-platform dos demais arquivos, carregado por blob igual.
+
+As citações dos arquivos sem diff são as da R21, com as mesmas linhas. As do `docs.test` foram renovadas no HEAD.
+
+| Check | Asserção decisiva (`file:line` no HEAD) | Prova | Result |
+| --- | --- | --- | --- |
+| C1 | `command.cli:48-49` `private`/`bin`; `:65` `[0, SKILL_ME_HELP, ""]`; `:77` `gitStatus() === before` | **A/B/C22** (B em clone `autocrlf=true`, bin LF/0 CR antes e depois); D22 | provado (fresco) |
+| C2 | `command.cli:96-98` `argv: LITERAL_ARGS` | A/B/C22; D22 | provado (fresco) |
+| C3 | `command.cli:105` `{0: 0, 7: 7}` | A/B/C22; D22 | provado (fresco) |
+| C4 | `command.cli:130-133` 127 `launcher_requires_shell`; `agent.unit` `I25-C4` | A/B22 e D22 (3 `✔`); `agent.unit` carry | provado |
+| C5 | `command.cli:228` POSIX; `:244-245` `CTRL_C_EVENT` → `["SIGINT"]` | POSIX em C22; console em A/B22 e D22 | provado (fresco) |
+| C6 | `command.cli:267` `signals: ["SIGTERM"]` | C22 (skip POSIX em A/B/D, com motivo) | provado (fresco) |
+| C7–C14 | `prepare.cli:93-94`, `:122-126`, `:163-168`, `:189-191`, `:200`, `:223`, `:238`, `:250` | D22; ABC R19 | provado |
+| C15 | `prepare.cli:408` (pty) | C R19 (skip no D, com motivo) | provado (carry) |
+| C16–C23 | `session.e2e:67`, `store.unit:79`, `session.e2e:111`, `:161`, `:190-192`, `:208-211`, `:230`, `:282` | D22; ABC R19 | provado |
+| C24 | `store.unit:168` | D22; ABC R19 | provado |
+| C25–C28 | `end.e2e:80-89`, `:101-109`, `:120` (e `store.unit` `I25-C27`), `:164-165` e `:194` `["EIO"]` | A/B/C22 (`end.e2e`); D22 | provado (fresco) |
+| C29–C31 | `command.cli:278`, `:342`; `end.e2e:205-215` | A/B/C22; D22 | provado (fresco) |
+| C32 | `end.e2e:320`; `store.unit:715` | A/B/C22 (`end.e2e`); D22 (9 `✔`); `store.unit` carry | provado |
+| C33 | `end.e2e:460`; `:493-494` (arranjo POSIX) | A/B/C22 (arranjo em C22); D22 | provado (fresco) |
+| C34–C35 | `report.cli:159`, `:252-259` | D22; ABC R19 | provado |
+| C36–C38 | `command.cli:350`; `launch/docs.test:82` (os limites); `prepare.cli:355` | A/B/C22 (`command.cli`); D22; os outros carry | provado |
+| C39–C40 | `hermes-harness.unit:90`; `:220`, `:320`, `:324`, `:327`; nativo `hermes-plugin.native:336` | D22 (os 11 nativos, `harness nativa`, `fixture do plugin`); ABC R19 | provado |
+| C41–C45 | `store.unit:327-523`, `end.e2e:518`; `agent.unit` `I25-C42`, `command.cli:456`/`:424`; `store.unit:598`; `hermes-harness.unit:288`, `:291`; `agent.unit:132-146`, `command.cli:166-186` | A/B/C22 (`command.cli`, `end.e2e`; POSIX em C22); D22 (17, 3, 12, 3 e 2 `✔`) | provado |
+| C46 | T8-C15 `concurrency.cli:220`, `:234`, `:256`; (a)–(c) `:283`–`:360`; (d)–(g) `live-capture:341`, `:348`, `:356`, `:367`, `replay.unit:161`, `:100`; (h) `live-capture:227-248`; (i) `follow.cli:195`, `:203-206`; (j) `:215`, `:225-236`; (k) `evidence.unit:54-148`; (l) `failure-matrix.cli:116-119`; (m) `evidence.unit:254-263` e `:287-298`; (n) `:303-305`, `:312`; (o) `delivery.unit:52-113`; (p) `concurrency.cli:956-1018`, T8-C16 `:920-928`; (q) `codex-run.cli:289-348`; **(r)** `docs.test:162-167` (T8-C20 inalterado), `:218`, `:225-226`, `:232-235`, `:254-258`, `:264`, `:266`, `:272`, `:273` | **A/B/C22** ((a)–(k), (m), (n), (p) e (r), nos arquivos inteiros); **D22** (todos; 30 `I25-C46`, 9 `T8-C16`); (l), (o) e (q) no D22 e carry | **provado (fresco)** |
+| C47 | I23-C10 `agents.e2e:315`; (a) `:427`, `:429`; (b) `:442`, `:444`; (c) `control.cli:1071-1077`; (d) `:1097-1105`; `evidence.unit:150-225` | **A/B/C22** (`agents.e2e`, `control.cli`, `evidence.unit` inteiros); D22 (6 `✔`, 7 `I23-C4`) | provado (fresco) |
+| C48 | estrutura contra `d0d5a7f` (R21); `governance-ci:373-433` (estrutural), `:444-582` (nativo), `:511` (escape), `:565-576` (aspas); `governance-C1 C3` `:271-283` | **G21** (A/B 27/27/0/0, C 27/26/0/1); **D22**: os dois `governance-C48` `✔`, nativo no pwsh oficial | provado |
+| C49 | `governance-ci:322-329`, `:330-334`, `:337-348`, `:350-356`, `:359-362`; `:299-304` | G21; D22 | provado |
+| C50 | `ci-lock-latency.test:127`, `:68`, `:137`, `:160-161`, `:187`, `:190-215`, `:217-240`, `:247`, `:250-303`, `:315-373`, `:377`, `:393-396`, `:406-434`, `:443` | G21; D22 (18 `C50`, `RUNNER_TEMP` presente) | provado |
+
+- **Critérios não reduzidos**: as constantes do contrato estão no código sem diff:
+  - `DELIVERY_DEADLINE_MS = 750`, `ATTEMPT_MS = 750 − 100` e `LOCK_RETRY_MS = 10` (`traces/delivery.mjs:12`, `:18`, `:19`);
+  - `REPORT_DEADLINE_MS = 1000` (`observation.mjs:39`);
+  - `HOOK_STDIN_DEADLINE_MS = 2000` (`hook-command.mjs:7`);
+  - a faixa 1.900 ≤ ms < 6.000 do I4-C36 (`failure-matrix.cli:83`, `:119`);
+  - `settleMaxMs`, com padrão 5.000 (`settle.py:41`);
+  - `PRIVACY_LIMITS` 500 eventos/8 MiB (`privacy/lifecycle.mjs:5`);
+  - `LAUNCH_SETTLE_MS = DELIVERY_DEADLINE_MS` (`launch/command.mjs:53`);
+  - `MAX_PARALLEL_FILES = 8` (`test-integrations.mjs:14`).
+
+  O workflow tem o mesmo blob da R21: jobs 20/10/5, o manual 10 e o `RUNNER_TEMP` só no passo Windows das integrações. Os 80 eventos de dois produtores, os payloads, as contagens, as perdas, o retry, a carga e a concorrência estão nos blobs iguais. O diff do `docs.test` só move o corpo e acrescenta os controles.
+- **AC → checks** (9 ACs): AC1–AC6 com C1–C45; AC7 com C46; AC8 com C47 e C48; AC9 com C49 e C50. O gate completo exigido no AC6/S6 e no despacho passou neste HEAD. A execução remota da medição e os cinco checks regulares continuam como condição de merge.
+
+## Swept `existing` (carry R21/R20; `src` igual, linhas conferidas no HEAD)
+
+- idempotência: `privacy/lifecycle.mjs:23-24`;
+- sem reenvio: `traces/delivery.mjs:57`, `:123`;
+- falha de entrega não bloqueia: `traces/delivery.mjs:156`;
+- `privacy prune`: `privacy/command.mjs:56-57`;
+- acréscimo da fatia do T8-C20 (`:917`): o C46 (r) é observabilidade, provada acima.
+
+## Observações (não bloqueantes; nada corrigido)
+
+- **O1 — o literal antigo continua no Landing.** A linha “Diagnóstico do T8-C20” do Landing (`:119`) ainda diz, para o controle de E/S, `pendentes na saída: nenhuma`.
+  - A retificação está só no C46 (r) (`:665-672`) e no `Handoff` (`:2255-2260`), como texto aditivo que declara o literal não garantido.
+  - O check verificado é o (r) com a retificação, e a prova o cumpre.
+  - Quem ler só o Landing vê a forma antiga. Fica como nota documental para o root, sem pedido de mudança: o contrato e o produto não mudam por isso.
+- **O2 — sobras do Node 24.13.0 no temporário.** Sob o Node 24.13.0 do Windows, os testes do alvo deixaram 362 entradas na raiz própria do B, contra 1 no A. O B do autor deixou o mesmo número.
+  - As entradas saíram com a raiz registrada. Não investiguei a causa e não a atribuo.
+  - Na CI Windows, o temporário das integrações é o `RUNNER_TEMP`.
+- **O3 — anteriores**: as O1–O2 da R21 e as observações anteriores continuam como estão. O código delas não mudou.
+
+## Gates remotos — pendentes e obrigatórios (nenhum ocorreu aqui)
+
+A ordem aprovada segue daqui:
+1. este PASS;
+2. a formal 13, já autorizada e sem uso, parando no primeiro `ready` válido;
+3. a publicação;
+4. **uma** execução manual com a medição nos destinos originais;
+5. os **cinco checks regulares verdes** nas matrizes PR e manual do HEAD aprovado;
+6. o merge, já autorizado só com tudo isso.
+
+O HEAD publicado continua `86c7677`. O PR 40790722204 verde e a manual 40790906319 vermelha no Windows e no agregado ficam **como história**. A CI e o benchmark de `86c7677` não cumprem o novo HEAD. Não disparei nada, não declaro verde nenhuma CI futura e não crio exigência de CI antes da publicação.
+
+## Processo, limites e limpeza da R22
+
+**Executado.**
+- **git**, só de leitura: `rev-parse`, `status`, `log`, `diff`, `show`, `ls-files --eol`, `ls-tree`, `merge-base`, `hash-object`, `check-ignore`, `config --show-origin` e `get-tar-commit-id`. Também:
+  - `git -c core.autocrlf=false archive` do HEAD para `r22/head.tar`;
+  - um `git clone --no-hardlinks --no-checkout --config core.autocrlf=true` do repositório local, sem rede, com a configuração só no clone.
+- **Leitura**: `node` só de leitura (contexto, config, `state.json`, logs, nível superior da auditoria), `sha256sum`, `python -I` (sha do zip oficial e CR do bin) e `stat`.
+- **Depois do D**, duas consultas `Get-CimInstance Win32_Process` pelo Windows PowerShell 5.1 (`powershell.exe -NoProfile -NonInteractive`, com os dois opt-outs no processo), filtradas por `node`/`python`/`pwsh`/`cmd`/`bash`/`wsl` com `sm-v22` ou o repositório na linha de comando (`r22/post-D-checks.txt`):
+  - a 1ª listou só os `bash.exe` da própria invocação;
+  - a 2ª, que exclui a cadeia de ancestrais da consulta, listou um `pwsh.exe` do runtime do Codex (`…\codex-runtimes\…\pwsh.exe`, pai na cadeia do host). Ele já não existia 15 s depois;
+  - não o iniciei nem o encerrei, e não li mais nada dele. **Nenhum processo meu ficou vivo**.
+- **Gates**: A, B, C e D, uma vez cada, sem repetição. O WSL foi chamado com `wsl.exe -d Ubuntu -u oldboydev --exec /bin/bash --noprofile --norc` e `MSYS_NO_PATHCONV=1`. Fora do gate, só versões, caminhos de sistema e um `ls -d` do scratch depois do D; nada do perfil.
+- **Modo dos gates**: A, B e C usaram `run_in_background` só para passar o orçamento de 30 min (`timeout` 1.800.000 ms), e o D, o de 2 h (7.200.000 ms).
+  - Esperei o término real de cada um. No D, usei um `tail -f` limitado a 570 s que lia só `r22/D.env.txt` até a linha `EXIT=`.
+  - Durante o D não rodei git nem escrevi nada no checkout; só li arquivos de `r22/` e fontes.
+  - A ferramenta guardou cópias das saídas em `AppData\Local\Temp\claude\…\tasks\*.output`. Não são auxiliares meus, e não as li nem apaguei.
+- **Git Bash**: o here-doc do `python -I` e a substituição de processo usaram pipe/`/proc/self/fd` (bash 5.2.37). Nenhum arquivo nomeado meu ficou no `/tmp`.
+
+**Incidentes meus**: nenhum. Não iniciei pwsh (nem `-?`, `help` ou `version`), agente real nem rede. Nenhum arquivo foi gravado na raiz do checkout: o `post-D-checks.txt` foi gravado por caminho absoluto em `r22/`, depois de conferir o diretório atual.
+
+**Não executado.**
+- RED, mutantes, sondas, testes novos e as reproduções do autor.
+- Agentes reais, `--help`/`--version` de agente, perfis, credenciais, banco, modelo, rede, relógio do host, antivírus, Git global, TEMP global e runtimes fora das provas. O Hermes real rodou só pelas provas nativas versionadas do D, com o `HERMES_HOME` temporário delas.
+- Actions, CI, `review:run`, commit, push, PR, merge, alteração de limites e subagentes.
+- **Arquivos fora do alvo em A/B/C**: os outros arquivos de integração da lista da R19 não rodaram aqui. São carry com os blobs iguais (R19 `5ee0e0f`/R20 `6eb09ef`), e o D desta rodada os rodou no Windows. A governança em A/B/C é carry da R21 (G21).
+- **Incidentes anteriores**, preservados sem leitura, remoção nem restauração:
+  - o incidente da R5 (`ffc5937`: até 5 inícios do Codex no WSL e 12 mtimes, sem linha de base de conteúdo);
+  - a limpeza antiga de 1.257 pastas no Windows e 107 no WSL, sem prova de proveniência e sem os nomes do Windows;
+  - os auxiliares `/tmp/d4.skips`/`/tmp/d-old.skips` no temporário global, sem inventário anterior;
+  - o D de `dc0db9b`, **interrompido pelo root** (não é falha natural);
+  - o incidente 1 da R21 (`pwsh -?` sem opt-outs; a afirmação errada foi corrigida no relatório; efeitos não auditados);
+  - o incidente 2 da R21 (`post-D-checks.txt` ~9 s na raiz depois do D, antes de ser movido);
+  - o incidente de telemetria do autor.
+
+  Não afirmo impacto global zero.
+
+**Auditoria externa 22 (do root, só metadados do perfil WSL).** O root gravou `../profile-comparison-final.json` às 00:36:01, depois do fim real do meu D (00:35:06). Eu o li às 00:36:30, só no nível superior. De `profile-target-check.json`, li só o agregado `sameProfileTarget` (`r22/profile-summary-external.txt`). Não abri `profile-before.json`, `profile-final.json` nem listas de entradas.
+- **escopo declarado**: “External metadata-only audit from the Round21 final snapshot before the T8-C20 author through completion of independent Round22 proofs; not a content audit, not temporary-file provenance, or undo for Round5”;
+- **janela**: a linha de base é 28/10 22:56:55 (-03), a cópia do snapshot final da R21; o fechamento é 29/10 00:35:59 (-03);
+- **resultado**: `baselineEntries` 12.113 e `afterEntries` 12.113; `errors`, `added`, `removed` e `modified` vazios; `sameProfileTarget` `true`.
+
+É resultado externo do root, não meu. Pelo escopo que ele declara, não audita conteúdo, temporários, Windows, PowerShell, rede, configuração global nem causalidade, e não desfaz a R5. As auditorias 19, 20 e 21 tiveram 12.113/12.113 e zero diferenças, no escopo delas.
+
+**Limites.**
+- **macOS**: o `I4-C25m` não rodou em ambiente nenhum.
+- **Windows**: os 7 skips do doctor e o `I4-C25l` não rodaram em ambiente nenhum desta rodada. `I4-C15`, `I4-C25b`/`j`/`k` e `I25-C15` são carry do C da R19.
+- **Runtime do Hermes**: só no D (Windows). O caso pelo Python do sistema não é runtime do Hermes.
+- **Causas**: continuam desconhecidas a do T8-C20 da R21, a do `EPERM` do B do autor e as históricas (CI 93, CI86, T8-C4, o D interrompido de `dc0db9b`). O verde desta rodada é deste computador e não mede o runner da CI.
+
+**Limpeza** (`A.env.txt`, `B.env.txt`, `B-clone-cleanup.txt`, `C.run.txt`, `D.env.txt`, `post-D-checks.txt`):
+- as raízes `sm-v22-A`/`B`/`D` foram removidas só pelo registro (caminho real absoluto, filha direta do temporário, nome, pasta não link, mesmo `dev`/`ino`) e estavam ausentes na conferência pós-D;
+- o scratch do C foi removido por caminho exato, uid 1000 e inode, e estava ausente depois do D;
+- o clone do B, por caminho, toplevel, HEAD e status;
+- `runner-temp-A`/`B`/`D`, vazias, por `rmdir`;
+- nenhuma seleção por prefixo ou mtime, nenhum auxiliar meu no `/tmp` (Git Bash ou WSL) nem no temporário global. Nada no `RUNNER_TEMP` foi limpo além das minhas pastas vazias. Logs, tar, scripts e a cópia do `.verified.md` anterior ficam em `r22/`.
+
+**Integridade do histórico abaixo.** O texto depois da linha `---` que fecha esta rodada (e da linha em branco seguinte) é, byte a byte, o `.verified.md` do HEAD: blob `2279964`, de `3a15d79`, com 294.533 bytes, sha256 `f9eed58e…` e 0 CR (`r22/verified-integrity.txt`). Nele estão o **FAIL 21**, o **PASS 20**, o **FAIL 19** e os relatórios anteriores, sem rebatizar nenhum resultado.
+- O FAIL 21 estava certo para `5a0f231`: o D teve uma falha natural.
+- Este PASS 22 é do conteúdo de `2383c52`, que acrescenta a evidência do T8-C20. O D fresco passou, mas isso não muda o FAIL 21 nem o B vermelho do autor em `407edc5`.
+
+---
+
 # Iniciar o agente com captura: `skill-me <agente>` — verificação da issue #25 (rodada 21)
 
 **Verdict (R21)**: **FAIL — o gate completo D falhou: 1.057 testes, 1.036 pass, 1 fail, 20 skip** (exit 1, término natural). HEAD `5a0f231`, 9 ACs. A falha é o teste antigo `T8-C20 … o exemplo é o que um hook com lock ocupado grava` (`tests/integrations/traces/docs.test.mjs:179`, `ENOENT` ao ler o arquivo de diagnóstico de entrega), sem diff na feature e verde na R20, no pf-D do autor e na CI86. O despacho e o S6/AC6 exigem o gate completo fresco sem falhas, então não há PASS. Não repeti nem corrigi.
