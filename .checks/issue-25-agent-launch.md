@@ -2238,3 +2238,29 @@ qualquer sondagem ou código):
   própria fora do repositório, das classes compatíveis com o sintoma, com o mesmo hook e o mesmo arquivo Unicode, e o
   confronto com o código e o contrato; (2) Landing, refinamento do check e task antes de qualquer código; (3) código e
   provas (RED/GREEN e controles discriminantes); (4) gates afetados depois do último código e um D completo.
+- **Onde a fronteira caiu**: abertura `648458f`; Landing “Diagnóstico do T8-C20”, C46 (r), Swept e task `22c1161`;
+  retificação aditiva do (r) `fce5c59`; código `cad647a` (`docs.test.mjs` `d52de03` → `852616a`,
+  `traces-probe.mjs` `a6440dd` → `292c319`); diagnóstico, RED, GREEN, mutantes e gates declarados `407edc5`;
+  resultados no commit seguinte, só docs. Produto, guia, workflow, governança, core, `package*` e configuração iguais
+  a `5a0f231`.
+- **Diagnóstico**: sem falha injetada, a linha do T8-C20 sai ~335–349 ms antes do prazo de 1.000 ms; quatro classes
+  compatíveis com o contrato (gravação parada no `open` ou no `realpath`, `open` com EIO, laço parado) dão o mesmo
+  sintoma da R21, e só a linha da pré-carga as separa. A causa da R21 continua desconhecida; nenhum defeito do
+  produto foi demonstrado. O defeito demonstrado é de observação da prova, corrigido com a evidência comum e dois
+  controles (RED `red2-run.txt`; mutantes M1–M3 recusados; A1/A3 com a evidência e A2/A4 sem ela).
+- **Gates em `407edc5`**: A 116/110/0/6, B 116/109/**1**/6, C 116/112/0/4, D 1.059/1.039/0/20 (exit 0, linhas do
+  pf-D de `be29203` mais os 2 controles, 11 nativos do Hermes). A falha do B é o controle `I25-C46 diagnóstico do
+  T8-C15: confirmação perdida…`: o produtor `a`, sem injeção, teve `open lock EPERM (tomada do lock)` → `io_failure`
+  39/1; preservada, sem repetição, sem correção e sem relação demonstrável com esta fatia (`B-failure.txt`).
+- **O que se decidiu no caminho**: a forma da evidência e dos controles (Landing); a retificação do literal
+  `pendentes na saída: nenhuma`, porque a tentativa da entrega abandonada no prazo pode estar em curso na saída. Nada
+  novo com o coordenador nem com o usuário.
+- **O que foi abandonado**: corrigir o produto (prazo, espera, reserva, nova tentativa); o knob `BLOCK_LOOP` como
+  controle (corrida medida); `runHook` no lugar de `runIntegrations`; o fd do relatório de fixture; tipo pelo nome do
+  arquivo; o literal `pendentes na saída: nenhuma`.
+- **Pendente, com o coordenador — decisão concreta**: a fatia não fecha inteira verde por causa do B. Opções: (1)
+  aceitar a falha do B como preservada e não atribuível a esta fatia e seguir para a verificação 22, que roda os
+  gates de novo; ou (2) abrir, com autorização, o diagnóstico do `open lock EPERM` na criação do `.lock` (1º errno de
+  uma falha desse tipo nos logs da #25), sabendo que tratar EPERM como disputa mudaria a política de retry do AC7.
+  Nada aqui afirma PASS, `ready`, CI verde, causa física ou impacto zero. Preservados: os gates de `be29203`, o FAIL21,
+  os incidentes da R5 e da R21, a limpeza de 1.257/107 pastas e os auxiliares antigos em `/tmp`.

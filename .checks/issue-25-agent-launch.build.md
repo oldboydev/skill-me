@@ -2807,3 +2807,50 @@ nem agentes). A governança não mudou e carrega os A/B/C da R21 por identidade.
   esforço do diagnóstico dentro do prazo. Se uma falha futura mostrar, com a evidência, a gravação parada até o prazo
   sob carga, resolver exigiria renegociar prazo, carga ou asserção — decisão do coordenador e do proprietário.
 - A sonda e os mutantes são deste computador, sem a carga da suíte; não medem o runner da CI.
+
+### Resultado dos gates em `407edc5` (árvore `6966ff2c…`; código de `cad647a`; uma execução de cada, sem filtro e sem repetição; logs em `builder-r21-t8c20/`)
+
+| Gate | Ambiente | Início–fim | Testes | Pass | Fail | Skip |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | checkout principal, Windows, Node 24.22.1, npm 11.19.1, `npm_execpath` ausente | 23:35:00–23:38:07 | 116 | 110 | 0 | 6 |
+| B | clone git novo (`core.autocrlf=true` no `.git/config` dele; `docs.test` e a pré-carga em CRLF), Node 24.13.0 oficial (`d14ba95c…`, zip `ca274269…` conferido), npm 11.6.2 adjacente, `npm_execpath` ausente | 23:38:36–23:40:49 | 116 | 109 | **1** | 6 |
+| C | WSL `Ubuntu`, uid 1000, `git archive` de `407edc5` (árvore = `HEAD^{tree}`, 0 CR, `cli.mjs` 755), Node 24.13.0 copiado (`150946e4…`) num prefixo sem `sh`, npm 11.6.2, `env -i`, PATH sem `/usr/bin` e sem agentes | 23:42:44–23:43:46 | 116 | 112 | 0 | 4 |
+| D | `npm test` completo, Windows, Node 24.22.1, teto 8, Hermes pelas provas versionadas | 23:44:07–23:56:51 | 1.059 | 1.039 | 0 | 20 |
+
+- **A/B/C**: os 4 do `docs.test` (os 2 T8-C20 e os 2 controles) rodaram e passaram nos três. Skips: em A e B, os 6
+  POSIX (I25-C5, C6, C33, C42, C45 e o sinal do T8-C4), com o motivo; em C, os 4 só do Windows (I25-C4, C5, C42 e o
+  controle do C45), com o motivo.
+- **B, a falha** (preservada, sem repetição; `B.log`, `B-failure.txt`): `I25-C46 diagnóstico do T8-C15: confirmação
+  perdida depois do commit …` (`concurrency.cli.test.mjs:321`, asserção em `:283`). O produtor **a**, sem nenhuma
+  injeção, saiu `io_failure` 40/39/39/1 com `falhas open lock EPERM (tomada do lock)` e `lock ocupado (EEXIST,
+  repetido) 16x`; o **b** (injeção `LOST_CONFIRMATION=2`) saiu como o controle espera. A prova confere `a` primeiro,
+  então o controle, que espera a falha de `b`, ficou vermelho. O store classifica a criação exclusiva do `.lock` com
+  EPERM como `io_failure`, sem nova tentativa (contrato: só EEXIST é repetido). **Causa do EPERM: não demonstrada**;
+  nada aqui a atribui a antivírus, disco, indexador ou hardware. **Relação com esta fatia: nenhuma demonstrável** — os
+  produtores desse teste recebem `boundEnv(root, id, {...timedEnv(timing), ...injected})`, sem
+  `SKILL_ME_CAPTURE_REPORT` e sem os knobs novos, então a pré-carga de `292c319` tem nele o mesmo efeito da de
+  `a6440dd`; o mesmo arquivo passou inteiro em A e nos D da R20, da R21, do pf-D e no D abaixo. É a 1ª ocorrência de
+  `EPERM (tomada do lock)` nos logs de `.checks/code-review/issue-25/`; as falhas antigas do T8-C15 não tinham errno.
+  Tratar EPERM na criação do lock como disputa mudaria a política de retry (AC7: sem retry novo): não corrigido, fica
+  para decisão do coordenador e do proprietário.
+- **C**: archive `b4ac4051…` (6.512.640 bytes), commit conferido pelo `get-tar-commit-id`; HOME do scratch vazio
+  depois; `RUNNER_TEMP` com 0 entradas; scratch `/tmp/sm-r21t-C.jfNi6w` removido por caminho, pasta não link, uid
+  1000 e inode 1974.
+- **D**: terminou sozinho com exit 0. Governança 27/27/0/0, motor 16/16/0/0, doctor 417/410/0/7, integrações
+  599/586/0/13. Contra o pf-D de `be29203` (`names-pfD.txt`, `names-D.txt`): as mesmas linhas de resultado, com as
+  mesmas marcas e os 20 skips, mais os 2 controles novos `✔`. O `T8-C20 … grava` passou (2.109,6 ms); os controles,
+  3.333,6 e 2.869,2 ms. Hermes (`D-hermes.txt`): os 11 nativos com runtime passaram, o I4-C35 passou sem o
+  diagnóstico de observação Hermes não executada, e o I23-C8 pelo Python do sistema, que não conta como nativo, passou.
+  O hook medido do C16 levou 693 ms do fim do stdin à saída. HEAD e status iguais antes e depois; `RUNNER_TEMP` com 0
+  entradas; raiz `sm-r21t-D-tvFHuF` (128 entradas dos testes) removida pelo registro.
+- **Processos e temporários**: nenhum `node`, `python`, `pwsh` ou `cmd` com o repositório ou `sm-r21t-` na linha de
+  comando ficou vivo (`processes-after-D.txt`; a 1ª contagem achou só o próprio `pwsh` da consulta,
+  `processes-after-D-1st.txt`, e o script passou a excluí-lo). Todas as raízes `sm-r21t-*` (sonda, RED, GREEN,
+  mutantes, A, B, D) foram removidas pelo registro, e as pastas `runner-temp-*` vazias por `rmdir`; o clone B pelo
+  caminho exato depois de conferir toplevel, HEAD e status (`B-clone-cleanup.txt`). Nenhuma seleção por prefixo ou
+  mtime; nenhum auxiliar no `/tmp` fora do scratch do C nem no temporário global. Uma 1ª consulta de processos com
+  WQL mal citado saiu inválida e não foi usada.
+- **O que isso prova e o que não prova**: o T8-C20 e os controles passam nos três ambientes e no D, e a evidência
+  distingue o prazo da falha de E/S. Não prova a causa da R21 nem que o T8-C20 não volte a falhar; o D é deste
+  computador e não mede o runner da CI. A fatia **não** fecha inteira verde: o gate B tem a falha acima, não
+  atribuível a esta mudança e fora do escopo dela.
