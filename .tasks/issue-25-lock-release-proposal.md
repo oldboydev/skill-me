@@ -1,8 +1,8 @@
 # Issue #25 / PR #28 — proposta de correção da liberação do lock
 
-**Status: aguardando decisão do proprietário (D1–D3). Não autoriza código de produto.**
+**Status: plano completo aprovado pelo proprietário, incluindo D1–D3 e os ajustes do Root, nas três plataformas.** Autorização literal: “Pode aplicar o plano completo nas três plataformas, mantendo os testes e prazos, e seguir até a CI ficar toda verde para fazer o merge e finalizar.” Registro: [6502294779](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6502294779). Autoriza a implementação deste escopo, preservando os gates e todo o histórico.
 
-Esta proposta complementa `.tasks/issue-25-agent-launch.md`. A autorização existente permite corrigir defeito demonstrado preservando os contratos. A alteração do layout e do ciclo de vida descrita aqui requer decisão explícita, conforme `AGENTS.md:86-98` e o retorno ao proprietário previsto no plano principal, `:332-334`.
+Este plano aprovado complementa `.tasks/issue-25-agent-launch.md`. A decisão explícita acima resolve a alteração do layout e do ciclo de vida descrita aqui, conforme `AGENTS.md:86-98` e o retorno ao proprietário previsto no plano principal, `:332-334`. As decisões abaixo ficam registradas na forma em que foram propostas e aprovadas.
 
 ## Problema e evidência
 
@@ -75,4 +75,4 @@ O autor será Claude ou Grok. Antes do código, registrar aprovação e refiname
 
 ## O que ainda não é resultado
 
-O código de produto, os testes, o workflow e o benchmark continuam no estado anterior. A proposta não faz o FAIL23 virar PASS, não identifica retrospectivamente a causa das duas falhas antigas e não garante uma CI futura verde. A aprovação D1–D3 autorizará a implementação deste escopo; não dispensa nenhuma prova, revisão ou gate.
+O código de produto, os testes, o workflow e o benchmark continuam no estado anterior. O plano aprovado não faz o FAIL23 virar PASS, não identifica retrospectivamente a causa das duas falhas antigas e não garante uma CI futura verde. A aprovação D1–D3 autoriza a implementação deste escopo; não dispensa nenhuma prova, revisão ou gate.
