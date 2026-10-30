@@ -406,7 +406,9 @@ test("I4-C34g Hermes: fonte posta durante a remoção conserva o bytecode dela",
     const home = path.join(dir, "hermes home");
     mkdirSync(home);
     const io = createNodeIo();
-    assert.equal((await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io })).exitCode, 0, label);
+    const traced = rejectionTrace(io, home);
+    const installed = await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io: traced.io });
+    assert.equal(installed.exitCode, 0, installed.exitCode === 0 ? label : installEvidence(label, installed, traced.rejected));
     const own = path.join(home, "plugins", "skill-me-observer");
     const cacheDir = path.join(own, "__pycache__");
     mkdirSync(cacheDir);
@@ -1681,6 +1683,86 @@ function packageEntry(file) {
 }
 const packageDir = (names) => `diretório real [${names.map((name) => `${name}: artefato do pacote`).join("; ")}]`;
 const FS_OPS = ["readdir", "readBytes", "readText", "unlink", "rmdir", "mkdir", "writeExclusive", "rename", "lstat", "stat", "realpath"];
+
+// Evidência da instalação inicial do I4-C34g, que saiu 5 sem dizer onde no D da
+// S16 (.tasks/issue-25-hermes-install-diagnostic-plan.md, O2). Cada operação de
+// FS_OPS é repassada uma vez ao io, com o mesmo `this`, argumentos, valor e o
+// mesmo objeto de erro. Toda rejeição fica em memória e em ordem, ENOENT
+// normal inclusive: filtrar escolheria a causa. De cada uma ficam a operação,
+// os caminhos relativos ao home Hermes e o código — nunca bytes, opções,
+// mensagem ou stack. A coleta é melhor esforço: falhando, o erro original
+// segue intacto.
+function rejectionTrace(io, home) {
+  const rejected = [];
+  const traced = { ...io };
+  for (const op of FS_OPS) {
+    traced[op] = async (...args) => {
+      try {
+        return await io[op](...args);
+      } catch (error) {
+        try {
+          let paths;
+          try {
+            paths = args.slice(0, op === "rename" ? 2 : 1).map((file) => homeRelative(home, file));
+          } catch {
+            paths = "<caminhos não observáveis>";
+          }
+          rejected.push({ op, paths, code: rejectionCode(error) });
+        } catch {
+          // Registro indisponível (ex.: lista congelada por quem a recebeu): a
+          // rejeição segue sem ele — um TypeError aqui tomaria o lugar do erro.
+        }
+        throw error;
+      }
+    };
+  }
+  return { io: traced, rejected };
+}
+
+// Raiz `.`; fora do home um marcador, sem caminho absoluto nem `..` que exponha ancestrais.
+function homeRelative(home, file) {
+  if (typeof file !== "string") return "<não é caminho>";
+  const relative = path.relative(home, file);
+  if (relative === "") return ".";
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return "<fora do home>";
+  return relative.split(path.sep).join("/");
+}
+
+// Só o código textual: objeto (até cíclico) nunca é registrado, e um `code`
+// ilegível vira marcador em vez de trocar o erro que está sendo relançado.
+function rejectionCode(error) {
+  try {
+    const code = error?.code;
+    if (code === undefined || code === null) return null;
+    return typeof code === "string" ? code : "<código não é texto>";
+  } catch {
+    return "<código não observável>";
+  }
+}
+
+// Mensagem da asserção quando a instalação não sai 0: o rótulo e só status,
+// códigos, passos e conflitos (já relativos) — sem alvo, mudanças, bytes ou
+// mensagens. Ausente fica ausente, nunca [] ou 0. Nunca lança: uma exceção
+// aqui trocaria a falha da asserção; sem como coletar, fica o rótulo marcado.
+function installEvidence(label, result, rejected) {
+  const text = (value) => (value === undefined || typeof value === "string" ? value : "<não é texto>");
+  const pick = (list, keys) => {
+    if (list === undefined) return undefined;
+    if (!Array.isArray(list)) return "<não é lista>";
+    return list.map((item) => Object.fromEntries(keys.flatMap((key) => (typeof item?.[key] === "string" ? [[key, item[key]]] : []))));
+  };
+  try {
+    return `${label} ${JSON.stringify({
+      status: text(result?.status),
+      errors: pick(result?.errors, ["code"]),
+      steps: pick(result?.steps, ["step", "state"]),
+      conflicts: pick(result?.conflicts, ["code", "file", "event"]),
+      rejected,
+    })}`;
+  } catch {
+    return `${label} (evidência indisponível)`;
+  }
+}
 
 // Staging próprio trocado durante a instalação Hermes — achado R7-F1 da
 // verificação independente round 7. Com `plugins` estável, só o staging é
