@@ -151,3 +151,12 @@ Observação opcional, só se ajudar a decisão: o instante absoluto da operaç�
 - Edição: cerca de 3 arquivos de teste ou apoio (end.e2e, helpers/launch, helpers/traces), mais Landing.
 - Runtime local: as provas `end.e2e` C32 (4) + R1/R2/R3 (+ R4) e `report.cli` C34, cada uma em segundos, sem carga nova.
 - Provas afetadas a rodar depois: os arquivos `end.e2e`, `report.cli` e `agents.e2e` inteiros, mais os consumidores de `helpers/traces.mjs`.
+
+
+## Fechamento da recuperação limitada (Root, posterior ao diagnóstico acima)
+
+O Windows passou na tentativa 2 do PR (execução 41111349795, job 124272776190) e na tentativa 2 manual (execução 41111491159, job 124279286363). Em cada uma: governança 27/27; core 105/105; doctor 417 testes, 410 aprovados e 7 skips; integrações 642 testes, 618 aprovados e 24 skips. Total por execução: 1191 testes, 1160 aprovados, zero falhas, 31 skips e zero cancelamentos. Os 89 testes novos do core, os 16 originais e os sete S22 foram conferidos por nome nos dois logs. As quatro falhas anteriores do PR e o controle C43 manual passaram. Houve uma recuperação por job, preservando as tentativas anteriores, sem alteração de código, asserções, prazos, contagens, concorrência ou durabilidade. O resultado não identifica a causa física nem garante ausência futura.
+
+Detecção e Ubuntu passaram nas duas execuções. A medição manual original do mesmo HEAD 34b foi validada: A1/B/A2, 4500/4500 ciclos, zero erros ou ciclos incompletos e três limpezas. Ela não foi solicitada novamente. IDs novos atribuídos pelo GitHub a resultados carregados não comprovam nova execução desses jobs. O macOS continua cancelado antes dos testes pela interrupção programada oficial; os dois agregados CI continuam falhando. Não houve merge, Done ou CI inteiramente verde.
+
+A proposta S23 de macOS 15 continua aguardando decisão do proprietário, conforme a pergunta da conversa e `.tasks/issue-25-macos-runner-proposal.md`. A alternativa original é aguardar a retomada da imagem 14 em 31/10 às 00:00 UTC (30/10 às 21:00 BRT); a retirada definitiva será em 02/11. Nenhuma mudança de workflow, teste ou produto S23/S24 foi implementada. Os planos e as evidências locais novos ainda não foram publicados. O ready 15 refere-se somente ao HEAD publicado 34b8089; conteúdo novo exige revisão válida antes de novo push, com as rodadas já autorizadas.
