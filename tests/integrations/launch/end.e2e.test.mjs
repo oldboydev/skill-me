@@ -10,6 +10,7 @@ import { claudeHookDraft } from "../../../src/integrations/adapters/claude.mjs";
 import { createLaunchDelivery } from "../../../src/integrations/observe/delivery.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
 import { appendRecords, startLaunch } from "../../../src/integrations/privacy/store.mjs";
+import { ATTEMPT_MS } from "../../../src/integrations/traces/delivery.mjs";
 import { INTEGRATIONS_CLI, REPO_ROOT, makeScratch, runIntegrationsJson } from "../helpers/cli.mjs";
 import { FIXTURES_DIR } from "../helpers/fixtures.mjs";
 import { locateSystemPython } from "../helpers/hermes-runtime.mjs";
@@ -17,7 +18,8 @@ import { agentArgs, agentBin, launchCapturesOnDisk, markerPausedIo, npmScriptEnv
 import { automaticOf, homeEnv, npmCli, runNpmScript } from "../helpers/observe.mjs";
 import { claudePayload, hermesRecord } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy, sanitizedRecord } from "../helpers/privacy-store.mjs";
-import { ISO_MS, TRACES_PROBE, captureDir, capturesDir, expectedPseudonym, exportOf, runHook, statusOf, storeDir } from "../helpers/traces.mjs";
+import { activeRecording } from "../helpers/producer-runs.mjs";
+import { ISO_MS, TRACES_PROBE, captureDir, capturesDir, expectedPseudonym, exportOf, producerTrace, recordProducersInEachTest, runHook, statusOf, storeDir } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 
 // Provas S4 da issue #25 sobre o encerramento (C25–C28, C31–C33): o fim da
@@ -26,6 +28,12 @@ import { snapshotTree } from "../helpers/tree.mjs";
 // concorrência com outra invocação e com on/off. Linhas literais do Landing de
 // .checks/issue-25-agent-launch.md ("Mensagens do launcher", "Ordem e falha do
 // encerramento").
+
+// Evidência comum dos produtores (linha "Diagnóstico do I25-C43 após recuperar o
+// lock" do Landing): numa falha, o mesmo erro sai com a evidência dos runHook do
+// teste e das raízes deles. Os controles I25-C43 de diagnóstico dependem deste
+// registro para carregar a pré-carga no hook.
+recordProducersInEachTest();
 
 const scratches = [];
 after(() => {
@@ -799,8 +807,10 @@ const otherLaunchBytes = (prepared, other) => () => ({
   state: readFileSync(path.join(captureDir(prepared.root, other.capture), "state.json"), "utf8"),
   pointer: readFileSync(pointerFile(prepared.root, other.invocation), "utf8"),
 });
-const hookFor = (prepared, invocation, label) =>
-  runHook("claude", claudePayload("pre_tool_bash"), { env: { ...prepared.env, SKILL_ME_LAUNCH_ROOT: prepared.rootReal, SKILL_ME_LAUNCH_ID: invocation }, cwd: scratch(label) });
+// `extraEnv`: só o último hook dos controles de diagnóstico do I25-C43 recebe a
+// injeção da pré-carga; os demais usos passam `{}`.
+const hookFor = (prepared, invocation, label, extraEnv = {}) =>
+  runHook("claude", claudePayload("pre_tool_bash"), { env: { ...prepared.env, SKILL_ME_LAUNCH_ROOT: prepared.rootReal, SKILL_ME_LAUNCH_ID: invocation, ...extraEnv }, cwd: scratch(label) });
 
 // Recuperação declarada na linha do lock: com o processo terminado e o lock
 // ainda com o pid dele, removê-lo e rodar o comando mostrado.
@@ -814,22 +824,93 @@ function recoverDeclared(prepared, capture, pid) {
   assert.equal(statusOf(prepared.root, capture).state, "stopped");
 }
 
-test("I25-C43 abertura pelo launcher com a liberação do lock falhando por E/S uma vez: o agente não inicia, o stderr dá a execução, a captura active e o lock, e a recuperação declarada a encerra sem mudar a outra execução", async () => {
-  const prepared = preparedLaunch(scratch, "i25 c43 transitorio", { agents: ["claude"] });
+// Abertura com a liberação do lock falhando uma vez, recuperação declarada e a
+// entrega seguinte da outra execução. O teste natural a chama sem env extra; os
+// controles de diagnóstico (linha "Diagnóstico do I25-C43 após recuperar o lock"
+// do Landing) passam a injeção da pré-carga só ao último hook.
+async function c43TransientOpening(prepared, label, lastHookEnv = {}) {
   const other = await startLaunch({ root: prepared.rootReal, expectedReal: prepared.rootReal });
   const otherBytes = otherLaunchBytes(prepared, other);
   const before = otherBytes();
-  const run = await launchInProcess(prepared, lockKeptIo(1), "i25 c43 transitorio");
+  const run = await launchInProcess(prepared, lockKeptIo(1), label);
   const [created] = launchCapturesOnDisk(prepared.root).filter((c) => c.invocation !== other.invocation);
   assert.deepEqual([run.exitCode, run.started], [5, false]);
   assert.equal(run.stderr, [openedLine(created.invocation, created.id, "io_failure"), ...endFailedLines(prepared, created.invocation, created.id, "lock_present"), lockLine(rootLockOf(prepared), process.pid), ""].join("\n"));
   assert.deepEqual([created.segment, created.state, created.endedAt, existsSync(pointerFile(prepared.root, created.invocation))], [1, "active", null, true]);
   // O impedimento declarado: com o lock, a outra execução não grava, e nada dela muda.
-  assert.equal((await hookFor(prepared, other.invocation, "i25 c43 transitorio projeto")).report.delivery.code, "lock_present");
+  assert.equal((await hookFor(prepared, other.invocation, `${label} projeto`)).report.delivery.code, "lock_present");
   assert.deepEqual(otherBytes(), before);
   recoverDeclared(prepared, created.id, process.pid);
   assert.deepEqual(otherBytes(), before, "a recuperação não toca a outra execução");
-  assert.deepEqual((await hookFor(prepared, other.invocation, "i25 c43 transitorio depois")).report.delivery, LAUNCHED(1));
+  assert.deepEqual((await hookFor(prepared, other.invocation, `${label} depois`, lastHookEnv)).report.delivery, LAUNCHED(1));
+}
+
+test("I25-C43 abertura pelo launcher com a liberação do lock falhando por E/S uma vez: o agente não inicia, o stderr dá a execução, a captura active e o lock, e a recuperação declarada a encerra sem mudar a outra execução", async () => {
+  const prepared = preparedLaunch(scratch, "i25 c43 transitorio", { agents: ["claude"] });
+  await c43TransientOpening(prepared, "i25 c43 transitorio");
+});
+
+// Controles do diagnóstico: a mesma rotina com uma falha conhecida da pré-carga
+// no último hook. A asserção LAUNCHED(1) continua a que falha, e a evidência do
+// registro do arquivo (a linha da pré-carga do hook) distingue a classe. Sem o
+// registro a injeção fica inerte e a rotina passa, e o controle falha por isso,
+// antes de ler o registro. Discriminam classes de injeção, não a causa física da
+// falha histórica.
+async function transientFailure(label, lastHookEnv) {
+  const prepared = preparedLaunch(scratch, label, { agents: ["claude"] });
+  const failure = await c43TransientOpening(prepared, label, lastHookEnv).then(
+    () => null,
+    (error) => error,
+  );
+  return { prepared, failure };
+}
+
+function assertFinalHookLost(failure, code) {
+  assert.ok(failure !== null, "a rotina passou: a falha injetada no último hook não apareceu");
+  assert.ok(failure instanceof assert.AssertionError, `a asserção da rotina continua a que falha: ${failure}`);
+  assert.deepEqual(
+    [failure.actual, failure.expected, failure.operator],
+    [{ launch: true, code, entries: 1, committed: 0, persisted: 0, lost: 1 }, LAUNCHED(1), "deepStrictEqual"],
+    failure.message,
+  );
+}
+
+// O último produtor do registro é o último hook; lugar neutro da rota da execução.
+const finalHookTrace = () => producerTrace(activeRecording().producers.at(-1).timing, { commits: false });
+const capturesByState = (prepared) =>
+  launchCapturesOnDisk(prepared.root)
+    .map((c) => [c.state, c.counters.accepted, c.counters.persisted, c.dataFile])
+    .sort((a, b) => a[0].localeCompare(b[0]));
+const NOTHING_PERSISTED = [["active", 0, 0, null], ["stopped", 0, 0, null]];
+
+test("I25-C43 diagnóstico da abertura com falha transitória: E/S na promoção do segmento na entrega final mantém a asserção vermelha com io_failure e mostra a falha sob o lock, o lock livre e nada persistido", async () => {
+  const { prepared, failure } = await transientFailure("i25 c43 diagnostico eio", { SKILL_ME_TEST_TRACES_SEGMENT_EIO: "1" });
+  assertFinalHookLost(failure, "io_failure");
+  const trace = finalHookTrace();
+  assert.deepEqual([trace.failures, trace.pending?.map((p) => p.name)], [["rename segmento.tmp EIO (sob o lock, 1ª tomada)"], []], failure.message);
+  assert.equal(existsSync(rootLockOf(prepared)), false, failure.message);
+  assert.deepEqual(capturesByState(prepared), NOTHING_PERSISTED, failure.message);
+});
+
+test("I25-C43 diagnóstico da abertura com falha transitória: disco parado na criação do segmento na entrega final mantém a asserção vermelha com delivery_timeout e mostra a operação pendente sob o lock, o laço livre e o lock do hook", async () => {
+  const { prepared, failure } = await transientFailure("i25 c43 diagnostico disco", { SKILL_ME_TEST_TRACES_STALL_SEGMENT: "1" });
+  assertFinalHookLost(failure, "delivery_timeout");
+  const trace = finalHookTrace();
+  assert.deepEqual([trace.failures, trace.pending?.map((p) => p.name), trace.last], [[], ["open segmento.tmp (sob o lock, 1ª tomada)"], "close key (sob o lock, 1ª tomada)"], failure.message);
+  assert.ok(trace.loop?.samples > 0 && trace.loop.maxMs < ATTEMPT_MS, `o laço continuou livre: ${failure.message}`);
+  const lock = rootLockOf(prepared);
+  assert.ok(existsSync(lock), `o lock do hook ficou: ${failure.message}`);
+  assert.equal(JSON.parse(readFileSync(lock, "utf8")).pid, trace.pid, failure.message);
+  assert.deepEqual(capturesByState(prepared), NOTHING_PERSISTED, failure.message);
+});
+
+// Sem afirmar lock, pendentes nem atraso >= 900 ms: a amostragem do laço e o
+// process.exit no prazo cortam a operação em ponto variável.
+test("I25-C43 diagnóstico da abertura com falha transitória: laço de eventos parado antes da tomada do lock na entrega final mantém a asserção vermelha com delivery_timeout e mostra o atraso do laço maior que o prazo da tentativa", async () => {
+  const { failure } = await transientFailure("i25 c43 diagnostico laco", { SKILL_ME_TEST_TRACES_BLOCK_LOOP: "1|900" });
+  assertFinalHookLost(failure, "delivery_timeout");
+  const trace = finalHookTrace();
+  assert.ok(trace.loop?.maxMs >= ATTEMPT_MS, `o laço ficou parado mais que o prazo da tentativa: ${failure.message}`);
 });
 
 test("I25-C43 abertura pelo launcher com a liberação do lock falhando por E/S sempre: o mesmo diagnóstico, e outra abertura na raiz sai com lock_present sem criar captura nem iniciar o agente até a recuperação", async () => {
