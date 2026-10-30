@@ -3443,3 +3443,82 @@ test("I4-C34k Hermes: promoção Windows repete só recusas com guardas, preserv
   }
   assert.deepEqual(observed, expected);
 });
+
+// Raiz própria trocada por um diretório REAL de mesmo nome — com
+// `.skill-me/hermes.lock` de bytes idênticos e um arquivo do usuário, sem
+// `plugins` — dentro do `lstat` BigInt com que a instalação lê a identidade
+// própria da pasta de estado; o `lstat` devolve as estatísticas próprias já
+// lidas. O caminho real da raiz não muda: só a identidade da raiz, já
+// capturada, distingue a alheia, e ela precisa ser conferida antes de criar
+// `plugins`. A montagem da troca é síncrona, fora do io: `through` registra só
+// operações do instalador — conteúdo, criação, exclusão e rename sob a raiz —
+// depois da troca.
+test("I4-C34m Hermes: identidade da raiz antes de criar plugins — raiz real substituta com lock idêntico fica intacta", async () => {
+  const ctx = s19Target("m raiz", { plugins: false });
+  const moved = path.join(ctx.dir, "raiz-movida");
+  const canary = path.join(ctx.home, "canário do usuário.txt");
+  const io = createNodeIo();
+  const probe = { injected: false, attempts: 0, through: [], foreignBefore: null };
+  const underRoot = (file) => typeof file === "string" && (file === ctx.home || file.startsWith(ctx.home + path.sep));
+  const relToHome = (file) => path.relative(ctx.home, file).split(path.sep).join("/") || ".";
+  const wrapped = { ...io };
+  for (const op of FS_OPS) {
+    wrapped[op] = async (...args) => {
+      const files = args.slice(0, op === "rename" ? 2 : 1);
+      if (probe.injected && CONTENT_OPS.includes(op) && files.some(underRoot)) probe.through.push(`${op} ${files.map(relToHome).join(" → ")}`);
+      if (op === "rename" && args[0] === ctx.staging && args[1] === ctx.pluginDir) probe.attempts += 1;
+      const out = await io[op](...args);
+      if (op === "lstat" && !probe.injected && args[0] === ctx.stateDir && args[1]?.bigint === true) {
+        renameSync(ctx.home, moved);
+        mkdirSync(ctx.stateDir, { recursive: true });
+        writeFileSync(ctx.lock, OWN_LOCK);
+        writeFileSync(canary, USER_FILE);
+        probe.foreignBefore = entrySnapshot(ctx.home);
+        probe.injected = true;
+      }
+      return out;
+    };
+  }
+  const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: ctx.home, apply: true, io: wrapped });
+  assert.deepEqual(
+    {
+      injected: probe.injected,
+      attempts: probe.attempts,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      through: probe.through,
+      foreign: probe.foreignBefore !== null && existsSync(ctx.home) && isDeepStrictEqual(entrySnapshot(ctx.home), probe.foreignBefore) ? "intacto" : "alterado",
+      atForeignRoot: {
+        plugins: packageEntry(ctx.plugins),
+        staging: packageEntry(ctx.staging),
+        pluginDir: packageEntry(ctx.pluginDir),
+        lock: describeEntry(ctx.lock),
+        canary: describeEntry(canary),
+        manifest: existsSync(ctx.manifest),
+      },
+      atMovedRoot: {
+        lock: describeEntry(path.join(moved, ".skill-me", "hermes.lock")),
+        plugins: existsSync(path.join(moved, "plugins")),
+        manifest: existsSync(path.join(moved, ".skill-me", "hermes-install.json")),
+      },
+    },
+    {
+      injected: true,
+      attempts: 0,
+      exitCode: 4,
+      status: "conflict",
+      applied: false,
+      conflicts: [s19Changed("."), S19_LOCK_KEPT],
+      errors: [],
+      steps: [],
+      through: [],
+      foreign: "intacto",
+      atForeignRoot: { plugins: "ausente", staging: "ausente", pluginDir: "ausente", lock: "lock próprio", canary: "arquivo do usuário intacto", manifest: false },
+      atMovedRoot: { lock: "lock próprio", plugins: false, manifest: false },
+    },
+  );
+});
