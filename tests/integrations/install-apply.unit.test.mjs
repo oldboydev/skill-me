@@ -3564,9 +3564,8 @@ test("I4-C34n fixture: aguarda troca ancestral e preserva falha da montagem", as
   };
 
   await t.test("recusa transitória: 2 EPERM e depois a troca; a instalação só segue depois dela", async () => {
-    const { ctx, moved, waits, state, probe, result } = await run("n transitório", (attempt, from, to) => {
+    const { ctx, moved, waits, state, probe, result } = await run("n transitório", (attempt) => {
       if (attempt <= 2) throw simulated("EPERM");
-      renameSync(from, to);
     });
     assert.deepEqual(
       {
@@ -3664,6 +3663,11 @@ async function s19InstallWithObservedMount(home, makeSwapIo, { from, to, linkTar
           return new Promise((resolve) => setImmediate(resolve));
         },
       });
+      // A movimentação injetada só decide a política (tentativas/esperas
+      // simuladas, sucesso lógico sem rename). A física vem depois, com a
+      // política real do auxílio: uma recusa natural do Windows nela não altera
+      // as contagens simuladas, e uma falha física sobe e falha o teste.
+      await s19MoveFixtureDirectory(from, to);
       symlinkSync(linkTarget, from, DIR_LINK);
     })();
     settled = mounting.then(
@@ -3711,9 +3715,8 @@ test("I4-C34o fixture: aguarda troca do staging e preserva falha da montagem", a
   };
 
   await t.test("recusa transitória: 2 EPERM e depois a troca; a instalação só segue depois dela", async () => {
-    const { ctx, waits, state, probe, result } = await run("o transitório", (attempt, from, to) => {
+    const { ctx, waits, state, probe, result } = await run("o transitório", (attempt) => {
       if (attempt <= 2) throw simulated("EPERM");
-      renameSync(from, to);
     });
     assert.deepEqual(
       {
