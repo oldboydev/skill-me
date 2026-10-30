@@ -3471,3 +3471,16 @@ Em todas: nenhuma criação a mais, nenhum `.lock` no fim, árvore da captura ig
   esperei o fim real. A justificativa dos 600.000 ms era leitura da ferramenta, não limite demonstrado.
 - **Pendentes**: verificação independente 26, formal 14 sem uso (13 tentativas, teto 14), publicação, medição manual e cinco
   checks. Não é PASS global.
+
+
+## Abertura S16 — I25-C43 da manual40969866439 (antes do código)
+
+HEAD58ffff4: Verifier26PASS50/50, formal14ready, CI do PR40969777477 cinco success. Manual40969866439: Windows123783727441 e CI123787402546 failure, demais success. Windows gov27/27,motor16/16,doctor417/410/0/7,integrações616/591/1/24 naturais; PRWindows616/592/0/24. Ubuntu em ambas1076/1053/0/23, macOS1076/1051/0/25, ACLnativaMac passada; T8-C15/C16/C8/I23-C10 e8casos de prazo executados nesses logs.
+
+Falha única: I25-C43 transitório end.e2e:832, após recuperação/isolamento já afirmados. Actual launch:true/code:delivery_timeout/entries1/committed0/persisted0/lost1; esperado LAUNCHED(1). Sem operação específica no log desse caminho; causa física desconhecida. Logs integrais próprios remote26-{pr,manual}-{windows,macos,ubuntu}-decoded.json, metadados remote26-results-final.json. Sem rerun inalterado nem merge.
+
+Diagnóstico123783649555 success no mesmoHEAD: 4500/4500, schema2individual, A1/B/A2C:/D:, zeroerro/incompleto/linhainválida,10métricas1500amostras/fase; filhos0/semsinal e limpeza3zeroerros. Releasep50/p99/maxA1 2.563/9.863/932.634,B1.875/6.857/11.168,A2 2.553/9.791/145.993ms. A1contagens>=600/650:take1/retire1/release2/write1/rename1/removeRetired1, sobrepostasnão7ciclos; B/A2zero. Cargasescritas245/1434/270. ValidadoRoot em manual26-measurement.json/-validation.json e log preservado. Não atribui causa da entrega; não é SLO nem disputa/pipelinecomchave.
+
+Claude diagnóstico readonly40292 e plano82720 terminaram0/0BG e source58ffffclean. Report builder-ci26-diagnostic/findings.md lido integralmente peloRoot; fontes/omissões anteriores preservadas e adenda concreta. Sessão declarou≈170ktokens de leitura e encerrou semBUILD. Root anotou D1/D2/D3 e P1corrigido no plano .tasks/issue-25-c43-diagnostic-plan.md antes de qualquer código. Autor novo sóend.e2e/artefatospróprios; leitura mapeada da fatia com estimativa≤150k, semclaimdefeatureinteira. Ainda nenhum teste/sonda foi executado para S16.
+
+Preservar globalTemp/xpreexistente sobrescrito, semcópia conhecida/impactodesconhecido; nunca tocar. Guardas restringem ferramentas, não são sandboxFSdoSO; sem retomada ampla rejeitada, shell geral ou limpeza global. Auditoria26 terminaantesformal14; futuraauditoria deve declarar janela incluindoformal14/CI/S16, sem causalidade/impactozero.

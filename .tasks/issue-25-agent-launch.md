@@ -998,3 +998,16 @@ limpeza continua vermelha, o F2 não muda e a identidade nova exige provas próp
 
 Detalhes no bloco S15 do `Handoff` e no build. O F2 continua com causa desconhecida. Pendentes: a verificação independente
 26, a formal 14, a publicação, a medição manual e os cinco checks verdes. Não é PASS global.
+
+
+## Diagnóstico do I25-C43 após recuperar o lock — S16 (CI manual40969866439)
+
+Continuação do coordenador dentro do critério35/AC4 e do contrato de observabilidade já existente, sob os pedidos de corrigir CI mantendo testes/przos até verde/merge e rodadas necessárias. Fonte técnica vinculante: [.tasks/issue-25-c43-diagnostic-plan.md](issue-25-c43-diagnostic-plan.md), registrada antes do código. Causa do timeout posterior à recuperação desconhecida; nenhuma alteração de produto nem redução do C43(a) autorizada por esta fatia.
+
+R26PASS50/50 e formal14ready no58ffff4 foram seguidos de PR40969777477 com cinco checks verdes e manual40969866439 Windows/CI FAIL: integrações616/591/1/24. O end.e2e:832 recebeu delivery_timeout1/0/0/1, onde exige LAUNCHED(1), depois de passar pelas asserções da recuperação e isolamento. A falha permanece; nenhum rerun inalterado.
+
+Root decide reutilizar o registro comum em end.e2e e extrair só a rotina transitória para os três controles, com os mesmos argumentos/payload/contagens/ordem/asserções. Produto, apoios, preload, workflow e core não mudam. P1 em cópias prova o erro natural acrescido de evidência; preload+timing explícitos nos dois lados mantêm a injeção efetiva semregistro. Refinamento do C43, Sources/Landing/Swept/Handoff no checklist. A sessão diagnóstica encerrou antes doBUILD ao declarar170k; um autor novo recebe uma S16 inteira com estimativa≤150k de leitura, vista literal da fatia e diff; a verificação final continua sobre C1–C50 completos.
+
+Medição40969866439 validada: schema2/A1-B-A2/4500completos/zeroerro/incompleto, dez métricas1500amostras/fase. PicosA1>=650 em métricas sobrepostas, B/A2nenhum; namespaceindividual, sem medição do pipeline comchave ou causa doC43. Não é substituta da CI vermelha.
+
+Nenhuma implementação/prova nesta abertura. Ordem: autor/provas/commit → Verifier27 frescoRoot → relatório/commit → formal15 → ready → push/uma nova manual+PR → ambos cinco checks verdes+comparação → merge já autorizado. Histórico de26verificações/14formais, FAILs/omissões/interrupções e incidentes preservado; novo teto/contexto específico sóRootquando necessário.
