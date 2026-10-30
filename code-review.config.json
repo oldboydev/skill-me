@@ -16,25 +16,20 @@
     }
   },
   "roundOverrides": {
-    "4": {
-      "profile": "light",
-      "maxRounds": 10,
-      "approval": "Proprietário autorizou em 17/10/2026: use quantas rodadas precisar. Registro e autorização de merge em .tasks/issue-4-integracoes.md; exclusivo da issue #4, preservando o histórico e o máximo de 10 suportado pelo motor."
-    },
     "3": {
       "profile": "light",
       "maxRounds": 9,
       "approval": "Proprietário autorizou em 13/10/2026: pode fazer as revisoes necessarias. Registro em .checks/issue-3-agent-diagnostics.linux.md; exclusivo da issue #3, preservando histórico."
     },
+    "4": {
+      "profile": "light",
+      "maxRounds": 10,
+      "approval": "Proprietário autorizou em 17/10/2026: use quantas rodadas precisar. Registro e autorização de merge em .tasks/issue-4-integracoes.md; exclusivo da issue #4, preservando o histórico e o máximo de 10 suportado pelo motor."
+    },
     "5": {
       "profile": "light",
       "maxRounds": 10,
       "approval": "Proprietário autorizou em 18/10/2026: autorizo quantos precisaram para resolver. Registro literal em .checks/issue-5-privacidade.approval.md e .tasks/issue-5-privacidade.md; exclusivo da issue #5, preservando histórico e usando o máximo de 10 suportado pelo motor. Merge permanece humano."
-    },
-    "8": {
-      "profile": "light",
-      "maxRounds": 3,
-      "approval": "Proprietário autorizou em 19/10/2026 a terceira tentativa formal da issue #8 após falha técnica de capacidade do modelo na segunda; registro em https://github.com/oldboydev/skill-me/issues/8#issuecomment-6265279482. Exclusivo da issue #8, preservando as duas tentativas anteriores. Merge permanece humano."
     },
     "6": {
       "profile": "light",
@@ -46,6 +41,11 @@
       "maxRounds": 35,
       "approval": "Proprietário autorizou até 35 tentativas formais exclusivas da issue #7 após consumir as 30 anteriores, preservando todo o histórico e mantendo os pilotos intocados; registro em https://github.com/oldboydev/skill-me/issues/7#issuecomment-6342492981. Revisões adicionais somente conforme necessárias; push, PR e merge somente após verificação atualizada e status ready."
     },
+    "8": {
+      "profile": "light",
+      "maxRounds": 3,
+      "approval": "Proprietário autorizou em 19/10/2026 a terceira tentativa formal da issue #8 após falha técnica de capacidade do modelo na segunda; registro em https://github.com/oldboydev/skill-me/issues/8#issuecomment-6265279482. Exclusivo da issue #8, preservando as duas tentativas anteriores. Merge permanece humano."
+    },
     "23": {
       "profile": "light",
       "maxRounds": 4,
@@ -53,8 +53,8 @@
     },
     "25": {
       "profile": "light",
-      "maxRounds": 14,
-      "approval": "Proprietário autorizou “Pode fazer quantas precisar” e o plano completo nas três plataformas, preservando testes e prazos até CI verde e merge do PR28; aprovação https://github.com/oldboydev/skill-me/issues/25#issuecomment-6502294779. Registro específico da verificação26 e revisão14 ainda não usada: https://github.com/oldboydev/skill-me/issues/25#issuecomment-6509404165. Preservar25 verificações e13 revisões, todos FAILs/incidentes/omissões/limites. Exclusivo25/light, teto14 mantido; globais2/demaisissues/core5intactos. Produto13ecc07 e S14a1156da inalterados; S15 eb6999e sincroniza somente provaC46p com helperexistente e mesmasasserções, planoantesd4687eb, fechamento7ae87e4. Probes117porNode/32races+2H3vermelhos, B25H1vsH3/F2físicocontinuamdesconhecidos. AutorABC34/33/0/1,34/33/0/1,34/34/0/0; D43/41/2corepathpreservado, comparaçãoTEMP130fail/68pass, D2full1076/1056/0/20 natural. D2explicitBG/métodoretificado; Temp/xpreexistentesobrescrito semcópiaconhecida/impactodesconhecido preservado. Verifier26novo lêfontesobrigatóriasantesgates e executafeatureinteiraABC/D. PrimeiroPASS26 e readyformal14, pararprimeiroreadyválido; pushnovoHEAD, umanova manualschema2A1/B/A2/4500 e cincochecksverdesPR+manualmesmoHEAD antesmergejáautorizado. Contexto/refsfrescos. Auditoria26baseline24incluiparcial25atéD26, nãocriaD25. Pacoteprivado."
+      "maxRounds": 15,
+      "approval": "Proprietário autorizou quantas rodadas necessárias (6442514838), plano completo nas três plataformas/testes e prazos preservados até CI verde/merge (https://github.com/oldboydev/skill-me/issues/25#issuecomment-6502294779), e S19 explícita6520123791. Registro específico independente27/formal15: https://github.com/oldboydev/skill-me/issues/25#issuecomment-6523482087. Preservar26 verificações/14revisões/histórico/incidentes/falhas/omissões. Exclusivo25/light, global2/demaisissues/core5inalterados. S19produto c94cdab/fixturesf9039f6 autorizados; próxima featureinteira50/9/ABC/D, primeiroPASS/readyválido, pushnovoHEAD e cincoverdesPR+manual/esquema2A1/B/A2/4500novo antesmergejáautorizado. Semperdas/retryentregas/prazosnovos. GlobalTemp/xpreexistentesobrescrito/semcópiaconhecida/impactodesconhecido preservado."
     }
   }
 }
