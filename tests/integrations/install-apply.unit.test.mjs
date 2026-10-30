@@ -3522,3 +3522,156 @@ test("I4-C34m Hermes: identidade da raiz antes de criar plugins — raiz real su
     },
   );
 });
+
+// Montagem das provas (não produto): move um diretório próprio da fixture com o
+// contrato compartilhado de rename (I4-C34l). No Windows, renomear a `plugins`
+// recém-gravada é recusado às vezes (EPERM em 7 de 200 instalações do
+// diagnóstico S19 C34h, causa física não identificada). Antes de cada tentativa
+// a origem continua o mesmo diretório real (identidade BigInt) e o destino
+// continua ausente. `rename`, `platform` e `wait` são injetáveis só para a prova
+// do próprio auxílio.
+async function s19MoveFixtureDirectory(from, to, { rename = renameSync, platform = process.platform, wait } = {}) {
+  const own = lstatSync(from, { bigint: true });
+  if (own.isSymbolicLink() || !own.isDirectory()) throw new Error("fixture: a origem não é diretório real");
+  const options = {
+    beforeAttempt: async () => {
+      const now = lstatSync(from, { bigint: true });
+      if (now.isSymbolicLink() || !now.isDirectory() || now.dev !== own.dev || now.ino !== own.ino) throw new Error("fixture: a origem foi trocada");
+      if (existsSync(to) || isSymlink(to)) throw new Error("fixture: o destino está ocupado");
+    },
+    retryable: (error) => platform === "win32" && ["EPERM", "EACCES", "EBUSY"].includes(error.code),
+  };
+  if (wait) options.wait = wait;
+  await s19RenameRetrying()({ rename: async (a, b) => rename(a, b) }, from, to, options);
+}
+
+// Linha índice 8 do I4-C34h (troca de `plugins` pela própria movida para fora do
+// home depois do 3º artefato gravado) com a montagem assíncrona pelo auxílio. A
+// instalação só pode seguir depois da montagem: nenhuma operação do instalador
+// enquanto ela está pendente. A montagem é aguardada até o fim, e uma rejeição é
+// capturada no ato, sem promessa nem timer pendente.
+test("I4-C34n fixture: aguarda troca ancestral e preserva falha da montagem", async (t) => {
+  const run = async (label, fakeRename) => {
+    const ctx = s19Target(label);
+    const moved = path.join(ctx.dir, "plugins própria movida");
+    const waits = [];
+    const state = { attempts: 0, pending: false, error: null, installerOps: [], realpathDuring: false };
+    let settled = null;
+    const { io: swapIo, probe } = ancestorSwapIo(ctx.home, ["artefato gravado no staging", 3], () => {
+      state.pending = true;
+      // A tarefa original vai para `ancestorSwapIo` (rejeita com o próprio erro
+      // da montagem); o observador, ligado no ato, só registra e é aguardado.
+      const mounting = (async () => {
+        await s19MoveFixtureDirectory(ctx.plugins, moved, {
+          platform: "win32",
+          rename: (from, to) => {
+            state.attempts += 1;
+            fakeRename(state.attempts, from, to);
+          },
+          wait: (ms) => {
+            waits.push(ms);
+            return new Promise((resolve) => setImmediate(resolve));
+          },
+        });
+        symlinkSync(moved, ctx.plugins, DIR_LINK);
+      })();
+      settled = mounting.then(
+        () => {
+          state.pending = false;
+        },
+        (error) => {
+          state.pending = false;
+          state.error = error;
+        },
+      );
+      return mounting;
+    });
+    const io = { ...swapIo };
+    for (const op of FS_OPS) {
+      io[op] = async (...args) => {
+        if (state.pending) {
+          state.installerOps.push(op);
+          if (op === "realpath") state.realpathDuring = true;
+        }
+        return swapIo[op](...args);
+      };
+    }
+    const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: ctx.home, apply: true, io });
+    await settled;
+    return { ctx, moved, waits, state, probe, result };
+  };
+
+  await t.test("recusa transitória: 2 EPERM e depois a troca; a instalação só segue depois dela", async () => {
+    const { ctx, moved, waits, state, probe, result } = await run("n transitório", (attempt, from, to) => {
+      if (attempt <= 2) throw simulated("EPERM");
+      renameSync(from, to);
+    });
+    assert.deepEqual(
+      {
+        attempts: state.attempts,
+        waits,
+        fixtureError: state.error,
+        realpathDuringFixture: state.realpathDuring,
+        installerOpsDuringFixture: state.installerOps,
+        exitCode: result.exitCode,
+        conflicts: result.conflicts,
+        steps: result.steps,
+        through: probe.through,
+        ownStaging: packageEntry(path.join(moved, STAGING_NAME)),
+        lock: describeEntry(ctx.lock),
+      },
+      {
+        attempts: 3,
+        waits: [10, 20],
+        fixtureError: null,
+        realpathDuringFixture: false,
+        installerOpsDuringFixture: [],
+        exitCode: 4,
+        conflicts: [{ code: "target_escape", file: "plugins" }],
+        steps: [],
+        through: [],
+        ownStaging: packageDir(OWN_ARTIFACTS),
+        lock: "ausente",
+      },
+    );
+  });
+
+  await t.test("EIO permanente na montagem: uma tentativa, mesmo erro, instalação incompleta sem promover", async () => {
+    const eio = simulated("EIO");
+    const { ctx, waits, state, result } = await run("n eio", () => {
+      throw eio;
+    });
+    assert.deepEqual(
+      {
+        attempts: state.attempts,
+        waits,
+        sameError: state.error === eio,
+        realpathDuringFixture: state.realpathDuring,
+        installerOpsDuringFixture: state.installerOps,
+        exitCode: result.exitCode,
+        status: result.status,
+        errors: result.errors,
+        steps: result.steps,
+        staging: packageEntry(ctx.staging),
+        pluginDir: packageEntry(ctx.pluginDir),
+        manifest: s19Manifest(ctx),
+        lock: describeEntry(ctx.lock),
+      },
+      {
+        attempts: 1,
+        waits: [],
+        sameError: true,
+        realpathDuringFixture: false,
+        installerOpsDuringFixture: [],
+        exitCode: 5,
+        status: "incomplete",
+        errors: [{ code: "EIO" }],
+        steps: [{ step: "artifacts", state: "failed" }],
+        staging: packageDir(OWN_ARTIFACTS),
+        pluginDir: "ausente",
+        manifest: "ausente",
+        lock: "ausente",
+      },
+    );
+  });
+});
