@@ -198,6 +198,28 @@ async function assertStillRealDir(io, dir, rel) {
   if ((await entryKind(io, dir)) !== "dir") throw new ConflictError("config_changed_during_apply", rel);
 }
 
+// Identidade (dev/ino BigInt, sem seguir link) de uma pasta da promoção
+// Hermes. Caminho real e tipo não distinguem um diretório real posto no lugar
+// — com cópias idênticas dos artefatos ou do lock —; a identidade, sim. Link
+// ou não diretório é conflito. Identidade não observável (ausente, de outro
+// tipo, `ino` não positivo ou `dev` negativo) falha fechada como E/S (5,
+// `io_error`, sem errno inventado): sem ela nada é promovido nem limpo por
+// suposição. Erro real do `lstat` sobe com o próprio código.
+async function dirIdentity(io, dir, rel) {
+  const stats = await io.lstat(dir, { bigint: true });
+  if (stats.isSymbolicLink() || !stats.isDirectory()) throw new ConflictError("config_changed_during_apply", rel);
+  const { dev, ino } = stats;
+  if (typeof dev !== "bigint" || typeof ino !== "bigint" || dev < 0n || ino <= 0n) throw new Error("identity_unavailable");
+  return { dev, ino };
+}
+
+function sameIdentityGuard(io, dir, rel, identity) {
+  return async () => {
+    const current = await dirIdentity(io, dir, rel);
+    if (current.dev !== identity.dev || current.ino !== identity.ino) throw new ConflictError("config_changed_during_apply", rel);
+  };
+}
+
 // Só sai o lock que esta execução criou: pela mesma pasta de estado e enquanto
 // for o arquivo regular com os bytes gravados. Ausente, editado, trocado ou
 // com a pasta trocada, ele não é comprovadamente nosso e fica.
@@ -263,14 +285,21 @@ async function withLock(io, root, agent, platform, result, fn) {
     if (error.code === "EEXIST") throw new ConflictError("lock_present", rel(root, lockPath));
     throw error;
   }
+  // `fn` pode trocar a conferência usada na liberação por uma mais estrita
+  // (a promoção Hermes soma a identidade da raiz e da pasta de estado: um
+  // diretório real posto no lugar, com lock de bytes idênticos, tem o mesmo
+  // caminho real). Sem a troca, a liberação é a de sempre.
+  let stateGuard = stateDirUnchanged;
   let failure = null;
   try {
-    await fn(stateDirUnchanged, rootUnchanged);
+    await fn(stateDirUnchanged, rootUnchanged, (guard) => {
+      stateGuard = guard;
+    });
   } catch (error) {
     failure = error;
   }
   try {
-    await releaseLock(io, root, lockPath, lockText, stateDirUnchanged);
+    await releaseLock(io, root, lockPath, lockText, stateGuard);
     await removeDirIfEmpty(io, stateDir);
   } catch (error) {
     failure = withLockKept(result, failure, error);
@@ -295,6 +324,27 @@ async function accessBeforeReplace(io, root, file) {
 const RENAME_DENIED = new Set(["EPERM", "EACCES", "EBUSY"]);
 const RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80, 160, 320];
 
+// Rename repetido enquanto `retryable` aceitar o erro, no máximo 7 tentativas
+// com as esperas acima (630 ms somados). `beforeAttempt` vem antes de cada
+// tentativa — também depois de uma espera — e o erro dele sobe sem nova
+// tentativa; o predicado julga cada erro de rename, inclusive o último, que
+// sobe como recebido. Laço único dos dois consumidores (temporário de arquivo
+// e promoção do staging Hermes); cada um mantém suas guardas e sua limpeza.
+// `wait` existe só para a prova de camada sem relógio; produção usa a espera
+// real. Exportado como contrato deste módulo privado, não da CLI.
+export async function renameRetrying(io, from, to, { beforeAttempt, retryable, wait = sleep }) {
+  for (let retry = 0; ; retry += 1) {
+    await beforeAttempt();
+    try {
+      await io.rename(from, to);
+      return;
+    } catch (error) {
+      if (!retryable(error) || retry === RENAME_RETRY_DELAYS_MS.length) throw error;
+    }
+    await wait(RENAME_RETRY_DELAYS_MS[retry]);
+  }
+}
+
 // Grava `text` num temporário novo e o renomeia sobre `file`. `wx` só cria com
 // o caminho livre: ocupado depois da leitura, ele é alheio, como na prévia.
 // Antes de cada tentativa de rename, o temporário precisa continuar nosso
@@ -314,18 +364,14 @@ async function writeViaTemp(io, root, file, text, { like = null, dirUnchanged = 
     throw error;
   }
   try {
-    for (let retry = 0; ; retry += 1) {
-      await dirUnchanged();
-      if (!(await stillHolds(io, tmp, bytes))) throw new ConflictError("config_changed_during_apply", rel(root, tmp));
-      await beforeRename();
-      try {
-        await io.rename(tmp, file);
-        return;
-      } catch (error) {
-        if (!RENAME_DENIED.has(error.code) || retry === RENAME_RETRY_DELAYS_MS.length) throw error;
-      }
-      await sleep(RENAME_RETRY_DELAYS_MS[retry]);
-    }
+    await renameRetrying(io, tmp, file, {
+      beforeAttempt: async () => {
+        await dirUnchanged();
+        if (!(await stillHolds(io, tmp, bytes))) throw new ConflictError("config_changed_during_apply", rel(root, tmp));
+        await beforeRename();
+      },
+      retryable: (error) => RENAME_DENIED.has(error.code),
+    });
   } catch (error) {
     const sameDir = await dirUnchanged().then(
       () => true,
@@ -764,10 +810,29 @@ async function removeOwnedStaging(io, root, artifacts, platform, stagingStillOwn
 // em si só é nosso como diretório real nessa `plugins` — trocado depois de
 // criado ou de um artefato gravado por junção/link (mesmo para dentro do alvo)
 // ou arquivo, nada mais é gravado, apagado ou promovido através dele.
-async function installHermesArtifacts(io, root, artifacts, state, platform, rootUnchanged) {
+//
+// Identidades (S19): a da raiz e a da pasta de estado são capturadas no início,
+// cada uma logo depois da conferência de caminho real que a precede; a de
+// `plugins`, logo depois do `mkdir` próprio ou da conferência dela; a da sobra
+// prévia, antes de limpá-la; a do staging novo, logo depois do próprio `mkdir`.
+// As conferências de caminho real vêm sempre antes das de identidade, que só
+// decidem o que elas não veem (diretório real posto no lugar). A conferência
+// composta da raiz e da pasta de estado passa a valer, por `adoptStateGuard`,
+// para a liberação do lock e para a gravação do registro desta execução.
+async function installHermesArtifacts(io, root, artifacts, state, platform, { rootUnchanged, stateDirUnchanged, adoptStateGuard }) {
   const pluginsDir = path.join(root, "plugins");
   const pluginDir = path.join(root, PLUGIN_REL_DIR);
   const tmpDir = path.join(root, STAGING_REL_DIR);
+  const stateDir = path.join(root, STATE_DIR);
+  await rootUnchanged();
+  const rootSame = sameIdentityGuard(io, root, ".", await dirIdentity(io, root, "."));
+  await stateDirUnchanged();
+  const stateDirSame = sameIdentityGuard(io, stateDir, STATE_DIR, await dirIdentity(io, stateDir, STATE_DIR));
+  adoptStateGuard(async () => {
+    await stateDirUnchanged();
+    await rootSame();
+    await stateDirSame();
+  });
   let pluginsDirReal = state.pluginsDirReal;
   if (!state.pluginsDirExists) {
     await rootUnchanged();
@@ -776,28 +841,74 @@ async function installHermesArtifacts(io, root, artifacts, state, platform, root
     pluginsDirReal = await dirRealPath(io, root, "plugins", platform);
   }
   const pluginsUnchanged = dirUnchangedGuard(io, root, "plugins", pluginsDirReal, platform);
-  const stagingStillOwn = async () => {
+  await pluginsUnchanged();
+  const pluginsSame = sameIdentityGuard(io, pluginsDir, "plugins", await dirIdentity(io, pluginsDir, "plugins"));
+  const ancestorsSame = async () => {
+    await pluginsUnchanged();
+    await rootSame();
+    await pluginsSame();
+  };
+  // Staging de uma identidade: conferido antes de cada gravação, exclusão e
+  // promoção. A limpeza não exige os três artefatos — cada arquivo continua
+  // conferido como próprio em `removeOwnedStaging`.
+  const stagingStillOwn = (stagingSame) => async () => {
     await pluginsUnchanged();
     await assertStillRealDir(io, tmpDir, STAGING_REL_DIR);
+    await rootSame();
+    await pluginsSame();
+    await stagingSame();
   };
-  // Sobra própria de uma instalação interrompida; alheia já virou conflito no plano.
-  if (state.staging) await removeOwnedStaging(io, root, artifacts, platform, stagingStillOwn);
-  await pluginsUnchanged();
+  // Sobra própria de uma instalação interrompida; alheia já virou conflito no
+  // plano. Ela é limpa com a própria identidade, nunca com a do staging novo.
+  if (state.staging) {
+    await ancestorsSame();
+    const leftover = await dirIdentity(io, tmpDir, STAGING_REL_DIR);
+    await removeOwnedStaging(io, root, artifacts, platform, stagingStillOwn(sameIdentityGuard(io, tmpDir, STAGING_REL_DIR, leftover)));
+  }
+  await ancestorsSame();
   await io.mkdir(tmpDir);
+  const stagingOwn = stagingStillOwn(sameIdentityGuard(io, tmpDir, STAGING_REL_DIR, await dirIdentity(io, tmpDir, STAGING_REL_DIR)));
   for (const a of artifacts) {
-    await stagingStillOwn();
+    await stagingOwn();
     await io.writeExclusive(path.join(tmpDir, a.name), a.content);
   }
-  await stagingStillOwn();
-  // O plano só grava artefatos com a pasta do plugin ausente: uma entrada surgida
-  // depois é alheia, mesmo vazia — no POSIX o rename substituiria um diretório
-  // vazio com sucesso. Nada é promovido sobre ela e o staging próprio completo
-  // fica onde está (a instalação seguinte o limpa como sobra própria).
-  if ((await entryKind(io, pluginDir)) !== "absent") throw new ConflictError("foreign_artifact", PLUGIN_REL_DIR);
+  const expectedNames = JSON.stringify(artifacts.map((a) => a.name).sort());
+  // Antes de cada tentativa de promoção, inclusive depois de uma espera: o
+  // mesmo staging, completo — exatamente os três artefatos, com os bytes do
+  // pacote — e o destino ainda ausente. Staging incompleto, editado ou com
+  // arquivo a mais pode conter dado de outro programa: conflito, nada promovido
+  // nem limpo. O plano só grava artefatos com a pasta do plugin ausente: uma
+  // entrada surgida depois é alheia, mesmo vazia — no POSIX o rename
+  // substituiria um diretório vazio com sucesso. Nada é promovido sobre ela e
+  // o staging próprio completo fica onde está (a instalação seguinte o limpa
+  // como sobra própria). Entre a última conferência e o rename não há
+  // atomicidade contra editores arbitrários (sem CAS).
+  const promotable = async () => {
+    await stagingOwn();
+    if (JSON.stringify((await io.readdir(tmpDir)).sort()) !== expectedNames) throw new ConflictError("config_changed_during_apply", STAGING_REL_DIR);
+    for (const a of artifacts) {
+      if (!(await isOwnStagedFile(io, root, path.join(tmpDir, a.name), a.name, artifacts, platform))) {
+        throw new ConflictError("config_changed_during_apply", STAGING_REL_DIR);
+      }
+    }
+    if ((await entryKind(io, pluginDir)) !== "absent") throw new ConflictError("foreign_artifact", PLUGIN_REL_DIR);
+  };
+  let guardFailure = null;
   try {
-    await io.rename(tmpDir, pluginDir);
+    // Só no Windows a recusa do diretório é repetida (handle de outro processo
+    // no staging recém-gravado); no POSIX esses códigos são permissão real.
+    await renameRetrying(io, tmpDir, pluginDir, {
+      beforeAttempt: () =>
+        promotable().catch((error) => {
+          guardFailure = error;
+          throw error;
+        }),
+      retryable: (error) => platform === "win32" && RENAME_DENIED.has(error.code),
+    });
   } catch (error) {
-    await removeOwnedStaging(io, root, artifacts, platform, stagingStillOwn).catch(() => {});
+    // Conferência recusada: o staging pode ser alheio ou ter dado alheio, e fica.
+    if (error === guardFailure) throw error;
+    await removeOwnedStaging(io, root, artifacts, platform, stagingOwn).catch(() => {});
     if (await io.stat(pluginDir).then(() => true, () => false)) throw new ConflictError("foreign_artifact", PLUGIN_REL_DIR);
     throw error;
   }
@@ -884,19 +995,28 @@ async function runHermesAgent({ op, root, apply, io, platform, result }) {
   // O plano é a fonte do que a aplicação apaga: o que a prévia não lista não sai.
   const needsWrite = (p) => p.writeArtifacts || (p.removals?.length ?? 0) > 0 || (p.caches?.length ?? 0) > 0 || p.manifestAction !== null;
   if (!apply || !needsWrite(plan)) return;
-  await withLock(io, root, "hermes", platform, result, async (stateDirUnchanged, rootUnchanged) => {
+  await withLock(io, root, "hermes", platform, result, async (stateDirUnchanged, rootUnchanged, useStateGuard) => {
     state = await readHermesState(io, root, platform, { op, artifacts, beforeManifestRead: stateDirUnchanged });
     plan = planHermes(op, state, artifacts);
     result.changes = plan.changes;
     result.conflicts = plan.conflicts;
     if (!needsWrite(plan)) return;
-    if (op === "install" && plan.writeArtifacts) await step(result, "artifacts", () => installHermesArtifacts(io, root, artifacts, state, platform, rootUnchanged));
+    // Só a promoção dos artefatos troca a conferência da pasta de estado (lock
+    // e registro desta execução) pela composta com as identidades.
+    let stateGuard = stateDirUnchanged;
+    const adoptStateGuard = (guard) => {
+      stateGuard = guard;
+      useStateGuard(guard);
+    };
+    if (op === "install" && plan.writeArtifacts) {
+      await step(result, "artifacts", () => installHermesArtifacts(io, root, artifacts, state, platform, { rootUnchanged, stateDirUnchanged, adoptStateGuard }));
+    }
     if (op === "uninstall") await step(result, "artifacts", () => removeHermesArtifacts(io, root, plan, state, platform));
     if (plan.manifestAction) {
       await step(result, "manifest", () =>
         plan.manifestAction === "delete"
-          ? deleteManifest(io, root, "hermes", state.manifestText, stateDirUnchanged)
-          : writeManifest(io, root, "hermes", plan.manifestBody, state.manifestText, stateDirUnchanged),
+          ? deleteManifest(io, root, "hermes", state.manifestText, stateGuard)
+          : writeManifest(io, root, "hermes", plan.manifestBody, state.manifestText, stateGuard),
       );
     }
     result.applied = true;
