@@ -836,6 +836,9 @@ async function installHermesArtifacts(io, root, artifacts, state, platform, { ro
   let pluginsDirReal = state.pluginsDirReal;
   if (!state.pluginsDirExists) {
     await rootUnchanged();
+    // Caminho real igual não basta: uma raiz real posta no mesmo nome receberia
+    // `plugins`. A identidade já capturada vem antes desse primeiro efeito.
+    await rootSame();
     await io.mkdir(pluginsDir);
     // Criada agora: a referência vem logo depois do `mkdir`, como na pasta de estado.
     pluginsDirReal = await dirRealPath(io, root, "plugins", platform);

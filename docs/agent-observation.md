@@ -201,6 +201,20 @@ simulação de caminho.
   mantém o arquivo aberto: até 6 novas tentativas em no máximo 630 ms, refazendo
   antes de cada uma a conferência do temporário e da configuração; persistindo, a
   operação sai com 5 e a configuração fica como estava.
+- Promoção da pasta temporária do Hermes: somente no Windows, `EPERM`, `EACCES` e
+  `EBUSY` permitem até sete tentativas, com esperas de 10, 20, 40, 80, 160 e 320 ms
+  (630 ms adicionais). Cada tentativa reconfere as identidades da raiz, de `plugins`
+  e do staging, os três artefatos completos com os bytes do pacote e o destino
+  ausente. Identidade indisponível impede promoção e limpeza por suposição (5).
+  EIO, outros códigos e promoção POSIX encerram após uma tentativa. A instalação
+  que promove artefatos também protege o registro e a liberação do lock pela
+  identidade da raiz e de `.skill-me`; uma pasta real substituta com cópias
+  idênticas fica intacta. A raiz é reconferida antes de criar `plugins`. O lock pode
+  permanecer ocupado por até 630 ms adicionais; isso não altera os prazos ou o
+  retry de entrega dos eventos. Persistindo a recusa, a operação sai com 5 e o
+  último código real, sem registro de instalação concluída. A janela entre a
+  última conferência e o efeito continua sem CAS; um arquivo de bytes idênticos
+  trocado dentro da mesma pasta continua indistinguível.
 - Temporários de nome fixo: a reescrita usa `<settings.json|hooks.json>.skill-me-tmp`
   e `.skill-me/<agente>-install.json.skill-me-tmp`. Se a operação precisa de um deles
   e o caminho já tem qualquer coisa — arquivo (inclusive sobra de uma execução
