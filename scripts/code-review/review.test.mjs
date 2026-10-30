@@ -897,15 +897,21 @@ test("C9 argumentos estritos e launcher Windows sem shell ou API key", () => {
 // Import por namespace: no core sem promoteStateTemp o arquivo ainda liga e cada teste
 // falha na própria asserção, nunca por erro de ligação.
 import * as reviewModule from "./review.mjs";
+import { randomUUID } from "node:crypto";
+import { lstatSync, realpathSync } from "node:fs";
+import { isAbsolute } from "node:path";
 
 const S21_DELAYS = [10, 20, 40, 80, 160, 320];
 const S21_CHANGED = (destination) =>
   `Gravação do estado recusada: o temporário ou o destino mudou antes da promoção (${destination}).`;
 const S21_UNAVAILABLE = (destination) =>
   `Gravação do estado recusada: identidade do temporário ou do destino indisponível (${destination}).`;
-// Caminhos só do sistema de arquivos virtual dos testes unitários; nada é gravado neles.
-const S21_TEMP = "C:\\s21-virtual\\issue-7.state.json.tmp";
-const S21_DEST = "C:\\s21-virtual\\issue-7.state.json";
+// Caminhos só do sistema de arquivos virtual dos testes unitários: nome único sob o TEMP do
+// processo, nunca criado. Se o produto ignorar o io injetado, o efeito real cai numa pasta
+// privada inexistente, nunca num caminho compartilhado.
+const S21_VIRTUAL_DIR = join(tmpdir(), `code-review-test-s21-${randomUUID()}`);
+const S21_TEMP = join(S21_VIRTUAL_DIR, "issue-7.state.json.tmp");
+const S21_DEST = join(S21_VIRTUAL_DIR, "issue-7.state.json");
 const S21_BYTES = '{\n  "attempts": []\n}\n';
 const S21_OLD = "anterior\n";
 
@@ -1429,9 +1435,88 @@ syncBuiltinESMExports();
 `;
 }
 
+const S21_CHECKOUT_PREFIX = "codex-code-review-";
+// Filho direto da raiz com o prefixo do motor: sem "..", sem separadores.
+function s21DirectCheckoutChild(root, target) {
+  const within = relative(root, target);
+  return (
+    within.startsWith(S21_CHECKOUT_PREFIX) &&
+    !within.includes("..") &&
+    !within.includes("/") &&
+    !within.includes("\\")
+  );
+}
+const s21LexicallyOwned = (checkout) =>
+  isAbsolute(checkout) &&
+  s21DirectCheckoutChild(resolve(tmpdir()), resolve(checkout));
+
+// Identidade do checkout deixado pela limpeza falsa, lida logo que o CLI retorna e só depois
+// das conferências de caminho. Só ela autoriza a remoção no fim do teste.
+function s21CaptureCheckout(checkout) {
+  if (typeof checkout !== "string") return null;
+  if (!s21LexicallyOwned(checkout)) return { refused: "fora do TEMP próprio" };
+  const stat = lstatSync(checkout, { bigint: true, throwIfNoEntry: false });
+  if (!stat || stat.isSymbolicLink() || !stat.isDirectory())
+    return { refused: "não é pasta real" };
+  return { dev: stat.dev, ino: stat.ino };
+}
+
+// Remove só o checkout com a identidade capturada: mesmo caminho lexical e real, pasta real
+// sem link, mesmos dev/ino. Qualquer divergência lança e nada é removido; sem nova tentativa.
+function s21RemoveOwnCheckout(f, run) {
+  if (typeof run.checkout !== "string") return;
+  const { checkout, checkoutIdentity: identity } = run;
+  if (!identity || identity.refused)
+    throw new Error(
+      `S21: checkout não removido (${identity?.refused ?? "identidade não capturada"}): ${checkout}`,
+    );
+  const stat = lstatSync(checkout, { bigint: true, throwIfNoEntry: false });
+  if (!stat) throw new Error(`S21: checkout ausente antes da remoção: ${checkout}`);
+  if (
+    !s21LexicallyOwned(checkout) ||
+    stat.isSymbolicLink() ||
+    !stat.isDirectory() ||
+    stat.dev !== identity.dev ||
+    stat.ino !== identity.ino ||
+    !s21DirectCheckoutChild(realpathSync(tmpdir()), realpathSync(checkout))
+  )
+    throw new Error(`S21: checkout trocado ou fora do TEMP próprio, não removido: ${checkout}`);
+  f.git("worktree", "remove", "--force", checkout);
+}
+
+// Corpo de teste de CLI com remoção dos checkouts próprios no fim. Falha do corpo e da
+// remoção aparecem juntas num AggregateError; nenhuma esconde a outra.
+async function s21WithCheckouts(f, body) {
+  const runs = [];
+  const runCli = (outcome, faults) =>
+    s21RunCli(f, outcome, faults, (run) => runs.push(run));
+  let failure = null;
+  try {
+    await body(runCli);
+  } catch (error) {
+    failure = { error };
+  }
+  const cleanup = [];
+  for (const run of runs)
+    try {
+      s21RemoveOwnCheckout(f, run);
+    } catch (error) {
+      cleanup.push(error);
+    }
+  if (failure && cleanup.length)
+    throw new AggregateError(
+      [failure.error, ...cleanup],
+      "S21: o teste falhou e a remoção do checkout também",
+    );
+  if (failure) throw failure.error;
+  if (cleanup.length)
+    throw new AggregateError(cleanup, "S21: remoção do checkout recusada ou falhou");
+}
+
 // Chama o runCliWithFailingCleanup original com a pré-carga; NODE_OPTIONS volta ao valor
-// anterior mesmo se a chamada lançar.
-function s21RunCli(f, outcome, faults) {
+// anterior mesmo se a chamada lançar. O resultado é registrado antes de qualquer outra
+// leitura, para que o checkout criado nunca fique sem dono.
+function s21RunCli(f, outcome, faults, register) {
   const dir = join(f.cwd, ".checks/code-review/s21");
   mkdirSync(dir, { recursive: true });
   const log = join(dir, "events.jsonl");
@@ -1463,13 +1548,16 @@ function s21RunCli(f, outcome, faults) {
     if (previous === undefined) delete process.env.NODE_OPTIONS;
     else process.env.NODE_OPTIONS = previous;
   }
-  const events = existsSync(log)
+  const result = { ...run };
+  register(result);
+  result.checkoutIdentity = s21CaptureCheckout(run.checkout);
+  result.events = existsSync(log)
     ? readFileSync(log, "utf8")
         .split("\n")
         .filter(Boolean)
         .map((line) => JSON.parse(line))
     : [];
-  return { ...run, events };
+  return result;
 }
 
 const S21_PATHS = {
@@ -1556,11 +1644,6 @@ function s21AssertFailed(f, run, phase, target, message, guard) {
   assert.equal(existsSync(`${s21Path(f, other)}.tmp`), false);
 }
 
-function s21RemoveCheckouts(f, runs) {
-  for (const run of runs)
-    if (run?.checkout) f.git("worktree", "remove", "--force", run.checkout);
-}
-
 for (const [status, code] of [
   ["ready", 0],
   ["changes_requested", 2],
@@ -1568,8 +1651,8 @@ for (const [status, code] of [
   for (const target of ["common", "local"])
     test(`S21 P5 C11 ${status} com 3 EPERM na gravação ${target} da tentativa`, (t) => {
       const f = fixture(t);
-      const run = s21RunCli(f, status, [{ target, save: 2, kind: "eperm", count: 3 }]);
-      try {
+      return s21WithCheckouts(f, (runCli) => {
+        const run = runCli(status, [{ target, save: 2, kind: "eperm", count: 3 }]);
         if (process.platform !== "win32") {
           s21AssertFailed(f, run, "attempt", target, "S21 EPERM 1", false);
           assert.deepEqual(s21Attempts(run.events, target, 2), [1]);
@@ -1592,16 +1675,14 @@ for (const [status, code] of [
         for (const each of ["common", "local"])
           assert.equal(existsSync(`${s21Path(f, each)}.tmp`), false);
         assert.equal(existsSync(s21Lock(f)), false);
-      } finally {
-        s21RemoveCheckouts(f, [run]);
-      }
+      });
     });
 
 for (const target of ["common", "local"])
-  test(`S21 P5 C11 EPERM permanente na gravação ${target} da tentativa preserva o último erro e a ordem comum→local`, async (t) => {
+  test(`S21 P5 C11 EPERM permanente na gravação ${target} da tentativa preserva o último erro e a ordem comum→local`, (t) => {
     const f = fixture(t);
-    const run = s21RunCli(f, "ready", [{ target, save: 2, kind: "eperm", count: 99 }]);
-    try {
+    return s21WithCheckouts(f, async (runCli) => {
+      const run = runCli("ready", [{ target, save: 2, kind: "eperm", count: 99 }]);
       const windows = process.platform === "win32";
       s21AssertFailed(f, run, "attempt", target, windows ? "S21 EPERM 7" : "S21 EPERM 1", false);
       assert.deepEqual(
@@ -1624,9 +1705,7 @@ for (const target of ["common", "local"])
       await assert.rejects(check(f.cwd, f.options, f.deps), {
         message: target === "common" ? S21_CHECK_ABSENT : S21_CHECK_NO_REPORT,
       });
-    } finally {
-      s21RemoveCheckouts(f, [run]);
-    }
+    });
   });
 
 const S21_SAVE = { initial: 1, attempt: 2, report: 3, cache: 2 };
@@ -1652,19 +1731,13 @@ function s21FailureMessage(f, kind, target) {
 for (const phase of ["initial", "attempt", "report", "cache"])
   for (const target of ["common", "local"])
     for (const kind of ["transient", "permanent", "eio", "guard"])
-      test(`S21 P6 ${kind} na gravação ${target} da fase ${phase}`, async (t) => {
+      test(`S21 P6 ${kind} na gravação ${target} da fase ${phase}`, (t) => {
         const f = fixture(t);
-        const runs = [];
-        const runCli = (faults) => {
-          const run = s21RunCli(f, "ready", faults);
-          runs.push(run);
-          return run;
-        };
-        try {
-          if (phase === "cache") s21AssertSucceeded(f, runCli([]), false);
+        return s21WithCheckouts(f, async (runCli) => {
+          if (phase === "cache") s21AssertSucceeded(f, runCli("ready", []), false);
           const save = S21_SAVE[phase];
           const lastSave = phase === "cache" ? 2 : 3;
-          const run = runCli([{ target, save, ...S21_FAULT[kind] }]);
+          const run = runCli("ready", [{ target, save, ...S21_FAULT[kind] }]);
           const message = s21FailureMessage(f, kind, target);
           if (message === null) {
             s21AssertSucceeded(f, run, phase === "cache");
@@ -1689,19 +1762,17 @@ for (const phase of ["initial", "attempt", "report", "cache"])
           // Nova chamada sem falha injetada: a recuperação que já existia, com o contador real.
           s21AssertSucceeded(
             f,
-            runCli([]),
+            runCli("ready", []),
             phase === "cache" || `${phase}/${target}` === "report/local",
             expected.recovered,
           );
-        } finally {
-          s21RemoveCheckouts(f, runs);
-        }
+        });
       });
 
 test("S21 P6 destino comum criado com os bytes esperados durante a espera é recusado e preservado", (t) => {
   const f = fixture(t);
-  const run = s21RunCli(f, "ready", [{ target: "common", save: 1, kind: "dest-create" }]);
-  try {
+  return s21WithCheckouts(f, (runCli) => {
+    const run = runCli("ready", [{ target: "common", save: 1, kind: "dest-create" }]);
     const message =
       process.platform === "win32" ? S21_CHANGED(s21Path(f, "common")) : "S21 EPERM 1";
     assert.equal(run.status, 1);
@@ -1717,9 +1788,7 @@ test("S21 P6 destino comum criado com os bytes esperados durante a espera é rec
     );
     assert.deepEqual(s21Reports(s21Path(f, "common")), []);
     assert.equal(existsSync(s21Path(f, "local")), false);
-  } finally {
-    s21RemoveCheckouts(f, [run]);
-  }
+  });
 });
 
 test("S21 P6 seis gravações novas e quatro do cache com seis EPERM cada concluem", (t) => {
@@ -1728,10 +1797,8 @@ test("S21 P6 seis gravações novas e quatro do cache com seis EPERM cada conclu
     saves.flatMap((save) =>
       ["common", "local"].map((target) => ({ target, save, kind: "eperm", count: 6 })),
     );
-  const runs = [];
-  try {
-    const first = s21RunCli(f, "ready", everySave([1, 2, 3]));
-    runs.push(first);
+  return s21WithCheckouts(f, (runCli) => {
+    const first = runCli("ready", everySave([1, 2, 3]));
     if (process.platform !== "win32") {
       s21AssertFailed(f, first, "initial", "common", "S21 EPERM 1", false);
       return;
@@ -1739,23 +1806,20 @@ test("S21 P6 seis gravações novas e quatro do cache com seis EPERM cada conclu
     s21AssertSucceeded(f, first, false);
     assert.deepEqual(s21Writes(first.events), s21WriteOrder(3));
     assert.equal(first.events.filter((e) => e.op === "rename").length, 42);
-    const cached = s21RunCli(f, "ready", everySave([1, 2]));
-    runs.push(cached);
+    const cached = runCli("ready", everySave([1, 2]));
     s21AssertSucceeded(f, cached, true);
     assert.equal(cached.stdout, first.stdout);
     assert.deepEqual(s21Writes(cached.events), s21WriteOrder(2));
     assert.equal(cached.events.filter((e) => e.op === "rename").length, 28);
     assert.equal(s21LockHeld(first.events) && s21LockHeld(cached.events), true);
-  } finally {
-    s21RemoveCheckouts(f, runs);
-  }
+  });
 });
 
 for (const target of ["common", "local"])
   test(`S21 P4 falha ao gravar o temporário ${target} não tenta promover`, (t) => {
     const f = fixture(t);
-    const run = s21RunCli(f, "ready", [{ target, save: 1, kind: "write-eio" }]);
-    try {
+    return s21WithCheckouts(f, (runCli) => {
+      const run = runCli("ready", [{ target, save: 1, kind: "write-eio" }]);
       assert.equal(run.status, 1);
       assert.equal(run.stdout, "");
       assert.equal(run.stderr, "Code review interrompido: S21 EIO write\n");
@@ -1766,7 +1830,5 @@ for (const target of ["common", "local"])
       assert.equal(existsSync(`${s21Path(f, target)}.tmp`), false);
       assert.deepEqual(s21Reports(s21Path(f, "common")), target === "common" ? null : []);
       assert.equal(existsSync(s21Path(f, "local")), false);
-    } finally {
-      s21RemoveCheckouts(f, [run]);
-    }
+    });
   });

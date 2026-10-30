@@ -1128,3 +1128,8 @@ Ajustes Root antes dos testes (não renegociam barra): unitP1–P4 usaIOvirtuald
 ### S21 TEST revisão Root — antes do ajuste pontual (sem execução)
 
 AutorTEST0encerrou15:32:01.923UTC/0BG, sócoretest+ownreport;878linhasAPPEND. Rootleu4chunkscontíguos34253chars/SHA774aa8fa366274d65adc84e808611fd7caeece8d523c947f759f70f1d3914367+report§7/sintaxe; prefixo894linhas/16testesoriginaisEXATOLF. Produto/README/cli/schemaintactos. AindaSEMRED/PASS. TestesderivamP1–P6, contagensplanned89; corrigirANTESRED F1nomesvirtuaisCglobalpara namespacealeatório sobTMPprivado(continuamsemI/Oreal); F2novohelpercleanupcapturaidentidadequandoCLIretornacheckout e confereabsoluto/diretóriorealsemlink/lexical+realpathdirectchildTMPprefixcodex-code-review-/mesmoBigIntdevino antesf.gitworktreeremoveforce. Recusa/falhacleanupdeveaparecerjuntocomerrooriginal(aggregateharness), nuncamascararasserção/nãofingirremovido/retry. Helpers e16testesoriginaisnãoalterar. Não novos critérios/prazos: isolamento/limpeza dentrocontratoAGENTS eWindows. Registarajustes/novohashantesexec.
+
+
+### S21 — revisão Root dos testes antes do RED
+
+Autor Claude encerrou TESTFIX1 naturalmente em 2026-10-30T15:46:02.613Z, exit0/sem sinal/0background. Root leu todo o diff dos ajustes e §8: caminhos unitários virtuais únicos sob TMP privado; remoção do checkout condicionada a caminho lexical/real, tipo e identidade BigInt capturada; falha primária preservada junto da falha de limpeza. Prefixo original de894linhas/16testes exato LF, sintaxe válida e mesmos89casos/asserts/prazos. Nenhum teste executado ainda; produto/README intactos. Liberação somente para RED controlado no core antigo, não PASS.
