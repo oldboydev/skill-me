@@ -3793,3 +3793,283 @@ test("I4-C34o fixture: aguarda troca do staging e preserva falha da montagem", a
     );
   });
 });
+
+// I4-C34p (S22, achado K7d do FAIL28): a montagem da troca do I4-C34k roda
+// dentro do `rename` instrumentado da promoção. Ela termina antes de o
+// instalador seguir, e a falha dela é da fixture — o erro original fica em
+// `probe.mountError` — sem alimentar o retry do produto como se fosse a recusa
+// simulada da linha. Testes de topo independentes: o P1 (montagem síncrona)
+// roda sozinho pelo nome.
+test("I4-C34p P1 montagem: EPERM síncrono da troca não vira promoção sem troca", async () => {
+  const ctx = s19Target("p1 eperm síncrono");
+  const eperm = simulated("EPERM");
+  const { io, probe } = s19PromotionIo(ctx, {
+    denials: ["EPERM"],
+    watched: [{ entry: ctx.staging, strict: true }],
+    swap: () => {
+      throw eperm;
+    },
+  });
+  const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: ctx.home, apply: true, platform: "win32", io });
+  assert.deepEqual(
+    {
+      attempts: probe.attempts,
+      sameMountError: probe.mountError === eperm,
+      swapped: probe.swapped,
+      foreign: probe.foreign,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      through: probe.through,
+      atStaging: packageEntry(ctx.staging),
+      atPluginDir: packageEntry(ctx.pluginDir),
+      manifest: s19Manifest(ctx),
+      lock: describeEntry(ctx.lock),
+    },
+    {
+      attempts: 1,
+      sameMountError: true,
+      swapped: false,
+      foreign: null,
+      exitCode: 5,
+      status: "incomplete",
+      applied: false,
+      conflicts: [],
+      errors: [{ code: "io_error" }],
+      steps: [{ step: "artifacts", state: "failed" }],
+      through: [],
+      atStaging: "ausente",
+      atPluginDir: "ausente",
+      manifest: "ausente",
+      lock: "ausente",
+    },
+  );
+});
+
+// Arranjo do P2–P4: staging trocado na 1ª recusa por junção/link para outra
+// pasta do alvo com cópias exatas (K7b), montado pelo observador do I4-C34n/o
+// com o io de promoção do I4-C34k; `fakeRename` decide a política Windows
+// simulada do auxílio.
+async function c34pMountedPromotion(label, fakeRename) {
+  const ctx = s19Target(label);
+  const dest = path.join(ctx.home, "outra pasta");
+  copyPackageArtifacts(dest);
+  const observed = await s19InstallWithObservedMount(
+    ctx.home,
+    (swap) => s19PromotionIo(ctx, { denials: ["EPERM"], watched: [{ entry: ctx.staging, strict: true }], swap }),
+    { from: ctx.staging, to: ctx.moved, linkTarget: dest, fakeRename, platform: "win32" },
+  );
+  return { ctx, ...observed };
+}
+
+test("I4-C34p P2 montagem aguardada: 2 EPERM e depois a troca; o instalador só segue depois dela", async () => {
+  const { ctx, waits, state, probe, result } = await c34pMountedPromotion("p2 transitório", (attempt) => {
+    if (attempt <= 2) throw simulated("EPERM");
+  });
+  assert.deepEqual(
+    {
+      fixtureAttempts: state.attempts,
+      waits,
+      fixtureError: state.error,
+      realpathDuringFixture: state.realpathDuring,
+      installerOpsDuringFixture: state.installerOps,
+      attempts: probe.attempts,
+      mountError: probe.mountError,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      through: probe.through,
+      atStaging: packageEntry(ctx.staging),
+      atPluginDir: packageEntry(ctx.pluginDir),
+      own: packageEntry(ctx.moved),
+      manifest: s19Manifest(ctx),
+      lock: describeEntry(ctx.lock),
+    },
+    {
+      fixtureAttempts: 3,
+      waits: [10, 20],
+      fixtureError: null,
+      realpathDuringFixture: false,
+      installerOpsDuringFixture: [],
+      attempts: 1,
+      mountError: null,
+      exitCode: 4,
+      status: "conflict",
+      applied: false,
+      conflicts: [s19Changed(S19_STAGING_REL)],
+      errors: [],
+      steps: [],
+      through: [],
+      atStaging: "link → outra pasta",
+      atPluginDir: "ausente",
+      own: packageDir(OWN_ARTIFACTS),
+      manifest: "ausente",
+      lock: "ausente",
+    },
+  );
+});
+
+// Montagem que falha: o mesmo objeto de erro no observador e no io de
+// promoção; o produto recebe a recusa sem código (`io_error`), não repete e
+// não promove.
+const c34pFailedMount = (ctx, state, probe, result) => ({
+  realpathDuringFixture: state.realpathDuring,
+  installerOpsDuringFixture: state.installerOps,
+  attempts: probe.attempts,
+  swapped: probe.swapped,
+  exitCode: result.exitCode,
+  status: result.status,
+  applied: result.applied,
+  conflicts: result.conflicts,
+  errors: result.errors,
+  steps: result.steps,
+  through: probe.through,
+  atStaging: packageEntry(ctx.staging),
+  atPluginDir: packageEntry(ctx.pluginDir),
+  own: packageEntry(ctx.moved),
+  manifest: s19Manifest(ctx),
+  lock: describeEntry(ctx.lock),
+});
+const C34P_FAILED_MOUNT = {
+  realpathDuringFixture: false,
+  installerOpsDuringFixture: [],
+  attempts: 1,
+  swapped: false,
+  exitCode: 5,
+  status: "incomplete",
+  applied: false,
+  conflicts: [],
+  errors: [{ code: "io_error" }],
+  steps: [{ step: "artifacts", state: "failed" }],
+  through: [],
+  atStaging: "ausente",
+  atPluginDir: "ausente",
+  own: "ausente",
+  manifest: "ausente",
+  lock: "ausente",
+};
+
+test("I4-C34p P3 montagem com EIO permanente: uma tentativa, nenhuma espera, o mesmo erro e falha explícita", async () => {
+  const eio = simulated("EIO");
+  const { ctx, waits, state, probe, result } = await c34pMountedPromotion("p3 eio", () => {
+    throw eio;
+  });
+  assert.deepEqual(
+    {
+      fixtureAttempts: state.attempts,
+      waits,
+      sameFixtureError: state.error === eio,
+      sameMountError: probe.mountError === eio,
+      ...c34pFailedMount(ctx, state, probe, result),
+    },
+    { fixtureAttempts: 1, waits: [], sameFixtureError: true, sameMountError: true, ...C34P_FAILED_MOUNT },
+  );
+});
+
+test("I4-C34p P4 montagem com EPERM permanente no Windows: 7 tentativas, 630 ms, o 7º erro sem retry do produto", async () => {
+  const errors = Array.from({ length: 7 }, () => simulated("EPERM"));
+  const { ctx, waits, state, probe, result } = await c34pMountedPromotion("p4 eperm permanente", (attempt) => {
+    throw errors[attempt - 1];
+  });
+  assert.deepEqual(
+    {
+      fixtureAttempts: state.attempts,
+      waits,
+      waited: waits.reduce((sum, ms) => sum + ms, 0),
+      sameFixtureError: state.error === errors[6],
+      sameMountError: probe.mountError === errors[6],
+      ...c34pFailedMount(ctx, state, probe, result),
+    },
+    { fixtureAttempts: 7, waits: [10, 20, 40, 80, 160, 320], waited: 630, sameFixtureError: true, sameMountError: true, ...C34P_FAILED_MOUNT },
+  );
+});
+
+// Origem própria e destino ausente para o auxílio da montagem chamado direto,
+// com `rename` e `wait` injetados: nenhum rename físico nem relógio.
+function c34pMoveDirs(label, { marked = true } = {}) {
+  const dir = makeScratch(`s22 ${label}`);
+  scratches.push(dir);
+  const from = path.join(dir, "origem própria");
+  mkdirSync(from);
+  if (marked) writeFileSync(path.join(from, "marca.txt"), USER_FILE);
+  return { dir, from, to: path.join(dir, "destino da montagem") };
+}
+
+const C34P_MARKED = "diretório [marca.txt: arquivo do usuário intacto]";
+
+test("I4-C34p H1 auxílio da montagem no POSIX: EPERM não é repetido — uma tentativa, nenhuma espera, o mesmo erro", async () => {
+  const { from, to } = c34pMoveDirs("h1 posix");
+  const eperm = simulated("EPERM");
+  const renames = [];
+  const waits = [];
+  const settled = await s19Settle(
+    s19MoveFixtureDirectory(from, to, {
+      platform: "linux",
+      rename: (source, target) => {
+        renames.push([source, target]);
+        throw eperm;
+      },
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    }),
+  );
+  assert.deepEqual(
+    { sameError: settled.error === eperm, renames, waits, from: describeEntry(from), to: describeEntry(to) },
+    { sameError: true, renames: [[from, to]], waits: [], from: C34P_MARKED, to: "ausente" },
+  );
+});
+
+test("I4-C34p H2 auxílio da montagem: destino ocupado recusa antes de qualquer rename", async () => {
+  const { from, to } = c34pMoveDirs("h2 destino ocupado");
+  mkdirSync(to);
+  const renames = [];
+  const waits = [];
+  const settled = await s19Settle(
+    s19MoveFixtureDirectory(from, to, {
+      platform: "win32",
+      rename: (source, target) => renames.push([source, target]),
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    }),
+  );
+  assert.deepEqual(
+    { error: settled.error?.message, renames, waits, from: describeEntry(from), to: describeEntry(to) },
+    { error: "fixture: o destino está ocupado", renames: [], waits: [], from: C34P_MARKED, to: "diretório []" },
+  );
+});
+
+// A troca da origem é um rename de pasta vazia recém-criada (não de artefatos
+// recém-gravados): a original continua existindo, então a substituta tem outra
+// identidade também no ext4, que pode reutilizar o inode de uma pasta apagada.
+test("I4-C34p H3 auxílio da montagem: origem trocada na espera recusa sem nova tentativa", async () => {
+  const { dir, from, to } = c34pMoveDirs("h3 origem trocada", { marked: false });
+  const aside = path.join(dir, "origem própria movida");
+  const renames = [];
+  const waits = [];
+  const settled = await s19Settle(
+    s19MoveFixtureDirectory(from, to, {
+      platform: "win32",
+      rename: (source, target) => {
+        renames.push([source, target]);
+        renameSync(from, aside);
+        mkdirSync(from);
+        throw simulated("EPERM");
+      },
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    }),
+  );
+  assert.deepEqual(
+    { error: settled.error?.message, renames, waits, from: describeEntry(from), aside: describeEntry(aside), to: describeEntry(to) },
+    { error: "fixture: a origem foi trocada", renames: [[from, to]], waits: [10], from: "diretório []", aside: "diretório []", to: "ausente" },
+  );
+});
