@@ -1423,7 +1423,7 @@ function ancestorSwapIo(home, on, swap) {
       const event = eventOf(op, args[0]);
       if (event !== null) counts[event] = (counts[event] ?? 0) + 1;
       if (on && !probe.swapped && event === on[0] && counts[event] === on[1]) {
-        swap();
+        await swap();
         probe.swapped = true;
         probe.trigger = path.basename(args[0]);
       }
@@ -1501,8 +1501,8 @@ test("I4-C34h Hermes: ancestral plugins trocado durante a remoção ou a instala
       symlinkSync(movedPath, plugins, DIR_LINK);
     }
     const destBefore = dest && !dest.own ? snapshotTree(destPath) : null;
-    const { io, probe } = ancestorSwapIo(home, row.on, () => {
-      renameSync(plugins, movedPath);
+    const { io, probe } = ancestorSwapIo(home, row.on, async () => {
+      await s19MoveFixtureDirectory(plugins, movedPath);
       symlinkSync(destPath, plugins, DIR_LINK);
     });
     const result = await runIntegrationCommand({ command: row.op, agent: "hermes", target: home, apply: true, io });
