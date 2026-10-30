@@ -1802,7 +1802,7 @@ function stagingSwapIo(home, { on, failRename }, swap) {
       const event = eventOf(op, args[0]);
       if (event !== null) counts[event] = (counts[event] ?? 0) + 1;
       if (on && !probe.swapped && event === on[0] && counts[event] === on[1]) {
-        swap();
+        await swap();
         probe.swapped = true;
         probe.trigger = path.basename(args[0]);
       }
@@ -1867,8 +1867,8 @@ test("I4-C34i Hermes: staging próprio trocado durante a instalação não leva 
     if (destPath) dest.fill(destPath);
     const destBefore = destPath ? snapshotTree(destPath) : null;
     const moved = path.join(dir, "staging próprio movido");
-    const { io, probe } = stagingSwapIo(home, row, () => {
-      renameSync(staging, moved);
+    const { io, probe } = stagingSwapIo(home, row, async () => {
+      await s19MoveFixtureDirectory(staging, moved);
       if (dest.file) writeFileSync(staging, USER_FILE);
       else symlinkSync(destPath, staging, DIR_LINK);
     });
