@@ -1,3 +1,460 @@
+# Issue25 — verificação independente29 PASS (50/50, AC1–AC9 atendidos)
+
+Perfil light/handoff:on; Verifier Claude fresco sessãod189c0dc-39f3-48c1-9ff7-ef30c595dd0c, apósúltima fatia, provas no HEAD 4becf46ca8baf4590ab4b56becf355daa12c0282, base63621c691f132dc8d591414269d36cfa18fca594. Root leu a análise e o fechamento literal completos; não executou esses testes. Cópia fiel de39fontes/28092partes recebida integralmente e conferida por linhas exatas, sem presumir cognição; carryR26 explicitado por identidade das256fontes selecionadas e sete deltas, analisados novamente.
+
+A774/761/0/13, B774/761/0/13, C774/752/0/22, D1191/1171/0/20 (tests/pass/fail/skip), quatro saídas naturais0, nenhum cancelamento/falha. ABC:68integrações+2governança+core105 em uma invocação/ambiente, concorrência8/8/7; D:npmtestcompleto.105core=89S21+16originais,7S22 e11Hermesnativos confirmados por nome; nativosWSL/ACLWindows/subcasos de privilégio declarados. Core3arquivos autorizados divergem da base; cli/schema iguais; prefixo894linhas exato. S22alterou só montagem da fixture e preservou asserções/testes/prazos. Provas S21/S20/S18 anteriores são atribuídas, sem simular nova execução ou causalidade histórica.
+
+Auditoria29Root final apósD29real: baselineFINAL28parcial 2026-10-30T17:23:46.716Z → 2026-10-30T18:48:31.646Z,12113/12113entradas,0diferenças/erros e alvo por igualdade de string. Somente metadadosWSL; não conteúdo, Windows/PS/rede/TEMP/proveniência/causalidade/impacto global zero. IncidenteS14 preservado: arquivo global preexistente Temp/x sobrescrito, conteúdo anterior sem cópia conhecida, impacto desconhecido; nunca tocado novamente/restaurado por hipótese. FAIL27/28 e omissões históricos permanecem nos relatórios separados, sem conversão retroativa emPASS.
+
+Este PASS local não é readyformal nem CI remota. Exige revisãoCodex15ready/sufficient/9met, contexto e refs frescos, publicação da branch do PR28existente, cinco checks regulares PR+manual e mediçãoesquema2A1/B/A2/4500no mesmoHEAD antes do merge autorizado. Sem publicação do pacote/deploy/pushmain. Relatório literalSHA256:c2d640514475b1826bf3c0fbc9afff6f2b1a0c38618d2db0d2fde3977891b40e; o fechamento final antecede a análise pré-provas histórica.
+
+---
+
+# Verificação independente 29 — **PASS** (A/B/C/D válidos, término natural 0; 50/50 checks e 9/9 ACs atendidos no escopo deste Verifier)
+
+Títulos anteriores (preservados): "Verificação29 — fontes ainda não lidas, provas não executadas" → "Verificação29 — ANÁLISE PRÉ-PROVAS (fontes lidas; provas NÃO executadas; nenhum PASS, nenhum FAIL)". A análise pré-provas está preservada a partir de "## 1. Recibo de leitura", como foi escrita antes de qualquer execução e revisada pelo Root.
+
+**Verdict: PASS.**
+- **Profile**: light · **Diff range**: `63621c691f132dc8d591414269d36cfa18fca594..4becf46ca8baf4590ab4b56becf355daa12c0282` · **Round**: 29, feature inteira, C1–C50 e 9 ACs.
+- **Escopo do PASS**: verificação independente local. **Não** declara formal 15, push, CI regular, job manual nem medição esquema 2 A1/B/A2/4500. Essas continuam condições de merge (AC9 e "Condições obrigatórias para o merge").
+
+## F. FECHAMENTO — gates executados (at `4becf46`)
+
+### F.1 Execuções
+
+- Os **quatro comandos literais** do Root rodaram **uma vez cada, sequenciais**, cada um numa chamada Bash própria em primeiro plano com timeout de 600000.
+  - Nenhum usou `run_in_background` e nenhum foi destacado sozinho; o D terminou dentro do limite.
+  - Cada um só rodou depois do resultado `valid: true` do anterior. 0 tarefas em segundo plano.
+- Nenhum outro Bash. Depois dos gates usei só Glob, Read e Grep nos artefatos do controlador (`identity-comparison.json`, `{A,B,C,D}.log`) e este Edit.
+
+| Gate | Ambiente | UTC | Resultado (tests/pass/fail/cancelled/skipped) | `valid` / término |
+|---|---|---|---|---|
+| A | Windows, checkout, Node 24.22.1, conc 8, TMP curto privado | 18:21:16.162–18:27:14.691 | **774 / 761 / 0 / 0 / 13**, 355315 ms | `true` / 0 |
+| B | clone novo `core.autocrlf=true`, Node 24.13.0, conc 8 | 18:27:39.115–18:35:51.168 | **774 / 761 / 0 / 0 / 13**, 476617 ms | `true` / 0 |
+| C | WSL 24.13 LF `env -i`, conc 7 | 18:36:00.958–18:37:27.183 | **774 / 752 / 0 / 0 / 22**, 82790 ms | `true` / 0 |
+| D | `npm test` completo, Windows, Node 24.22.1 | 18:37:36.326–18:45:43.673 | **1191 / 1171 / 0 / 0 / 20**: governança 27/27/0/0/0; core 105/105/0/0/0; doctor 417/410/0/0/7; integrações 642/629/0/0/13 | `true` / 0 |
+
+As contagens subiram exatamente +7 em relação ao S21 do autor (767 → 774 em A/B/C; 1184 → 1191 em D; integrações 635 → 642). Isso corresponde aos 7 controles I4-C34p da S22.
+
+### F.2 Identidade (comando A) — `independent-29/identity-comparison.json`, `valid: true`
+
+- **`changed` = `expectedChanged`**, exatamente **7** arquivos contra `8f393c5`:
+  - core S21: `scripts/code-review/README.md` `25e52841→89869e47`, `review.mjs` `1bda8e45→eb6b927c`, `review.test.mjs` `216125ce→3b6b4540`;
+  - S19/S16: `src/integrations/install/run.mjs` `fa23ace5→12c422a6`, `install.cli.test.mjs` `8b3919ab→df8b91b2`, `launch/end.e2e.test.mjs` `1912fe9d→315252e5`, os três `same: true` com `f9039f6` (lista `unchanged`);
+  - S22: `tests/integrations/install-apply.unit.test.mjs` `fa29c196→39c8afcb`, com o hash S22 conferido pelo controlador (`s22UnitSha256` `567dc135…`).
+  - Todos os demais arquivos de `src tests scripts .github package*` têm `same: true`.
+- **Core 5**: README, review.mjs e review.test.mjs diferem da base e são `approved: true`. `cli.mjs` `c6a4abcd` e `schema.json` `b02001e2` são iguais à base. Pilotos **não** conferidos.
+- **Prefixo de `review.test.mjs`**: 894 linhas, 27839 bytes, SHA `a48aff48…e108`, **`exact: true`**.
+- **Consequência**: o carry-R26 das citações em arquivos de blob igual é **válido**.
+
+### F.3 Nomes e valores observados nos logs (não inferidos só das contagens)
+
+- **Core**: `^✔ S21 ` (89) + os 16 originais `^✔ C1…C11 `, sem skip no core, em A, B, C e D. No D, o C11 ready ✔ (`D.log:53`), ✔ changes_requested (`:54`) e ✔ failure (`:55`). O C11 que falhou no D27 agora passa.
+- **S22/S19 (AC2)**, todos ✔ em A, B, C e D:
+  - `I4-C34k` (A:307 B:307 C:292 D:768) com a asserção exata da tabela K1–K13/K12h–j (`unit:3456`, `deepEqual`) e sem o throw L2 (`unit:3431`): nenhuma montagem falhou;
+  - `I4-C34m` (A:310 B:310 C:294 D:771); `I4-C34n` (A:314 C:298 D:775); `I4-C34o` (A:318 C:302 D:779);
+  - `I4-C34p P1` (A:319 B:319 C:303 D:780), `P2` (A:320 … D:781), `P3` (A:321 … D:782), `P4` (A:322 … D:783), `H1` (A:323 … D:784), `H2` (A:324 … D:785), `H3` (A:325 … D:786).
+  - Os valores são os afirmados pelos `deepEqual` lidos no §4, não relaxados. No C (WSL) o K6 POSIX roda dentro do C34k.
+- **Nativos Hermes**: 11 com runtime ✔ em A/B/D. A:257 `I25-C40 harness nativa`; as 116 linhas `^✔ S21|C1–C11|I4-C18–C23|C37|C44b|I23-C8` em A, B e D somam 105 core + 8 nativos I4 + 3 I23-C8. No C são `﹣ hermes-runtime-ausente` (C:249-258, :260), o skip esperado.
+- **Python do sistema e I4-C35**: `I23-C8 … pelo Python do sistema` ✔ (A:260, C:259, D:721); `I4-C35` ✔ (A:749 B:749 C:723 D:1210).
+- **Outros**: T8-C15 ✔ (A:750 B:750 C:725 D:1211); T8-C16 ✔ (D:1215-1238); I23-C10 ✔ (A:466 B:466 C:440 D:927).
+- **Skips, todos com motivo honesto**:
+  - A/B 13: I4-C15, I4-C25k/b/j/m/l, I25-C45 POSIX, I25-C5 POSIX, I25-C6, I25-C42 POSIX, I25-C33 arranjo, I25-C15 pty, T8-C4. São só POSIX/Linux/macOS.
+  - C 22: 11 `hermes-runtime-ausente`, governance-C48 pwsh, I4-C25h/g/i (DACL), I4-C25m (macOS), I25-C4/C45-controle/C5/C42/C8 LOCALAPPDATA/C38. São só Windows/macOS.
+  - D 20: os 13 de integrações acima mais 7 do doctor (FIFO/symlink POSIX, `# SKIP`, D:171, :188, :509-517).
+  - Os só-POSIX passaram em C; os só-Windows passaram em A/B/D. O macOS (I4-C25m) não rodou em nenhum ambiente: só na CI posterior.
+- **Nenhum `✖` nem `not ok`** em A, B, C ou D.
+
+### F.4 Checks — uma linha por check (asserção, valor, nível, amostragem e tocado/carry na tabela §5, intacta abaixo)
+
+| Check | Asserção (orig. file:line) · origem | Prova nomeada (log:linha) | Resultado |
+|---|---|---|---|
+| C1 | `command.cli:48-49`, `:65`, `:77` · carry (blob igual) | `I25-C1 npm link…` A:363 | **PASS** (A/B/C/D ✔) |
+| C2 | `command.cli:96-98` · carry | `I25-C2 …` A:364 | **PASS** |
+| C3 | `command.cli:105` · carry | `I25-C3 …` A:365 | **PASS** |
+| C4 | `command.cli:130-133`; `agent.unit` · carry | `I25-C4 …` A:357-358, :366 (W); C skip com motivo | **PASS** |
+| C5 | `command.cli:228`, `:244-245` · carry | `I25-C5 Ctrl+C` (W) A:370; POSIX C:344 | **PASS** |
+| C6 | `command.cli:267` · carry | `I25-C6 SIGTERM` (P) C:346 | **PASS** |
+| C7 | `prepare.cli:93-94` · carry | `I25-C7 …` A:410 | **PASS** |
+| C8 | `prepare.cli:122-126` · carry | `I25-C8 …` A:411-412 | **PASS** |
+| C9 | `prepare.cli:163-168` · carry + produto tocado | `I25-C9 …` A:413 | **PASS** |
+| C10 | `prepare.cli:189-191` · carry | `I25-C10 …` A:414 | **PASS** |
+| C11 | `prepare.cli:200` · carry | `I25-C11 …` A:415 | **PASS** |
+| C12 | `prepare.cli:223` · carry | `I25-C12 …` A:416, :420 | **PASS** |
+| C13 | `prepare.cli:238` · carry + produto tocado | `I25-C13 …` A:417 | **PASS** |
+| C14 | `prepare.cli:250` · carry + produto tocado | `I25-C14 …` A:418 | **PASS** |
+| C15 | `prepare.cli:408` · carry | `I25-C15 pty` (P) C:396 | **PASS** |
+| C16 | `session.e2e:67` · carry | `I25-C16 …` A:360, :427 | **PASS** |
+| C17 | `store.unit:79` · carry | `I25-C17 …` A:434-437 | **PASS** |
+| C18 | `session.e2e:111` · carry | `I25-C18 …` A:428 | **PASS** |
+| C19 | `session.e2e:161` · carry | `I25-C19 …` A:429 | **PASS** |
+| C20 | `session.e2e:190-192` · carry | `I25-C20 …` A:430 | **PASS** |
+| C21 | `session.e2e:208-211` · carry | `I25-C21 …` A:431 | **PASS** |
+| C22 | `session.e2e:230` · carry | `I25-C22 …` A:432 | **PASS** |
+| C23 | `session.e2e:282` · carry | `I25-C23 …` A:433 | **PASS** |
+| C24 | `store.unit:168` · carry | `I25-C24 …` A:439 | **PASS** |
+| C25 | `end.e2e:80`, `:85-97` · fresca | `I25-C25 …` A:380 | **PASS** |
+| C26 | `end.e2e:117` · fresca | `I25-C26 …` A:381 | **PASS** |
+| C27 | `end.e2e:128-129` · fresca; `store.unit` · carry | `I25-C27 …` A:382, :440-441 | **PASS** |
+| C28 | `end.e2e:171-175`, `:195`, `:202-203` · fresca | `I25-C28 …` A:383-384 | **PASS** |
+| C29 | `command.cli:278` · carry | `I25-C29 …` A:372 | **PASS** |
+| C30 | `command.cli:342` · carry | `I25-C30 …` A:373 | **PASS** |
+| C31 | `end.e2e:213-223`, `:252-264` · fresca | `I25-C31 …` A:385-386 | **PASS** |
+| C32 | `end.e2e:294-451` · fresca; `store.unit:715` · carry | `I25-C32 …` A:387-391, :458-461 | **PASS** |
+| C33 | `end.e2e:477-482`, `:501-509` · fresca | `I25-C33 on e off…` A:392; arranjo (P) C:367-368 | **PASS** |
+| C34 | `report.cli:159` · carry | `I25-C34 …` A:422-425 | **PASS** |
+| C35 | `report.cli:252-259` · carry | `I25-C35 …` A:426 | **PASS** |
+| C36 | `command.cli:350` · carry | `I25-C36 …` A:374 | **PASS** |
+| C37 | `launch/docs.test:82` · carry | `I25-C37 …` A:377-379 | **PASS** |
+| C38 | `prepare.cli:355` · carry | `I25-C38 console real…` (W) A:419 | **PASS** |
+| C39 | `hermes-harness.unit:90` · carry | `I25-C39 …` A:241-243 | **PASS** |
+| C40 | `hermes-harness.unit:220-327`; `hermes-plugin.native:336` · carry + produto tocado | `I25-C40 …` A:244-245, :249; `harness nativa` A:257 B:257 D:718 (C skip esperado) | **PASS** (nativos no D completo) |
+| C41 | `end.e2e:547-760` · fresca; `store.unit:327-523` · carry | `I25-C41 …` A:394-399, :442-452 | **PASS** |
+| C42 | `agent.unit`; `command.cli:424`, `:456` · carry | `I25-C42 …` A:361-362, :376 (W); POSIX C:336-337, :350 | **PASS** |
+| C43 | `end.e2e:831-1053` · fresca; `store.unit:562-600` · carry | `I25-C43 …` A:400-409, :453-457 | **PASS** |
+| C44 | `hermes-harness.unit:288`, `:291` · carry | `I25-C44 …` A:246-248; I4-C22 nativo A/B/D | **PASS** |
+| C45 | `agent.unit:132-146`; `command.cli:166-186` · carry | `I25-C45 …` A:359, :368 (W); POSIX C:334, :342 | **PASS** |
+| C46 | §5 linha C46 · carry; `delivery.mjs`/`traces.mjs` frescos | T8-C15 A:750 B:750 C:725 D:1211; T8-C16 D:1215-1238; `I25-C46` A:153-154, :233, :469-470, :516-525, :751-836 | **PASS** |
+| C47 | §5 linha C47 · carry | I23-C10 A:466 B:466 C:440 D:927; `I25-C47` A:467-468, :484-485, :802-803 | **PASS** |
+| C48 | `governance-ci:373-582`, `:271-283` · carry | `governance-C48` A:131-132, D:34-35 (pwsh real); `governance-C1 C3` A:129, D:32; C skip pwsh com motivo | **PASS** |
+| C49 | `governance-ci:299-362` · carry | `governance-C49` A:130 C:130 D:33 | **PASS** |
+| C50 | `ci-lock-latency.test:146-412` · carry | 18 `C50 …` A:1-18 C:1-18 D:9-26 | **PASS** |
+
+**50/50 checks PASS.** Cada um tem prova nomeada ✔ e os quatro gates válidos; os skips são só subcasos de plataforma, com motivo, cobertos no outro ambiente.
+
+### F.5 ACs (texto canônico no §6, citado uma vez; nenhum critério criado)
+
+| AC | Estado |
+|---|---|
+| AC1 | **met**: C1–C6, C45 ✔ |
+| AC2 (com a exceção S19) | **met**: C7–C15, C38 ✔; I4-C34g–p ✔ nos 4 gates; CLI partial ✔ |
+| AC3 | **met**: C16–C24 ✔ |
+| AC4 | **met**: C25–C35, C41–C43 ✔ |
+| AC5 | **met**: C36–C37 ✔ |
+| AC6 | **met**: C39, C40, C44 ✔; o gate completo D foi repetido com os 11 nativos ✔ |
+| AC7 | **met**: C46 (T8-C15 80 e T8-C16) ✔ |
+| AC8 | **met**: C47, C48 ✔ |
+| AC9 (com as ressalvas S19/S21) | **met no escopo local**: C49, C50 ✔; core 105 (89 S21 + 16 originais intactos, prefixo exato) ✔ em A/B/C/D. A execução remota, a CI 5 PR + 5 manual e a medição esquema 2 continuam **condições de merge**, não declaradas aqui |
+
+**9/9 ACs met.**
+
+### F.6 Achados finais
+
+- **Bloqueantes: nenhum.**
+- **Observações não bloqueantes, preservadas do §7**: O-S22-1…4, R1 residual (K10/K11/C34m com `renameSync` puro; nenhuma recusa natural se manifestou em A/B/C/D), O2, N1, N3, N4, S21-O1…O5 e o desempenho S19 AFTER.
+- **Limites**:
+  - um verde não identifica causas históricas: o errno do FAIL28 K7d, o D27, o S20 casos 18/43, a CI 58, S17, S18/C34h/C34i e R25/R23/CI 066 continuam **DESCONHECIDOS**;
+  - uma amostra por gate, sem garantia futura;
+  - A/B/C/D são deste computador e não medem o runner da CI; o macOS fica só com a CI;
+  - pilotos não conferidos.
+- Sem fault injection, `Coverage` ou `Test policy` (perfil light).
+
+### F.7 Processo da fase de execução e histórico
+
+- **Comandos**: exatamente os quatro literais, uma vez cada, em primeiro plano, sequenciais. A/B/C/D com término natural 0. 0 tarefas em segundo plano. **Incidentes meus: nenhum.**
+- Não toquei no `Temp\x` global PREEXISTENTE (sobrescrito na S14, sem cópia conhecida, impacto desconhecido), nem em TEMP global ou `/tmp`. Restrições de ferramenta não são sandbox do SO.
+- Não editei `.verified`, fonte, produto, teste nem config. Não executei formal 15, push, CI, manual nem merge.
+- **Histórico preservado, sem reclassificar**: FAIL28 (A 767/754/0/13; B 767/753/1/13 natural 1; C/D não executados; 0/50, 0/9; K7d 2/exit 0/applied/foreign —/own ausente contra 1/4/conflict); FAIL27 (D 43/42/1, C11); e todos os FAILs, omissões e incidentes do §9. Este PASS não os corrige retroativamente.
+- **Auditoria 29**: é do Root, externa, e fecha **depois** deste D29 real. Está **pendente**, e não invento dados dela. Baseline FINAL28 parcial, B 30 Out 17:23:46 UTC, 12113 entradas, só metadados WSL. Não existe D28 nem final25.
+- **Próximo** (Root, não declarado aqui): PASS literal preservando o sufixo de 495744 bytes do `.verified` → formal 15 ready/sufficient/9 met com contexto fresco → push → CI 5 PR + 5 manual → medição esquema 2 A1/B/A2/4500 no mesmo HEAD final → merge já autorizado.
+
+**Encerrado: CLI 0/0, 0 processos em segundo plano.**
+
+---
+
+# ANÁLISE PRÉ-PROVAS (preservada como escrita antes das execuções)
+
+**Status da fase: NÃO é PASS nem FAIL.** Nenhum gate foi executado. Nenhum dos checks C1–C50 e nenhum dos 9 ACs está provado. A tabela do §5 diz o que cada gate terá de mostrar.
+
+- **Verifier**: CLAUDE VERIFIER29, novo e independente. Não sou autor S16–S22, nem Verifier R26/R27/R28, nem revisor formal.
+- **Profile**: `light` (`AGENTS.md`), com handoff ligado.
+- **HEAD**: `4becf46ca8baf4590ab4b56becf355daa12c0282`. **Base**: `63621c691f132dc8d591414269d36cfa18fca594`.
+- **Escopo**: a feature inteira, C1–C50 um por um e os 9 ACs canônicos.
+- **Round**: 29. Re-verificação escopada contra a R26 (PASS 50/9 em `8f393c5`). O carry analítico só vale com o mapa de blobs inteiro (§8).
+- **Processo nesta fase**: só Read, Grep e este Edit nativo. Nenhum Bash, PowerShell, Write, Agent, Task, rede, agente real, teste, sonda, commit, push, CI, formal ou merge. Nenhuma edição em fonte, produto, teste, config ou `.verified`. **Ao fim: 0 processos em segundo plano.**
+
+## 1. Recibo de leitura — "li a cópia fiel"
+
+- **Metadados**: `read-plan.json` inteiro (165 chunks, `completeLines` 28092) e `required-sources-index.json` (head `4becf46`, `lossless: true`, 39 fontes).
+- **Pack**: li **inteira** a cópia literal `independent-29/required-sources-pack.md`, **28092/28092 linhas**, nos 165 pares offset/limit do plano, sem lacuna, sobreposição nem truncamento:
+  1/153, 154/200, 354/200, 554/171, 725/162, 887/137, 1024/200, 1224/200, 1424/200, 1624/200, 1824/200, 2024/191, 2215/172, 2387/200, 2587/82, 2669/92, 2761/136, 2897/110, 3007/123, 3130/79, 3209/74, 3283/29, 3312/27, 3339/26, 3365/24, 3389/26, 3415/24, 3439/103, 3542/157, 3699/200, 3899/200, 4099/200, 4299/200, 4499/200, 4699/200, 4899/200, 5099/200, 5299/200, 5499/200, 5699/199, 5898/192, 6090/200, 6290/117, 6407/71, 6478/103, 6581/154, 6735/137, 6872/94, 6966/86, 7052/193, 7245/200, 7445/176, 7621/96, 7717/87, 7804/57, 7861/69, 7930/81, 8011/92, 8103/200, 8303/189, 8492/200, 8692/176, 8868/140, 9008/168, 9176/182, 9358/200, 9558/164, 9722/122, 9844/200, 10044/200, 10244/200, 10444/200, 10644/181, 10825/131, 10956/72, 11028/109, 11137/111, 11248/95, 11343/130, 11473/101, 11574/200, 11774/200, 11974/200, 12174/200, 12374/200, 12574/200, 12774/200, 12974/200, 13174/200, 13374/200, 13574/200, 13774/200, 13974/200, 14174/200, 14374/200, 14574/200, 14774/200, 14974/200, 15174/200, 15374/200, 15574/200, 15774/200, 15974/200, 16174/200, 16374/200, 16574/200, 16774/200, 16974/200, 17174/200, 17374/200, 17574/200, 17774/200, 17974/200, 18174/200, 18374/200, 18574/200, 18774/200, 18974/200, 19174/200, 19374/200, 19574/200, 19774/200, 19974/200, 20174/200, 20374/200, 20574/200, 20774/200, 20974/200, 21174/200, 21374/200, 21574/200, 21774/200, 21974/200, 22174/200, 22374/200, 22574/200, 22774/200, 22974/200, 23174/200, 23374/200, 23574/190, 23764/148, 23912/142, 24054/134, 24188/200, 24388/200, 24588/200, 24788/200, 24988/200, 25188/200, 25388/200, 25588/200, 25788/200, 25988/200, 26188/200, 26388/200, 26588/200, 26788/200, 26988/140, 27128/124, 27252/200, 27452/200, 27652/200, 27852/200, 28052/41.
+- **Compactação**: houve uma compactação de contexto no meio da leitura, depois do chunk 13774/200. Retomei em 13974/200 e segui até 28052/41, sem pular nenhum par.
+- **Releituras e buscas extras** (feitas depois da cobertura, só no pack, declaradas aqui):
+  - Read de 1/200 (plano e Landing S22), 6555/40 (ACs canônicos), 520/103 e 940/163 (FAIL28) e 6528/26 (checklist S22), para citar com exatidão;
+  - Grep no pack por `| C… |` e por `S22`.
+- **Fontes, com a faixa no pack** (SHA256LF do índice, **não recalculados**: sem shell nesta fase):
+  - plano S22 4–47 (`233f7603`); S22 Landing 49–197 (`07cc4689`); relatório do autor S22 199–518 (`23186196`); round28-failed 520–1102 (`f3a900bc`);
+  - AGENTS 1104–1250; CLAUDE 1252–1257; verify.md 1259–1560;
+  - task 1562–2773; propostas e planos lock-release 2775–2858, c43 2860–2935, hermes install-diagnostic 2937–2989, probe 2991–3027, staging-retry 3029–3145, c34h 3147–3182;
+  - checklist 3184–6553; context-readable 6555–7104; relatório R26 7106–7625;
+  - since-r26.diff 7627–14629 (**inteiro**);
+  - `run.mjs` 14631–15731 (`4b63fed3`); `io.mjs` 15733–15856 (`6c4bd823`); `install-apply.unit` 15858–19944 (`6c5c8516`, 4087 linhas); `install.cli` 19946–21579 (`3ab33683`); `end.e2e` 21581–22634 (`e5b69e55`); `producer-runs` 22636–22732 (`0b147ffd`); `traces.mjs` 22734–23398 (`1f7ee30b`); `delivery.mjs` 23400–23624 (`792f4742`);
+  - builder-s19 23626–24125; s19 comparison-root 24127–24163; core-save-retry proposal 24165–24201;
+  - `review.mjs` 24203–25128 (`fdf8dc66`); `review.test.mjs` 25130–26963 (`ec6743f2`); README 26965–27017 (`8d5bfec2`);
+  - builder-s21 27019–27302; s21 after comparison 27304–27360; round27-failed 27362–27933; product-approved-core-root 27935–27997; `code-review.config.json` 27999–28059; core c11 plan 28061–28082; after-preparation-decision 28084–28092.
+- **Não alego** ter lido o `feature.diff` inteiro nem os originais. Li a cópia fiel; o `since-r26.diff` foi lido inteiro dentro do pack.
+- Arquivos citados fora do pack (`command.cli`, `prepare.cli`, `session.e2e`, `store.unit`, `report.cli`, `docs.test`, `hermes-harness.unit`, `hermes-plugin.native`, `agent.unit`, `concurrency.cli`, `delivery.unit`, `evidence.unit`, `agents.e2e`, `control.cli`, `governance-ci`, `ci-lock-latency.test`, `store.mjs`) **não foram relidos**. As citações deles são carry R26/R28 (pack 965–1015 e 7531–7580).
+- **CONTRIBUTING**: não existe no repositório. Como em R26–R28, só há cópias no npm vendorizado do Node da CI, que não regem o projeto. Vale o `AGENTS.md`. Não fiz Glob novo nesta fase: é a constatação preservada das rodadas anteriores (pack 27441–27443).
+
+## 2. Perfil e passos que não rodam
+
+`light`: sem UI, sem `Coverage`, sem `Test policy` e sem fault injection (verify.md). Não crio mutantes nem sondas.
+
+RED, GREEN, os controles P1–P4/H1–H3, K1–K13, G1–G7, a coleta S20 AFTER e os FAILs históricos são **do autor/Root**: só os atribuo, não são provas minhas. O passo 3 (asserção, precisão, Swept existing) foi feito pela leitura.
+
+## 3. Fontes vinculantes × checklist (Sources, Landing, Handoff, Swept)
+
+- **Intenção da S22** (plano, pack 4–47): corrigir só a **prova** criada nesta entrega, depois do FAIL28 K7d.
+  - Ownership: só `tests/integrations/install-apply.unit.test.mjs` (plano L13).
+  - Reusar `s19MoveFixtureDirectory` e a montagem aguardada C34n/o, sem mover genérico (L14).
+  - A montagem termina antes de o instalador seguir (L15). A falha dela é identificável e não alimenta o retry do produto (L16).
+  - Política física: Windows EPERM/EACCES/EBUSY, 7 tentativas/630 ms; demais códigos e POSIX, 1 (L17).
+  - Preservar todos os casos, labels, arrays e asserções de K1–K13 e C34m/n/o (L18).
+  - K10/K11/C34m só se justificado (L19). Core S21 congelado, prefixo 894 exato (L20).
+- **Landing aprovada** (pack 49–197; decisão Root L3): L1–L5.
+  - P1 é o RED determinístico. P2–P4 e H1–H3 são provas do GREEN, **não RED limpo** (Landing L118).
+  - TEST só por APPEND. L1–L4 só depois do RED revisado.
+- **Handoff do checklist** (L3222–L3239, pack 6535–6553): FAIL28 preservado; S22 fechada verde no autor em `098544d`.
+  - Autor, arquivo unit inteiro ABC: 45/44/0/1 cada, natural 0.
+  - Root detém os 50/9 e despacha o Verifier29 fresco com ABC globais (68 integrações + 2 governança + core 105) e D `npm test` completo.
+  - O registro 29 consta em `code-review.config.json` `"25"` (maxRounds 15 inalterado).
+  - **Sem contradição** com o plano.
+- **Task** (L1187–L1196, pack 2755–2765): mesmo conteúdo do checklist. Sem contradição.
+- **Swept existing** (`delivery.mjs` relido, SHA `792f4742` igual ao R26/R27/R28):
+  - `DELIVERY_DEADLINE_MS = 750` (`:12`) e `ATTEMPT_MS = 750 − 100 = 650` (`:17-18`);
+  - `LOCK_RETRY_MS = 10` (`:19`); só `lock_present` repete (`:100-102`);
+  - abandono terminal pelo `clock` (`:72-104`); sem reenvio (`:54-62`).
+  - A S22 não toca entrega, store, traces nem workflow.
+- **Invariantes preservados** (leitura; nenhum arquivo deles no delta S22):
+  - delivery 750/650 ms; relatório 1000 ms incluindo settle 650;
+  - stdin 2000 ms (faixa 1900–6000); Hermes 5 s; 500 eventos / 8 MiB / 7 dias;
+  - T8-C15 2 produtores × 40 = 80, com 4 linhas intercaladas; T8-C16 exatamente 3 criações; retry de entrega 10 ms só em `EEXIST`;
+  - concorrência min(CPU−1, 8) = 8 no Windows / 7 no WSL; CI jobs 20/10/5, manual 10;
+  - **I4-C29b**: `Date.now() - started - accessMs < 1000 + 500` (`install-apply.unit:610`), intacto. Não há limite de 1 s.
+- **S19** (`run.mjs`, mesmo SHA `4b63fed3` do R27/R28):
+  - `renameRetrying` (`:335-346`); `retryable: platform === "win32" && RENAME_DENIED.has(code)` (`:909`), `RENAME_DENIED` em `:324`;
+  - `dirIdentity` com BigInt `dev ≥ 0n`, `ino > 0n` → `identity_unavailable` → `io_error` 5 (`:208-214`, `:477-486`, `:1094-1098`);
+  - `promotable` com identidades, nomes exatos, bytes e destino ausente (`:889-898`); falha de guarda sem limpeza, falha de rename limpa só o próprio (`:911-917`); `rootSame` antes do `mkdir plugins` (`:841`);
+  - política de rename de arquivo a antiga (`:373`). Sem CAS (`:887-888`). A limpeza pode ser parcial depois de um unlink e não exige os 3 arquivos (`:854-856`).
+- **S21** (aprovação 6525782289; `review.mjs` `fdf8dc66`, `review.test` `ec6743f2` e README `8d5bfec2`, iguais aos blobs "after" de `product-approved-core-root.json`):
+  - só EPERM no Windows, `STATE_RENAME_DELAYS_MS` (`:653`), 7 tentativas/630 ms; POSIX com rename direto, 1 tentativa e sem guarda (`:711-714`);
+  - guardas fora do catch, antes da 1ª tentativa e depois de cada espera (`:723-738`); ENOENT na leitura depois do lstat = CHANGED (`:686-689`); o último EPERM é o mesmo objeto (`:743-744`);
+  - temp escrito **uma vez** (`save` `:748-753`).
+  - cli/schema iguais à base (`c6a4abcd`/`b02001e2`). Pilotos **não lidos nem conferidos agora**.
+
+## 4. Análise fresca da superfície S22 contra a Landing aprovada
+
+Delta S22 (`since-r26.diff`, hunk do unit, pack 13000–14437, e arquivo atual, pack 15858–19944): **só** `install-apply.unit.test.mjs`. `run.mjs`, `io.mjs`, `install.cli`, `end.e2e`, `traces`, `producer-runs`, `delivery` e o core têm os mesmos SHA256LF das rodadas R27/R28 e dos blobs aprovados.
+
+| Landing | Implementação (orig. `install-apply.unit:linha`) | Confere? |
+|---|---|---|
+| L1 montagem aguardada, erro sem `code` | `probe = { …, mountError: null }` `:3083`; `foreign = await swap()` em try, `catch { probe.mountError = error; throw new Error("fixture: a montagem da troca falhou", { cause: error }) }` `:3098-3107`; `foreign`/`foreignBefore`/`swapped` só depois `:3108-3110`; comentário `:3078-3080` | **Sim**, literal à Landing L25–L46 |
+| L2 falha explícita nomeada | `if (probe.mountError !== null) throw new Error(\`fixture: montagem da troca falhou em "${row.label}"\`, { cause: probe.mountError })` `:3431`, antes do `observed.push` | **Sim**; `base`/`expect`/`deepEqual` `:3404-3456` sem campo novo |
+| L3 só K7 pelo auxílio | `moveStaging = (ctx) => s19MoveFixtureDirectory(ctx.staging, ctx.moved)` `:3141`; `stagingLinkedTo` async `:3144-3150`; K7a `:3188-3192`, K7d `:3219-3223`, K7e `:3234-3240` com `await` | **Sim**; K10a/b/c, K11a/b/c e C34m continuam com `renameSync` (`:3315`, `:3327`, `:3341`, `:3358`, `:3370`, `:3484`), como decidido |
+| L4 `platform` opcional | assinatura `:3660`; `runIntegrationCommand({…, platform, io})` `:3706`; C34n/o não o passam → default `process.platform` (`run.mjs:1036`) | **Sim** |
+| L5 controles anexados | 7 testes de topo depois do C34o: P1 `:3815`, P2 `:3880`, P3 `:3970`, P4 `:3987`, H1 `:4018`, H2 `:4041`, H3 `:4064`; helpers `c34pMountedPromotion` `:3868`, `c34pFailedMount`/`C34P_FAILED_MOUNT` `:3933-3968`, `c34pMoveDirs` `:4007` | **Sim** em conteúdo. A forma difere da proposta (um teste com subtestes): são 7 testes de topo, e o plano/checklist registram "7 controles" aprovados. Ver O-S22-1 |
+
+**Valores dos controles** (conferidos contra a Landing §3):
+- **P1** (`:3826-3861`, `assert.deepEqual`): `attempts 1`, `sameMountError true`, `swapped false`, `foreign null`, `exitCode 5`, `incomplete`, `applied false`, `conflicts []`, `errors [{code:"io_error"}]`, `steps [artifacts failed]`, `through []`, staging/pluginDir/manifest/lock `ausente`.
+  - Pela leitura do produto: o Error sem `code` não é `retryable` (`run.mjs:909`) e não é `guardFailure`, então a limpeza do próprio staging roda (`:914`). O destino está ausente, logo relança. `step` → `IncompleteError(cause?.code ?? "io_error")` (`:48-53`, `:484`) → 5.
+  - RED do autor: atual 2/applied/0 (atribuído, checklist L3233).
+- **P2** (`:3884-3927`): `fixtureAttempts 3`, `waits [10,20]`, `fixtureError null`, `installerOpsDuringFixture []`, `realpathDuringFixture false`, `attempts 1`, `mountError null`, 4 `conflict` `[s19Changed(S19_STAGING_REL)]`, `through []`, `atStaging "link → outra pasta"`, `own packageDir(OWN_ARTIFACTS)`, `pluginDir`/`manifest`/`lock` `ausente`.
+  - Pela leitura: depois da montagem o produto repete (`win32`); `assertStillRealDir` só faz `lstat` do staging (`run.mjs:198`), por isso `through []`.
+- **P3** (`:3975-3984`): 1 / `[]`, o mesmo `eio` em `state.error` e em `probe.mountError`, mais `C34P_FAILED_MOUNT` (`attempts 1`, `swapped false`, 5 `io_error`, `own ausente`).
+- **P4** (`:3992-4002`): 7 / `[10,20,40,80,160,320]` / `waited 630`, o mesmo `errors[6]` nos dois lugares, mais `C34P_FAILED_MOUNT`. O produto vê 1 tentativa: o EPERM final não alimenta o retry.
+- **H1** (`:4035-4038`): `linux`, 1 rename, `waits []`, mesmo objeto, origem intacta, destino `ausente`.
+- **H2** (`:4055-4058`): "fixture: o destino está ocupado", 0 renames, `[]`.
+- **H3** (`:4083-4086`): "fixture: a origem foi trocada", 1 rename, `[10]`, as duas pastas intactas, destino `ausente`.
+- P2–P4 e H1–H3 são **controles GREEN** e não os declaro RED limpo: no encanamento antigo, P2–P4 dariam TypeError/`ERR_INVALID_ARG_TYPE` (Landing L118). O RED controlado P1 prova o **mecanismo**, não o errno histórico do FAIL28, que segue **desconhecido**.
+
+**Asserções antigas** (comparadas no diff e no arquivo atual; pela leitura **nenhum valor de K1–K13, K12h–j, C34l, C34m, C34n ou C34o mudou**):
+- os `expect` de K7a–e continuam `{...stagingChanged(), foreign:"intacto", atStaging…, own: OWN_COMPLETE}` (`:3194`, `:3203`, `:3212`, `:3225`, `:3242`);
+- `base` `:3404-3419`; `deepEqual(observed, expected)` `:3456`;
+- C34m `:3495-3535`; C34n 3/`[10,20]` e 1/`[]` `:3596-3648`; C34o `:3749-3805`; C29b `:610`, `:614-645`; G1–G7 `:2893-3028`.
+
+**Silent test weakening ou framework geral?** Não encontrei.
+- A L2 converte uma falha de montagem em erro **explícito** antes do `observed`. Antes a mesma falha virava `applied` sem troca (FAIL28): é endurecimento, não relaxamento.
+- Nenhum limite ou prazo mudou.
+- O auxílio continua o mesmo (`:3545-3558`): reusa `installModule.renameRetrying`, sem laço novo.
+- Nenhum mover genérico novo. O observador ganhou só o parâmetro `platform`.
+
+## 5. Tabela por check (uma linha por check; NENHUM é PASS)
+
+Legenda:
+- **Nível**: CLI, e2e, unit, workflow.
+- **Amostragem**: 1 execução por gate liberado, salvo nota.
+- **fresca** = lida por mim no HEAD; **carry-R26** = citação de R26/R28 §5, válida só se o A provar o blob igual.
+- **produto tocado** = o caminho exercitado passa por `install/run.mjs` (S19, SHA inalterado desde S19), então a prova re-roda.
+- **Identidade A** = blob a confirmar no comando A (`8f393c5` × HEAD).
+- **Gate D**: todos os checks dependem do `npm test` completo, encadeado por `&&` e começando pelo motor do core S21. **Um D vermelho derruba todos.**
+
+| Check | Claim | Valor concreto | Asserção localizada (orig. file:line · expressão) | Prova nomeada | Nível | Amostragem | Tocado/carry | Identidade A |
+|---|---|---|---|---|---|---|---|---|
+| C1 | `--help` 0/stdout; `private`; checkout intacto | `[0, SKILL_ME_HELP, ""]`; `private:true` | `command.cli:48-49`, `:65`, `:77` | `I25-C1 npm link…` | CLI | A/B/C/D | carry-R26 | `command.cli`, `package.json` iguais |
+| C2 | args literais, sem shell | `argv: LITERAL_ARGS` | `command.cli:96-98` | `I25-C2 argumentos literais…` | CLI | A/B/C/D | carry-R26 | `command.cli` |
+| C3 | código repassado | `{0:0, 7:7}` | `command.cli:105` | `I25-C3 código do agente…` | CLI | A/B/C/D | carry-R26 | `command.cli` |
+| C4 | shim `codex.cmd`; outro `.cmd` recusado | 127 `launcher_requires_shell` | `command.cli:130-133`; `agent.unit` I25-C4 | `I25-C4 shim do npm…` (W), `…entrada do shim…` | CLI+unit | W A/B/D; C skip com motivo | carry-R26 | `command.cli`, `agent.unit` |
+| C5 | sinais do terminal 1× | `CTRL_C_EVENT → ["SIGINT"]` | `command.cli:228`, `:244-245` | `I25-C5 Ctrl+C…` (W), `…POSIX` (P) | CLI | W A/B/D; P C | carry-R26 | `command.cli` |
+| C6 | SIGTERM só ao launcher, 1× | `signals: ["SIGTERM"]` | `command.cli:267` | `I25-C6 SIGTERM…` | CLI | só C (P) | carry-R26 | `command.cli` |
+| C7 | agente ausente | 127 `executable_not_found`, nada criado | `prepare.cli:93-94` | `I25-C7 agente ausente…` | CLI | A/B/C/D | carry-R26 | `prepare.cli` |
+| C8 | prévia antes de escrever | 500 / 8 MiB / 7 dias | `prepare.cli:122-126` | `I25-C8 prévia…`, `…LOCALAPPDATA` (W) | CLI | A/B/C/D | carry-R26 | `prepare.cli` |
+| C9 | confirmação aplica (inclui instalação Hermes) e inicia | aplicado + agente iniciado | `prepare.cli:163-168` | `I25-C9 confirmação aplica…` | CLI | A/B/C/D | carry-R26 + **produto tocado** | `prepare.cli`; `run.mjs` (SHA256LF `4b63fed3`) |
+| C10 | recusa | 3 `setup_declined` | `prepare.cli:189-191` | `I25-C10 recusa…` | CLI | A/B/C/D | carry-R26 | `prepare.cli` |
+| C11 | raiz relativa | 2 `root_not_absolute` | `prepare.cli:200` | `I25-C11 caminho relativo…` | CLI | A/B/C/D | carry-R26 | `prepare.cli` |
+| C12 | sem terminal | 3 `setup_required` | `prepare.cli:223` | `I25-C12 sem terminal…` | CLI | A/B/C/D | carry-R26 | `prepare.cli` |
+| C13 | preparo concluído não repete | SHA-256 iguais, sem prévia | `prepare.cli:238` | `I25-C13 preparo concluído…` | CLI | A/B/C/D | carry-R26 + **produto tocado** | `prepare.cli`, `run.mjs` |
+| C14 | falha do preparo | conflito 4 / inválida 3, mesmo código | `prepare.cli:250` | `I25-C14 falha do preparo…` | CLI | A/B/C/D | carry-R26 + **produto tocado** | `prepare.cli`, `run.mjs` |
+| C15 | pty real | prévia, confirmação, recusa | `prepare.cli:408` | `I25-C15 terminal real (pty)…` | CLI | só C (P) | carry-R26 | `prepare.cli` |
+| C16 | execução aberta | segmento 1, ponteiro, só o par da execução | `session.e2e:67` | `I25-C16 execução aberta…` | e2e | A/B/C/D | carry-R26 | `session.e2e` |
+| C17 | formato persistido e recusas | campos exatos | `store.unit:79` | `I25-C17 …` | unit | A/B/C/D | carry-R26 | `store.unit` |
+| C18 | execução indisponível | 3/4/5 sem caminho | `session.e2e:111` | `I25-C18 …` | e2e | A/B/C/D | carry-R26 | `session.e2e` |
+| C19 | grava na captura corrente | nada fora | `session.e2e:161` | `I25-C19 …` | e2e | A/B/C/D | carry-R26 | `session.e2e` |
+| C20 | par inválido | `binding_invalid`, nada gravado | `session.e2e:190-192` | `I25-C20 …` | e2e | A/B/C/D | carry-R26 | `session.e2e` |
+| C21 | autorização global intacta | bytes iguais on/off | `session.e2e:208-211` | `I25-C21 …` | e2e | A/B/C/D | carry-R26 | `session.e2e` |
+| C22 | limite de eventos | 503 → 500 + 3, chave nova | `session.e2e:230` | `I25-C22 …` | e2e | A/B/C/D | carry-R26 | `session.e2e` |
+| C23 | limite de bytes | 8.388.608 exatos | `session.e2e:282` | `I25-C23 …` | e2e | A/B/C/D | carry-R26 | `session.e2e` |
+| C24 | sucessora após stop manual | corrente nova | `store.unit:168` | `I25-C24 …` | unit | A/B/C/D | carry-R26 | `store.unit` |
+| C25 | encerramento e resumo | 2 `stopped`, `endedAt` ISO_MS, ponteiro fora, `{unknown_event:1}`, status 3, stderr de 5 linhas | `end.e2e:80` `assert.equal(captures.length, 2)`; `:85-87`; `:88-97` `assert.equal(result.stderr, [...].join("\n"))` | `I25-C25 encerramento e resumo…` (`:59`) | e2e | A/B/C/D | **fresca** | `end.e2e` (SHA256LF `e5b69e55`, igual R27/R28) |
+| C26 | nada gravado + 1º passo manual | stderr literal ×3 agentes | `end.e2e:117` `assert.deepEqual(observed, expected)` | `I25-C26 nada gravado…` (`:100`) | e2e | A/B/C/D | **fresca** | `end.e2e` |
+| C27 | revogação | `{launch:true, code:"launch_ended", entries:1, committed:0, persisted:0, lost:1}`; árvore igual | `end.e2e:128` `assert.deepEqual(late.report.delivery, {...})`; `:129` `snapshotTree` | `I25-C27 revogação…` (`:120`) + `store.unit` (carry) | e2e+unit | A/B/C/D | **fresca** + carry | `end.e2e`, `store.unit` |
+| C28 | Hermes em voo N=3; 1ª perdida | persisted 3, `stopped`; perdida `[["stopped",0,0]]`, `rename` `["EIO"]`, 1 unlink | `end.e2e:171-175` `{persisted:3, states, status:0}`; `:195`; `:202-203` `assert.deepEqual(ofSegment("rename").map(...), ["EIO"])` | `I25-C28 entregas Hermes em voo…` (`:161`), `…primeira entrega perdida…` (`:184`) | e2e | A/B/C/D; Python do sistema | **fresca** | `end.e2e` |
+| C29 | término por sinal | `stopped`, mesmo sinal/código | `command.cli:278` | `I25-C29 …` | CLI | A/B/C/D | carry-R26 | `command.cli` |
+| C30 | falha de início | 127/126, segmento 1 `stopped`, 0 eventos | `command.cli:342` | `I25-C30 …` | CLI | A/B/C/D | carry-R26 | `command.cli` |
+| C31 | falha do encerramento com orientação | lock alheio: 6, stderr literal, `["active", true]`; E/S: 2, `["active", false]`, `launch_ended` | `end.e2e:213-223`; `:252-262`; `:264` | `I25-C31 …` (`:206`, `:233`) | e2e | A/B/C/D | **fresca** | `end.e2e` |
+| C32 | simultâneas isoladas; 1ª criação do store | `["stopped","active"]`; pseudônimos próprios; `[1,1]`; `{"skillMePrivacyStore":1}` | `end.e2e:294`, `:301-304`; `:326-334`; `:376-395`; `:438-451`; `store.unit:715` (carry) | `I25-C32 …` (`:273`, `:311`, `:348`, `:404`) | e2e+unit | A/B/C/D | **fresca** + carry | `end.e2e`, `store.unit` |
+| C33 | on/off durante; arranjo `npm run` | `LAUNCHED(1)` ×3, `automaticOf = []`; `spawn sh ENOENT` | `end.e2e:477-482`; `:501-509` | `I25-C33 on e off…` (`:454`), arranjo (P) (`:489`) | e2e | A/B/D; arranjo só C | **fresca** | `end.e2e` |
+| C34 | `skill-me report` | última execução, recuo de relógio | `report.cli:159` | `I25-C34 …` | CLI | A/B/C/D | carry-R26 | `report.cli` |
+| C35 | report sem execução | 3 `no_launch_capture`/`not_configured` | `report.cli:252-259` | `I25-C35 …` | CLI | A/B/C/D | carry-R26 | `report.cli` |
+| C36 | ajuda | 0/stdout; 2/stderr | `command.cli:350` | `I25-C36 ajuda…` | CLI | A/B/C/D | carry-R26 | `command.cli` |
+| C37 | README/guias | textos exigidos | `launch/docs.test:82` | `I25-C37 documentação…` | unit | A/B/C/D | carry-R26 | `docs.test`, docs |
+| C38 | console Windows | acento exato | `prepare.cli:355` | `I25-C38 console real…` (W) | CLI | A/B/D | carry-R26 | `prepare.cli` |
+| C39 | não conclui com 300 ms estáveis | pendente após 300 ms | `hermes-harness.unit:90` | `I25-C39 …` | unit | A/B/C/D | carry-R26 | `hermes-harness.unit` |
+| C40 | failed/timeout distintos; Hermes 5 s; "ação"; nativos | 5.000 ms | `hermes-harness.unit:220`, `:320`, `:324`, `:327`; `hermes-plugin.native:336` | `I25-C40 …`, `I25-C40 harness nativa` | unit+nativo | nativos A/B/D; C skip `hermes-runtime-ausente` | carry-R26 + **produto tocado** | `hermes-*`, `run.mjs` |
+| C41 | sucessora não publicada/não lida; vínculo do ponteiro | `[[1,"stopped",500],[2,"stopped",0]]`; `[[1,"stopped",500],[2,"active",0]]` → stop; `LAUNCHED(1)` da outra | `end.e2e:547`, `:620`, `:627`, `:664`, `:689`, `:733-737`, `:754-760`; `store.unit:327-523` (carry) | `I25-C41 …` ×6 (`:516`, `:566`, `:630`, `:667`, `:728`, `:740`) | e2e+unit | A/B/C/D | **fresca** + carry | `end.e2e`, `store.unit` |
+| C42 | cancelamento antes do agente | agente não inicia | `agent.unit` I25-C42; `command.cli:424`, `:456` | `I25-C42 …` | unit+CLI | W console A/B/D; P C | carry-R26 | `agent.unit`, `command.cli` |
+| C43 | lock após abertura/encerramento + S16 | `[5,false]` + `lockLine`; `LAUNCHED(1)` no último hook; K1–K3 vermelhos com `io_failure`/`delivery_timeout`; `NOTHING_PERSISTED`; `[4,false]` `root_changed`; `endReleaseLines` | `end.e2e:837-845` (`c43TransientOpening` `:831-846`); `:868-876` `assertFinalHookLost`; `:888-892`, `:897-904`, `:911-913`; `:921-926`, `:946-949`, `:959-962`, `:973-984`, `:1026-1036`, `:1048-1053`; `store.unit:562`, `:580`, `:600` (carry) | `I25-C43 …` (`:848`, `:886`, `:895`, `:909`, `:916`, `:929`, `:952`, `:968`, `:1010`, `:1039`) | e2e+unit | A/B/C/D | **fresca** (S16) + carry | `end.e2e`, `producer-runs.mjs` `0b147ffd`, `traces.mjs` `1f7ee30b`, `store.unit` |
+| C44 | contagem fechada | `failed`/`timeout`/`inactive` | `hermes-harness.unit:288`, `:291` | `I25-C44 …`, I4-C22 nativo | unit+nativo | A/B/C/D; nativo A/B/D | carry-R26 | `hermes-harness.unit` |
+| C45 | PATH vazio | = cwd no POSIX; Windows ignora | `agent.unit:132-146`; `command.cli:166-186` | `I25-C45 …` | unit+CLI | A/B/C/D; processo P em C | carry-R26 | `agent.unit`, `command.cli` |
+| C46 | T8-C15 + (a)–(u) + F1 R24/R25 | 2 × 40 = 80, 4 linhas intercaladas, por produtor 40/40/40/0; **T8-C16 exatamente 3 criações**; retry só `EEXIST` 10 ms; flush `[2,2,2,2]`; (p) `[creation, 2]`; (u) liberação por rename do `.lock`; conc. min(CPU−1, 8) = 8 W / 7 WSL | `concurrency.cli:221-222`, `:233-236`, `:305`, `:333`, `:360`, `:965-969`, `:1007`, `:1013-1019`, `:1031-1033`, `:1094-1098`; `delivery.unit:52-113`; `evidence.unit:241-283`, `:345-373`; `agents.e2e:469-486`, `:504-526` (carry); `delivery.mjs:72-104` `untilDeadline`, `:19`; `traces.mjs:233-249` `diskTrace` (fresco) | T8-C15, (a)–(c), T8-C16, (o), (p) `I25-C46 prazo da entrega…`, (u) | CLI+unit+e2e | A/B/C/D; (u) só discrimina no W | carry-R26; `delivery.mjs`/`traces.mjs` frescos, mesmo SHA | `concurrency.cli`, `delivery.unit`, `evidence.unit`, `agents.e2e`, `store.mjs`, `traces.mjs`, `delivery.mjs` |
+| C47 | I23-C10 + (a)–(d) | (a) `io_failure` 1/0/0/1/0, `[["rename segmento.tmp EIO (sob o lock, 2ª tomada)"],0,1]`; (b) `delivery_timeout`, `close key (sob o lock, 2ª tomada)` | `agents.e2e:328-381`, `:428-436`, `:443-449`; `evidence.unit:150-225`; `control.cli:1071-1077`, `:1097-1105` (carry); `traces.mjs:267` `neutralPlace` (fresco) | `I23-C10 …`, (a)/(b), I23-C4 (c)/(d) | e2e+CLI+unit | A/B/C/D | carry-R26 | `agents.e2e`, `evidence.unit`, `control.cli` |
+| C48 | workflow muda só `timeout-minutes`; pwsh real | jobs 20/10/5, manual 10; pwsh 0/17 → 1 | `governance-ci:373-433`, `:444-582`, `:511`, `:565-576`; `:271-283` | `governance-C48 …`, `…pwsh real…` (W), `governance-C1 C3` | workflow | A/B/D; C skip pwsh | carry-R26 | `governance-ci.test`, `.github/workflows/*` |
+| C49 | job manual `lock_diagnostics` | campos exatos | `governance-ci:322-362`, `:299-304` | `governance-C49 job manual…` | workflow | A/B/C/D | carry-R26 | `governance-ci.test`, workflow |
+| C50 | medição esquema 2 | `[2, "individual: um lock por produtor; não mede disputa entre produtores"]` | `ci-lock-latency.test:146`, `:216-219`, `:231-232`, `:397`, `:399`, `:412` | 18 `C50 …` | unit/script | A/B/C/D, `RUNNER_TEMP` válido | carry-R26 | `scripts/ci-lock-latency*` |
+
+**Provas do AC2** (S19/S17/S22; não são check novo, a Landing diz "não muda C1–C50"):
+- I4-C34g `unit:409-411`;
+- C34h: `ancestorSwapIo` com `await swap()` `:1426`, callback `:1504-1507`;
+- C34i: `stagingSwapIo` com `await swap()` `:1805`, callback `:1870-1874`;
+- C34j `:1958-2076`; C34l G1–G7 `:2893-3028`;
+- C34k K1–K13 + K12h–j `:3166-3400`, L2 `:3431`, `deepEqual` `:3456`;
+- C34m `:3468-3536`; C34n `:3565-3650`; C34o `:3715-3807`;
+- **C34p P1–P4, H1–H3** `:3815-4087`;
+- CLI partial `install.cli:1376`, `:1617-1634`.
+
+**Provas do AC9/S21**: os 89 testes `S21 …` (`review.test.mjs:896-1834`) e os 16 originais (`:1-894`).
+
+## 6. ACs — texto canônico (contexto L14–27, citado uma vez, literal)
+
+- **AC1**: "Um executável local `skill-me` pode ser disponibilizado sem publicar o pacote; `skill-me codex`, `skill-me claude` e `skill-me hermes` iniciam o respectivo agente em modo interativo, preservando argumentos, entrada/saída, sinais e código de saída aplicáveis."
+- **AC2**: "No primeiro uso, o comando conduz a escolha/preparação do destino local e a instalação necessária da integração, apresenta as alterações antes de aplicá-las e indica a etapa de confiança nativa que o usuário precisa confirmar. Sem agente ou confiança/captura disponível, informa o impedimento sem fingir que gravou a sessão.
+  Exceção S19 aprovada em 30/10/2026: somente a promoção do diretório temporário da instalação Hermes no Windows repete EPERM/EACCES/EBUSY, até sete tentativas e seis esperas de 10/20/40/80/160/320 ms (630 ms adicionais). Antes de cada tentativa, reconfere identidade BigInt da raiz/plugins/staging, os três artefatos completos com bytes do pacote e destino ausente; escrita, limpeza e liberação do lock preservam entradas alheias, incluindo pastas reais substitutas com cópias idênticas. Identidade indisponível falha fechada com 5; EIO/outros códigos e promoção POSIX mantêm uma tentativa. Política de arquivos, prazos de produto/testes, asserções e concorrência permanecem. Plano vinculante: `.tasks/issue-25-hermes-staging-retry-proposal.md`; aprovação: https://github.com/oldboydev/skill-me/issues/25#issuecomment-6520123791."
+- **AC3**: "A invocação autoriza somente a sessão iniciada por ela: eventos suportados são sanitizados e gravados localmente, com identidade/chave isoladas e limites e retenção da política existente; não exige `SKILL_ME_CAPTURE_ROOT`, `SKILL_ME_CAPTURE_ID`, ID copiado, `npm run on` ou `npm run off`. Ao atingir 500 eventos ou 8 MiB, a invocação continua em capturas sucessivas até o agente sair, preservando os limites e a chave própria de cada captura."
+- **AC4**: "Ao sair, falhar ou receber interrupção, o agente e a captura dessa invocação terminam de forma verificável; execuções concorrentes não misturam eventos nem desligam uma à outra. O comando oferece uma forma de consultar a captura resultante sem copiar ID."
+- **AC5**: "README e ajuda mostram o preparo único e o fluxo diário de uma linha, além dos limites reais: confiança manual, ausência de sinal nativo de ativação de skill no Codex e cobertura apenas de ferramentas locais quando essa for a fonte."
+- **AC6**: "A harness nativa do Hermes não declara concluída uma entrega ainda pendente após 300 ms de contadores estáveis; provas cobrem inicialização atrasada, conclusão e falha/destino travado, preservando o prazo máximo existente, callbacks neutros e as asserções. O gate completo é repetido com os casos nativos aplicáveis."
+- **AC7**: "A prova antiga T8-C15 preserva os dois produtores concorrentes de 40 eventos, os 80 eventos únicos e todas as asserções e prazos; quando falhar, informa operações/tipos/códigos de E/S e o estado/export da captura, ou a indisponibilidade dessa inspeção, sem expor caminhos, conteúdo, chaves ou ambiente. Provas discriminam falha anterior ao commit e confirmação perdida após commit. Eventual correção exige defeito demonstrado e preserva os contratos atuais, sem retry novo, aceitação de perdas ou redução de concorrência."
+- **AC8**: "A prova I23-C10 mantém as sessões intercaladas e simultâneas, as contagens exatas, chaves/identidades isoladas, prazos e asserções; quando falhar, o diagnóstico informa operações/tipos/códigos de E/S e estado ou indisponibilidade, sem expor caminhos, conteúdo, chaves ou ambiente. Provas controladas demonstram que a mensagem preserva a falha e não vaza dados. Somente o orçamento total do job Windows da matriz verify passa de 10 para 20 minutos; limites dos testes/produto, paralelismo, carga, demais jobs e sistemas permanecem iguais."
+- **AC9**: "A medição comparativa usa o workflow existente, com um job Windows executado somente por workflow_dispatch e limitado a 10 minutos, sem substituir os cinco checks regulares. O script reutiliza createStoreIo/holdLockFile, compara os caminhos reais do temporário padrão e RUNNER_TEMP e identifica quando são equivalentes; quando distintos, executa A1/B/A2 no mesmo runner, cada fase com três produtores de 500 ciclos e três processos de carga de 64 KiB com flush, sob teto de 120 segundos. Registra quantidades previstas/concluídas/incompletas, erros por código e métricas p50/p99/máximo e contagens >=600/650 ms, sem transformar erro, ausência de dados ou término parcial em zero ocorrências. Provas controladas verificam valores exatos, caminhos equivalentes, E/S, prazo, proteção da limpeza e supervisão somente de filhos próprios. Produto, testes funcionais existentes, prazos750/650ms, contagens, perdas/retry, carga da suíte e jobs regulares20/10/5 permanecem iguais, ressalvadas a política de promoção da instalação Hermes Windows da S19 descrita no segundo critério e a exceção local S21 do core vendorizado, aprovada em https://github.com/oldboydev/skill-me/issues/25#issuecomment-6525782289: somente o rename do temporário do estado repete EPERM no Windows, até sete tentativas e seis esperas de 10/20/40/80/160/320 ms (630 ms por gravação; até 3.780 ms de esperas numa revisão nova e 2.520 ms no cache, sem teto novo para E/S). Guardas conferem identidade/tipo/bytes do temporário e do destino ou sua ausência, inclusive edições no mesmo inode; indisponibilidade ou mudança falha fechada, e esgotamento preserva o último erro original. Outros códigos e POSIX mantêm uma tentativa sem espera. Ordem comum→local, autoridade do estado comum, histórico/contadores, cache, locks, cleanup e recusa de ready pela chamada que falhou permanecem. Os 16 testes existentes e seus prazos ficam intactos; a divergência nova de review.mjs/review.test.mjs/README é explícita somente neste repositório, com hashes dos cinco arquivos antes/depois, cli.mjs/schema.json e os dois pilotos intocados; plano vinculante `.tasks/issue-25-core-save-retry-proposal.md`; o novo job manual é a exceção adicional autorizada ao conjunto de jobs, não uma dispensa da CI. Este critério da revisão do código exige a ferramenta, sua integração e suas provas locais descritas acima. A execução remota ocorre após PASS, ready e publicação da branch, conforme a proposta aprovada; seu resultado e a CI regular verde são condições adicionais obrigatórias de merge, na seção seguinte."
+
+| AC | Checks | Delta desde R26 | Estado |
+|---|---|---|---|
+| AC1 | C1–C6, C45 | nenhum | pendente A/B/C/D |
+| AC2 (+ S19) | C7–C15, C38 + I4-C34g–p, CLI partial | `run.mjs` (S19), `install-apply.unit` (S19 + **S22**), `install.cli` | pendente; texto × código sem contradição (§3, §4) |
+| AC3 | C16–C24 | nenhum | pendente |
+| AC4 | C25–C35, C41–C43 | `end.e2e` (S16) | pendente |
+| AC5 | C36–C37 | nenhum | pendente |
+| AC6 | C39, C40, C44 + nativos | instalação Hermes dos nativos passa por `run.mjs` | pendente; exige o D completo com nativos |
+| AC7 | C46 | nenhum | pendente |
+| AC8 | C47, C48 | nenhum | pendente |
+| AC9 (+ S19/S21) | C49, C50 + S21 | 3 arquivos do core | pendente; medição remota, CI e formal são condição de merge, não deste Verifier |
+
+## 7. Achados pré-provas (pela leitura; nenhum é veredito)
+
+**Bloqueantes: nenhum encontrado pela leitura.** Isto **não** é PASS. Defeitos: nenhum (portanto sem cenário, esperado, atual, impacto e local a relatar). Não proponho correção.
+
+Observações S22 (não são defeitos):
+1. **O-S22-1 — forma do L5.**
+   - A Landing propôs um teste `I4-C34p fixture: …` com subtestes. A implementação tem 7 testes de topo `I4-C34p P1…H3` (`unit:3815-4087`); o comentário `:3809-3814` justifica: o P1 roda sozinho pelo nome.
+   - O plano e o checklist registram "7 controles"/"7 novos nomes" aprovados pelo Root (checklist L3233, L3235). Conteúdo e valores conferem com a Landing §3.
+   - Só mudam nomes de chaves: P3/P4 usam `sameFixtureError`/`sameMountError` no lugar de `fixtureErrorSame`/`mountErrorSame`. Sem efeito de contrato.
+2. **O-S22-2 — R1 residual, atualizado.**
+   - **Cenário**: K10a/b/c e K11a/b/c montam a troca com `renameSync` puro (`unit:3315`, `:3327`, `:3341`, `:3358`, `:3370`).
+   - **Atual com L1/L2**: um EPERM natural ali vira falha **explícita e nomeada** do C34k (`:3431`), não `applied` silencioso. No C34m (`:3484`), a recusa sai pelo `io.lstat` instrumentado e faria a linha divergir (5 em vez de 4).
+   - **Impacto**: vermelho falso intermitente possível no Windows, **nunca verde falso**. Decisão da Landing L3 (K10/K11 ficam).
+3. **O-S22-3 — política fixa no observador.** Em `s19InstallWithObservedMount`, a movimentação **simulada** usa `platform: "win32"` literal (`:3668`, preexistente) e a **física** usa o default `process.platform` (`:3682`). No C (WSL), a física faz 1 tentativa. É coerente com o plano L17 (contagem simulada separada da física).
+4. **O-S22-4 — limpeza do produto na falha de montagem.** O Error sem `code` vem do `io.rename`, não da guarda, então o produto limpa o próprio staging (`run.mjs:914`). Nos K7 com falha física real isso altera a fixture, mas o L2 já falha a tabela antes do `observed`. No P1/P3/P4, `atStaging`/`own` `ausente` estão declarados.
+
+Observações S21, carry da R28 e preservadas:
+- **S21-O1**: destino diretório no Windows com EPERM repete até 630 ms (`review.mjs:739-745`).
+- **S21-O2**: volumes sem `ino > 0n` falham fechados com UNAVAILABLE (`:667-673`).
+- **S21-O3**: formato do caminho na mensagem CHANGED (`review.test.mjs:1727`, `:1776-1777`).
+- **S21-O4**: sem CAS (`review.mjs:699-700`; README `:29`).
+- **S21-O5**: esperas reais nos testes P5/P6/42-28; nenhum prazo muda.
+
+Carry preservados:
+- **R1** (R27/R28; atualizado em O-S22-2);
+- **O2**: o `retryable` de `s19MoveFixtureDirectory` (`unit:3554`) repete `RENAME_DENIED` em vez de importá-lo;
+- **N1**: o texto F1 do C46 (u) diz "vermelho na importação"; **N3**: o C46 (p) não tem RED natural; **N4**: `unsure` duplicado em `concurrency.cli`;
+- desempenho S19 AFTER: p50 18 → 38 ms, sem SLO;
+- a S22 não corrigiu nenhuma delas, como pedia o plano L19.
+
+Lacunas declaradas:
+- **G1**: a identidade dos blobs `8f393c5` × HEAD e o mapa do core só virão do comando A. Até lá, todo carry é condicional.
+- **G2**: os arquivos fora do pack não foram relidos.
+- **G3**: o `feature.diff` não foi lido.
+- **G4**: causas físicas **desconhecidas**: o errno e a causa do FAIL28 K7d, o D27 (stderr não retido), o EPERM do S20 (casos 18/43), a CI 58 do S16, o S17, os EPERM do S18/C34h/C34i e os históricos R25/R23/CI 066. O P1 do autor prova o mecanismo, não o errno histórico. Um verde não as resolve, e o S20 AFTER 200 saudáveis não garante ausência futura.
+- **G5**: os pilotos não foram lidos nem conferidos. Não alego que os 5 arquivos do core sejam iguais à base: 3 diferem, por exceção aprovada.
+
+## 8. Plano dos gates (escrito ANTES de qualquer execução)
+
+- **Exatamente 4 comandos** que o Root liberar nesta mesma sessão, depois de revisar a cobertura e este relatório.
+  - Uma vez cada, sequenciais, em primeiro plano, sem `run_in_background` e sem repetição.
+  - Paro na primeira falha, omissão ou intervenção e preservo nome, motivo e números.
+- **A** precisa trazer o mapa de identidade de **todos** os arquivos de `src tests scripts .github package*`, `8f393c5` × HEAD. O carry só vale com **exatamente 7** deltas:
+  - os 3 S19/S16 **iguais a `f9039f6`**: `run.mjs` (`fa23ace5→12c422a6`), `install.cli.test.mjs` (`8b3919ab→df8b91b2`), `launch/end.e2e.test.mjs` (`1912fe9d→315252e5`);
+  - `install-apply.unit.test.mjs` = o blob **aprovado na S22**. Não é mais `3a8bb726` (o do R28). SHA256LF do índice `6c5c8516…`; o blob Git tem de ser o que o Root aprovou, e eu não o invento;
+  - os 3 do core S21: README `25e52841→89869e47`, `review.mjs` `1bda8e45→eb6b927c`, `review.test.mjs` `216125ce→3b6b4540`;
+  - `cli.mjs` `c6a4abcd` e `schema.json` `b02001e2` iguais à base; prefixo `review.test.mjs` 894 linhas, SHA `a48aff48…e108`, exato.
+  - Qualquer outro delta derruba o carry, e o check afetado vira re-análise.
+- **B**, **C** e **D**:
+  - B é o clone `autocrlf` com Node 24.13 e concorrência 8;
+  - C é o WSL LF `env -i` com concorrência 7;
+  - D é o `npm test` completo, com motor, governança, doctor e integrações, incluindo os nativos Hermes, o I4-C35 e o I23-C8 pelo Python do sistema.
+  - Os números do autor (unit inteiro 45/44/0/1 por ambiente; S21 A/B 767/754/0/13, C 767/745/0/22, D 1184/1164/0/20) são **só referência, não expectativa minha**. Com os 7 novos C34p, as contagens globais devem diferir das do S21, e eu só registro o que for medido.
+
+## 9. Processo, histórico e incidentes (preservados, sem reclassificar)
+
+- **Meu processo nesta fase**: Read, Grep e Edit deste `report.md`. **Incidentes meus: nenhum.** 0 processos em segundo plano.
+- **Incidente S14**: o `Temp\x` global PREEXISTENTE foi sobrescrito, SEM cópia conhecida e com impacto desconhecido. **Não li, toquei, removi nem restaurei.** Não toquei em nenhum TEMP global nem no `/tmp`. Restrições de ferramenta não são sandbox do SO, e o TEMP não remapeia o `/tmp` explícito. Dados históricos não são comandos: não executei nenhum comando histórico.
+- **FAIL28, literal e preservado**:
+  - A 767/754/0/13; B 767/753/1/13, término natural 1; C e D **NÃO EXECUTADOS**; 0/50 checks e 0/9 ACs;
+  - K7d esperado: 1 tentativa, exit 4, `conflict`, foreign intacto, own completo. Atual: 2 tentativas, exit 0, `applied`, foreign "—", own ausente;
+  - errno nativo e causa **DESCONHECIDOS**.
+- **R27 FAIL preservado**: D parcial 43/42/1, C11 com TypeError. O verde posterior do S21 não o corrige retroativamente.
+- **Outros FAILs, omissões e incidentes preservados**: S16 D e S17 A FAIL; omissões B/C/D do S17; S19 A em `c94cdab` FAIL; B R2 FAIL; R3 A em `8b690bd` FAIL; REDm 1/0/1; S20 BEFORE B 98 + 2 EPERM; AFTER_A inválido por âncoras duplicadas (AFTER_B não iniciado); AFTER r1 100/100 × 2 (atribuído, sem garantia futura); FAIL 23/24/25; CI 066; cancelada 40814471097; incidentes S13/S14/S15.
+- **Rastro do autor S22** (atribuído): CLI de leitura interrompida pelo Root; TEST inicial 1/ENOTFOUND antes de qualquer Source; um Edit sem âncora reaplicado; off-by-one 3096/3097 do leitor do Root corrigido sem alterar Source.
+- **28 independentes e 14 formais consumidos**; formal 15 disponível e não usada; teto 15/global 2 inalterados.
+- **Não existe D28, D25 nem final25**, e não os invento.
+- **Auditoria 29**: é do Root, externa, e fecha só depois do D29 real. Baseline FINAL28 parcial, B 30 Out 17:23:46 UTC, 12113 entradas, só metadados WSL com alvo string. Ela não prova conteúdo, Windows, PowerShell, rede, TEMP, proveniência nem impacto global zero.
+- **Gates remotos pendentes**: PASS 29 → formal 15 `ready` → push → CI 5 PR + 5 manual → medição esquema 2 A1/B/A2/4500 no mesmo HEAD → merge já autorizado. Não declaro nenhum deles.
+
+**Fim da fase pré-provas: CLI 0/0, 0 processos em segundo plano.** Aguardo o Root revisar a cobertura de leitura e este relatório inteiro antes da fase de execução, nesta mesma sessão.
+
+
+---
+
+## Histórico anterior preservado byte a byte (495744 bytes)
+
 # Verificação independente 26 — **PASS 50/50**, 9 ACs (gates frescos A/B/C/D naturais, exit 0)
 
 **Verdict**: PASS — 50/50 checks provados; 0 falha, 0 cancelado; skips só de plataforma, com motivo.
