@@ -1011,3 +1011,12 @@ Root decide reutilizar o registro comum em end.e2e e extrair só a rotina transi
 Medição40969866439 validada: schema2/A1-B-A2/4500completos/zeroerro/incompleto, dez métricas1500amostras/fase. PicosA1>=650 em métricas sobrepostas, B/A2nenhum; namespaceindividual, sem medição do pipeline comchave ou causa doC43. Não é substituta da CI vermelha.
 
 Nenhuma implementação/prova nesta abertura. Ordem: autor/provas/commit → Verifier27 frescoRoot → relatório/commit → formal15 → ready → push/uma nova manual+PR → ambos cinco checks verdes+comparação → merge já autorizado. Histórico de26verificações/14formais, FAILs/omissões/interrupções e incidentes preservado; novo teto/contexto específico sóRootquando necessário.
+
+
+## Diagnóstico das instalações Hermes que falharam no D da S16 — S17
+
+Plano vinculante Root antes do código: [.tasks/issue-25-hermes-install-diagnostic-plan.md](issue-25-hermes-install-diagnostic-plan.md). Mesma autorização para CIverde/merge preservando testes/prazos e rodadas necessárias; não acrescenta capacidade de produto. S16ceb RED/P1/ABC válidos, mas D1079/1057/2/20naturalFAIL em I4-C34g instalaçãoexitCode5 e I4-C34f instalaçãoCLIstatus5. Erros/fases não impressos; nenhum defeito ou causa física comprovados. Não relaxar asserções e não repetir inalterado.
+
+Claude diagnóstico S17 sóleitura/report, CLI73564/PID70744/UUIDbf1d494e-f889-4bd4-b894-37574b62ea52 terminou0/0BG, HEADceb limpo; relatório ownfindings lido inteiro peloRoot e ranges conferidos. Claude novo implementa uma S17 inteira: salvar resultados e projetar evidência nas duas asserções, wrapperlocalneutro FS_OPS somenteC34ginstall; todo restanteinalterado. Caminhosrelativos ao home/externosneutralizados, sem bytes/stack/env/target; mesmoerro, args/this/valor euma chamada. Controles RED/K1/K2/K3/CLI e neutralidade em cópias, gates ABCdoisarquivosinteiros/Dfull semfiltro/mesmoslimites. Landing/Sources/Handoff/Swept aditivos no checklist, orçamento medido antesBUILD. Rootcoordena/code-reviewRO, nãoimplementa produto/testes.
+
+S16 permaneceaberta peloD; fechamento global exige freshVerifier27C1–C50/9AC/ABCintegraçõesinteiras+gov/Dfull, formal15ready, contexto/refsfrescos, nova publicação eambasCIs cinco checksverdes+schema2A1/B/A24500. Preserve26indep/14formais e todohistórico; nenhumregistro27/15aindanesteponto. Causashistóricasnão resolvidasporverde. GlobalTemp/xpreexistente sobrescrito semcópiaconhecida/impactodesconhecido, semtocar novamente, e limites de auditoria/auto-reviewpreservados.
