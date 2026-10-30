@@ -13,6 +13,7 @@ import {
   mkdtempSync,
   rmSync,
   renameSync,
+  lstatSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, relative, join, win32 } from "node:path";
@@ -646,10 +647,109 @@ function stateAt(path, legacyStates) {
   requireThat(Array.isArray(state.attempts), "Estado da revisão inválido.");
   return state;
 }
+// Exceção local da issue #25 (README, "O core é vendorizado"): no Windows, um rename do
+// estado já falhou com EPERM transitório. Só ali, e só EPERM, repete com estas esperas
+// (630 ms por gravação); outros códigos e POSIX mantêm uma tentativa.
+const STATE_RENAME_DELAYS_MS = [10, 20, 40, 80, 160, 320];
+function waitSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+// Retrato da entrada sem seguir link; bytes só de arquivo regular, nunca de diretório.
+function observeStateEntry(io, path, messages) {
+  let stat;
+  try {
+    stat = io.lstatSync(path, { bigint: true });
+  } catch (error) {
+    if (error?.code === "ENOENT")
+      return { absent: true, type: null, dev: null, ino: null, bytes: null };
+    throw error;
+  }
+  requireThat(
+    typeof stat.dev === "bigint" &&
+      stat.dev >= 0n &&
+      typeof stat.ino === "bigint" &&
+      stat.ino > 0n,
+    messages.unavailable,
+  );
+  const type = stat.isSymbolicLink()
+    ? "link"
+    : stat.isFile()
+      ? "file"
+      : stat.isDirectory()
+        ? "directory"
+        : "other";
+  const entry = { absent: false, type, dev: stat.dev, ino: stat.ino, bytes: null };
+  if (type === "file") {
+    try {
+      entry.bytes = io.readFileSync(path);
+    } catch (error) {
+      // Sumiu entre o lstat e a leitura: é mudança da entrada, não falha de E/S.
+      requireThat(error?.code !== "ENOENT", messages.changed);
+      throw error;
+    }
+  }
+  return entry;
+}
+const sameStateEntry = (a, b) =>
+  a.absent === b.absent &&
+  a.type === b.type &&
+  a.dev === b.dev &&
+  a.ino === b.ino &&
+  (a.bytes === null ? b.bytes === null : b.bytes !== null && a.bytes.equals(b.bytes));
+// Export só para as provas; não é API da CLI. Entre a última conferência e o rename não há
+// garantia CAS: escritores legítimos continuam serializados pelo lock da revisão.
+export function promoteStateTemp(
+  temp,
+  destination,
+  expectedBytes,
+  {
+    platform = process.platform,
+    io = { lstatSync, readFileSync, renameSync },
+    wait = waitSync,
+  } = {},
+) {
+  if (platform !== "win32") {
+    io.renameSync(temp, destination);
+    return;
+  }
+  const expected = Buffer.from(expectedBytes);
+  const messages = {
+    changed: `Gravação do estado recusada: o temporário ou o destino mudou antes da promoção (${destination}).`,
+    unavailable: `Gravação do estado recusada: identidade do temporário ou do destino indisponível (${destination}).`,
+  };
+  const observe = (path) => observeStateEntry(io, path, messages);
+  const intactTemp = (entry) =>
+    !entry.absent && entry.type === "file" && entry.bytes.equals(expected);
+  const tempEntry = observe(temp);
+  requireThat(intactTemp(tempEntry), messages.changed);
+  const destinationEntry = observe(destination);
+  for (let attempt = 0; ; attempt++) {
+    // As conferências ficam fora do catch do rename: falha de guarda ou de E/S nelas nunca
+    // é repetida e chega ao chamador como foi lançada.
+    if (attempt > 0) {
+      wait(STATE_RENAME_DELAYS_MS[attempt - 1]);
+      const tempNow = observe(temp);
+      requireThat(
+        intactTemp(tempNow) &&
+          sameStateEntry(tempNow, tempEntry) &&
+          sameStateEntry(observe(destination), destinationEntry),
+        messages.changed,
+      );
+    }
+    try {
+      io.renameSync(temp, destination);
+      return;
+    } catch (error) {
+      if (error?.code !== "EPERM" || attempt === STATE_RENAME_DELAYS_MS.length)
+        throw error;
+    }
+  }
+}
 function save(path, value) {
   const temp = `${path}.tmp`;
-  writeFileSync(temp, JSON.stringify(value, null, 2) + "\n");
-  renameSync(temp, path);
+  const bytes = Buffer.from(JSON.stringify(value, null, 2) + "\n");
+  writeFileSync(temp, bytes);
+  promoteStateTemp(temp, path, bytes);
 }
 function saveState(paths, state) {
   save(paths.state, state);

@@ -3602,3 +3602,22 @@ AutorTEST0encerrou15:32:01.923UTC/0BG, sócoretest+ownreport;878linhasAPPEND. Ro
 ### S21 — revisão Root dos testes antes do RED
 
 Autor Claude encerrou TESTFIX1 naturalmente em 2026-10-30T15:46:02.613Z, exit0/sem sinal/0background. Root leu todo o diff dos ajustes e §8: caminhos unitários virtuais únicos sob TMP privado; remoção do checkout condicionada a caminho lexical/real, tipo e identidade BigInt capturada; falha primária preservada junto da falha de limpeza. Prefixo original de894linhas/16testes exato LF, sintaxe válida e mesmos89casos/asserts/prazos. Nenhum teste executado ainda; produto/README intactos. Liberação somente para RED controlado no core antigo, não PASS.
+
+
+### S21 — produto escrito pelo Claude e revisado antes do GREEN
+
+Autor e9f1dd46 encerrou naturalmente em 2026-10-30T15:53:16.731Z, exit0/sem sinal/0background. Root leu o diff inteiro de review.mjs/README e §10; sintaxe válida, prefixo original894linhas/16testes exatoLF. RED anterior89/10/79/0skip natural1 foi conferido nas asserções reais, incluindo CLI EPERM1 vs7, semTypeError/setup/cleanuperrors. Implementação limitada ao contrato S21 autorizado: sóWindowsEPERM7/630ms, escrita única, guardasfora catch de rename, IDsBigInt/tipo/bytes+ausência, últimoerrooriginal, POSIXdireto1, ordem comum→local/cache/counters/lock intocados. NãoháPASSainda.
+
+Hashes dos cinco arquivos em LF, antesb51bbe1/base636 e depoisS21:
+
+| Arquivo | SHA256 antes | SHA256 depois | Estado |
+| --- | --- | --- | --- |
+| scripts/code-review/README.md | 0bfcbdec697c681dcf7970db90bc9af8cb52a93cefd36bfcdb038f65a9c3e17d | 8d5bfec20e877e9181be7b67c970f35d3fada8a27190ea8faa258a6d5b9b1e3e | exceção S21 |
+| scripts/code-review/cli.mjs | 4ff9a5e7a50950bda2857f6d76f0d7b690630a9feaef5fd7471e7ba1b66dd4a0 | 4ff9a5e7a50950bda2857f6d76f0d7b690630a9feaef5fd7471e7ba1b66dd4a0 | igual |
+| scripts/code-review/schema.json | 09381948e36666bd22234eb2ce39c61d7208bbb93a6ffb95861d2d92ea1b983c | 09381948e36666bd22234eb2ce39c61d7208bbb93a6ffb95861d2d92ea1b983c | igual |
+| scripts/code-review/review.mjs | 499891502b83e048b0bc18b3a91ea6e29e5a68a815308f5c9a416fe08e590555 | fdf8dc6615fa98aea03379b482d893c85c170379f59cf9d8c472095a3adc3f4f | exceção S21 |
+| scripts/code-review/review.test.mjs | a48aff48c96c77fbc5d6254b09b39a9aa59fac510d94d86af00de1dc8134e108 | ec6743f27c364985a55f371445e911e3eddacdbeca61a40ea7c3af8ac42014bc | exceção S21 |
+
+A exceçãoLOCAL#25 foi aprovada emhttps://github.com/oldboydev/skill-me/issues/25#issuecomment-6525782289; só3arquivos divergem desta base, cli/schema iguais, pilotos nãoalterados nemconferidosagora. Teto35inalterado. Identidade indisponível falha fechada, inclusivevolumessem`ino>0n`; semCAS/isolamentoarbitrário, parcomum/localnãoétransação; esperasaté3780msnova/2520cachecomlock+E/Ssemtetonovo. Sourceautor≈89k<150k/runtime separado, semhandoffmidRED.
+
+Provas liberadas: ABC alvos INTEIROS integrações+governança+core emumaexecuçãoporambiente, concorrência8/8/7, A/B/DcomTMPprivadocurtodesdeinício; issofazGREENdocore105casosecoberturaafetadaABCsemduplicarrodadanarrow. Dnpmtestcompleto eS20AFTERmesmogerador100x2/ordem/ambiente. Nenhumteste/prazo/asserçãoreduzido. DepoisVerifier28fresco50checks/9AC, formal15, CIPR+manualdoHEADfinal5regulares/schema2A1/B/A2/4500verdesantesmerge.
