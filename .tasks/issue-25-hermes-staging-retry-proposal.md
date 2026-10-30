@@ -1,3 +1,5 @@
+> **Atualização: S19 APROVADA pelo proprietário.** Resposta na conversa: “Autorizar correção pontual e seguir até merge”. Registro https://github.com/oldboydev/skill-me/issues/25#issuecomment-6520123791. O texto abaixo preserva a proposta anterior à aprovação; o estado pendente nele é histórico. Ainda nenhum código S19 foi escrito.
+
 # S19 — proposta de correção pontual da promoção Hermes no Windows
 
 **Estado: proposta completa do Root, aguardando decisão do proprietário. Nenhum código desta correção foi escrito.** Issue #25/PR #28. Não é PASS, ready ou CI verde. Os pedidos de corrigir a CI, manter testes/prazos e seguir até merge, e as rodadas necessárias, permanecem autorizados. A decisão nova abaixo não é uma rodada adicional.
@@ -76,3 +78,18 @@ Alternativas rejeitadas: repetir gate inalterado até passar, tolerar5, ignorarE
 ## Histórico e incidentes
 
 S16/S17 continuam vermelhas; S18 é diagnóstico, não gate. Sem Source nova desta correção, Verifier27, formal15, push, nova CI ou merge. Todos FAILs/omissões/interrupções/limites preservados. GlobalTemp/x PREEXISTENTE sobrescrito naS14, conteúdo anterior sem cópia conhecida e impacto desconhecido: nunca ler/tocar/restaurar. Retomada ampla foi recusada automaticamente antes do início; guardas NativeEdit/literais não são sandboxFSdoSO/TEMPprivado não remapeia/tmpGitBash. MetadadosWSL não demonstram conteúdo/Windows/PS/rede/TEMP/proveniência/causa/impactoglobalzero. Nenhum agente real como fixture/help/version, package privado.
+
+
+## Contrato técnico S19 fechado antes do BUILD — Root, após aprovação
+
+A aprovação cobre a política Windows7tentativas/630ms e as guardas da proposta. Decisões reversíveis do Root: helper renameRetrying compartilhado pelos dois consumidores reais, com efeito de espera parametrizável interno (default sleep existente) para provar a sequência pedida sem relógio. Se necessário, um named export desse contrato no módulo privado run.mjs permite a prova de camada; NÃO alterar assinatura/opções de runIntegrationCommand nem CLI, package ou dependências. Os consumidores de produção usam a espera real padrão. A prova espera literalmente [10,20,40,80,160,320], soma630, ordem guarda→rename→espera, máximo7, sem importar a mesma lista para calcular o esperado. Não criar parâmetro público de teste nem mock global de timers.
+
+Diretório: referências BigInt de root/plugins/staging capturadas no ponto próprio antes de usar a nova janela, staging logo apósmkdir; checar tipo/não-link/identidade/completude/exatos3bytes/destinoausente em cada promoção, inclusive apósespera. Reusar as mesmas referências na gravação e limpeza. Identidade não observável: erro existente io_error/5, sem errno inventado, sem promoção ou limpeza por suposição; NÃO fallback de1tentativa sem identidade. Erro real de lstat mantém seu código. POSIX sem nova espera de retry; validações adicionais podem chamarE/S (não alegar “nenhum await novo”).
+
+Raiz trocada: não forçar liberação do lock por um caminho que passou a alcançar pasta alheia. Manter a prioridade e os conflitos/lockLeft já praticados por withLock/withLockKept; os testes de root/plugins conferem ausência de acesso alheio e o estado do lock no local realmente comprovado. “Lock liberado” aplica-se aos cenários com raiz/pasta de estado estáveis, não autoriza seguir um alias depois da troca.
+
+Ownership: Claude novo implementa SOMENTE src/integrations/install/run.mjs e APENDA provas novas em tests/integrations/install-apply.unit.test.mjs (import adicional do contrato de espera, se necessário), mais relatório/transformações puras próprios. Root faz docs/checklist/controle/revisão, não produto/testes. Testes antigos permanecem byte a byte (LF) após remover apenas import/testes novos; nenhum ajuste de asserção/limite/skip. Se um detalhe exigir correção pontual indispensável, autor relata cenário e Root resolve no escopo, sem rebaixar teste.
+
+Nomes propostos de prova: I4-C34k Hermes: promoção Windows repete só recusas com guardas, preserva alheios e mantém falhas permanentes; I4-C34l rename: orçamento de repetição, ordem das conferências e identidade dos erros. O autor pode separar subtestes nomeados para cada linha da tabela, conservando todos os casos. Os testes de política semfilesystem cobrem códigos/plataformas/limites por valores literais; os casos de fronteira usam io real instrumentado e verificam bytes/hash/registro/lock e operações que atravessariam caminhos trocados. Não inferir630ms de7tentativas.
+
+TDD: autor escreve APENAS testes e transformações puras primeiro; Root revisa e executores controlados permitem RED no produto anterior, com casos discriminantes e positivos preservados. Depois autor altera run.mjs; mesmos novos testes GREEN. Sem control opcional/quota de mutantes, sem executar agente real. Scope de batch: uma S19 inteira≤150ktokens de leitura medida, sem fatiar o resultado no meio. Autor não dispara Verifier; Root despacha Verifier27 fresco após a última fatia/provas globais.
