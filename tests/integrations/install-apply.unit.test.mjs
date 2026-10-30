@@ -3075,10 +3075,12 @@ const s19Manifest = (ctx) => (existsSync(ctx.manifest) ? JSON.parse(readFileSync
 // própria entrada, que é como a troca é percebida; senão (destino, `plugins`,
 // raiz, `.skill-me`) — leitura, listagem, gravação, exclusão e rename, como
 // em I4-C34h. `identity` altera as estatísticas BigInt (`lstat` com
-// `{ bigint: true }`) de um caminho, ou as recusa com um código.
+// `{ bigint: true }`) de um caminho, ou as recusa com um código. A troca é
+// aguardada até o fim; se falhar, o io recusa sem código e guarda o erro
+// original em `probe.mountError` (I4-C34p).
 function s19PromotionIo(ctx, { denials = [], watched = [], swap = null, identity = null }) {
   const io = createNodeIo();
-  const probe = { attempts: 0, swapped: false, through: [], foreign: null, foreignBefore: null };
+  const probe = { attempts: 0, swapped: false, through: [], foreign: null, foreignBefore: null, mountError: null };
   const relToHome = (file) => path.relative(ctx.home, file).split(path.sep).join("/") || ".";
   const crosses = (op, file) =>
     typeof file === "string" &&
@@ -3094,7 +3096,16 @@ function s19PromotionIo(ctx, { denials = [], watched = [], swap = null, identity
         probe.attempts += 1;
         if (probe.attempts <= denials.length) {
           if (probe.attempts === 1 && swap) {
-            probe.foreign = swap() ?? null;
+            let foreign;
+            try {
+              foreign = await swap();
+            } catch (error) {
+              // Falha da montagem é da fixture, não a recusa simulada da linha:
+              // sem `code`, o retry do produto não a repete nem promove depois.
+              probe.mountError = error;
+              throw new Error("fixture: a montagem da troca falhou", { cause: error });
+            }
+            probe.foreign = foreign ?? null;
             probe.foreignBefore = probe.foreign === null ? null : entrySnapshot(probe.foreign);
             probe.swapped = true;
           }
@@ -3127,13 +3138,13 @@ test("I4-C34k Hermes: promoção Windows repete só recusas com guardas, preserv
   const stagingChanged = () => ({ conflicts: [s19Changed(S19_STAGING_REL)] });
   const strict = (entry) => [{ entry, strict: true }];
   const content = (entry) => [{ entry, strict: false }];
-  const moveStaging = (ctx) => renameSync(ctx.staging, ctx.moved);
+  const moveStaging = (ctx) => s19MoveFixtureDirectory(ctx.staging, ctx.moved);
   const ownMoved = (ctx) => packageEntry(ctx.moved);
   // Junção/link no lugar do staging para uma pasta com cópias exatas dos artefatos.
-  const stagingLinkedTo = (outside) => (ctx) => {
+  const stagingLinkedTo = (outside) => async (ctx) => {
     const dest = outside ? path.join(ctx.dir, "pasta externa") : path.join(ctx.home, "outra pasta");
     copyPackageArtifacts(dest);
-    moveStaging(ctx);
+    await moveStaging(ctx);
     symlinkSync(dest, ctx.staging, DIR_LINK);
     return dest;
   };
@@ -3174,8 +3185,8 @@ test("I4-C34k Hermes: promoção Windows repete só recusas com guardas, preserv
       platform: "win32",
       denials: ["EPERM"],
       watched: (ctx) => strict(ctx.staging),
-      swap: (ctx) => {
-        moveStaging(ctx);
+      swap: async (ctx) => {
+        await moveStaging(ctx);
         writeFileSync(ctx.staging, USER_FILE);
         return ctx.staging;
       },
@@ -3205,8 +3216,8 @@ test("I4-C34k Hermes: promoção Windows repete só recusas com guardas, preserv
       platform: "win32",
       denials: ["EPERM"],
       watched: (ctx) => strict(ctx.staging),
-      swap: (ctx) => {
-        moveStaging(ctx);
+      swap: async (ctx) => {
+        await moveStaging(ctx);
         copyPackageArtifacts(ctx.staging);
         return ctx.staging;
       },
@@ -3220,10 +3231,10 @@ test("I4-C34k Hermes: promoção Windows repete só recusas com guardas, preserv
             platform: "win32",
             denials: ["EPERM"],
             watched: (ctx) => strict(ctx.staging),
-            swap: (ctx) => {
+            swap: async (ctx) => {
               const external = path.join(ctx.dir, "arquivo externo");
               writeFileSync(external, USER_FILE);
-              moveStaging(ctx);
+              await moveStaging(ctx);
               symlinkSync(external, ctx.staging, "file");
               return external;
             },
@@ -3417,6 +3428,7 @@ test("I4-C34k Hermes: promoção Windows repete só recusas com guardas, preserv
       identity: row.identity ? row.identity(ctx) : null,
     });
     const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: ctx.home, apply: true, platform: row.platform ?? native, io });
+    if (probe.mountError !== null) throw new Error(`fixture: montagem da troca falhou em "${row.label}"`, { cause: probe.mountError });
     observed.push({
       label: row.label,
       attempts: probe.attempts,
@@ -3645,7 +3657,7 @@ test("I4-C34n fixture: aguarda troca ancestral e preserva falha da montagem", as
 // montagem); o observador, ligado no ato, registra e é aguardado depois da
 // instalação — também com o io antigo, que não espera a troca. Toda operação do
 // instalador enquanto a montagem está pendente é registrada.
-async function s19InstallWithObservedMount(home, makeSwapIo, { from, to, linkTarget, fakeRename }) {
+async function s19InstallWithObservedMount(home, makeSwapIo, { from, to, linkTarget, fakeRename, platform }) {
   const waits = [];
   const state = { attempts: 0, pending: false, error: null, installerOps: [], realpathDuring: false };
   let settled = null;
@@ -3691,7 +3703,7 @@ async function s19InstallWithObservedMount(home, makeSwapIo, { from, to, linkTar
       return swapIo[op](...args);
     };
   }
-  const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io });
+  const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, platform, io });
   await settled;
   return { waits, state, probe, result };
 }
