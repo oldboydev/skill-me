@@ -132,6 +132,14 @@ Não definem uma arquitetura, um framework ou um produto antes de existir essa n
   dois pilotos fica explícita no [registro da issue](https://github.com/oldboydev/skill-me/issues/7#issuecomment-6297902519);
   os pilotos não serão alterados por esta entrega. As demais atualizações do core
   continuam sujeitas à regra de igualdade e conferência de hashes acima.
+- Exceção da issue #25, S21: o proprietário autorizou somente neste repositório a
+  [correção pontual da promoção do estado do core no Windows](https://github.com/oldboydev/skill-me/issues/25#issuecomment-6525782289).
+  `review.mjs`, `review.test.mjs` e `README.md` podem divergir dos pilotos para tratar
+  somente EPERM com até sete tentativas/630 ms de esperas por gravação e guardas de
+  identidade/bytes; os 16 testes e prazos existentes ficam intactos. Registrar hashes
+  dos cinco arquivos antes/depois; `cli.mjs`, `schema.json`, pilotos e teto 35 não mudam.
+  Escopo e provas em `.tasks/issue-25-core-save-retry-proposal.md`; outras alterações
+  continuam sujeitas à regra de core vendorizado acima.
 
 ## tlc-implement
 

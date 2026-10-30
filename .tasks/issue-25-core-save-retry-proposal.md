@@ -1,4 +1,6 @@
-# S21 — proposta pontual para o estado do core (PENDENTE de aprovação)
+# S21 — correção pontual para o estado do core (APROVADA)
+
+Atualização antes do código: proprietário respondeu “Autorizar correção local e seguir”, registrado em https://github.com/oldboydev/skill-me/issues/25#issuecomment-6525782289. Aprovadas todas as decisões concretas desta proposta, inclusive exceção vendorizada local da #25, EPERM somente/7tentativas/630ms por gravação, guardas/últimoerro, 16testes/prazos/pilotos intactos e sequência até CIverde/merge. O estado PENDENTE descrito no diagnóstico anterior fica preservado como história; a decisão agora está resolvida. Ainda nenhum código S21 neste registro.
 
 ## Problema e evidências
 
