@@ -3554,51 +3554,13 @@ test("I4-C34n fixture: aguarda troca ancestral e preserva falha da montagem", as
   const run = async (label, fakeRename) => {
     const ctx = s19Target(label);
     const moved = path.join(ctx.dir, "plugins própria movida");
-    const waits = [];
-    const state = { attempts: 0, pending: false, error: null, installerOps: [], realpathDuring: false };
-    let settled = null;
-    const { io: swapIo, probe } = ancestorSwapIo(ctx.home, ["artefato gravado no staging", 3], () => {
-      state.pending = true;
-      // A tarefa original vai para `ancestorSwapIo` (rejeita com o próprio erro
-      // da montagem); o observador, ligado no ato, só registra e é aguardado.
-      const mounting = (async () => {
-        await s19MoveFixtureDirectory(ctx.plugins, moved, {
-          platform: "win32",
-          rename: (from, to) => {
-            state.attempts += 1;
-            fakeRename(state.attempts, from, to);
-          },
-          wait: (ms) => {
-            waits.push(ms);
-            return new Promise((resolve) => setImmediate(resolve));
-          },
-        });
-        symlinkSync(moved, ctx.plugins, DIR_LINK);
-      })();
-      settled = mounting.then(
-        () => {
-          state.pending = false;
-        },
-        (error) => {
-          state.pending = false;
-          state.error = error;
-        },
-      );
-      return mounting;
+    const observed = await s19InstallWithObservedMount(ctx.home, (swap) => ancestorSwapIo(ctx.home, ["artefato gravado no staging", 3], swap), {
+      from: ctx.plugins,
+      to: moved,
+      linkTarget: moved,
+      fakeRename,
     });
-    const io = { ...swapIo };
-    for (const op of FS_OPS) {
-      io[op] = async (...args) => {
-        if (state.pending) {
-          state.installerOps.push(op);
-          if (op === "realpath") state.realpathDuring = true;
-        }
-        return swapIo[op](...args);
-      };
-    }
-    const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: ctx.home, apply: true, io });
-    await settled;
-    return { ctx, moved, waits, state, probe, result };
+    return { ctx, moved, ...observed };
   };
 
   await t.test("recusa transitória: 2 EPERM e depois a troca; a instalação só segue depois dela", async () => {
@@ -3668,6 +3630,159 @@ test("I4-C34n fixture: aguarda troca ancestral e preserva falha da montagem", as
         errors: [{ code: "EIO" }],
         steps: [{ step: "artifacts", state: "failed" }],
         staging: packageDir(OWN_ARTIFACTS),
+        pluginDir: "ausente",
+        manifest: "ausente",
+        lock: "ausente",
+      },
+    );
+  });
+});
+
+// Instalação Hermes com a montagem de uma troca de fixture observada — comum ao
+// I4-C34n (`plugins`) e ao I4-C34o (staging). `makeSwapIo(swap)` é o io de troca
+// existente; `swap` move `from` para `to` com s19MoveFixtureDirectory (política
+// Windows, `rename` e `wait` injetados) e põe junção/link para `linkTarget` no
+// lugar. A tarefa original vai para o io de troca (rejeita com o próprio erro da
+// montagem); o observador, ligado no ato, registra e é aguardado depois da
+// instalação — também com o io antigo, que não espera a troca. Toda operação do
+// instalador enquanto a montagem está pendente é registrada.
+async function s19InstallWithObservedMount(home, makeSwapIo, { from, to, linkTarget, fakeRename }) {
+  const waits = [];
+  const state = { attempts: 0, pending: false, error: null, installerOps: [], realpathDuring: false };
+  let settled = null;
+  const { io: swapIo, probe } = makeSwapIo(() => {
+    state.pending = true;
+    const mounting = (async () => {
+      await s19MoveFixtureDirectory(from, to, {
+        platform: "win32",
+        rename: (source, target) => {
+          state.attempts += 1;
+          fakeRename(state.attempts, source, target);
+        },
+        wait: (ms) => {
+          waits.push(ms);
+          return new Promise((resolve) => setImmediate(resolve));
+        },
+      });
+      symlinkSync(linkTarget, from, DIR_LINK);
+    })();
+    settled = mounting.then(
+      () => {
+        state.pending = false;
+      },
+      (error) => {
+        state.pending = false;
+        state.error = error;
+      },
+    );
+    return mounting;
+  });
+  const io = { ...swapIo };
+  for (const op of FS_OPS) {
+    io[op] = async (...args) => {
+      if (state.pending) {
+        state.installerOps.push(op);
+        if (op === "realpath") state.realpathDuring = true;
+      }
+      return swapIo[op](...args);
+    };
+  }
+  const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io });
+  await settled;
+  return { waits, state, probe, result };
+}
+
+// Segundo consumidor real da montagem: o staging próprio trocado pelo
+// stagingSwapIo existente logo depois do 1º artefato gravado, no lugar dele uma
+// junção/link para uma pasta vazia do alvo. A instalação só segue depois da
+// montagem; uma falha dela é a falha da gravação instrumentada.
+test("I4-C34o fixture: aguarda troca do staging e preserva falha da montagem", async (t) => {
+  const run = async (label, fakeRename) => {
+    const ctx = s19Target(label);
+    const dest = path.join(ctx.home, "outra pasta");
+    mkdirSync(dest);
+    const observed = await s19InstallWithObservedMount(ctx.home, (swap) => stagingSwapIo(ctx.home, { on: ["artefato gravado no staging", 1] }, swap), {
+      from: ctx.staging,
+      to: ctx.moved,
+      linkTarget: dest,
+      fakeRename,
+    });
+    return { ctx, ...observed };
+  };
+
+  await t.test("recusa transitória: 2 EPERM e depois a troca; a instalação só segue depois dela", async () => {
+    const { ctx, waits, state, probe, result } = await run("o transitório", (attempt, from, to) => {
+      if (attempt <= 2) throw simulated("EPERM");
+      renameSync(from, to);
+    });
+    assert.deepEqual(
+      {
+        attempts: state.attempts,
+        waits,
+        fixtureError: state.error,
+        realpathDuringFixture: state.realpathDuring,
+        installerOpsDuringFixture: state.installerOps,
+        exitCode: result.exitCode,
+        conflicts: result.conflicts,
+        steps: result.steps,
+        through: probe.through,
+        promotions: probe.promotions,
+        ownMoved: packageEntry(ctx.moved),
+        manifest: s19Manifest(ctx),
+        lock: describeEntry(ctx.lock),
+      },
+      {
+        attempts: 3,
+        waits: [10, 20],
+        fixtureError: null,
+        realpathDuringFixture: false,
+        installerOpsDuringFixture: [],
+        exitCode: 4,
+        conflicts: [s19Changed(S19_STAGING_REL)],
+        steps: [],
+        through: [],
+        promotions: 0,
+        ownMoved: packageDir(["__init__.py"]),
+        manifest: "ausente",
+        lock: "ausente",
+      },
+    );
+  });
+
+  await t.test("EIO permanente na montagem: uma tentativa, mesmo erro, instalação incompleta sem promover", async () => {
+    const eio = simulated("EIO");
+    const { ctx, waits, state, probe, result } = await run("o eio", () => {
+      throw eio;
+    });
+    assert.deepEqual(
+      {
+        attempts: state.attempts,
+        waits,
+        sameError: state.error === eio,
+        realpathDuringFixture: state.realpathDuring,
+        installerOpsDuringFixture: state.installerOps,
+        exitCode: result.exitCode,
+        status: result.status,
+        errors: result.errors,
+        steps: result.steps,
+        promotions: probe.promotions,
+        staging: packageEntry(ctx.staging),
+        pluginDir: packageEntry(ctx.pluginDir),
+        manifest: s19Manifest(ctx),
+        lock: describeEntry(ctx.lock),
+      },
+      {
+        attempts: 1,
+        waits: [],
+        sameError: true,
+        realpathDuringFixture: false,
+        installerOpsDuringFixture: [],
+        exitCode: 5,
+        status: "incomplete",
+        errors: [{ code: "EIO" }],
+        steps: [{ step: "artifacts", state: "failed" }],
+        promotions: 0,
+        staging: packageDir(["__init__.py"]),
         pluginDir: "ausente",
         manifest: "ausente",
         lock: "ausente",
