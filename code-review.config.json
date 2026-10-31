@@ -16,25 +16,20 @@
     }
   },
   "roundOverrides": {
-    "4": {
-      "profile": "light",
-      "maxRounds": 10,
-      "approval": "Proprietário autorizou em 17/10/2026: use quantas rodadas precisar. Registro e autorização de merge em .tasks/issue-4-integracoes.md; exclusivo da issue #4, preservando o histórico e o máximo de 10 suportado pelo motor."
-    },
     "3": {
       "profile": "light",
       "maxRounds": 9,
       "approval": "Proprietário autorizou em 13/10/2026: pode fazer as revisoes necessarias. Registro em .checks/issue-3-agent-diagnostics.linux.md; exclusivo da issue #3, preservando histórico."
     },
+    "4": {
+      "profile": "light",
+      "maxRounds": 10,
+      "approval": "Proprietário autorizou em 17/10/2026: use quantas rodadas precisar. Registro e autorização de merge em .tasks/issue-4-integracoes.md; exclusivo da issue #4, preservando o histórico e o máximo de 10 suportado pelo motor."
+    },
     "5": {
       "profile": "light",
       "maxRounds": 10,
       "approval": "Proprietário autorizou em 18/10/2026: autorizo quantos precisaram para resolver. Registro literal em .checks/issue-5-privacidade.approval.md e .tasks/issue-5-privacidade.md; exclusivo da issue #5, preservando histórico e usando o máximo de 10 suportado pelo motor. Merge permanece humano."
-    },
-    "8": {
-      "profile": "light",
-      "maxRounds": 3,
-      "approval": "Proprietário autorizou em 19/10/2026 a terceira tentativa formal da issue #8 após falha técnica de capacidade do modelo na segunda; registro em https://github.com/oldboydev/skill-me/issues/8#issuecomment-6265279482. Exclusivo da issue #8, preservando as duas tentativas anteriores. Merge permanece humano."
     },
     "6": {
       "profile": "light",
@@ -46,10 +41,20 @@
       "maxRounds": 35,
       "approval": "Proprietário autorizou até 35 tentativas formais exclusivas da issue #7 após consumir as 30 anteriores, preservando todo o histórico e mantendo os pilotos intocados; registro em https://github.com/oldboydev/skill-me/issues/7#issuecomment-6342492981. Revisões adicionais somente conforme necessárias; push, PR e merge somente após verificação atualizada e status ready."
     },
+    "8": {
+      "profile": "light",
+      "maxRounds": 3,
+      "approval": "Proprietário autorizou em 19/10/2026 a terceira tentativa formal da issue #8 após falha técnica de capacidade do modelo na segunda; registro em https://github.com/oldboydev/skill-me/issues/8#issuecomment-6265279482. Exclusivo da issue #8, preservando as duas tentativas anteriores. Merge permanece humano."
+    },
     "23": {
       "profile": "light",
       "maxRounds": 4,
       "approval": "Proprietário autorizou em 24/10/2026 até 4 tentativas formais no total, exclusivas da issue #23, preservando o histórico e mantendo os pilotos intocados; registro em https://github.com/oldboydev/skill-me/issues/23#issuecomment-6391764562. Novo HEAD exige revisão ready antes de atualizar o PR #24."
+    },
+    "25": {
+      "profile": "light",
+      "maxRounds": 16,
+      "approval": "Proprietário autorizou quantas rodadas necessárias6442514838 e plano completo trêsplataformas/testes/prazos preservados atéCIverde/merge6502294779. Registro específico independente28/formal15:https://github.com/oldboydev/skill-me/issues/25#issuecomment-6528143595; preservados27verificações/14revisões/histórico. ExceçãoLOCALcoreS21aprovadahttps://github.com/oldboydev/skill-me/issues/25#issuecomment-6525782289: sóREADME/review/review.testdivergem, cli/schema/pilotos/teto35intactos, hashesconferidos. Max15inalterado/global2/demaisissuesintactos. S19aprovada6520123791; autor37b8048ABC/D/AFTERverde, próximaWholefeature50/9, primeiroPASS/readyválido/contextofresh/pushCI5PR+5manual/schema2A1/B/A2/4500mesmoHEADantesmergejáautorizado. Semperdas/retryentrega/prazosnovos. GlobalTemp/xPREEXISTENTEsobrescritoS14/SEMknowncopy/impactodesconhecidopreservado. SeguimentoS22somentefixture: autor098544dABC45/44/0/1cada/7controlesnovos/REDprévio; independente29/formal15registradoshttps://github.com/oldboydev/skill-me/issues/25#issuecomment-6529962311,28independentes/14formaispreservados, max15inalterado. S23 aprovada pelo proprietário em 31/10/2026: “Autorizar macOS 15 (recomendado)”. Registro https://github.com/oldboydev/skill-me/issues/25#issuecomment-6538188577. Exceção AC8/C48: somente imagem macOS e dois literais; testes, prazos e demais ambientes iguais. Próxima revisão formal 16 e Verifier 30 usam a autorização de quantas rodadas necessárias; preservar as 15 revisões e 29 verificações anteriores, global 2 e demais issues. Merge só com PASS, ready, CI5PR+5manual e medição4500 no mesmo HEAD."
     }
   }
 }

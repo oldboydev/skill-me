@@ -406,7 +406,9 @@ test("I4-C34g Hermes: fonte posta durante a remoção conserva o bytecode dela",
     const home = path.join(dir, "hermes home");
     mkdirSync(home);
     const io = createNodeIo();
-    assert.equal((await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io })).exitCode, 0, label);
+    const traced = rejectionTrace(io, home);
+    const installed = await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, io: traced.io });
+    assert.equal(installed.exitCode, 0, installed.exitCode === 0 ? label : installEvidence(label, installed, traced.rejected));
     const own = path.join(home, "plugins", "skill-me-observer");
     const cacheDir = path.join(own, "__pycache__");
     mkdirSync(cacheDir);
@@ -1421,7 +1423,7 @@ function ancestorSwapIo(home, on, swap) {
       const event = eventOf(op, args[0]);
       if (event !== null) counts[event] = (counts[event] ?? 0) + 1;
       if (on && !probe.swapped && event === on[0] && counts[event] === on[1]) {
-        swap();
+        await swap();
         probe.swapped = true;
         probe.trigger = path.basename(args[0]);
       }
@@ -1499,8 +1501,8 @@ test("I4-C34h Hermes: ancestral plugins trocado durante a remoção ou a instala
       symlinkSync(movedPath, plugins, DIR_LINK);
     }
     const destBefore = dest && !dest.own ? snapshotTree(destPath) : null;
-    const { io, probe } = ancestorSwapIo(home, row.on, () => {
-      renameSync(plugins, movedPath);
+    const { io, probe } = ancestorSwapIo(home, row.on, async () => {
+      await s19MoveFixtureDirectory(plugins, movedPath);
       symlinkSync(destPath, plugins, DIR_LINK);
     });
     const result = await runIntegrationCommand({ command: row.op, agent: "hermes", target: home, apply: true, io });
@@ -1682,6 +1684,86 @@ function packageEntry(file) {
 const packageDir = (names) => `diretório real [${names.map((name) => `${name}: artefato do pacote`).join("; ")}]`;
 const FS_OPS = ["readdir", "readBytes", "readText", "unlink", "rmdir", "mkdir", "writeExclusive", "rename", "lstat", "stat", "realpath"];
 
+// Evidência da instalação inicial do I4-C34g, que saiu 5 sem dizer onde no D da
+// S16 (.tasks/issue-25-hermes-install-diagnostic-plan.md, O2). Cada operação de
+// FS_OPS é repassada uma vez ao io, com o mesmo `this`, argumentos, valor e o
+// mesmo objeto de erro. Toda rejeição fica em memória e em ordem, ENOENT
+// normal inclusive: filtrar escolheria a causa. De cada uma ficam a operação,
+// os caminhos relativos ao home Hermes e o código — nunca bytes, opções,
+// mensagem ou stack. A coleta é melhor esforço: falhando, o erro original
+// segue intacto.
+function rejectionTrace(io, home) {
+  const rejected = [];
+  const traced = { ...io };
+  for (const op of FS_OPS) {
+    traced[op] = async (...args) => {
+      try {
+        return await io[op](...args);
+      } catch (error) {
+        try {
+          let paths;
+          try {
+            paths = args.slice(0, op === "rename" ? 2 : 1).map((file) => homeRelative(home, file));
+          } catch {
+            paths = "<caminhos não observáveis>";
+          }
+          rejected.push({ op, paths, code: rejectionCode(error) });
+        } catch {
+          // Registro indisponível (ex.: lista congelada por quem a recebeu): a
+          // rejeição segue sem ele — um TypeError aqui tomaria o lugar do erro.
+        }
+        throw error;
+      }
+    };
+  }
+  return { io: traced, rejected };
+}
+
+// Raiz `.`; fora do home um marcador, sem caminho absoluto nem `..` que exponha ancestrais.
+function homeRelative(home, file) {
+  if (typeof file !== "string") return "<não é caminho>";
+  const relative = path.relative(home, file);
+  if (relative === "") return ".";
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return "<fora do home>";
+  return relative.split(path.sep).join("/");
+}
+
+// Só o código textual: objeto (até cíclico) nunca é registrado, e um `code`
+// ilegível vira marcador em vez de trocar o erro que está sendo relançado.
+function rejectionCode(error) {
+  try {
+    const code = error?.code;
+    if (code === undefined || code === null) return null;
+    return typeof code === "string" ? code : "<código não é texto>";
+  } catch {
+    return "<código não observável>";
+  }
+}
+
+// Mensagem da asserção quando a instalação não sai 0: o rótulo e só status,
+// códigos, passos e conflitos (já relativos) — sem alvo, mudanças, bytes ou
+// mensagens. Ausente fica ausente, nunca [] ou 0. Nunca lança: uma exceção
+// aqui trocaria a falha da asserção; sem como coletar, fica o rótulo marcado.
+function installEvidence(label, result, rejected) {
+  const text = (value) => (value === undefined || typeof value === "string" ? value : "<não é texto>");
+  const pick = (list, keys) => {
+    if (list === undefined) return undefined;
+    if (!Array.isArray(list)) return "<não é lista>";
+    return list.map((item) => Object.fromEntries(keys.flatMap((key) => (typeof item?.[key] === "string" ? [[key, item[key]]] : []))));
+  };
+  try {
+    return `${label} ${JSON.stringify({
+      status: text(result?.status),
+      errors: pick(result?.errors, ["code"]),
+      steps: pick(result?.steps, ["step", "state"]),
+      conflicts: pick(result?.conflicts, ["code", "file", "event"]),
+      rejected,
+    })}`;
+  } catch {
+    return `${label} (evidência indisponível)`;
+  }
+}
+
 // Staging próprio trocado durante a instalação Hermes — achado R7-F1 da
 // verificação independente round 7. Com `plugins` estável, só o staging é
 // movido e no lugar dele fica junção (Windows) / symlink (POSIX) para outra
@@ -1720,7 +1802,7 @@ function stagingSwapIo(home, { on, failRename }, swap) {
       const event = eventOf(op, args[0]);
       if (event !== null) counts[event] = (counts[event] ?? 0) + 1;
       if (on && !probe.swapped && event === on[0] && counts[event] === on[1]) {
-        swap();
+        await swap();
         probe.swapped = true;
         probe.trigger = path.basename(args[0]);
       }
@@ -1785,8 +1867,8 @@ test("I4-C34i Hermes: staging próprio trocado durante a instalação não leva 
     if (destPath) dest.fill(destPath);
     const destBefore = destPath ? snapshotTree(destPath) : null;
     const moved = path.join(dir, "staging próprio movido");
-    const { io, probe } = stagingSwapIo(home, row, () => {
-      renameSync(staging, moved);
+    const { io, probe } = stagingSwapIo(home, row, async () => {
+      await s19MoveFixtureDirectory(staging, moved);
       if (dest.file) writeFileSync(staging, USER_FILE);
       else symlinkSync(destPath, staging, DIR_LINK);
     });
@@ -2754,3 +2836,1252 @@ test(
     assert.deepEqual(observed, expected);
   },
 );
+
+// S19 (.tasks/issue-25-hermes-staging-retry-proposal.md): o módulo inteiro, para
+// que o contrato `renameRetrying` ausente vire asserção nomeada dentro do teste
+// e não erro de ligação do ESM que impediria qualquer teste de rodar.
+import * as installModule from "../../src/integrations/install/run.mjs";
+
+// Contrato do helper compartilhado de rename, afirmado antes de cada uso.
+function s19RenameRetrying() {
+  assert.equal(typeof installModule.renameRetrying, "function", "contrato renameRetrying exportado por run.mjs");
+  return installModule.renameRetrying;
+}
+
+// io falso só com `rename` e espera falsa que registra a duração pedida, na
+// ordem: nenhum relógio nem timer global. `outcomes[n]` é o erro da tentativa
+// n+1 (ausente: sucesso); a guarda lança `guardError` na tentativa `guardFailsAt`.
+function s19RetryHarness({ outcomes, guardFailsAt = 0, retryable = () => true }) {
+  const events = [];
+  const waits = [];
+  const renames = [];
+  const judged = [];
+  const guardError = new Error("guarda recusou");
+  let guards = 0;
+  const io = {
+    async rename(from, to) {
+      renames.push([from, to]);
+      events.push(`rename${renames.length}`);
+      const outcome = outcomes[renames.length - 1];
+      if (outcome) throw outcome;
+    },
+  };
+  const options = {
+    beforeAttempt: async () => {
+      guards += 1;
+      events.push(`guard${guards}`);
+      if (guards === guardFailsAt) throw guardError;
+    },
+    retryable: (error) => {
+      judged.push(error);
+      return retryable(error);
+    },
+    wait: async (ms) => {
+      waits.push(ms);
+      events.push(`wait${ms}`);
+    },
+  };
+  return { io, options, events, waits, renames, judged, guardError };
+}
+
+const s19Settle = (promise) =>
+  promise.then(
+    (value) => ({ value }),
+    (error) => ({ error }),
+  );
+
+test("I4-C34l rename: orçamento de repetição, ordem das conferências e identidade dos erros", async (t) => {
+  await t.test("G1 recusa permanente: 7 tentativas, esperas 10/20/40/80/160/320 (630 ms) e o erro da 7ª", async () => {
+    const renameRetrying = s19RenameRetrying();
+    const errors = Array.from({ length: 7 }, () => simulated("EPERM"));
+    const h = s19RetryHarness({ outcomes: errors });
+    const settled = await s19Settle(renameRetrying(h.io, "de", "para", h.options));
+    assert.equal(settled.error, errors[6], "rejeita com o próprio objeto do erro da 7ª tentativa");
+    assert.deepEqual(h.events, [
+      "guard1", "rename1", "wait10",
+      "guard2", "rename2", "wait20",
+      "guard3", "rename3", "wait40",
+      "guard4", "rename4", "wait80",
+      "guard5", "rename5", "wait160",
+      "guard6", "rename6", "wait320",
+      "guard7", "rename7",
+    ]);
+    assert.deepEqual(h.waits, [10, 20, 40, 80, 160, 320]);
+    assert.equal(h.waits.reduce((sum, ms) => sum + ms, 0), 630);
+    assert.deepEqual(h.renames, Array.from({ length: 7 }, () => ["de", "para"]));
+    assert.equal(h.judged.length, 7, "o predicado julga também o 7º erro");
+    h.judged.forEach((error, i) => assert.equal(error, errors[i], `retryable recebeu o erro da tentativa ${i + 1}`));
+  });
+
+  await t.test("G2 duas recusas e sucesso: esperas 10 e 20, nenhuma depois do sucesso", async () => {
+    const renameRetrying = s19RenameRetrying();
+    const h = s19RetryHarness({ outcomes: [simulated("EPERM"), simulated("EBUSY")] });
+    const settled = await s19Settle(renameRetrying(h.io, "de", "para", h.options));
+    assert.deepEqual(settled, { value: undefined });
+    assert.deepEqual(h.events, ["guard1", "rename1", "wait10", "guard2", "rename2", "wait20", "guard3", "rename3"]);
+    assert.deepEqual(h.waits, [10, 20]);
+  });
+
+  await t.test("G3 erro não repetível: uma tentativa, nenhuma espera e o mesmo objeto de erro", async () => {
+    const renameRetrying = s19RenameRetrying();
+    const eio = simulated("EIO");
+    const h = s19RetryHarness({ outcomes: [eio], retryable: () => false });
+    const settled = await s19Settle(renameRetrying(h.io, "de", "para", h.options));
+    assert.equal(settled.error, eio);
+    assert.deepEqual(h.events, ["guard1", "rename1"]);
+    assert.deepEqual(h.waits, []);
+    assert.equal(h.judged.length, 1);
+    assert.equal(h.judged[0], eio);
+  });
+
+  await t.test("G4 guarda recusa depois da espera: sem segundo rename, o erro da guarda", async () => {
+    const renameRetrying = s19RenameRetrying();
+    const h = s19RetryHarness({ outcomes: [simulated("EPERM")], guardFailsAt: 2 });
+    const settled = await s19Settle(renameRetrying(h.io, "de", "para", h.options));
+    assert.equal(settled.error, h.guardError);
+    assert.deepEqual(h.events, ["guard1", "rename1", "wait10", "guard2"]);
+    assert.equal(h.renames.length, 1);
+  });
+
+  await t.test("G5 guarda recusa antes da primeira tentativa: nenhum rename nem espera", async () => {
+    const renameRetrying = s19RenameRetrying();
+    const h = s19RetryHarness({ outcomes: [], guardFailsAt: 1 });
+    const settled = await s19Settle(renameRetrying(h.io, "de", "para", h.options));
+    assert.equal(settled.error, h.guardError);
+    assert.deepEqual(h.events, ["guard1"]);
+    assert.deepEqual([h.renames.length, h.waits.length, h.judged.length], [0, 0, 0]);
+  });
+
+  await t.test("G6 sucesso na primeira: uma guarda, um rename, nenhuma espera", async () => {
+    const renameRetrying = s19RenameRetrying();
+    const h = s19RetryHarness({ outcomes: [] });
+    const settled = await s19Settle(renameRetrying(h.io, "de", "para", h.options));
+    assert.deepEqual(settled, { value: undefined });
+    assert.deepEqual(h.events, ["guard1", "rename1"]);
+    assert.deepEqual([h.waits.length, h.judged.length], [0, 0]);
+  });
+
+  // Linha de base do consumidor de arquivos (contrato preservado): antes de
+  // cada tentativa a pasta do temporário (raiz), o temporário próprio, a raiz e
+  // a configuração relida com o acesso, nessa ordem; esgotadas as 7, sai só o
+  // temporário próprio. Igual antes e depois da S19.
+  await t.test("G7 consumidor de arquivos: mesma ordem de conferências antes de cada uma das 7 tentativas", async () => {
+    const dir = target("s19 g7 arquivo");
+    const settings = path.join(dir, "settings.json");
+    const tmp = `${settings}.skill-me-tmp`;
+    const io = createNodeIo();
+    const events = [];
+    let created = false;
+    let attempts = 0;
+    const named = (op, file) => {
+      if (op === "realpath" && file === dir) return "raiz";
+      if (op === "readBytes" && file === tmp) return "temporário";
+      if (op === "readText" && file === settings) return "configuração";
+      if (op === "accessOf" && file === settings) return "acesso";
+      return null;
+    };
+    const instrumented = { ...io };
+    for (const op of ["realpath", "readBytes", "readText", "accessOf", "writeExclusive", "rename", "unlink"]) {
+      instrumented[op] = async (...args) => {
+        const [file] = args;
+        if (op === "rename" && file === tmp) {
+          attempts += 1;
+          events.push("rename");
+          throw simulated("EPERM");
+        }
+        if (op === "unlink" && file === tmp) events.push("temporário apagado");
+        const name = created ? named(op, file) : null;
+        if (name !== null) events.push(name);
+        const out = await io[op](...args);
+        if (op === "writeExclusive" && file === tmp) {
+          created = true;
+          events.push("temporário criado");
+        }
+        return out;
+      };
+    }
+    const result = await runIntegrationCommand({ command: "install", agent: "claude", target: dir, apply: true, io: instrumented });
+    const attempt = ["raiz", "temporário", "raiz", "configuração", "acesso", "rename"];
+    assert.deepEqual(
+      {
+        attempts,
+        exitCode: result.exitCode,
+        status: result.status,
+        errors: result.errors,
+        steps: result.steps.map((s) => `${s.step}:${s.state}`),
+        events,
+        tempLeft: existsSync(tmp),
+        settingsOriginal: readFileSync(settings, "utf8") === ORIGINAL,
+      },
+      {
+        attempts: 7,
+        exitCode: 5,
+        status: "incomplete",
+        errors: [{ code: "EPERM" }],
+        steps: ["config:failed"],
+        events: ["temporário criado", ...Array.from({ length: 7 }, () => attempt).flat(), "raiz", "temporário", "temporário apagado"],
+        tempLeft: false,
+        settingsOriginal: true,
+      },
+    );
+  });
+});
+
+// Alvo Hermes de uma linha da S19; `moved`: para onde a linha move o staging próprio.
+function s19Target(index, { plugins = true } = {}) {
+  const dir = makeScratch(`s19 k ${index}`);
+  scratches.push(dir);
+  const home = path.join(dir, "hermes home");
+  mkdirSync(home);
+  if (plugins) mkdirSync(path.join(home, "plugins"));
+  return {
+    dir,
+    home,
+    plugins: path.join(home, "plugins"),
+    staging: path.join(home, "plugins", STAGING_NAME),
+    pluginDir: path.join(home, "plugins", "skill-me-observer"),
+    stateDir: path.join(home, ".skill-me"),
+    lock: path.join(home, ".skill-me", "hermes.lock"),
+    manifest: path.join(home, ".skill-me", "hermes-install.json"),
+    moved: path.join(dir, "staging próprio movido"),
+  };
+}
+
+const s19Changed = (file) => ({ code: "config_changed_during_apply", file });
+const S19_STAGING_REL = `plugins/${STAGING_NAME}`;
+const S19_LOCK_KEPT = s19Changed(".skill-me/hermes.lock");
+
+// Registro de uma instalação completa, calculado dos arquivos do pacote sem
+// confiar no instalador.
+function s19PackageManifest(pluginsDir) {
+  return {
+    schemaVersion: 1,
+    tool: "skill-me",
+    agent: "hermes",
+    artifacts: OWN_ARTIFACTS.map((name) => ({ path: `plugins/skill-me-observer/${name}`, sha256: sha256File(path.join(PLUGIN_SOURCE, name)) })),
+    created: { pluginsDir },
+  };
+}
+
+const s19Manifest = (ctx) => (existsSync(ctx.manifest) ? JSON.parse(readFileSync(ctx.manifest, "utf8")) : "ausente");
+
+// io real da promoção Hermes (S19). As primeiras tentativas de
+// `rename(staging → pasta do plugin)` falham com os códigos de `denials`; a
+// troca da linha acontece dentro da 1ª tentativa recusada, antes do erro —
+// depois da recusa e antes da espera e da próxima conferência, sem relógio. A
+// troca devolve o caminho alheio, fotografado logo depois dela.
+// Depois da troca, `through` registra o que atravessa uma entrada vigiada:
+// `strict` (staging) — qualquer operação num filho e tudo menos o `lstat` da
+// própria entrada, que é como a troca é percebida; senão (destino, `plugins`,
+// raiz, `.skill-me`) — leitura, listagem, gravação, exclusão e rename, como
+// em I4-C34h. `identity` altera as estatísticas BigInt (`lstat` com
+// `{ bigint: true }`) de um caminho, ou as recusa com um código. A troca é
+// aguardada até o fim; se falhar, o io recusa sem código e guarda o erro
+// original em `probe.mountError` (I4-C34p).
+function s19PromotionIo(ctx, { denials = [], watched = [], swap = null, identity = null }) {
+  const io = createNodeIo();
+  const probe = { attempts: 0, swapped: false, through: [], foreign: null, foreignBefore: null, mountError: null };
+  const relToHome = (file) => path.relative(ctx.home, file).split(path.sep).join("/") || ".";
+  const crosses = (op, file) =>
+    typeof file === "string" &&
+    watched.some(({ entry, strict }) =>
+      strict ? file.startsWith(entry + path.sep) || (file === entry && op !== "lstat") : CONTENT_OPS.includes(op) && (file === entry || file.startsWith(entry + path.sep)),
+    );
+  const wrapped = { ...io };
+  for (const op of FS_OPS) {
+    wrapped[op] = async (...args) => {
+      const files = args.slice(0, op === "rename" ? 2 : 1);
+      if (probe.swapped && files.some((file) => crosses(op, file))) probe.through.push(`${op} ${files.map(relToHome).join(" → ")}`);
+      if (op === "rename" && args[0] === ctx.staging && args[1] === ctx.pluginDir) {
+        probe.attempts += 1;
+        if (probe.attempts <= denials.length) {
+          if (probe.attempts === 1 && swap) {
+            let foreign;
+            try {
+              foreign = await swap();
+            } catch (error) {
+              // Falha da montagem é da fixture, não a recusa simulada da linha:
+              // sem `code`, o retry do produto não a repete nem promove depois.
+              probe.mountError = error;
+              throw new Error("fixture: a montagem da troca falhou", { cause: error });
+            }
+            probe.foreign = foreign ?? null;
+            probe.foreignBefore = probe.foreign === null ? null : entrySnapshot(probe.foreign);
+            probe.swapped = true;
+          }
+          throw simulated(denials[probe.attempts - 1]);
+        }
+      }
+      if (op === "lstat" && identity && args[0] === identity.file && args[1]?.bigint === true) {
+        if (identity.reject) throw simulated(identity.reject);
+        const altered = Object.create(await io.lstat(...args));
+        for (const [key, value] of Object.entries(identity.fields)) Object.defineProperty(altered, key, { value, enumerable: true });
+        return altered;
+      }
+      return io[op](...args);
+    };
+  }
+  return { io: wrapped, probe };
+}
+
+test("I4-C34k Hermes: promoção Windows repete só recusas com guardas, preserva alheios e mantém falhas permanentes", async (t) => {
+  const native = process.platform;
+  const nativePosix = native !== "win32";
+  if (nativePosix) t.diagnostic('linhas "win32": política Windows escolhida pelo parâmetro platform; o sistema de arquivos é o POSIX nativo — não é execução Windows');
+  const OWN_COMPLETE = packageDir(OWN_ARTIFACTS);
+  const done = [
+    { step: "artifacts", state: "done" },
+    { step: "manifest", state: "done" },
+  ];
+  const applied = (pluginsDir) => ({ exitCode: 0, status: "applied", applied: true, steps: done, atPluginDir: OWN_COMPLETE, manifest: s19PackageManifest(pluginsDir) });
+  const failed = (code) => ({ exitCode: 5, status: "incomplete", errors: [{ code }], steps: [{ step: "artifacts", state: "failed" }] });
+  const stagingChanged = () => ({ conflicts: [s19Changed(S19_STAGING_REL)] });
+  const strict = (entry) => [{ entry, strict: true }];
+  const content = (entry) => [{ entry, strict: false }];
+  const moveStaging = (ctx) => s19MoveFixtureDirectory(ctx.staging, ctx.moved);
+  const ownMoved = (ctx) => packageEntry(ctx.moved);
+  // Junção/link no lugar do staging para uma pasta com cópias exatas dos artefatos.
+  const stagingLinkedTo = (outside) => async (ctx) => {
+    const dest = outside ? path.join(ctx.dir, "pasta externa") : path.join(ctx.home, "outra pasta");
+    copyPackageArtifacts(dest);
+    await moveStaging(ctx);
+    symlinkSync(dest, ctx.staging, DIR_LINK);
+    return dest;
+  };
+  const insideStaging = (name) => (ctx) => path.join(ctx.staging, name);
+  const pluginsMoved = (ctx, outside) => (outside ? path.join(ctx.dir, "plugins própria movida") : path.join(ctx.home, "plugins própria movida"));
+  const rootMoved = (ctx) => path.join(ctx.dir, "raiz movida");
+  const stateMoved = (ctx) => path.join(ctx.dir, "estado movido");
+  const ownRoot = (ctx) => {
+    const moved = rootMoved(ctx);
+    return {
+      staging: packageEntry(path.join(moved, "plugins", STAGING_NAME)),
+      pluginDir: packageEntry(path.join(moved, "plugins", "skill-me-observer")),
+      lock: describeEntry(path.join(moved, ".skill-me", "hermes.lock")),
+      manifest: existsSync(path.join(moved, ".skill-me", "hermes-install.json")) ? "gravado" : "ausente",
+    };
+  };
+  const OWN_ROOT_LEFT = { staging: OWN_COMPLETE, pluginDir: "ausente", lock: "lock próprio", manifest: "ausente" };
+
+  const rows = [
+    { label: "K1 win32: EPERM duas vezes, depois promove", platform: "win32", denials: ["EPERM", "EPERM"], expect: { attempts: 3, ...applied(false) } },
+    { label: "K2 win32: EACCES uma vez, depois promove", platform: "win32", denials: ["EACCES"], expect: { attempts: 2, ...applied(false) } },
+    { label: "K3 win32: EBUSY uma vez, depois promove", platform: "win32", denials: ["EBUSY"], expect: { attempts: 2, ...applied(false) } },
+    { label: "K4 win32: EPERM permanente (controle novo da S19)", platform: "win32", denials: Array(20).fill("EPERM"), expect: { attempts: 7, ...failed("EPERM") } },
+    {
+      label: "K4b win32: recusas alternadas permanentes saem com o último código",
+      platform: "win32",
+      denials: ["EPERM", "EACCES", "EBUSY", "EPERM", "EACCES", "EBUSY", "EACCES", "EPERM", "EBUSY"],
+      expect: { attempts: 7, ...failed("EACCES") },
+    },
+    { label: "K5 win32: EIO não é repetido", platform: "win32", denials: ["EIO"], expect: { ...failed("EIO") } },
+    { label: "K5b win32: ENOSPC não é repetido", platform: "win32", denials: ["ENOSPC"], expect: { ...failed("ENOSPC") } },
+    { label: "K5c win32: EPERM e depois EIO param na segunda", platform: "win32", denials: ["EPERM", "EIO"], expect: { attempts: 2, ...failed("EIO") } },
+    ...(nativePosix
+      ? ["EPERM", "EACCES", "EBUSY"].map((code) => ({ label: `K6 POSIX nativo (${native}): ${code} não é repetido`, platform: native, denials: [code], expect: { ...failed(code) } }))
+      : []),
+    {
+      label: "K7a staging trocado por arquivo do usuário na espera",
+      platform: "win32",
+      denials: ["EPERM"],
+      watched: (ctx) => strict(ctx.staging),
+      swap: async (ctx) => {
+        await moveStaging(ctx);
+        writeFileSync(ctx.staging, USER_FILE);
+        return ctx.staging;
+      },
+      own: ownMoved,
+      expect: { ...stagingChanged(), foreign: "intacto", atStaging: "arquivo do usuário intacto", own: OWN_COMPLETE },
+    },
+    {
+      label: "K7b staging trocado por junção/link para outra pasta do alvo com cópias exatas",
+      platform: "win32",
+      denials: ["EPERM"],
+      watched: (ctx) => strict(ctx.staging),
+      swap: stagingLinkedTo(false),
+      own: ownMoved,
+      expect: { ...stagingChanged(), foreign: "intacto", atStaging: "link → outra pasta", own: OWN_COMPLETE },
+    },
+    {
+      label: "K7c staging trocado por junção/link para pasta externa com cópias exatas",
+      platform: "win32",
+      denials: ["EPERM"],
+      watched: (ctx) => strict(ctx.staging),
+      swap: stagingLinkedTo(true),
+      own: ownMoved,
+      expect: { ...stagingChanged(), foreign: "intacto", atStaging: "link → pasta externa", own: OWN_COMPLETE },
+    },
+    {
+      label: "K7d staging trocado por diretório real com cópias exatas",
+      platform: "win32",
+      denials: ["EPERM"],
+      watched: (ctx) => strict(ctx.staging),
+      swap: async (ctx) => {
+        await moveStaging(ctx);
+        copyPackageArtifacts(ctx.staging);
+        return ctx.staging;
+      },
+      own: ownMoved,
+      expect: { ...stagingChanged(), foreign: "intacto", atStaging: OWN_COMPLETE, own: OWN_COMPLETE },
+    },
+    ...(fileLinksAllowed()
+      ? [
+          {
+            label: "K7e staging trocado por symlink de arquivo",
+            platform: "win32",
+            denials: ["EPERM"],
+            watched: (ctx) => strict(ctx.staging),
+            swap: async (ctx) => {
+              const external = path.join(ctx.dir, "arquivo externo");
+              writeFileSync(external, USER_FILE);
+              await moveStaging(ctx);
+              symlinkSync(external, ctx.staging, "file");
+              return external;
+            },
+            own: ownMoved,
+            expect: { ...stagingChanged(), foreign: "intacto", atStaging: "link → arquivo externo", own: OWN_COMPLETE },
+          },
+        ]
+      : []),
+    {
+      label: "K8a artefato do staging editado na espera",
+      platform: "win32",
+      denials: ["EPERM"],
+      swap: (ctx) => appendFileSync(insideStaging("kwargs.json")(ctx), USER_EDIT),
+      own: (ctx) => describeEntry(insideStaging("kwargs.json")(ctx)),
+      expect: {
+        ...stagingChanged(),
+        atStaging: "diretório real [__init__.py: artefato do pacote; kwargs.json: outro conteúdo; plugin.yaml: artefato do pacote]",
+        own: "edição do usuário intacta",
+      },
+    },
+    {
+      label: "K8b artefato do staging removido na espera",
+      platform: "win32",
+      denials: ["EPERM"],
+      swap: (ctx) => unlinkSync(insideStaging("plugin.yaml")(ctx)),
+      expect: { ...stagingChanged(), atStaging: packageDir(["__init__.py", "kwargs.json"]) },
+    },
+    {
+      label: "K8c arquivo extra posto no staging na espera",
+      platform: "win32",
+      denials: ["EPERM"],
+      swap: (ctx) => writeFileSync(insideStaging("notas.txt")(ctx), USER_FILE),
+      expect: {
+        ...stagingChanged(),
+        atStaging: "diretório real [__init__.py: artefato do pacote; kwargs.json: artefato do pacote; notas.txt: arquivo do usuário intacto; plugin.yaml: artefato do pacote]",
+      },
+    },
+    ...[
+      ["K9a destino surgido na espera: diretório real vazio", (ctx) => mkdirSync(ctx.pluginDir), "diretório real []"],
+      [
+        "K9b destino surgido na espera: diretório real com arquivo do usuário",
+        (ctx) => {
+          mkdirSync(ctx.pluginDir);
+          writeFileSync(path.join(ctx.pluginDir, "notas.txt"), USER_FILE);
+        },
+        "diretório real [notas.txt: arquivo do usuário intacto]",
+      ],
+      [
+        "K9c destino surgido na espera: junção/link para pasta vazia do alvo",
+        (ctx) => {
+          const userDir = path.join(ctx.home, "pasta vazia do usuário");
+          mkdirSync(userDir);
+          symlinkSync(userDir, ctx.pluginDir, DIR_LINK);
+        },
+        "link → pasta vazia do usuário",
+      ],
+      ["K9d destino surgido na espera: arquivo do usuário", (ctx) => writeFileSync(ctx.pluginDir, USER_FILE), "arquivo do usuário intacto"],
+    ].map(([label, appear, atPluginDir]) => ({
+      label,
+      platform: "win32",
+      denials: ["EPERM"],
+      watched: (ctx) => content(ctx.pluginDir),
+      swap: (ctx) => {
+        appear(ctx);
+        return ctx.pluginDir;
+      },
+      expect: { conflicts: [{ code: "foreign_artifact", file: "plugins/skill-me-observer" }], foreign: "intacto", atStaging: OWN_COMPLETE, atPluginDir },
+    })),
+    ...[
+      ["K10a plugins trocada por junção/link para ela mesma movida dentro do alvo", false, s19Changed("plugins")],
+      ["K10b plugins trocada por junção/link para ela mesma movida para fora do alvo", true, { code: "target_escape", file: "plugins" }],
+    ].map(([label, outside, conflict]) => ({
+      label,
+      platform: "win32",
+      denials: ["EPERM"],
+      watched: (ctx) => content(ctx.plugins),
+      swap: (ctx) => {
+        renameSync(ctx.plugins, pluginsMoved(ctx, outside));
+        symlinkSync(pluginsMoved(ctx, outside), ctx.plugins, DIR_LINK);
+      },
+      own: (ctx) => packageEntry(path.join(pluginsMoved(ctx, outside), STAGING_NAME)),
+      expect: { conflicts: [conflict], atStaging: OWN_COMPLETE, own: OWN_COMPLETE },
+    })),
+    {
+      label: "K10c plugins trocada por diretório real com staging de cópias exatas",
+      platform: "win32",
+      denials: ["EPERM"],
+      watched: (ctx) => content(ctx.plugins),
+      swap: (ctx) => {
+        renameSync(ctx.plugins, pluginsMoved(ctx, true));
+        mkdirSync(ctx.plugins);
+        copyPackageArtifacts(ctx.staging);
+        return ctx.plugins;
+      },
+      own: (ctx) => packageEntry(path.join(pluginsMoved(ctx, true), STAGING_NAME)),
+      expect: { conflicts: [s19Changed("plugins")], foreign: "intacto", atStaging: OWN_COMPLETE, own: OWN_COMPLETE },
+    },
+    {
+      label: "K11a raiz trocada por diretório real com staging de cópias e hermes.lock de bytes idênticos",
+      platform: "win32",
+      denials: ["EPERM"],
+      watched: (ctx) => content(ctx.home),
+      swap: (ctx) => {
+        renameSync(ctx.home, rootMoved(ctx));
+        mkdirSync(ctx.home);
+        mkdirSync(ctx.plugins);
+        copyPackageArtifacts(ctx.staging);
+        mkdirSync(ctx.stateDir);
+        writeFileSync(ctx.lock, OWN_LOCK);
+        return ctx.home;
+      },
+      own: ownRoot,
+      expect: { conflicts: [s19Changed("."), S19_LOCK_KEPT], foreign: "intacto", atStaging: OWN_COMPLETE, lock: "lock próprio", own: OWN_ROOT_LEFT },
+    },
+    {
+      label: "K11b raiz trocada por junção/link para ela mesma movida",
+      platform: "win32",
+      denials: ["EPERM"],
+      watched: (ctx) => content(ctx.home),
+      swap: (ctx) => {
+        renameSync(ctx.home, rootMoved(ctx));
+        symlinkSync(rootMoved(ctx), ctx.home, DIR_LINK);
+      },
+      own: ownRoot,
+      expect: { conflicts: [{ code: "target_escape", file: "plugins" }, S19_LOCK_KEPT], atStaging: OWN_COMPLETE, lock: "lock próprio", own: OWN_ROOT_LEFT },
+    },
+    {
+      label: "K11c .skill-me trocada por diretório real com hermes.lock de bytes idênticos",
+      platform: "win32",
+      denials: ["EPERM"],
+      watched: (ctx) => content(ctx.stateDir),
+      swap: (ctx) => {
+        renameSync(ctx.stateDir, stateMoved(ctx));
+        mkdirSync(ctx.stateDir);
+        writeFileSync(ctx.lock, OWN_LOCK);
+        return ctx.stateDir;
+      },
+      own: (ctx) => ({ entries: readdirSync(stateMoved(ctx)).sort(), lock: describeEntry(path.join(stateMoved(ctx), "hermes.lock")) }),
+      expect: {
+        attempts: 2,
+        conflicts: [s19Changed(".skill-me"), S19_LOCK_KEPT],
+        steps: [{ step: "artifacts", state: "done" }],
+        foreign: "intacto",
+        atPluginDir: OWN_COMPLETE,
+        lock: "lock próprio",
+        own: { entries: ["hermes.lock"], lock: "lock próprio" },
+      },
+    },
+    ...[
+      ["K12a identidade da raiz com ino 0", (ctx) => ({ file: ctx.home, fields: { ino: 0n } }), "io_error", "ausente"],
+      ["K12b identidade de .skill-me sem ino", (ctx) => ({ file: ctx.stateDir, fields: { ino: undefined } }), "io_error", "ausente"],
+      ["K12c identidade de plugins com ino que não é BigInt", (ctx) => ({ file: ctx.plugins, fields: { ino: 5 } }), "io_error", "ausente"],
+      ["K12d identidade do staging com dev negativo", (ctx) => ({ file: ctx.staging, fields: { dev: -1n } }), "io_error", "diretório real []"],
+      ["K12e identidade do staging com ino 0", (ctx) => ({ file: ctx.staging, fields: { ino: 0n } }), "io_error", "diretório real []"],
+      ["K12f lstat BigInt do staging falha com EIO", (ctx) => ({ file: ctx.staging, reject: "EIO" }), "EIO", "diretório real []"],
+      ["K12h identidade do staging sem dev", (ctx) => ({ file: ctx.staging, fields: { dev: undefined } }), "io_error", "diretório real []"],
+      ["K12i identidade do staging com dev positivo que não é BigInt", (ctx) => ({ file: ctx.staging, fields: { dev: 7 } }), "io_error", "diretório real []"],
+      ["K12j identidade do staging com ino BigInt negativo", (ctx) => ({ file: ctx.staging, fields: { ino: -1n } }), "io_error", "diretório real []"],
+    ].map(([label, identity, code, atStaging]) => ({ label, identity, expect: { attempts: 0, ...failed(code), atStaging } })),
+    { label: "K12g controle: dev 0 da raiz é identidade válida", identity: (ctx) => ({ file: ctx.home, fields: { dev: 0n } }), expect: { ...applied(false) } },
+    { label: "K13a win32 saudável: uma tentativa", platform: "win32", expect: { ...applied(false) } },
+    { label: `K13b nativo (${native}) saudável com plugins criada pela instalação`, plugins: false, expect: { ...applied(true) } },
+  ];
+  if (!nativePosix) t.diagnostic('K6 POSIX: sub-caso limitado — só roda em POSIX nativo (WSL, CI ubuntu/macos); no Windows `platform: "linux"` aplicaria path.posix a caminhos C:\\ e a contenção recusaria tudo');
+  if (!fileLinksAllowed()) t.diagnostic("K7e staging trocado por symlink de arquivo: sub-caso limitado — symlink de arquivo exige privilégio neste Windows; roda no Linux/WSL");
+
+  const base = {
+    attempts: 1,
+    exitCode: 4,
+    status: "conflict",
+    applied: false,
+    conflicts: [],
+    errors: [],
+    steps: [],
+    through: [],
+    foreign: "—",
+    atStaging: "ausente",
+    atPluginDir: "ausente",
+    manifest: "ausente",
+    lock: "ausente",
+    own: "—",
+  };
+  const observed = [];
+  const expected = [];
+  for (const [index, row] of rows.entries()) {
+    const ctx = s19Target(index, { plugins: row.plugins ?? true });
+    const { io, probe } = s19PromotionIo(ctx, {
+      denials: row.denials ?? [],
+      watched: row.watched ? row.watched(ctx) : [],
+      swap: row.swap ? () => row.swap(ctx) : null,
+      identity: row.identity ? row.identity(ctx) : null,
+    });
+    const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: ctx.home, apply: true, platform: row.platform ?? native, io });
+    if (probe.mountError !== null) throw new Error(`fixture: montagem da troca falhou em "${row.label}"`, { cause: probe.mountError });
+    observed.push({
+      label: row.label,
+      attempts: probe.attempts,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      through: probe.through,
+      foreign:
+        probe.foreign === null
+          ? "—"
+          : (existsSync(probe.foreign) || isSymlink(probe.foreign)) && isDeepStrictEqual(entrySnapshot(probe.foreign), probe.foreignBefore)
+            ? "intacto"
+            : "alterado",
+      atStaging: packageEntry(ctx.staging),
+      atPluginDir: packageEntry(ctx.pluginDir),
+      manifest: s19Manifest(ctx),
+      lock: describeEntry(ctx.lock),
+      own: row.own ? row.own(ctx) : "—",
+    });
+    expected.push({ label: row.label, ...base, ...row.expect });
+  }
+  assert.deepEqual(observed, expected);
+});
+
+// Raiz própria trocada por um diretório REAL de mesmo nome — com
+// `.skill-me/hermes.lock` de bytes idênticos e um arquivo do usuário, sem
+// `plugins` — dentro do `lstat` BigInt com que a instalação lê a identidade
+// própria da pasta de estado; o `lstat` devolve as estatísticas próprias já
+// lidas. O caminho real da raiz não muda: só a identidade da raiz, já
+// capturada, distingue a alheia, e ela precisa ser conferida antes de criar
+// `plugins`. A montagem da troca é síncrona, fora do io: `through` registra só
+// operações do instalador — conteúdo, criação, exclusão e rename sob a raiz —
+// depois da troca.
+test("I4-C34m Hermes: identidade da raiz antes de criar plugins — raiz real substituta com lock idêntico fica intacta", async () => {
+  const ctx = s19Target("m raiz", { plugins: false });
+  const moved = path.join(ctx.dir, "raiz-movida");
+  const canary = path.join(ctx.home, "canário do usuário.txt");
+  const io = createNodeIo();
+  const probe = { injected: false, attempts: 0, through: [], foreignBefore: null };
+  const underRoot = (file) => typeof file === "string" && (file === ctx.home || file.startsWith(ctx.home + path.sep));
+  const relToHome = (file) => path.relative(ctx.home, file).split(path.sep).join("/") || ".";
+  const wrapped = { ...io };
+  for (const op of FS_OPS) {
+    wrapped[op] = async (...args) => {
+      const files = args.slice(0, op === "rename" ? 2 : 1);
+      if (probe.injected && CONTENT_OPS.includes(op) && files.some(underRoot)) probe.through.push(`${op} ${files.map(relToHome).join(" → ")}`);
+      if (op === "rename" && args[0] === ctx.staging && args[1] === ctx.pluginDir) probe.attempts += 1;
+      const out = await io[op](...args);
+      if (op === "lstat" && !probe.injected && args[0] === ctx.stateDir && args[1]?.bigint === true) {
+        renameSync(ctx.home, moved);
+        mkdirSync(ctx.stateDir, { recursive: true });
+        writeFileSync(ctx.lock, OWN_LOCK);
+        writeFileSync(canary, USER_FILE);
+        probe.foreignBefore = entrySnapshot(ctx.home);
+        probe.injected = true;
+      }
+      return out;
+    };
+  }
+  const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: ctx.home, apply: true, io: wrapped });
+  assert.deepEqual(
+    {
+      injected: probe.injected,
+      attempts: probe.attempts,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      through: probe.through,
+      foreign: probe.foreignBefore !== null && existsSync(ctx.home) && isDeepStrictEqual(entrySnapshot(ctx.home), probe.foreignBefore) ? "intacto" : "alterado",
+      atForeignRoot: {
+        plugins: packageEntry(ctx.plugins),
+        staging: packageEntry(ctx.staging),
+        pluginDir: packageEntry(ctx.pluginDir),
+        lock: describeEntry(ctx.lock),
+        canary: describeEntry(canary),
+        manifest: existsSync(ctx.manifest),
+      },
+      atMovedRoot: {
+        lock: describeEntry(path.join(moved, ".skill-me", "hermes.lock")),
+        plugins: existsSync(path.join(moved, "plugins")),
+        manifest: existsSync(path.join(moved, ".skill-me", "hermes-install.json")),
+      },
+    },
+    {
+      injected: true,
+      attempts: 0,
+      exitCode: 4,
+      status: "conflict",
+      applied: false,
+      conflicts: [s19Changed("."), S19_LOCK_KEPT],
+      errors: [],
+      steps: [],
+      through: [],
+      foreign: "intacto",
+      atForeignRoot: { plugins: "ausente", staging: "ausente", pluginDir: "ausente", lock: "lock próprio", canary: "arquivo do usuário intacto", manifest: false },
+      atMovedRoot: { lock: "lock próprio", plugins: false, manifest: false },
+    },
+  );
+});
+
+// Montagem das provas (não produto): move um diretório próprio da fixture com o
+// contrato compartilhado de rename (I4-C34l). No Windows, renomear a `plugins`
+// recém-gravada é recusado às vezes (EPERM em 7 de 200 instalações do
+// diagnóstico S19 C34h, causa física não identificada). Antes de cada tentativa
+// a origem continua o mesmo diretório real (identidade BigInt) e o destino
+// continua ausente. `rename`, `platform` e `wait` são injetáveis só para a prova
+// do próprio auxílio.
+async function s19MoveFixtureDirectory(from, to, { rename = renameSync, platform = process.platform, wait } = {}) {
+  const own = lstatSync(from, { bigint: true });
+  if (own.isSymbolicLink() || !own.isDirectory()) throw new Error("fixture: a origem não é diretório real");
+  const options = {
+    beforeAttempt: async () => {
+      const now = lstatSync(from, { bigint: true });
+      if (now.isSymbolicLink() || !now.isDirectory() || now.dev !== own.dev || now.ino !== own.ino) throw new Error("fixture: a origem foi trocada");
+      if (existsSync(to) || isSymlink(to)) throw new Error("fixture: o destino está ocupado");
+    },
+    retryable: (error) => platform === "win32" && ["EPERM", "EACCES", "EBUSY"].includes(error.code),
+  };
+  if (wait) options.wait = wait;
+  await s19RenameRetrying()({ rename: async (a, b) => rename(a, b) }, from, to, options);
+}
+
+// Linha índice 8 do I4-C34h (troca de `plugins` pela própria movida para fora do
+// home depois do 3º artefato gravado) com a montagem assíncrona pelo auxílio. A
+// instalação só pode seguir depois da montagem: nenhuma operação do instalador
+// enquanto ela está pendente. A montagem é aguardada até o fim, e uma rejeição é
+// capturada no ato, sem promessa nem timer pendente.
+test("I4-C34n fixture: aguarda troca ancestral e preserva falha da montagem", async (t) => {
+  const run = async (label, fakeRename) => {
+    const ctx = s19Target(label);
+    const moved = path.join(ctx.dir, "plugins própria movida");
+    const observed = await s19InstallWithObservedMount(ctx.home, (swap) => ancestorSwapIo(ctx.home, ["artefato gravado no staging", 3], swap), {
+      from: ctx.plugins,
+      to: moved,
+      linkTarget: moved,
+      fakeRename,
+    });
+    return { ctx, moved, ...observed };
+  };
+
+  await t.test("recusa transitória: 2 EPERM e depois a troca; a instalação só segue depois dela", async () => {
+    const { ctx, moved, waits, state, probe, result } = await run("n transitório", (attempt) => {
+      if (attempt <= 2) throw simulated("EPERM");
+    });
+    assert.deepEqual(
+      {
+        attempts: state.attempts,
+        waits,
+        fixtureError: state.error,
+        realpathDuringFixture: state.realpathDuring,
+        installerOpsDuringFixture: state.installerOps,
+        exitCode: result.exitCode,
+        conflicts: result.conflicts,
+        steps: result.steps,
+        through: probe.through,
+        ownStaging: packageEntry(path.join(moved, STAGING_NAME)),
+        lock: describeEntry(ctx.lock),
+      },
+      {
+        attempts: 3,
+        waits: [10, 20],
+        fixtureError: null,
+        realpathDuringFixture: false,
+        installerOpsDuringFixture: [],
+        exitCode: 4,
+        conflicts: [{ code: "target_escape", file: "plugins" }],
+        steps: [],
+        through: [],
+        ownStaging: packageDir(OWN_ARTIFACTS),
+        lock: "ausente",
+      },
+    );
+  });
+
+  await t.test("EIO permanente na montagem: uma tentativa, mesmo erro, instalação incompleta sem promover", async () => {
+    const eio = simulated("EIO");
+    const { ctx, waits, state, result } = await run("n eio", () => {
+      throw eio;
+    });
+    assert.deepEqual(
+      {
+        attempts: state.attempts,
+        waits,
+        sameError: state.error === eio,
+        realpathDuringFixture: state.realpathDuring,
+        installerOpsDuringFixture: state.installerOps,
+        exitCode: result.exitCode,
+        status: result.status,
+        errors: result.errors,
+        steps: result.steps,
+        staging: packageEntry(ctx.staging),
+        pluginDir: packageEntry(ctx.pluginDir),
+        manifest: s19Manifest(ctx),
+        lock: describeEntry(ctx.lock),
+      },
+      {
+        attempts: 1,
+        waits: [],
+        sameError: true,
+        realpathDuringFixture: false,
+        installerOpsDuringFixture: [],
+        exitCode: 5,
+        status: "incomplete",
+        errors: [{ code: "EIO" }],
+        steps: [{ step: "artifacts", state: "failed" }],
+        staging: packageDir(OWN_ARTIFACTS),
+        pluginDir: "ausente",
+        manifest: "ausente",
+        lock: "ausente",
+      },
+    );
+  });
+});
+
+// Instalação Hermes com a montagem de uma troca de fixture observada — comum ao
+// I4-C34n (`plugins`) e ao I4-C34o (staging). `makeSwapIo(swap)` é o io de troca
+// existente; `swap` move `from` para `to` com s19MoveFixtureDirectory (política
+// Windows, `rename` e `wait` injetados) e põe junção/link para `linkTarget` no
+// lugar. A tarefa original vai para o io de troca (rejeita com o próprio erro da
+// montagem); o observador, ligado no ato, registra e é aguardado depois da
+// instalação — também com o io antigo, que não espera a troca. Toda operação do
+// instalador enquanto a montagem está pendente é registrada.
+async function s19InstallWithObservedMount(home, makeSwapIo, { from, to, linkTarget, fakeRename, platform }) {
+  const waits = [];
+  const state = { attempts: 0, pending: false, error: null, installerOps: [], realpathDuring: false };
+  let settled = null;
+  const { io: swapIo, probe } = makeSwapIo(() => {
+    state.pending = true;
+    const mounting = (async () => {
+      await s19MoveFixtureDirectory(from, to, {
+        platform: "win32",
+        rename: (source, target) => {
+          state.attempts += 1;
+          fakeRename(state.attempts, source, target);
+        },
+        wait: (ms) => {
+          waits.push(ms);
+          return new Promise((resolve) => setImmediate(resolve));
+        },
+      });
+      // A movimentação injetada só decide a política (tentativas/esperas
+      // simuladas, sucesso lógico sem rename). A física vem depois, com a
+      // política real do auxílio: uma recusa natural do Windows nela não altera
+      // as contagens simuladas, e uma falha física sobe e falha o teste.
+      await s19MoveFixtureDirectory(from, to);
+      symlinkSync(linkTarget, from, DIR_LINK);
+    })();
+    settled = mounting.then(
+      () => {
+        state.pending = false;
+      },
+      (error) => {
+        state.pending = false;
+        state.error = error;
+      },
+    );
+    return mounting;
+  });
+  const io = { ...swapIo };
+  for (const op of FS_OPS) {
+    io[op] = async (...args) => {
+      if (state.pending) {
+        state.installerOps.push(op);
+        if (op === "realpath") state.realpathDuring = true;
+      }
+      return swapIo[op](...args);
+    };
+  }
+  const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: home, apply: true, platform, io });
+  await settled;
+  return { waits, state, probe, result };
+}
+
+// Segundo consumidor real da montagem: o staging próprio trocado pelo
+// stagingSwapIo existente logo depois do 1º artefato gravado, no lugar dele uma
+// junção/link para uma pasta vazia do alvo. A instalação só segue depois da
+// montagem; uma falha dela é a falha da gravação instrumentada.
+test("I4-C34o fixture: aguarda troca do staging e preserva falha da montagem", async (t) => {
+  const run = async (label, fakeRename) => {
+    const ctx = s19Target(label);
+    const dest = path.join(ctx.home, "outra pasta");
+    mkdirSync(dest);
+    const observed = await s19InstallWithObservedMount(ctx.home, (swap) => stagingSwapIo(ctx.home, { on: ["artefato gravado no staging", 1] }, swap), {
+      from: ctx.staging,
+      to: ctx.moved,
+      linkTarget: dest,
+      fakeRename,
+    });
+    return { ctx, ...observed };
+  };
+
+  await t.test("recusa transitória: 2 EPERM e depois a troca; a instalação só segue depois dela", async () => {
+    const { ctx, waits, state, probe, result } = await run("o transitório", (attempt) => {
+      if (attempt <= 2) throw simulated("EPERM");
+    });
+    assert.deepEqual(
+      {
+        attempts: state.attempts,
+        waits,
+        fixtureError: state.error,
+        realpathDuringFixture: state.realpathDuring,
+        installerOpsDuringFixture: state.installerOps,
+        exitCode: result.exitCode,
+        conflicts: result.conflicts,
+        steps: result.steps,
+        through: probe.through,
+        promotions: probe.promotions,
+        ownMoved: packageEntry(ctx.moved),
+        manifest: s19Manifest(ctx),
+        lock: describeEntry(ctx.lock),
+      },
+      {
+        attempts: 3,
+        waits: [10, 20],
+        fixtureError: null,
+        realpathDuringFixture: false,
+        installerOpsDuringFixture: [],
+        exitCode: 4,
+        conflicts: [s19Changed(S19_STAGING_REL)],
+        steps: [],
+        through: [],
+        promotions: 0,
+        ownMoved: packageDir(["__init__.py"]),
+        manifest: "ausente",
+        lock: "ausente",
+      },
+    );
+  });
+
+  await t.test("EIO permanente na montagem: uma tentativa, mesmo erro, instalação incompleta sem promover", async () => {
+    const eio = simulated("EIO");
+    const { ctx, waits, state, probe, result } = await run("o eio", () => {
+      throw eio;
+    });
+    assert.deepEqual(
+      {
+        attempts: state.attempts,
+        waits,
+        sameError: state.error === eio,
+        realpathDuringFixture: state.realpathDuring,
+        installerOpsDuringFixture: state.installerOps,
+        exitCode: result.exitCode,
+        status: result.status,
+        errors: result.errors,
+        steps: result.steps,
+        promotions: probe.promotions,
+        staging: packageEntry(ctx.staging),
+        pluginDir: packageEntry(ctx.pluginDir),
+        manifest: s19Manifest(ctx),
+        lock: describeEntry(ctx.lock),
+      },
+      {
+        attempts: 1,
+        waits: [],
+        sameError: true,
+        realpathDuringFixture: false,
+        installerOpsDuringFixture: [],
+        exitCode: 5,
+        status: "incomplete",
+        errors: [{ code: "EIO" }],
+        steps: [{ step: "artifacts", state: "failed" }],
+        promotions: 0,
+        staging: packageDir(["__init__.py"]),
+        pluginDir: "ausente",
+        manifest: "ausente",
+        lock: "ausente",
+      },
+    );
+  });
+});
+
+// I4-C34p (S22, achado K7d do FAIL28): a montagem da troca do I4-C34k roda
+// dentro do `rename` instrumentado da promoção. Ela termina antes de o
+// instalador seguir, e a falha dela é da fixture — o erro original fica em
+// `probe.mountError` — sem alimentar o retry do produto como se fosse a recusa
+// simulada da linha. Testes de topo independentes: o P1 (montagem síncrona)
+// roda sozinho pelo nome.
+test("I4-C34p P1 montagem: EPERM síncrono da troca não vira promoção sem troca", async () => {
+  const ctx = s19Target("p1 eperm síncrono");
+  const eperm = simulated("EPERM");
+  const { io, probe } = s19PromotionIo(ctx, {
+    denials: ["EPERM"],
+    watched: [{ entry: ctx.staging, strict: true }],
+    swap: () => {
+      throw eperm;
+    },
+  });
+  const result = await runIntegrationCommand({ command: "install", agent: "hermes", target: ctx.home, apply: true, platform: "win32", io });
+  assert.deepEqual(
+    {
+      attempts: probe.attempts,
+      sameMountError: probe.mountError === eperm,
+      swapped: probe.swapped,
+      foreign: probe.foreign,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      through: probe.through,
+      atStaging: packageEntry(ctx.staging),
+      atPluginDir: packageEntry(ctx.pluginDir),
+      manifest: s19Manifest(ctx),
+      lock: describeEntry(ctx.lock),
+    },
+    {
+      attempts: 1,
+      sameMountError: true,
+      swapped: false,
+      foreign: null,
+      exitCode: 5,
+      status: "incomplete",
+      applied: false,
+      conflicts: [],
+      errors: [{ code: "io_error" }],
+      steps: [{ step: "artifacts", state: "failed" }],
+      through: [],
+      atStaging: "ausente",
+      atPluginDir: "ausente",
+      manifest: "ausente",
+      lock: "ausente",
+    },
+  );
+});
+
+// Arranjo do P2–P4: staging trocado na 1ª recusa por junção/link para outra
+// pasta do alvo com cópias exatas (K7b), montado pelo observador do I4-C34n/o
+// com o io de promoção do I4-C34k; `fakeRename` decide a política Windows
+// simulada do auxílio.
+async function c34pMountedPromotion(label, fakeRename) {
+  const ctx = s19Target(label);
+  const dest = path.join(ctx.home, "outra pasta");
+  copyPackageArtifacts(dest);
+  const observed = await s19InstallWithObservedMount(
+    ctx.home,
+    (swap) => s19PromotionIo(ctx, { denials: ["EPERM"], watched: [{ entry: ctx.staging, strict: true }], swap }),
+    { from: ctx.staging, to: ctx.moved, linkTarget: dest, fakeRename, platform: "win32" },
+  );
+  return { ctx, ...observed };
+}
+
+test("I4-C34p P2 montagem aguardada: 2 EPERM e depois a troca; o instalador só segue depois dela", async () => {
+  const { ctx, waits, state, probe, result } = await c34pMountedPromotion("p2 transitório", (attempt) => {
+    if (attempt <= 2) throw simulated("EPERM");
+  });
+  assert.deepEqual(
+    {
+      fixtureAttempts: state.attempts,
+      waits,
+      fixtureError: state.error,
+      realpathDuringFixture: state.realpathDuring,
+      installerOpsDuringFixture: state.installerOps,
+      attempts: probe.attempts,
+      mountError: probe.mountError,
+      exitCode: result.exitCode,
+      status: result.status,
+      applied: result.applied,
+      conflicts: result.conflicts,
+      errors: result.errors,
+      steps: result.steps,
+      through: probe.through,
+      atStaging: packageEntry(ctx.staging),
+      atPluginDir: packageEntry(ctx.pluginDir),
+      own: packageEntry(ctx.moved),
+      manifest: s19Manifest(ctx),
+      lock: describeEntry(ctx.lock),
+    },
+    {
+      fixtureAttempts: 3,
+      waits: [10, 20],
+      fixtureError: null,
+      realpathDuringFixture: false,
+      installerOpsDuringFixture: [],
+      attempts: 1,
+      mountError: null,
+      exitCode: 4,
+      status: "conflict",
+      applied: false,
+      conflicts: [s19Changed(S19_STAGING_REL)],
+      errors: [],
+      steps: [],
+      through: [],
+      atStaging: "link → outra pasta",
+      atPluginDir: "ausente",
+      own: packageDir(OWN_ARTIFACTS),
+      manifest: "ausente",
+      lock: "ausente",
+    },
+  );
+});
+
+// Montagem que falha: o mesmo objeto de erro no observador e no io de
+// promoção; o produto recebe a recusa sem código (`io_error`), não repete e
+// não promove.
+const c34pFailedMount = (ctx, state, probe, result) => ({
+  realpathDuringFixture: state.realpathDuring,
+  installerOpsDuringFixture: state.installerOps,
+  attempts: probe.attempts,
+  swapped: probe.swapped,
+  exitCode: result.exitCode,
+  status: result.status,
+  applied: result.applied,
+  conflicts: result.conflicts,
+  errors: result.errors,
+  steps: result.steps,
+  through: probe.through,
+  atStaging: packageEntry(ctx.staging),
+  atPluginDir: packageEntry(ctx.pluginDir),
+  own: packageEntry(ctx.moved),
+  manifest: s19Manifest(ctx),
+  lock: describeEntry(ctx.lock),
+});
+const C34P_FAILED_MOUNT = {
+  realpathDuringFixture: false,
+  installerOpsDuringFixture: [],
+  attempts: 1,
+  swapped: false,
+  exitCode: 5,
+  status: "incomplete",
+  applied: false,
+  conflicts: [],
+  errors: [{ code: "io_error" }],
+  steps: [{ step: "artifacts", state: "failed" }],
+  through: [],
+  atStaging: "ausente",
+  atPluginDir: "ausente",
+  own: "ausente",
+  manifest: "ausente",
+  lock: "ausente",
+};
+
+test("I4-C34p P3 montagem com EIO permanente: uma tentativa, nenhuma espera, o mesmo erro e falha explícita", async () => {
+  const eio = simulated("EIO");
+  const { ctx, waits, state, probe, result } = await c34pMountedPromotion("p3 eio", () => {
+    throw eio;
+  });
+  assert.deepEqual(
+    {
+      fixtureAttempts: state.attempts,
+      waits,
+      sameFixtureError: state.error === eio,
+      sameMountError: probe.mountError === eio,
+      ...c34pFailedMount(ctx, state, probe, result),
+    },
+    { fixtureAttempts: 1, waits: [], sameFixtureError: true, sameMountError: true, ...C34P_FAILED_MOUNT },
+  );
+});
+
+test("I4-C34p P4 montagem com EPERM permanente no Windows: 7 tentativas, 630 ms, o 7º erro sem retry do produto", async () => {
+  const errors = Array.from({ length: 7 }, () => simulated("EPERM"));
+  const { ctx, waits, state, probe, result } = await c34pMountedPromotion("p4 eperm permanente", (attempt) => {
+    throw errors[attempt - 1];
+  });
+  assert.deepEqual(
+    {
+      fixtureAttempts: state.attempts,
+      waits,
+      waited: waits.reduce((sum, ms) => sum + ms, 0),
+      sameFixtureError: state.error === errors[6],
+      sameMountError: probe.mountError === errors[6],
+      ...c34pFailedMount(ctx, state, probe, result),
+    },
+    { fixtureAttempts: 7, waits: [10, 20, 40, 80, 160, 320], waited: 630, sameFixtureError: true, sameMountError: true, ...C34P_FAILED_MOUNT },
+  );
+});
+
+// Origem própria e destino ausente para o auxílio da montagem chamado direto,
+// com `rename` e `wait` injetados: nenhum rename físico nem relógio.
+function c34pMoveDirs(label, { marked = true } = {}) {
+  const dir = makeScratch(`s22 ${label}`);
+  scratches.push(dir);
+  const from = path.join(dir, "origem própria");
+  mkdirSync(from);
+  if (marked) writeFileSync(path.join(from, "marca.txt"), USER_FILE);
+  return { dir, from, to: path.join(dir, "destino da montagem") };
+}
+
+const C34P_MARKED = "diretório [marca.txt: arquivo do usuário intacto]";
+
+test("I4-C34p H1 auxílio da montagem no POSIX: EPERM não é repetido — uma tentativa, nenhuma espera, o mesmo erro", async () => {
+  const { from, to } = c34pMoveDirs("h1 posix");
+  const eperm = simulated("EPERM");
+  const renames = [];
+  const waits = [];
+  const settled = await s19Settle(
+    s19MoveFixtureDirectory(from, to, {
+      platform: "linux",
+      rename: (source, target) => {
+        renames.push([source, target]);
+        throw eperm;
+      },
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    }),
+  );
+  assert.deepEqual(
+    { sameError: settled.error === eperm, renames, waits, from: describeEntry(from), to: describeEntry(to) },
+    { sameError: true, renames: [[from, to]], waits: [], from: C34P_MARKED, to: "ausente" },
+  );
+});
+
+test("I4-C34p H2 auxílio da montagem: destino ocupado recusa antes de qualquer rename", async () => {
+  const { from, to } = c34pMoveDirs("h2 destino ocupado");
+  mkdirSync(to);
+  const renames = [];
+  const waits = [];
+  const settled = await s19Settle(
+    s19MoveFixtureDirectory(from, to, {
+      platform: "win32",
+      rename: (source, target) => renames.push([source, target]),
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    }),
+  );
+  assert.deepEqual(
+    { error: settled.error?.message, renames, waits, from: describeEntry(from), to: describeEntry(to) },
+    { error: "fixture: o destino está ocupado", renames: [], waits: [], from: C34P_MARKED, to: "diretório []" },
+  );
+});
+
+// A troca da origem é um rename de pasta vazia recém-criada (não de artefatos
+// recém-gravados): a original continua existindo, então a substituta tem outra
+// identidade também no ext4, que pode reutilizar o inode de uma pasta apagada.
+test("I4-C34p H3 auxílio da montagem: origem trocada na espera recusa sem nova tentativa", async () => {
+  const { dir, from, to } = c34pMoveDirs("h3 origem trocada", { marked: false });
+  const aside = path.join(dir, "origem própria movida");
+  const renames = [];
+  const waits = [];
+  const settled = await s19Settle(
+    s19MoveFixtureDirectory(from, to, {
+      platform: "win32",
+      rename: (source, target) => {
+        renames.push([source, target]);
+        renameSync(from, aside);
+        mkdirSync(from);
+        throw simulated("EPERM");
+      },
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    }),
+  );
+  assert.deepEqual(
+    { error: settled.error?.message, renames, waits, from: describeEntry(from), aside: describeEntry(aside), to: describeEntry(to) },
+    { error: "fixture: a origem foi trocada", renames: [[from, to]], waits: [10], from: "diretório []", aside: "diretório []", to: "ausente" },
+  );
+});

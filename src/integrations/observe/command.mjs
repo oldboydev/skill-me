@@ -90,7 +90,8 @@ function view(observation, configured) {
   };
 }
 
-async function patiently(operation, clock = () => performance.now()) {
+// Também a abertura e o encerramento da execução de `skill-me <agente>` (#25).
+export async function patiently(operation, clock = () => performance.now()) {
   const deadline = clock() + OBSERVE_LOCK_PATIENCE_MS;
   for (;;) {
     try {

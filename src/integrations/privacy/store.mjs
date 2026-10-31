@@ -38,6 +38,8 @@ const KEY_BYTES = 32;
 const DELETING_PREFIX = ".deleting-";
 const DATA_FILE_PATTERN = /^events-(\d{6})\.ndjson$/;
 const TEMP_PATTERN = /^(state\.json|events-\d{6}\.ndjson)\.[0-9a-f]{8}\.skill-me-tmp$/;
+// Temporário do marcador durante a publicação (initStore), na pasta do store.
+const MARKER_TEMP_PATTERN = /^store\.json\.[0-9a-f]{8}\.skill-me-tmp$/;
 // state.json tem forma fechada e pequena; um arquivo maior não é nosso.
 const MAX_STATE_BYTES = 64 * 1024;
 // Estado da observação automática (#23), ao lado do marcador do store. O teto
@@ -45,6 +47,14 @@ const MAX_STATE_BYTES = 64 * 1024;
 const OBSERVE_FILE = "observe.json";
 const MAX_OBSERVE_BYTES = 256 * 1024;
 export const AUTOMATIC_ORIGIN = "automatic";
+// Execução de `skill-me <agente>` (issue #25): capturas sucessivas com
+// `invocation` e `segment`, e o ponteiro da execução aberta em `launches/`
+// (linhas "Ponteiro da execução aberta" e "Captura da execução" do Landing em
+// .checks/issue-25-agent-launch.md).
+export const LAUNCH_ORIGIN = "launch";
+const LAUNCHES_DIR = "launches";
+const LAUNCH_VERSION = 1;
+const MAX_LAUNCH_BYTES = 1024;
 
 export const CONTENT_OMISSION_CODES = Object.freeze([
   "content_disabled",
@@ -103,12 +113,13 @@ async function readSmallFile(io, file, maxBytes, invalidCode) {
   return bytes;
 }
 
-// Abre a pasta do store da raiz. Só `start` e o `on` da observação (create)
-// criam a pasta; os demais recebem null quando ela não existe. O marcador é
-// imutável depois de criado, então é conferido antes do lock: uma pasta alheia
-// com o mesmo nome nunca recebe o nosso lock. `expectedReal` (observação
-// automática, #23): o caminho real gravado no setup; outro destino é
-// `root_changed`, e `withLock` mantém a conferência até o fim da operação.
+// Abre a pasta do store da raiz. Só `start`, o `on` da observação e a abertura
+// do launcher (create) criam a pasta; os demais recebem null quando ela não
+// existe. O marcador é imutável depois de publicado, então é conferido antes do
+// lock: uma pasta alheia com o mesmo nome nunca recebe o nosso lock.
+// `expectedReal` (observação automática, #23): o caminho real gravado no setup;
+// outro destino é `root_changed`, e `withLock` mantém a conferência até o fim
+// da operação.
 async function openStore(rootArg, io, { create = false, expectedReal = null } = {}) {
   const rootReal = await resolveRoot(rootArg, io);
   if (expectedReal !== null && rootReal !== expectedReal) throw new StoreError("root_changed");
@@ -125,17 +136,38 @@ async function openStore(rootArg, io, { create = false, expectedReal = null } = 
   }
   if (kind === "link") throw new StoreError("link_refused");
   if (kind !== "dir") throw new StoreError("store_invalid");
-  const marker = await readSmallFile(io, path.join(storeDir, STORE_FILE), STORE_MARKER.length, "store_invalid");
   let needsInit = false;
-  if (marker === null) {
-    // Sem marcador, só uma pasta vazia (ou só com um lock) é adotada, e só por start.
-    const names = (await io.readdir(storeDir)).filter((name) => name !== LOCK_FILE);
-    if (!create || names.length > 0) throw new StoreError("store_invalid");
-    needsInit = true;
-  } else if (marker.toString("utf8") !== STORE_MARKER) {
-    throw new StoreError("store_invalid");
-  }
+  if (create) needsInit = await needsAdoption(io, storeDir);
+  else if (!(await readMarker(io, storeDir))) throw new StoreError("store_invalid");
   return { io, rootArg, rootReal, storeDir, capturesDir: path.join(storeDir, CAPTURES_DIR), needsInit };
+}
+
+// true com o marcador exato, false sem ele; outro conteúdo é store_invalid.
+async function readMarker(io, storeDir) {
+  const marker = await readSmallFile(io, path.join(storeDir, STORE_FILE), STORE_MARKER.length, "store_invalid");
+  if (marker === null) return false;
+  if (marker.toString("utf8") !== STORE_MARKER) throw new StoreError("store_invalid");
+  return true;
+}
+
+// Quem cria lista a pasta antes de ler o marcador (linha "Primeira criação
+// concorrente do store" do Landing da #25): duas primeiras aberturas na mesma
+// raiz criam o store juntas, e quem lia o marcador e depois listava a pasta
+// encontrava a criação da outra pela metade. Como initStore publica o marcador
+// por rename, um `store.json` listado já está inteiro; ausente na listagem, a
+// decisão final é sob o lock. Sem marcador, a pasta é adotável vazia, só com o
+// `.lock`, ou com o temporário do marcador junto do `.lock` — outra criação em
+// curso, sob o lock dela, que esta abertura vai encontrar (`lock_present`).
+// Qualquer outra entrada é store_invalid, antes do lock.
+async function needsAdoption(io, storeDir) {
+  const names = await io.readdir(storeDir);
+  if (names.includes(STORE_FILE)) {
+    if (!(await readMarker(io, storeDir))) throw new StoreError("store_invalid");
+    return false;
+  }
+  const creating = names.includes(LOCK_FILE);
+  if (names.some((name) => name !== LOCK_FILE && !(creating && MARKER_TEMP_PATTERN.test(name)))) throw new StoreError("store_invalid");
+  return true;
 }
 
 // A raiz e a pasta do store continuam as resolvidas no início: trocadas por
@@ -150,10 +182,97 @@ async function assertUnchanged(ctx) {
   if (real !== ctx.rootReal || (await entryKind(ctx.io, ctx.storeDir)) !== "dir") throw new StoreError("root_changed");
 }
 
+// Liberação do lock por reserva exclusiva (issue #25, linha "Liberação do lock
+// por reserva exclusiva" do Landing; plano aprovado em
+// .tasks/issue-25-lock-release-proposal.md). No Windows, entre a marca de
+// exclusão de um `unlink` e o fechamento do arquivo, a tomada `wx` de outro
+// processo recebe EPERM — o mesmo código do acesso negado real, então não pode
+// virar `lock_present`. O rename tira o nome de uma vez; a limpeza vem com o
+// lock já livre e só toca o que esta chamada criou e conferiu.
+const RELEASE_SUFFIX = "-release-";
+const RETIRED_FILE = "lock";
+
+// A reserva deixou de ser a pasta que o `mkdtemp` criou (não é pasta real, é
+// link ou mudou de identidade). Erro interno, sem `code`: não inventa errno do
+// sistema e não é `lostCode`, porque antes da retirada o nosso lock ficou — na
+// fronteira é E/S (`io_failure`, `lockLeft: true`).
+class LockReleaseError extends Error {
+  constructor() {
+    super("reserva da liberação do lock trocada");
+    this.name = "LockReleaseError";
+  }
+}
+
+// `dev`/`ino` exatos (bigint) da reserva, só se for uma pasta real; senão null.
+async function slotIdentity(io, slot) {
+  const stats = await io.lstat(slot, { bigint: true });
+  return stats.isDirectory() && !stats.isSymbolicLink() ? { dev: stats.dev, ino: stats.ino } : null;
+}
+
+async function assertSameSlot(io, slot, identity) {
+  const current = await slotIdentity(io, slot);
+  if (current === null || current.dev !== identity.dev || current.ino !== identity.ino) throw new LockReleaseError();
+}
+
+// Cada passo roda no máximo uma vez; vale a primeira falha, e nenhuma é
+// escondida. Nada é movido de volta (outro processo já pode ter o nome do
+// lock), atravessado, removido de forma recursiva ou escolhido por nome,
+// prefixo ou idade: a reserva só sai vazia e com a identidade conferida.
+async function releaseLockFile({ io, lockPath, lostCode, bytes }) {
+  const slot = await io.mkdtemp(lockPath + RELEASE_SUFFIX);
+  const identity = await slotIdentity(io, slot);
+  if (identity === null) throw new LockReleaseError();
+  const retired = path.join(slot, RETIRED_FILE);
+  let failure = null;
+  let moving = false;
+  try {
+    // Conferência adjacente ao rename, como antes do unlink.
+    const current = await readSmallFile(io, lockPath, bytes.length, lostCode);
+    if (current === null || !current.equals(bytes)) throw new StoreError(lostCode);
+    moving = true;
+    await io.rename(lockPath, retired);
+  } catch (error) {
+    failure = error;
+  }
+  // Sem o rename a reserva está vazia. Com ele — mesmo com erro, pois o rename
+  // pode ter movido e lançado — só sai o retirado com os nossos bytes.
+  let empty = !moving;
+  if (moving) {
+    try {
+      await assertSameSlot(io, slot, identity);
+      const moved = await readSmallFile(io, retired, bytes.length, lostCode);
+      if (moved !== null && !moved.equals(bytes)) throw new StoreError(lostCode);
+      if (moved !== null) {
+        try {
+          await io.unlink(retired);
+        } catch (error) {
+          // O unlink pode ter apagado antes de lançar: só a ausência conferida
+          // libera o rmdir; a falha que sai continua a dele.
+          empty = (await entryKind(io, retired).catch(() => null)) === "missing";
+          throw error;
+        }
+      }
+      empty = true;
+    } catch (error) {
+      failure ??= error;
+    }
+  }
+  if (empty) {
+    try {
+      await assertSameSlot(io, slot, identity);
+      await io.rmdir(slot);
+    } catch (error) {
+      failure ??= error;
+    }
+  }
+  if (failure !== null) throw failure;
+}
+
 // Lock exclusivo por arquivo, sem espera: ocupado → conflito sem mutação, e
 // nunca removido por outro processo. Só sai se ainda tiver os bytes que
-// gravamos; senão `lostCode`. Consumidores: o lock da raiz (withLock) e o da
-// configuração da observação (#23, linha "Barreira da configuração").
+// gravamos; senão `lostCode`. Sai por `releaseLockFile`, igual nas três
+// plataformas. Consumidores: o lock da raiz (withLock) e o da configuração da
+// observação (#23, linha "Barreira da configuração").
 //
 // O lock é criado sem flush: só serializa processos vivos — a criação `wx` é
 // atômica e os bytes conferidos na liberação são lidos pelo mesmo sistema — e,
@@ -177,9 +296,7 @@ export async function holdLockFile({ io, lockPath, lostCode }, fn) {
     failure = error;
   }
   try {
-    const current = await readSmallFile(io, lockPath, bytes.length, lostCode);
-    if (current === null || !current.equals(bytes)) throw new StoreError(lostCode);
-    await io.unlink(lockPath);
+    await releaseLockFile({ io, lockPath, lostCode, bytes });
   } catch (error) {
     failure ??= error;
   }
@@ -233,13 +350,29 @@ const STATE_KEYS = ["captureVersion", "content", "counters", "createdAt", "dataB
 // Só a captura criada pela observação automática traz `origin`; a manual
 // continua com a forma da #5 (linha "Captura automática" do Landing da #23).
 const AUTOMATIC_STATE_KEYS = [...STATE_KEYS, "origin"].sort();
+// A do launcher traz também a execução, o número da captura nela e o início
+// da execução (#25; `launchedAt` na linha "Início da execução" do Landing).
+const LAUNCH_STATE_KEYS = [...STATE_KEYS, "invocation", "launchedAt", "origin", "segment"].sort();
 const COUNTER_KEYS = ["accepted", "contentOmitted", "dropped", "malformed", "persisted"];
+
+const isSegment = (value) => Number.isSafeInteger(value) && value >= 1;
+const isLaunchId = (value) => typeof value === "string" && CAPTURE_ID_PATTERN.test(value);
+
+function hasKnownOrigin(state, keys) {
+  if (isDeepStrictEqual(keys, STATE_KEYS)) return true;
+  if (isDeepStrictEqual(keys, AUTOMATIC_STATE_KEYS)) return state.origin === AUTOMATIC_ORIGIN;
+  return (
+    isDeepStrictEqual(keys, LAUNCH_STATE_KEYS) &&
+    state.origin === LAUNCH_ORIGIN &&
+    isLaunchId(state.invocation) &&
+    isSegment(state.segment) &&
+    isIso(state.launchedAt)
+  );
+}
 
 function isValidState(state, id) {
   if (state === null || typeof state !== "object" || Array.isArray(state)) return false;
-  const keys = Object.keys(state).sort();
-  const manual = isDeepStrictEqual(keys, STATE_KEYS);
-  if (!manual && !(isDeepStrictEqual(keys, AUTOMATIC_STATE_KEYS) && state.origin === AUTOMATIC_ORIGIN)) return false;
+  if (!hasKnownOrigin(state, Object.keys(state).sort())) return false;
   const counters = state.counters;
   return (
     state.captureVersion === 1 &&
@@ -303,19 +436,38 @@ async function writeStateAtomic(io, dir, state) {
 function publicCapture(state) {
   const { id, state: lifecycle, content, retentionDays, createdAt, endedAt, dataBytes, counters, limits } = state;
   const shown = { id, state: lifecycle, content, retentionDays, createdAt, endedAt, dataBytes, counters, limits };
-  return state.origin === undefined ? shown : { ...shown, origin: state.origin };
+  if (state.origin === undefined) return shown;
+  if (state.origin === LAUNCH_ORIGIN) {
+    return { ...shown, origin: state.origin, invocation: state.invocation, segment: state.segment, launchedAt: state.launchedAt };
+  }
+  return { ...shown, origin: state.origin };
 }
 
-// Marcador gravado sob o lock pela operação que adotou a pasta vazia.
+// Marcador publicado sob o lock pela operação que adotou a pasta. Outra criação
+// pode tê-lo publicado entre a listagem (needsAdoption) e este lock: presente,
+// ele vale e nada é regravado. Ausente, a pasta só pode ter o nosso `.lock`, e
+// o marcador nasce por temporário + rename, como o state.json: nunca existe
+// pela metade para quem o lê sem o lock.
 async function initStore(ctx) {
   if (!ctx.needsInit) return;
-  await ctx.io.writeExclusive(path.join(ctx.storeDir, STORE_FILE), STORE_MARKER);
+  const { io, storeDir } = ctx;
+  if (await readMarker(io, storeDir)) return;
+  if ((await io.readdir(storeDir)).some((name) => name !== LOCK_FILE)) throw new StoreError("store_invalid");
+  const tmp = path.join(storeDir, tempName(STORE_FILE));
+  try {
+    await io.writeExclusive(tmp, STORE_MARKER);
+    await io.rename(tmp, path.join(storeDir, STORE_FILE));
+  } catch (error) {
+    await io.unlink(tmp).catch(() => {});
+    throw error;
+  }
   await assertUnchanged(ctx);
 }
 
 // Captura nova, já sob o lock: pasta, chave própria e o state.json, que é o
-// commit. `origin` só existe nas criadas pela observação automática.
-async function createCapture(ctx, { content, retentionDays, nowMs, origin }) {
+// commit. `origin` só existe nas criadas pela observação automática ou pelo
+// launcher; `launch` ({invocation, segment, launchedAt}) só nas do launcher.
+async function createCapture(ctx, { content, retentionDays, nowMs, origin, launch }) {
   const { io } = ctx;
   await ensureCapturesDir(ctx);
   const id = randomBytes(16).toString("hex");
@@ -335,6 +487,7 @@ async function createCapture(ctx, { content, retentionDays, nowMs, origin }) {
     counters: { accepted: 0, persisted: 0, malformed: 0, dropped: {}, contentOmitted: {} },
     limits: { ...PRIVACY_LIMITS },
     ...(origin === undefined ? {} : { origin }),
+    ...(launch === undefined ? {} : { invocation: launch.invocation, segment: launch.segment, launchedAt: launch.launchedAt }),
   };
   await writeStateAtomic(io, dir, state);
   return { dir, state };
@@ -770,9 +923,9 @@ async function writeObservationFile(ctx, observation) {
   }
 }
 
-// Capturas `origin: automatic` legíveis, por criação; as ilegíveis vão para
-// `failed`, como no list.
-async function automaticCaptures(ctx) {
+// Capturas legíveis de uma origem (`automatic` da #23, `launch` da #25), por
+// criação; as ilegíveis vão para `failed`, como no list.
+async function capturesOfOrigin(ctx, origin) {
   if ((await capturesDirKind(ctx)) === "missing") return { found: [], failed: [] };
   const found = [];
   const failed = [];
@@ -780,7 +933,7 @@ async function automaticCaptures(ctx) {
     if (!CAPTURE_ID_PATTERN.test(name)) continue;
     try {
       const capture = await readCapture(ctx, name);
-      if (capture.state.origin === AUTOMATIC_ORIGIN) found.push(capture);
+      if (capture.state.origin === origin) found.push(capture);
     } catch (error) {
       if (!(error instanceof StoreError)) throw error;
       failed.push({ capture: name, code: error.code });
@@ -790,7 +943,12 @@ async function automaticCaptures(ctx) {
   return { found, failed };
 }
 
-const stopCapture = (ctx, { dir, state }, nowIso) => writeStateAtomic(ctx.io, dir, transition(state, "stop", nowIso).capture);
+// Devolve o estado gravado: o resumo do encerramento sai dele, sem reler.
+async function stopCapture(ctx, { dir, state }, nowIso) {
+  const stopped = transition(state, "stop", nowIso).capture;
+  await writeStateAtomic(ctx.io, dir, stopped);
+  return stopped;
+}
 
 // on/off. Só o `on` cria a pasta do store; `off` sem store não tem o que
 // desligar. Depois de gravar off, encerra toda captura automática ativa —
@@ -810,7 +968,7 @@ export function changeObservation({ root, expectedReal, action, nowMs = Date.now
       if (action === "on") await authorization?.claim();
       if (changed) await writeObservationFile(ctx, next);
       if (action === "on") return { observation: next, changed, stopped: [], failed: [] };
-      const { found, failed } = await automaticCaptures(ctx);
+      const { found, failed } = await capturesOfOrigin(ctx, AUTOMATIC_ORIGIN);
       const stopped = [];
       for (const capture of found) {
         if (capture.state.state !== "active") continue;
@@ -830,7 +988,7 @@ export function readObservation({ root, expectedReal, io = createStoreIo() }) {
     if (ctx === null) return { observation: null, captures: [], failed: [] };
     return withLock(ctx, async () => {
       const observation = await readObservationFile(ctx);
-      const { found, failed } = await automaticCaptures(ctx);
+      const { found, failed } = await capturesOfOrigin(ctx, AUTOMATIC_ORIGIN);
       return { observation, captures: found.map(({ state }) => publicCapture(state)), failed };
     });
   });
@@ -860,13 +1018,52 @@ async function activeCapture(ctx, id) {
   }
 }
 
+// Sucessão por limite, numa tomada do lock já obtida: a regra da observação
+// automática (#23), reusada pela execução do launcher (#25, linha "Sucessão"
+// do Landing). `produce(capture, pendentes)` — a política, fora deste módulo —
+// devolve o lote e quantas entradas iniciais consumiu com a chave e o uso da
+// captura; as que não couberam vão para a sucessora, que `succeed()` cria (e
+// registra no índice de quem chama) depois de encerrar a cheia, com a política
+// reaplicada com a chave nova. `target` null: não há corrente ativa — também
+// quando foi encerrada ou excluída à mão — e a primeira entrada já abre a
+// sucessora. `entries` é opaco.
+async function appendWithSuccession(ctx, { target, entries, produce, nowIso, succeed }) {
+  let current = target;
+  let pending = entries;
+  let committed = 0;
+  let persisted = 0;
+  while (pending.length > 0) {
+    let created = false;
+    if (current === null) {
+      current = await succeed();
+      created = true;
+    }
+    const usage = { events: current.state.counters.persisted, bytes: current.state.dataBytes };
+    const { batch, consumed } = produce({ key: await readCaptureKey(ctx.io, current.dir), content: current.state.content, usage }, pending);
+    assertBatch(batch);
+    // Uma captura recém-criada sempre consome (o limite nela é descarte);
+    // sem isso o laço criaria capturas vazias sob o lock indefinidamente.
+    if (consumed === 0 && created) throw new StoreError("io_failure");
+    if (consumed > 0) {
+      const lines = batch.records.map((record) => JSON.stringify(record) + "\n");
+      const appended = await commitBatch(ctx, current.dir, current.state, batch, lines);
+      current = { dir: current.dir, state: appended.state };
+      persisted += appended.admitted;
+      committed += consumed;
+      pending = pending.slice(consumed);
+    }
+    if (pending.length > 0) {
+      await stopCapture(ctx, current, nowIso);
+      current = null;
+    }
+  }
+  return { committed, persisted };
+}
+
 // Gravação automática de entradas de uma sessão numa só tomada do lock: confere
-// a geração do produtor, escolhe ou cria a captura da sessão e chama `produce`
-// — a política, fora deste módulo — com a chave e o uso dela. `produce(capture,
-// pendentes)` devolve o lote e quantas entradas iniciais ele consumiu; as que
-// não couberam vão para a sucessora, criada depois de encerrar a cheia, com a
-// política reaplicada com a chave nova. Captura encerrada ou excluída à mão
-// também é sucedida: o `on` continua valendo até o `off`. `entries` é opaco.
+// a geração do produtor e grava na captura da sessão pela sucessão comum. A
+// captura encerrada ou excluída à mão também é sucedida: o `on` continua
+// valendo até o `off`.
 export function appendAutomatic({ root, expectedReal, generation, session, entries, produce, nowMs = Date.now(), io = createStoreIo(), onLock }) {
   return storeOp(async () => {
     const opened = await openStore(root, io, { expectedReal });
@@ -876,40 +1073,336 @@ export function appendAutomatic({ root, expectedReal, generation, session, entri
       let observation = await readObservationFile(ctx);
       if (!isCurrentGeneration(observation, generation)) throw new StoreError("observe_off");
       const tag = sessionTag(observation.sessionKey, session);
-      const nowIso = new Date(nowMs).toISOString();
-      let target = observation.sessions[tag] === undefined ? null : await activeCapture(ctx, observation.sessions[tag]);
-      let pending = entries;
-      let committed = 0;
-      let persisted = 0;
-      while (pending.length > 0) {
-        let created = false;
-        if (target === null) {
-          target = await createCapture(ctx, { content: true, retentionDays: DEFAULT_RETENTION_DAYS, nowMs, origin: AUTOMATIC_ORIGIN });
-          created = true;
-          observation = assignSession(observation, tag, target.state.id);
+      const target = observation.sessions[tag] === undefined ? null : await activeCapture(ctx, observation.sessions[tag]);
+      return appendWithSuccession(ctx, {
+        target,
+        entries,
+        produce,
+        nowIso: new Date(nowMs).toISOString(),
+        succeed: async () => {
+          const created = await createCapture(ctx, { content: true, retentionDays: DEFAULT_RETENTION_DAYS, nowMs, origin: AUTOMATIC_ORIGIN });
+          observation = assignSession(observation, tag, created.state.id);
           await writeObservationFile(ctx, observation);
-        }
-        const usage = { events: target.state.counters.persisted, bytes: target.state.dataBytes };
-        const { batch, consumed } = produce({ key: await readCaptureKey(ctx.io, target.dir), content: target.state.content, usage }, pending);
-        assertBatch(batch);
-        // Uma captura recém-criada sempre consome (o limite nela é descarte);
-        // sem isso o laço criaria capturas vazias sob o lock indefinidamente.
-        if (consumed === 0 && created) throw new StoreError("io_failure");
-        if (consumed > 0) {
-          const lines = batch.records.map((record) => JSON.stringify(record) + "\n");
-          const appended = await commitBatch(ctx, target.dir, target.state, batch, lines);
-          target = { dir: target.dir, state: appended.state };
-          persisted += appended.admitted;
-          committed += consumed;
-          pending = pending.slice(consumed);
-        }
-        if (pending.length > 0) {
-          await stopCapture(ctx, target, nowIso);
-          target = null;
-        }
-      }
-      return { committed, persisted };
+          return created;
+        },
+      });
     });
+  });
+}
+
+// Execução de `skill-me <agente>` (issue #25). O ponteiro em
+// `launches/<invocation>.json` aponta a captura corrente e só existe enquanto
+// a execução recebe registros; muda só sob o lock da raiz (linhas "Ponteiro da
+// execução aberta", "Início da execução" e "Ordem e falha do encerramento" do
+// Landing em .checks/issue-25-agent-launch.md).
+
+const LAUNCH_KEYS = ["capture", "invocation", "launchVersion", "launchedAt", "segment"];
+const launchesDir = (ctx) => path.join(ctx.storeDir, LAUNCHES_DIR);
+const launchFile = (ctx, invocation) => path.join(launchesDir(ctx), `${invocation}.json`);
+
+function isValidLaunch(value, invocation) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    isDeepStrictEqual(Object.keys(value).sort(), LAUNCH_KEYS) &&
+    value.launchVersion === LAUNCH_VERSION &&
+    value.invocation === invocation &&
+    isLaunchId(value.capture) &&
+    isSegment(value.segment) &&
+    isIso(value.launchedAt)
+  );
+}
+
+async function launchesDirKind(ctx) {
+  const kind = await entryKind(ctx.io, launchesDir(ctx));
+  if (kind === "link") throw new StoreError("link_refused");
+  if (kind !== "dir" && kind !== "missing") throw new StoreError("store_invalid");
+  return kind;
+}
+
+// null: a execução foi encerrada, ou nunca existiu nesta raiz.
+async function readLaunchFile(ctx, invocation) {
+  if ((await launchesDirKind(ctx)) === "missing") return null;
+  const bytes = await readSmallFile(ctx.io, launchFile(ctx, invocation), MAX_LAUNCH_BYTES, "store_invalid");
+  if (bytes === null) return null;
+  let value;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new StoreError("store_invalid");
+  }
+  if (!isValidLaunch(value, invocation)) throw new StoreError("store_invalid");
+  return value;
+}
+
+async function writeLaunchFile(ctx, launch) {
+  if ((await launchesDirKind(ctx)) === "missing") await ctx.io.mkdir(launchesDir(ctx));
+  const tmp = path.join(launchesDir(ctx), tempName(`${launch.invocation}.json`));
+  try {
+    await ctx.io.writeExclusive(tmp, JSON.stringify(launch));
+    await ctx.io.rename(tmp, launchFile(ctx, launch.invocation));
+  } catch (error) {
+    await ctx.io.unlink(tmp).catch(() => {});
+    throw error;
+  }
+}
+
+const launchSegment = (ctx, { invocation, segment, launchedAt, nowMs }) =>
+  createCapture(ctx, { content: true, retentionDays: DEFAULT_RETENTION_DAYS, nowMs, origin: LAUNCH_ORIGIN, launch: { invocation, segment, launchedAt } });
+
+// Falha de E/S com a captura que ficou `active` por causa dela: quem chama
+// precisa dizer qual é e como encerrá-la (storeOp preserva o StoreError).
+const leftActive = (error, fields) => Object.assign(error instanceof StoreError ? error : new StoreError("io_failure"), fields);
+
+// Abre a execução antes do agente (crit. 15): o segmento 1 e o ponteiro na
+// mesma tomada do lock. Sem o ponteiro a execução não existe, então a captura
+// criada não fica `active`; se nem pará-la der certo, o erro diz qual ficou
+// (task 33; linha "Sucessora não publicada" do Landing). Com captura e ponteiro
+// gravados, só a liberação do lock pode falhar: a execução já existe, e o erro
+// leva a identidade dela (`opened`) e o lock.
+export function startLaunch({ root, expectedReal, nowMs = Date.now(), io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { create: true, expectedReal });
+    return keepingResult(
+      ctx,
+      async () => {
+        await initStore(ctx);
+        const invocation = randomBytes(16).toString("hex");
+        const launchedAt = new Date(nowMs).toISOString();
+        const first = await launchSegment(ctx, { invocation, segment: 1, launchedAt, nowMs });
+        try {
+          await writeLaunchFile(ctx, { launchVersion: LAUNCH_VERSION, invocation, capture: first.state.id, segment: 1, launchedAt });
+        } catch (error) {
+          try {
+            await stopCapture(ctx, first, launchedAt);
+          } catch {
+            throw leftActive(error, { capture: first.state.id, orphan: true });
+          }
+          throw error;
+        }
+        return { invocation, capture: first.state.id, launchedAt };
+      },
+      (opened) => ({ ...opened, opened: true }),
+    );
+  });
+}
+
+// Liberação do lock que falha depois de o callback terminar (task 35; linha
+// "Lock após a abertura" do Landing): holdLockFile lança a falha e o resultado
+// já gravado se perderia. `describe(resultado)` diz o que vai no erro, com o
+// lock: `lockLeft` quando a falha foi de E/S e o lock gravado aqui pode ter
+// ficado; um lock ausente ou com outros bytes (`StoreError`) não é desta
+// operação. Uma falha do próprio callback continua a que sai, sem resultado.
+async function keepingResult(ctx, fn, describe) {
+  let done = null;
+  try {
+    return await withLock(ctx, async () => (done = { result: await fn() }).result);
+  } catch (error) {
+    if (done === null) throw error;
+    throw leftActive(error, { ...describe(done.result), lockPath: path.join(ctx.storeDir, LOCK_FILE), lockLeft: !(error instanceof StoreError) });
+  }
+}
+
+// Captura seguinte da execução, ainda sem publicar (task 33; linha "Sucessora
+// não publicada" do Landing). Uma sucessora criada numa tomada anterior cujo
+// ponteiro não chegou a ser gravado está `active` com `segment` maior que o do
+// ponteiro: ela é a seguinte, e nenhuma outra recebe o número dela. Senão,
+// nasce uma nova com o maior número já visto na execução + 1. Só roda quando a
+// corrente não está ativa — no limite ou depois de um encerramento à mão.
+async function nextLaunchSegment(ctx, launch, nowMs) {
+  const known = await launchCaptures(ctx, launch.invocation);
+  const unpublished = known.filter((state) => state.state === "active" && state.segment > launch.segment).at(-1);
+  if (unpublished !== undefined) {
+    return { capture: { dir: path.join(ctx.capturesDir, unpublished.id), state: unpublished }, segment: unpublished.segment };
+  }
+  const segment = Math.max(launch.segment, ...known.map((state) => state.segment)) + 1;
+  return { capture: await launchSegment(ctx, { invocation: launch.invocation, segment, launchedAt: launch.launchedAt, nowMs }), segment };
+}
+
+// Gravação de um produtor da execução (crit. 17 e 19): sem ponteiro, a
+// execução acabou (`launch_ended`) e nada é gravado. A corrente que não
+// comporta o próximo registro — ou que não está mais ativa — é sucedida pela
+// regra comum, e o ponteiro passa à sucessora na mesma tomada do lock.
+export function appendLaunch({ root, expectedReal, invocation, entries, produce, nowMs = Date.now(), io = createStoreIo(), onLock }) {
+  return storeOp(async () => {
+    const opened = await openStore(root, io, { expectedReal });
+    if (opened === null) throw new StoreError("launch_ended");
+    const ctx = { ...opened, onLock };
+    return withLock(ctx, async () => {
+      let launch = await readLaunchFile(ctx, invocation);
+      if (launch === null) throw new StoreError("launch_ended");
+      const target = await activeCapture(ctx, launch.capture);
+      if (target !== null && target.state.invocation !== invocation) throw new StoreError("store_invalid");
+      return appendWithSuccession(ctx, {
+        target,
+        entries,
+        produce,
+        nowIso: new Date(nowMs).toISOString(),
+        // O ponteiro só passa à seguinte se a gravação dele der certo; senão a
+        // entrega falha e a seguinte fica para a próxima tomada (nextLaunchSegment).
+        succeed: async () => {
+          const next = await nextLaunchSegment(ctx, launch, nowMs);
+          const published = { ...launch, capture: next.capture.state.id, segment: next.segment };
+          await writeLaunchFile(ctx, published);
+          launch = published;
+          return next.capture;
+        },
+      });
+    });
+  });
+}
+
+// Vínculo de uma captura com a execução: o ponteiro tem só a forma conferida,
+// e quem diz a execução da captura é o estado dela.
+const ofLaunch = (state, invocation) => state.origin === LAUNCH_ORIGIN && state.invocation === invocation;
+
+// Capturas legíveis de uma execução, por segmento (a seguinte, em
+// nextLaunchSegment). Uma ilegível de qualquer origem fica de fora.
+async function launchCaptures(ctx, invocation) {
+  const { found } = await capturesOfOrigin(ctx, LAUNCH_ORIGIN);
+  return found
+    .map(({ state }) => state)
+    .filter((state) => state.invocation === invocation)
+    .sort((a, b) => a.segment - b.segment);
+}
+
+// Capturas da execução lidas uma a uma no encerramento (linha "Descoberta das
+// capturas no encerramento" do Landing). `StoreError` (formato inválido, link,
+// entrada alheia) fica de fora, como em launchCaptures; um erro de E/S cru põe
+// o nome em `unreadable` sem perder as demais. A pasta que não pôde ser listada
+// torna a descoberta inteira não conferida. `error`: a primeira falha.
+async function discoverLaunch(ctx, invocation) {
+  const found = [];
+  const unreadable = [];
+  let names;
+  try {
+    names = (await capturesDirKind(ctx)) === "missing" ? [] : (await ctx.io.readdir(ctx.capturesDir)).sort();
+  } catch (error) {
+    return { found, unreadable, complete: false, error };
+  }
+  let error = null;
+  for (const name of names) {
+    if (!CAPTURE_ID_PATTERN.test(name)) continue;
+    try {
+      const capture = await readCapture(ctx, name);
+      if (ofLaunch(capture.state, invocation)) found.push(capture);
+    } catch (failure) {
+      if (failure instanceof StoreError) continue;
+      unreadable.push(name);
+      error ??= failure;
+    }
+  }
+  found.sort((a, b) => a.state.segment - b.state.segment);
+  return { found, unreadable, complete: unreadable.length === 0, error };
+}
+
+// Encerramento (crit. 20): o ponteiro sai antes de qualquer captura parar —
+// sem ele nenhum produtor grava, mesmo que parar falhe depois. Então para a
+// corrente e qualquer outra `active` da execução, como uma sucessora cujo
+// ponteiro não foi gravado (task 33). As que não pararam vão no erro, para
+// quem chama dizer quais são; o resumo de sucesso nunca traz uma `active`.
+// Uma captura que não pôde ser lida pode ser desta execução: o erro diz que o
+// encerramento não foi conferido (`unverified`) e quais nomes faltaram, sem
+// tocar nelas — podem ser de outra execução. Com tudo parado, só a liberação
+// do lock pode falhar: o erro leva o resultado (`closed`) e o lock.
+export function endLaunch({ root, expectedReal, invocation, nowMs = Date.now(), io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { expectedReal });
+    if (ctx === null) return { ended: false, captures: [] };
+    return keepingResult(
+      ctx,
+      async () => {
+        const nowIso = new Date(nowMs).toISOString();
+        const launch = await readLaunchFile(ctx, invocation);
+        if (launch !== null) await io.unlink(launchFile(ctx, invocation));
+        const failures = [];
+        // Para a captura lida só se ela for desta execução e estiver `active`;
+        // devolve o estado que fica (o gravado, quando parou).
+        const stop = async (capture) => {
+          if (capture.state.state !== "active" || !ofLaunch(capture.state, invocation)) return capture.state;
+          try {
+            return await stopCapture(ctx, capture, nowIso);
+          } catch (error) {
+            failures.push({ id: capture.state.id, error });
+            return capture.state;
+          }
+        };
+        // A captura do ponteiro vale pelo vínculo do estado dela (linha "Vínculo
+        // do ponteiro no encerramento"); a que não pôde ser lida fica para a
+        // descoberta, que a relê ou a dá como não lida.
+        if (launch !== null) {
+          const current = await readCapture(ctx, launch.capture).catch(() => null);
+          if (current !== null) await stop(current);
+        }
+        const discovered = await discoverLaunch(ctx, invocation);
+        const states = [];
+        for (const capture of discovered.found) {
+          states.push(failures.some((failure) => failure.id === capture.state.id) ? capture.state : await stop(capture));
+        }
+        if (failures.length > 0 || !discovered.complete) {
+          const ids = failures.map((failure) => failure.id);
+          const unverified = discovered.complete ? {} : { unverified: true, unreadable: discovered.unreadable };
+          throw leftActive(failures[0]?.error ?? discovered.error, { revoked: true, capture: ids[0], captures: ids, ...unverified });
+        }
+        return { ended: launch !== null, captures: states.map(publicCapture) };
+      },
+      (closed) => ({ closed }),
+    );
+  });
+}
+
+// Ponteiro lido sem lock, só para orientar o usuário depois de um
+// encerramento que falhou: null quando a execução já não recebe registros.
+// A captura dele só é devolvida se o estado dela for desta execução; de outra,
+// o ponteiro é inválido, e a ilegível lança o erro da leitura.
+export function peekLaunch({ root, expectedReal, invocation, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { expectedReal });
+    if (ctx === null) return null;
+    const launch = await readLaunchFile(ctx, invocation);
+    if (launch === null) return null;
+    const { state } = await readCapture(ctx, launch.capture);
+    if (!ofLaunch(state, invocation)) throw new StoreError("store_invalid");
+    return launch;
+  });
+}
+
+// `skill-me report` (crit. 27): a execução iniciada por último, sem criar lock
+// — como em latestAutomaticCapture, lock ausente e raiz conferidos antes e
+// depois; uma captura ilegível impede a escolha. A ordem é (`launchedAt`,
+// `invocation`), que não depende de qual segmento ainda existe.
+export function latestLaunch({ root, expectedReal, io = createStoreIo() }) {
+  return storeOp(async () => {
+    const ctx = await openStore(root, io, { expectedReal });
+    if (ctx === null) throw new StoreError("no_launch_capture");
+    const lockPath = path.join(ctx.storeDir, LOCK_FILE);
+    const assertQuiet = async () => {
+      if ((await entryKind(io, lockPath)) !== "missing") throw new StoreError("lock_present");
+      await assertUnchanged(ctx);
+    };
+    await assertQuiet();
+    const { found, failed } = await capturesOfOrigin(ctx, LAUNCH_ORIGIN);
+    if (failed.length > 0) throw new StoreError(failed[0].code);
+    if (found.length === 0) throw new StoreError("no_launch_capture");
+    const latest = found
+      .map(({ state }) => state)
+      .reduce((a, b) => (b.launchedAt > a.launchedAt || (b.launchedAt === a.launchedAt && b.invocation > a.invocation) ? b : a));
+    const segments = found
+      .map(({ state }) => state)
+      .filter((state) => state.invocation === latest.invocation)
+      .sort((a, b) => a.segment - b.segment)
+      .map((state) => ({ segment: state.segment, capture: state.id }));
+    const present = new Set(segments.map((item) => item.segment));
+    const missingSegments = Array.from({ length: segments.at(-1).segment }, (_, i) => i + 1).filter((segment) => !present.has(segment));
+    let open = false;
+    if ((await launchesDirKind(ctx)) === "dir") {
+      const kind = await entryKind(io, launchFile(ctx, latest.invocation));
+      if (kind === "link") throw new StoreError("link_refused");
+      open = kind === "file";
+    }
+    await assertQuiet();
+    return { invocation: latest.invocation, open, segments, missingSegments };
   });
 }
 
@@ -926,7 +1419,7 @@ export function latestAutomaticCapture({ root, expectedReal, io = createStoreIo(
       await assertUnchanged(ctx);
     };
     await assertQuiet();
-    const { found, failed } = await automaticCaptures(ctx);
+    const { found, failed } = await capturesOfOrigin(ctx, AUTOMATIC_ORIGIN);
     await assertQuiet();
     if (failed.length > 0) throw new StoreError(failed[0].code);
     if (found.length === 0) throw new StoreError("no_automatic_capture");

@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { cp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { FIXTURES_DIR } from "./fixtures.mjs";
@@ -16,6 +17,15 @@ const EXPECTED = {
 export const HARNESS = path.join(FIXTURES_DIR, "hermes", "harness.py");
 export const FIXTURE_PLUGINS = path.join(FIXTURES_DIR, "hermes", "plugins");
 export const DELIVERY_FIXTURE = path.join(FIXTURES_DIR, "hermes", "delivery", "delivery.mjs");
+
+// Plugin de fixture versionado no HERMES_HOME temporário de uma prova. Pelo
+// `cp`/`rm` de node:fs/promises, não `cpSync`/`rmSync`: no Windows, o Node
+// 24.13.0 (o da CI) com "ação" no caminho deixa o destino da cópia vazio e a
+// pasta da remoção no lugar, sem lançar (gate B em 60bbda8; o mesmo defeito do
+// nodejs/node#56049 documentado em traces/concurrency.cli.test.mjs). Sem
+// `force`: remover um plugin que não está lá lança ENOENT.
+export const installFixturePlugin = (home, name) => cp(path.join(FIXTURE_PLUGINS, name), path.join(home, "plugins", name), { recursive: true });
+export const removeFixturePlugin = (home, name) => rm(path.join(home, "plugins", name), { recursive: true });
 
 function defaultPython() {
   if (process.platform === "win32") {

@@ -30,7 +30,7 @@ function singleJson(result) {
   try {
     return JSON.parse(result.stdout);
   } catch (cause) {
-    throw new Error(`stdout não é um JSON único: ${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)}`, { cause });
+    throw new Error(`stdout não é um JSON único: ${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)} status=${result.status}`, { cause });
   }
 }
 
@@ -42,7 +42,7 @@ export function runObserve(args, { env, ...options }) {
 // O npm do próprio Node em execução (o que `npm run` usaria): ao lado do
 // executável no Windows, em ../lib no POSIX; `npm_execpath` quando a suíte roda
 // por `npm test`.
-function npmCli() {
+export function npmCli() {
   const candidates = [
     process.env.npm_execpath,
     path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),

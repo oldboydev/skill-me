@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { INTEGRATIONS_CLI, REPO_ROOT, assertPseudonymIds, baseEnv, makeScratch, parseReport, runIntegrations, runIntegrationsJson } from "./helpers/cli.mjs";
 import { expectedPseudonym } from "./helpers/traces.mjs";
 import { fixtureCase } from "./helpers/fixtures.mjs";
-import { DELIVERY_FIXTURE, FIXTURE_PLUGINS, bytecodeState, harnessEnv, locateHermesRuntime, locateSystemPython, runHarness } from "./helpers/hermes-runtime.mjs";
+import { DELIVERY_FIXTURE, bytecodeState, harnessEnv, installFixturePlugin, locateHermesRuntime, locateSystemPython, runHarness } from "./helpers/hermes-runtime.mjs";
 import { snapshotTree } from "./helpers/tree.mjs";
 
 // Prova nativa: PluginManager, invoke_hook e handle_function_call reais do
@@ -56,9 +57,7 @@ async function prepareAndRun(name, { delivery, enable = ["skill-me-observer", "s
     const installed = runIntegrationsJson(["install", "--agent", "hermes", "--target", home, "--apply"], { env: baseEnv() });
     assert.equal(installed.status, 0, installed.stdout);
   }
-  for (const plugin of enable.filter((p) => p !== "skill-me-observer")) {
-    cpSync(path.join(FIXTURE_PLUGINS, plugin), path.join(home, "plugins", plugin), { recursive: true });
-  }
+  for (const plugin of enable.filter((p) => p !== "skill-me-observer")) await installFixturePlugin(home, plugin);
   // Habilitação manual simulada no HERMES_HOME do teste (o instalador nunca a faz).
   writeFileSync(path.join(home, "config.yaml"), `plugins:\n  enabled:\n${enable.map((p) => `    - ${p}`).join("\n")}\n  hook_callback_timeout: ${timeout}\n`);
   const pluginDir = path.join(home, "plugins", "skill-me-observer");
@@ -133,8 +132,10 @@ before(async () => {
   runs.capture.done = await waitFor(path.join(runs.capture.sandbox, "captured.ndjson.done"));
 });
 
-after(() => {
-  for (const dir of scratches) rmSync(dir, { recursive: true, force: true });
+// Pelo `rm` de node:fs/promises, que remove o caminho com "ação" também no Node
+// 24.13.0 do Windows (helpers/hermes-runtime.mjs).
+after(async () => {
+  for (const dir of scratches) await rm(dir, { recursive: true });
 });
 
 function echoed(result) {
@@ -325,6 +326,20 @@ test("I4-C37 Hermes: seis casos de falha mantêm callbacks neutros e ferramenta 
   }
   assert.ok(runs.stall.result.stats.droppedQueueFull > 0);
   assert.equal(runs.capture.result.stats.oversize, 1);
+});
+
+// Issue #25, S6: com o runtime real, a harness termina a espera pelo estado da
+// entrega (fixtures/hermes/settle.py), não por 300 ms de contadores parados.
+test("I25-C40 harness nativa: entrega concluída, sem destino, destino que falha e destino travado terminam a espera com estados distintos", { skip: SKIP }, () => {
+  const observed = {};
+  for (const name of ["capture", "ingest", "inactive", "spawnfail", "exit", "disconnect", "stall"]) observed[name] = runs[name].result.settle?.state;
+  assert.deepEqual(observed, { capture: "concluded", ingest: "concluded", inactive: "inactive", spawnfail: "failed", exit: "failed", disconnect: "failed", stall: "timeout" });
+  // Concluída: todo registro posto na fila saiu dela (entregue ou grande demais).
+  const capture = runs.capture.result.stats;
+  assert.equal(capture.delivered + capture.oversize, capture.enqueued, JSON.stringify(capture));
+  // Travado: espera o prazo do cenário inteiro (settleMaxMs 2000), com a fila ainda cheia.
+  assert.ok(runs.stall.result.settle.waitedMs >= 2000, `esperou ${runs.stall.result.settle.waitedMs} ms`);
+  assert.ok(runs.stall.result.stats.droppedQueueFull > 0);
 });
 
 // Capturas automáticas legíveis da raiz, pelo CLI (sem assert: usado na espera).

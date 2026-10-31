@@ -1,17 +1,20 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { after, test } from "node:test";
 import { baseEnv, makeScratch, runIntegrationsJson } from "./helpers/cli.mjs";
 import { fixtureCase } from "./helpers/fixtures.mjs";
-import { FIXTURE_PLUGINS, harnessEnv, locateHermesRuntime, runHarness } from "./helpers/hermes-runtime.mjs";
+import { harnessEnv, installFixturePlugin, locateHermesRuntime, removeFixturePlugin, runHarness } from "./helpers/hermes-runtime.mjs";
 import { readClaudeHandlers, readCodexHandlers, runClaudeHandler, runCodexHandler } from "./helpers/installed-hooks.mjs";
 import { snapshotTree, writeThirdPartySkill } from "./helpers/tree.mjs";
 import { FAKE_CODEX, runWrapper, writeScenario } from "./helpers/wrapper.mjs";
 
 const scratches = [];
-after(() => {
-  for (const dir of scratches) rmSync(dir, { recursive: true, force: true });
+// Pelo `rm` de node:fs/promises, que remove o caminho com "ação" também no Node
+// 24.13.0 do Windows (helpers/hermes-runtime.mjs).
+after(async () => {
+  for (const dir of scratches) await rm(dir, { recursive: true });
 });
 
 // Mapa caminho → {sha256, bytes, mtime} de TODOS os arquivos da skill de
@@ -85,7 +88,7 @@ test("I4-C35 hash da árvore da skill de terceiro não muda em instalação, obs
   if (runtime.skipReason) {
     t.diagnostic(`observação Hermes não executada: hermes-runtime-ausente: ${runtime.skipReason} (prova nativa pendente)`);
   } else {
-    cpSync(path.join(FIXTURE_PLUGINS, "skillme-fixture-tool"), path.join(home, "plugins", "skillme-fixture-tool"), { recursive: true });
+    await installFixturePlugin(home, "skillme-fixture-tool");
     writeFileSync(path.join(home, "config.yaml"), "plugins:\n  enabled:\n    - skill-me-observer\n    - skillme-fixture-tool\n");
     const run = await runHarness(runtime, {
       sandbox: hermesRoot,
@@ -98,7 +101,7 @@ test("I4-C35 hash da árvore da skill de terceiro não muda em instalação, obs
     });
     assert.ok(run.result, run.stderr.slice(-1000));
     expectUntouched(hermesSkill, hermesBaseline, "hermes depois de observar");
-    rmSync(path.join(home, "plugins", "skillme-fixture-tool"), { recursive: true });
+    await removeFixturePlugin(home, "skillme-fixture-tool");
   }
   const removed = runIntegrationsJson(["uninstall", "--agent", "hermes", "--target", home, "--apply"], { env });
   assert.equal(removed.status, 0, removed.stdout);

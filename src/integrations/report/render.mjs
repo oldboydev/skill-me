@@ -127,3 +127,28 @@ export function renderReport(report, format = "text") {
   ];
   return rows.join("\n") + "\n";
 }
+
+// Execução de `skill-me <agente>` (issue #25, linha "Consulta" do Landing em
+// .checks/issue-25-agent-launch.md): o cabeçalho da execução e, por captura,
+// o relatório acima sem mudança — nenhum dado é somado entre capturas.
+export function renderLaunchReport({ launch, reports }, format = "text") {
+  if (format === "json") {
+    return JSON.stringify({ skillMeLaunchReport: 1, invocation: launch.invocation, open: launch.open, segments: launch.segments, missingSegments: launch.missingSegments, reports }) + "\n";
+  }
+  const markdown = format === "markdown";
+  const line = (text) => (markdown ? `- ${md(text)}` : text);
+  const last = launch.segments.at(-1).segment;
+  const header = [
+    ...(markdown ? ["# Execução skill-me", ""] : []),
+    line(`Execução skill-me: ${launch.invocation}; fonte: launch.invocation.`),
+    line(`Capturas da execução: ${launch.segments.length} (segmentos ${launch.segments.map((item) => item.segment).join(", ")}); fonte: launch.segments.`),
+    line(`Segmentos ausentes: ${launch.missingSegments.length > 0 ? launch.missingSegments.join(", ") : "nenhum"}; fonte: launch.missingSegments.`),
+    line(`Execução aberta: ${launch.open ? "sim" : "não"}; fonte: launch.open.`),
+    line("Cada seção avalia só a própria captura."),
+  ];
+  const sections = launch.segments.map(({ segment }, index) => {
+    const title = markdown ? `## Segmento ${segment} de ${last}` : `== Segmento ${segment} de ${last} ==`;
+    return `${title}\n\n${renderReport(reports[index], format)}`;
+  });
+  return [header.join("\n"), ...sections].join("\n\n");
+}

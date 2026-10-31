@@ -38,9 +38,9 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     strategy:
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-14]
+        os: [ubuntu-22.04, windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 20 || 10 }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -53,7 +53,23 @@ jobs:
       - run: npm run test:governance
       - run: npm run test:code-review
       - run: npm run test:doctor
-      - run: npm run test:integrations
+      - if: matrix.os != 'windows-latest'
+        run: npm run test:integrations
+      # Windows: TEMP/TMP no RUNNER_TEMP só neste passo e nos filhos dele (issue #25). Na
+      # medição 40790906319, a tomada do lock no RUNNER_TEMP teve latência menor que no
+      # temporário padrão; isso não demonstra a causa das falhas da CI. Sem fallback: um
+      # RUNNER_TEMP inválido interrompe o passo antes do npm. Pelo `pwsh -command` do runner,
+      # um código de saída do npm diferente de 0 chega ao job como 1.
+      - if: matrix.os == 'windows-latest'
+        run: |
+          $destino = $env:RUNNER_TEMP
+          if (-not $destino -or -not [IO.Path]::IsPathFullyQualified($destino) -or -not (Test-Path -LiteralPath $destino -PathType Container)) {
+            throw 'RUNNER_TEMP precisa ser o caminho absoluto de uma pasta existente'
+          }
+          $env:TEMP = $destino
+          $env:TMP = $destino
+          npm run test:integrations
+          exit $LASTEXITCODE
 
   ci:
     name: CI
@@ -74,3 +90,22 @@ jobs:
           DETECTION_RESULT: ${{ needs.changes.result }}
           CODE_CHANGED: ${{ needs.changes.outputs.code }}
           VERIFY_RESULT: ${{ needs.verify.result }}
+
+  # Medição comparativa da latência do lock no runner Windows (issue #25, AC9):
+  # só por execução manual, fora dos checks regulares e do agregado `ci`.
+  lock_diagnostics:
+    name: Diagnosticar lock Windows (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.13.0
+      - run: npm ci --ignore-scripts
+      - run: node scripts/ci-lock-latency.mjs

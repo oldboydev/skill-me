@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
   rmSync,
@@ -263,11 +265,14 @@ test("governance-C1 C3 workflow sempre publica CI sem IA nem release", () => {
   assert.deepEqual(tools.strategy.matrix.os, [
     "ubuntu-22.04",
     "windows-latest",
-    "macos-14",
+    "macos-15",
   ]);
   assert.equal(tools["runs-on"], "$" + "{{ matrix.os }}");
+  // O ramo de integrações do Windows (governance-C48) é o único passo fora desta lista.
   assert.deepEqual(
-    tools.steps.filter((step) => step.run).map((step) => step.run),
+    tools.steps
+      .filter((step) => step.run && step.if !== "matrix.os == 'windows-latest'")
+      .map((step) => step.run),
     [
       "npm ci --ignore-scripts",
       "npm run test:governance",
@@ -289,9 +294,12 @@ test("governance-C1 C3 workflow sempre publica CI sem IA nem release", () => {
   });
   assert.equal(ci["continue-on-error"], undefined);
   assert.equal(result["continue-on-error"], undefined);
+  // `lock_diagnostics`: job manual autorizado pelo AC9 da issue #25, com as
+  // restrições conferidas em governance-C49; os regulares continuam estes três.
   assert.deepEqual(Object.keys(workflow.jobs).sort(), [
     "changes",
     "ci",
+    "lock_diagnostics",
     "verify",
   ]);
   for (const job of Object.values(workflow.jobs))
@@ -304,3 +312,277 @@ test("governance-C1 C3 workflow sempre publica CI sem IA nem release", () => {
         );
     }
 });
+
+test("governance-C49 job manual de diagnóstico do lock: só em workflow_dispatch, Windows, 10 min, leitura, mesmas ações pinadas, fora do agregado e sem tolerar falha", () => {
+  const workflow = parse(
+    readFileSync(path.join(root, ".github/workflows/governance.yml"), "utf8"),
+  );
+  const job = workflow.jobs.lock_diagnostics;
+  const verify = workflow.jobs.verify;
+  assert.deepEqual(Object.keys(job).sort(), [
+    "if",
+    "name",
+    "permissions",
+    "runs-on",
+    "steps",
+    "timeout-minutes",
+  ]);
+  assert.equal(job.name, "Diagnosticar lock Windows (manual)");
+  assert.equal(job.if, "github.event_name == 'workflow_dispatch'");
+  assert.equal(job["runs-on"], "windows-latest");
+  assert.equal(job["timeout-minutes"], 10);
+  assert.deepEqual(job.permissions, { contents: "read" });
+  // As mesmas ações do `verify`, nos mesmos hashes; sem cache no setup-node.
+  const [checkout, setup, ...commands] = job.steps;
+  assert.deepEqual(checkout, {
+    uses: verify.steps[0].uses,
+    with: { "persist-credentials": false },
+  });
+  assert.deepEqual(setup, {
+    uses: verify.steps[1].uses,
+    with: { "node-version": "24.13.0" },
+  });
+  assert.deepEqual(commands, [
+    { run: "npm ci --ignore-scripts" },
+    { run: "node scripts/ci-lock-latency.mjs" },
+  ]);
+  // Nem o agregado nem outro job dependem dele, e nada nele tolera falha.
+  assert.deepEqual(workflow.jobs.ci.needs, ["changes", "verify"]);
+  for (const other of Object.values(workflow.jobs)) {
+    assert.ok(![other.needs].flat().includes("lock_diagnostics"));
+    assert.equal(other["continue-on-error"], undefined);
+    for (const step of other.steps ?? [])
+      assert.equal(step["continue-on-error"], undefined);
+  }
+  // A ferramenta roda junto das provas de governança da CI regular.
+  const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  assert.equal(
+    pkg.scripts["test:governance"],
+    "node --test scripts/governance-ci.test.mjs scripts/ci-lock-latency.test.mjs",
+  );
+  assert.equal(pkg.private, true);
+});
+
+test("governance-C48 integrações: um só passo por sistema da matriz, com o mesmo comando; só o do Windows põe TEMP e TMP no RUNNER_TEMP, no próprio passo; orçamentos 20/10/5 e 10 iguais", () => {
+  const workflow = parse(
+    readFileSync(path.join(root, ".github/workflows/governance.yml"), "utf8"),
+  );
+  const verify = workflow.jobs.verify;
+  const [, , ...commands] = verify.steps;
+  const windows = commands.at(-1);
+  assert.deepEqual(commands.slice(0, -1), [
+    { run: "npm ci --ignore-scripts" },
+    { run: "npm run test:governance" },
+    { run: "npm run test:code-review" },
+    { run: "npm run test:doctor" },
+    { if: "matrix.os != 'windows-latest'", run: "npm run test:integrations" },
+  ]);
+  // Só `if` e `run`: o shell padrão do runner Windows (pwsh), sem `env` nem `shell`.
+  assert.deepEqual(Object.keys(windows).sort(), ["if", "run"]);
+  assert.equal(windows.if, "matrix.os == 'windows-latest'");
+  // Um ramo por sistema. Só as duas formas de `if` do workflow são interpretadas;
+  // outra condição falha a prova.
+  const runsOn = (step, os) => {
+    const condition = /^matrix\.os (==|!=) '([^']+)'$/.exec(step.if);
+    assert.ok(condition, `condição não prevista: ${step.if}`);
+    return (condition[1] === "==") === (condition[2] === os);
+  };
+  for (const [os, branches] of [
+    ["ubuntu-22.04", [true, false]],
+    ["windows-latest", [false, true]],
+    ["macos-15", [true, false]],
+  ])
+    assert.deepEqual(
+      commands.slice(-2).map((step) => runsOn(step, os)),
+      branches,
+      os,
+    );
+  // O mesmo comando, sem argumento a mais; só RUNNER_TEMP, TEMP e TMP, e nada
+  // que sobreviva ao passo.
+  assert.deepEqual(
+    windows.run
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => /^npm\b/.test(line)),
+    ["npm run test:integrations"],
+  );
+  assert.deepEqual(
+    [
+      ...new Set(
+        [...windows.run.matchAll(/\$env:(\w+)/gi)].map(([, name]) =>
+          name.toUpperCase(),
+        ),
+      ),
+    ].sort(),
+    ["RUNNER_TEMP", "TEMP", "TMP"],
+  );
+  assert.doesNotMatch(
+    windows.run,
+    /GITHUB_ENV|GITHUB_PATH|SetEnvironmentVariable|setx/i,
+  );
+  for (const scope of [workflow, verify]) {
+    assert.equal(scope.env, undefined);
+    assert.equal(scope.defaults, undefined);
+  }
+  assert.equal(
+    verify["timeout-minutes"],
+    "$" + "{{ matrix.os == 'windows-latest' && 20 || 10 }}",
+  );
+  assert.equal(workflow.jobs.changes["timeout-minutes"], 5);
+  assert.equal(workflow.jobs.ci["timeout-minutes"], 5);
+  assert.equal(workflow.jobs.lock_diagnostics["timeout-minutes"], 10);
+});
+
+test(
+  "governance-C48 ramo Windows das integrações no pwsh real: com RUNNER_TEMP válido, o npm recebe os mesmos argumentos e TEMP/TMP nele, e o passo sai 0 ou falha com ele; ausente, vazio, relativo, inexistente ou arquivo param antes do npm; nada muda fora do passo",
+  {
+    skip:
+      process.platform !== "win32" &&
+      "o ramo roda no pwsh do runner Windows; fora dele, só a estrutura (governance-C48 integrações)",
+  },
+  (t) => {
+    const workflow = parse(
+      readFileSync(path.join(root, ".github/workflows/governance.yml"), "utf8"),
+    );
+    const windows = workflow.jobs.verify.steps.find(
+      (step) => step.if === "matrix.os == 'windows-latest'",
+    );
+    assert.ok(windows, "ramo Windows das integrações");
+    // O runner acha o `pwsh` pelo PATH; a prova usa o mesmo, e o npm real fica
+    // fora do PATH dado ao pwsh.
+    const pwsh = process.env.PATH.split(path.delimiter)
+      .map((dir) => path.join(dir, "pwsh.exe"))
+      .find((file) => existsSync(file));
+    assert.ok(pwsh, "pwsh.exe no PATH: o shell padrão dos passos Windows");
+    t.diagnostic(`pwsh: ${pwsh}`);
+    const scratch = mkdtempSync(path.join(tmpdir(), "ci-pwsh-"));
+    const folder = (name) => {
+      const target = path.join(scratch, name);
+      mkdirSync(target);
+      return target;
+    };
+    try {
+      const bin = folder("bin");
+      const runnerTemp = folder("runner-temp");
+      const parentTemp = folder("temp-do-pai");
+      const parentTmp = folder("tmp-do-pai");
+      const sentinel = path.join(runnerTemp, "sentinela.txt");
+      writeFileSync(sentinel, "do runner\n");
+      const githubEnv = path.join(scratch, "github-env");
+      const githubPath = path.join(scratch, "github-path");
+      writeFileSync(githubEnv, "");
+      writeFileSync(githubPath, "");
+      // npm falso: grava o que recebeu e sai com o código pedido.
+      const record = path.join(scratch, "npm-recebeu.json");
+      const fakeNpm = path.join(scratch, "npm-falso.mjs");
+      writeFileSync(
+        fakeNpm,
+        [
+          'import { writeFileSync } from "node:fs";',
+          "const { TEMP, TMP, RUNNER_TEMP, SKILL_ME_SENTINELA } = process.env;",
+          "writeFileSync(process.env.NPM_FALSO_REGISTRO, JSON.stringify({ argv: process.argv.slice(2), TEMP, TMP, RUNNER_TEMP, SKILL_ME_SENTINELA }));",
+          "process.exitCode = Number(process.env.NPM_FALSO_CODIGO);",
+        ].join("\n"),
+      );
+      writeFileSync(
+        path.join(bin, "npm.cmd"),
+        `@"${process.execPath}" "${fakeNpm}" %*\r\n`,
+      );
+      const script = path.join(scratch, "passo.ps1");
+      // Um caminho Windows válido pode ter aspa simples, inclusive as tipográficas
+      // que o PowerShell também lê como aspa; os casos válidos rodam o mesmo `run`
+      // também de arquivos assim.
+      const quoted = [
+        "passo ' literal.ps1",
+        "passo \u2018\u2019\u201A\u201B literal.ps1",
+      ].map((name) => path.join(scratch, name));
+      for (const file of [script, ...quoted]) writeFileSync(file, windows.run);
+      const parent = { TEMP: process.env.TEMP, TMP: process.env.TMP };
+      const step = (runnerTempValue, npmCode, file = script) => {
+        rmSync(record, { force: true });
+        const result = spawnSync(
+          pwsh,
+          // A forma do runner, `pwsh -command ". '{0}'"`, sem perfil. No literal
+          // de aspas simples, cada aspa simples que o PowerShell reconhece vai dobrada.
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `. '${file.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'`,
+          ],
+          {
+            cwd: scratch,
+            encoding: "utf8",
+            timeout: 60_000,
+            env: {
+              SystemRoot: process.env.SystemRoot,
+              PATH: [bin, path.join(process.env.SystemRoot, "System32")].join(
+                path.delimiter,
+              ),
+              PATHEXT: ".COM;.EXE;.BAT;.CMD",
+              // Sem rede: telemetria e checagem de versão do pwsh desligadas.
+              POWERSHELL_TELEMETRY_OPTOUT: "1",
+              POWERSHELL_UPDATECHECK: "Off",
+              TEMP: parentTemp,
+              TMP: parentTmp,
+              GITHUB_ENV: githubEnv,
+              GITHUB_PATH: githubPath,
+              SKILL_ME_SENTINELA: "inalterada",
+              NPM_FALSO_REGISTRO: record,
+              NPM_FALSO_CODIGO: String(npmCode),
+              ...(runnerTempValue === undefined
+                ? {}
+                : { RUNNER_TEMP: runnerTempValue }),
+            },
+          },
+        );
+        return {
+          status: result.status,
+          npm: existsSync(record)
+            ? JSON.parse(readFileSync(record, "utf8"))
+            : null,
+        };
+      };
+      const received = {
+        argv: ["run", "test:integrations"],
+        TEMP: runnerTemp,
+        TMP: runnerTemp,
+        RUNNER_TEMP: runnerTemp,
+        SKILL_ME_SENTINELA: "inalterada",
+      };
+      assert.deepEqual(step(runnerTemp, 0), { status: 0, npm: received });
+      // O `-Command` do pwsh sai 1 para todo código do script diferente de 0,
+      // como nos outros passos Windows; o npm recebeu o mesmo.
+      assert.deepEqual(step(runnerTemp, 17), { status: 1, npm: received });
+      for (const [label, value] of [
+        ["ausente", undefined],
+        ["vazio", ""],
+        ["relativo", "runner-temp"],
+        ["inexistente", path.join(scratch, "nao-existe")],
+        ["arquivo", sentinel],
+      ])
+        assert.deepEqual(step(value, 0), { status: 1, npm: null }, label);
+      for (const file of quoted) {
+        assert.deepEqual(
+          step(runnerTemp, 0, file),
+          { status: 0, npm: received },
+          path.basename(file),
+        );
+        assert.deepEqual(
+          step(runnerTemp, 17, file),
+          { status: 1, npm: received },
+          path.basename(file),
+        );
+      }
+      assert.deepEqual(
+        [readFileSync(githubEnv, "utf8"), readFileSync(githubPath, "utf8")],
+        ["", ""],
+      );
+      assert.deepEqual(readdirSync(runnerTemp), ["sentinela.txt"]);
+      assert.deepEqual({ TEMP: process.env.TEMP, TMP: process.env.TMP }, parent);
+    } finally {
+      assert.equal(path.dirname(scratch), path.resolve(tmpdir()));
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);

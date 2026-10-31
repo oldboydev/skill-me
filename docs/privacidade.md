@@ -7,7 +7,11 @@ pela rede: nenhum evento inicia telemetria, DNS ou upload, e não existe destino
 remoto nem consentimento implícito em variável de ambiente ou configuração de
 agente. O par `SKILL_ME_CAPTURE_ROOT`/`SKILL_ME_CAPTURE_ID` da #8
 ([docs/traces.md](traces.md)) só aponta para uma captura que você criou com
-`privacy start`: não cria captura nem liga conteúdo.
+`privacy start`: não cria captura nem liga conteúdo. O par
+`SKILL_ME_LAUNCH_ROOT`/`SKILL_ME_LAUNCH_ID` só aponta para a execução que
+`skill-me <agente>` abriu para aquela invocação; ele é posto pelo próprio
+`skill-me` no ambiente do agente, tem precedência sobre o par da #8 e sobre o
+`on`, e definido à mão não cria execução nem captura.
 
 ## Padrões
 
@@ -27,6 +31,14 @@ agente. O par `SKILL_ME_CAPTURE_ROOT`/`SKILL_ME_CAPTURE_ID` da #8
   o conteúdo ligado (como `--content`), retenção padrão, chave e limites
   próprios; cada evento passa pela mesma política. `off` encerra as capturas
   automáticas, e a retenção delas começa ali.
+- Execução do `skill-me <agente>` (issue #25, [docs/traces.md](traces.md)): a
+  confirmação do primeiro uso, depois da prévia, prepara a raiz e a integração;
+  cada invocação autoriza só a sessão que ela inicia, até o agente sair. As
+  capturas da execução nascem com o conteúdo ligado (como `--content`),
+  retenção padrão de 7 dias, chave e limites próprios, e cada evento passa pela
+  mesma política. A execução continua em capturas sucessivas — cada uma com até
+  500 eventos ou 8 MiB e chave própria — até o agente sair; o fim da execução
+  inicia a retenção da última.
 - IDs viram pseudônimos `h1:` (HMAC-SHA-256 com chave aleatória da captura):
   iguais dentro da captura, diferentes entre capturas. A chave fica só em
   `captures/<id>/key`, nunca aparece em `status` ou `export` e sai com a captura.
@@ -259,6 +271,23 @@ de conteúdo informa um destes códigos, com contagem em `status`
 motivo) de conteúdo omitido; nenhum número de eventos representa a cobertura
 completa da execução observada: perdas por limite, linha malformada ou evento
 desconhecido ficam visíveis nos contadores.
+
+Na observação automática e na execução do `skill-me`, o limite da captura não
+descarta: a captura cheia é encerrada e a sessão segue numa sucessora com chave
+própria. Limites da execução do `skill-me <agente>`:
+
+- a confiança nativa é manual, por agente; sem ela nada é gravado;
+- o Codex não tem evento nativo de ativação de skill: ler um `SKILL.md` aparece
+  só como operação de ferramenta; os hooks do Codex cobrem só ferramentas
+  locais, e as hospedadas ficam fora;
+- cada captura tem até 500 eventos ou 8 MiB, e a execução continua em capturas
+  sucessivas, com chave própria cada uma, até o agente sair;
+- entregas que chegam mais de 750 ms depois da saída do agente não entram na
+  execução e não ficam registradas em captura nenhuma;
+- um encerramento forçado do launcher (SIGKILL, TerminateProcess) deixa a
+  captura corrente `active` — sem retenção correndo — e a execução aberta;
+  `privacy stop` encerra a captura;
+- o próximo passo depois da sessão é `skill-me report`.
 
 ## Canais nativos do agente
 

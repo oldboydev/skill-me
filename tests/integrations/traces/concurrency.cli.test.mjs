@@ -9,11 +9,11 @@ import { after, test } from "node:test";
 import { claudeHookDraft } from "../../../src/integrations/adapters/claude.mjs";
 import { createStoreIo } from "../../../src/integrations/privacy/fs.mjs";
 import { deleteCapture, exportCapture, listCaptures, pruneCaptures } from "../../../src/integrations/privacy/store.mjs";
-import { DELIVERY_DEADLINE_MS, createCaptureDelivery } from "../../../src/integrations/traces/delivery.mjs";
+import { ATTEMPT_MS, DELIVERY_DEADLINE_MS, createCaptureDelivery } from "../../../src/integrations/traces/delivery.mjs";
 import { CAPTURE_REPORT_ENV, appendDeliveryReport, deliveryReportFile, deliveryReportLine } from "../../../src/integrations/traces/delivery-report.mjs";
 import { REPO_ROOT, baseEnv, makeScratch, runIntegrations, runIntegrationsJson } from "../helpers/cli.mjs";
 import { readClaudeHandlers, readCodexHandlers, runClaudeHandler, runCodexHandler } from "../helpers/installed-hooks.mjs";
-import { MARKER, claudePayload, codexHookPayload, execEvent, hermesRecord } from "../helpers/privacy-canaries.mjs";
+import { MARKER, claudePayload, codexHookPayload, execEvent, hermesRecord, leaks } from "../helpers/privacy-canaries.mjs";
 import {
   ISO_MS,
   TRACES_PROBE,
@@ -22,19 +22,30 @@ import {
   capturesDir,
   describeTiming,
   deliveryTiming,
+  diskTrace,
   exportOf,
   expectedPseudonym,
+  inspected,
+  privacyBody,
   privacyOk,
+  recordProducersInEachTest,
   runHermesIngest,
   runHook,
+  shown,
   startCapture,
   statusOf,
   storeDir,
+  timedEnv,
   timingLines,
+  UNSURE_PLACE,
   waitUntil,
 } from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
+
+// Evidência comum dos produtores quando um teste falha (issue #25, linha
+// "Evidência comum dos produtores e formatter legado" do Landing): helpers/traces.mjs.
+recordProducersInEachTest();
 
 // Provas S3 da issue #8 (C15–C16): produtores reais concorrentes na mesma
 // captura e falhas de entrega (lock ocupado, E/S, confirmação perdida, disco
@@ -94,18 +105,129 @@ function assertSegmentConsistent(root, id, label) {
   return state;
 }
 
-test("T8-C15 concurrent producers: dois produtores em paralelo confirmam cada evento uma vez e deixam estado e segmento coerentes", async () => {
-  const root = scratch("t8 c15 raiz");
+// O T8-C15 e as provas do diagnóstico dele (I25-C46, issue #25, AC7) passam pela
+// mesma rotina: produtores, inspeção e asserções. A falha do gate da 9ª
+// verificação da #25 (`b` com `io_failure` e 20 de 40 sem confirmação) não
+// deixou operação, código de erro nem estado da captura; a inspeção os põe na
+// mensagem, sem caminho, ID, chave, conteúdo ou ambiente. Diagnóstico, não
+// correção: linha "Diagnóstico do T8-C15" do Landing em
+// .checks/issue-25-agent-launch.md.
+const PRODUCERS = ["a", "b"];
+
+// Os dois começam juntos, como antes, cada um com a pré-carga de tempos — só
+// observa: acumula as operações em memória e grava uma linha ao sair — e, nas
+// provas do diagnóstico, com uma injeção existente dela em `injected[nome]`.
+async function runConcurrentProducers(label, injected = {}) {
+  const root = scratch(`${label} raiz`);
   const id = startCapture(root);
-  const env = boundEnv(root, id);
-  const [a, b] = await Promise.all([
-    runHermesIngest([], { env, lines: interleaved(hermesLines("a", 40), 4) }),
-    runHermesIngest([], { env, lines: interleaved(hermesLines("b", 40), 4) }),
-  ]);
-  for (const [name, run] of [["a", a], ["b", b]]) {
-    assert.equal(run.status, 0, name);
-    assert.deepEqual(run.report.delivery, { bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0 }, name);
+  const times = scratch(`${label} tempos`);
+  const timing = Object.fromEntries(PRODUCERS.map((name) => [name, path.join(times, `${name}.ndjson`)]));
+  const startedAt = performance.now();
+  const runs = await Promise.all(
+    PRODUCERS.map((name) =>
+      runHermesIngest([], { env: boundEnv(root, id, { ...timedEnv(timing[name]), ...injected[name] }), lines: interleaved(hermesLines(name, 40), 4) }),
+    ),
+  );
+  return { root, id, timing, startedAt, runs: Object.fromEntries(PRODUCERS.map((name, index) => [name, runs[index]])) };
+}
+
+// Operações com erro da linha da pré-carga (`diskTrace`, helpers/traces.mjs),
+// com a fase. No caminho manual cada tomada do lock tem um só `rename` de
+// `state.json.tmp`, que é o commit (store.mjs). O `open` do `.lock` com EEXIST
+// é a disputa normal do lock, repetida pelo contrato da entrega: só contada,
+// senão esconderia a falha real. Depois de um `rename lock` com erro a posse
+// fica indeterminada (`unsure`, C46 (u)), nunca “fora do lock”.
+function failuresWithPhase(ops) {
+  let contention = 0;
+  const failures = [];
+  for (const { op, kind, code, held, unsure, commits } of diskTrace(ops)) {
+    if (code === undefined) continue;
+    if (op === "open" && kind === "lock" && code === "EEXIST") contention += 1;
+    else failures.push(`${op} ${kind} ${code} (${held ? (commits > 0 ? "depois do commit" : "antes do commit") : kind === "lock" ? "tomada do lock" : unsure ? UNSURE_PLACE : "fora do lock"})`);
   }
+  return { contention, failures };
+}
+
+function producerTiming(file) {
+  const lines = timingLines(file);
+  if (lines.length === 0) return { unavailable: "sem linha da pré-carga" };
+  const { contention, failures } = failuresWithPhase(lines.at(-1).ops);
+  return { lines: lines.length, contention, failures, summary: describeTiming({ ...deliveryTiming(lines.at(-1)), failed: failures }) };
+}
+
+// Da captura, depois que os dois saíram: a pasta e o lock lidos direto; export
+// e status pelo CLI, como o usuário os consulta (com o lock preso, saem com o
+// código dele). Um registro é de `a` ou de `b` pelo pseudônimo do tool_call_id.
+function inspectCapture({ root, id }) {
+  const files = inspected(() => {
+    const names = readdirSync(captureDir(root, id));
+    return { segments: names.filter((name) => /^events-\d{6}\.ndjson$/.test(name)).length, temporaries: names.filter((name) => name.endsWith(".skill-me-tmp")).length };
+  });
+  const lock = inspected(() => ({ present: readdirSync(storeDir(root)).includes(".lock") }));
+  const exported = inspected(() => {
+    const result = privacyBody(["export", "--root", root, "--capture", id]);
+    if (result.unavailable !== undefined) return result;
+    const callIds = result.body.records.map((r) => r.envelope.ids.toolCallId);
+    const of = Object.fromEntries(PRODUCERS.map((name) => [name, new Set(Array.from({ length: 40 }, (_, i) => expectedPseudonym(root, id, `${name}-${i}`)))]));
+    const counts = Object.fromEntries(PRODUCERS.map((name) => [name, callIds.filter((callId) => of[name].has(callId)).length]));
+    const others = callIds.filter((callId) => !PRODUCERS.some((name) => of[name].has(callId))).length;
+    return { records: callIds.length, ...counts, others, repeated: callIds.length - new Set(callIds).size };
+  });
+  const status = inspected(() => {
+    const result = privacyBody(["status", "--root", root, "--capture", id]);
+    if (result.unavailable !== undefined) return result;
+    const { state, counters } = result.body.capture;
+    return { state, accepted: counters.accepted, persisted: counters.persisted };
+  });
+  return { export: exported, status, files, lock };
+}
+
+// Nunca lança: o que não pôde ser lido aparece como indisponível.
+function inspectProducers(flow) {
+  const producers = Object.fromEntries(
+    PRODUCERS.map((name) => {
+      const run = flow.runs[name];
+      const timing = inspected(() => producerTiming(flow.timing[name]));
+      return [name, { status: run.status, signal: run.signal, exitMs: Math.round(run.closedAt - flow.startedAt), delivery: run.report?.delivery ?? null, timing }];
+    }),
+  );
+  return { producers, capture: inspected(() => inspectCapture(flow)) };
+}
+
+function describeProducers({ producers, capture }) {
+  const lines = PRODUCERS.flatMap((name) => {
+    const { status, signal, exitMs, delivery, timing } = producers[name];
+    return [
+      `produtor ${name}: status ${status}, sinal ${signal ?? "nenhum"}, saiu aos ${exitMs} ms; entrega ${delivery === null ? "sem relatório" : JSON.stringify(delivery)}`,
+      `  tempos: ${shown(timing, (t) => `${t.summary}; lock ocupado (EEXIST, repetido) ${t.contention}x${t.lines === 1 ? "" : `; ${t.lines} linhas da pré-carga`}`)}`,
+    ];
+  });
+  const captured = shown(capture, (c) =>
+    [
+      `export ${shown(c.export, (e) => `${e.records} registros: a ${e.a}/40, b ${e.b}/40, outros ${e.others}, repetidos ${e.repeated}`)}`,
+      `status ${shown(c.status, (s) => `${s.state}, accepted ${s.accepted}, persisted ${s.persisted}`)}`,
+      `pasta ${shown(c.files, (f) => `${f.segments} segmento(s), ${f.temporaries} temporário(s)`)}`,
+      `lock ${shown(c.lock, (l) => (l.present ? "presente" : "ausente"))}`,
+    ].join("; "),
+  );
+  return [...lines, `captura: ${captured}`].join("\n");
+}
+
+// As asserções de sempre do T8-C15; só a mensagem traz a evidência.
+function assertProducersConfirmed(flow, evidence) {
+  const diagnosis = describeProducers(evidence);
+  for (const name of PRODUCERS) {
+    const run = flow.runs[name];
+    assert.equal(run.status, 0, `${name}\n${diagnosis}`);
+    assert.deepEqual(run.report.delivery, { bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0 }, `${name}\n${diagnosis}`);
+  }
+}
+
+test("T8-C15 concurrent producers: dois produtores em paralelo confirmam cada evento uma vez e deixam estado e segmento coerentes", async () => {
+  const flow = await runConcurrentProducers("t8 c15");
+  assertProducersConfirmed(flow, inspectProducers(flow));
+  const { root, id } = flow;
+  const env = boundEnv(root, id);
   const callIds = exportOf(root, id).records.map((r) => r.envelope.ids.toolCallId);
   const expected = ["a", "b"].flatMap((p) => Array.from({ length: 40 }, (_, i) => expectedPseudonym(root, id, `${p}-${i}`)));
   assert.equal(callIds.length, 80);
@@ -137,6 +259,117 @@ test("T8-C15 concurrent producers: dois produtores em paralelo confirmam cada ev
   assert.deepEqual(snapshotTree(captureDir(root, id)), before);
   unlinkSync(lock);
   assert.ok(!exportOf(root, id).records.some((r) => r.envelope.ids.toolCallId === expectedPseudonym(root, id, "c-0")));
+});
+
+// I25-C46 (issue #25, AC7): o diagnóstico pela rotina do T8-C15, com uma injeção
+// existente da pré-carga só no produtor `b`. Na prova antiga, a falha antes do
+// commit e a confirmação perdida davam a mesma mensagem (`b` e as contagens);
+// aqui a asserção continua vermelha e a evidência separa as duas pela operação,
+// pela fase e pelo export.
+const injectedInB = (name, value) => ({ b: { [`SKILL_ME_TEST_TRACES_${name}`]: value } });
+
+function failureOf(flow, evidence) {
+  try {
+    assertProducersConfirmed(flow, evidence);
+  } catch (error) {
+    return error;
+  }
+  return null;
+}
+
+// Falhou a asserção de sempre (`actual` e `expected` dela) sobre o produtor
+// `name`, e a mensagem começa pelo nome e pela evidência inteira; o Node anexa
+// o diff dos valores depois dela.
+function assertFailedWithEvidence(failure, name, flow, evidence) {
+  assert.ok(failure instanceof assert.AssertionError, `a asserção do T8-C15 continua vermelha: ${failure}`);
+  assert.deepEqual([failure.actual, failure.expected], [flow.runs[name].report.delivery, { bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0 }]);
+  assert.ok(failure.message.startsWith(`${name}\n${describeProducers(evidence)}`), failure.message);
+}
+
+function assertNoLeak(flow, text) {
+  const key = readFileSync(path.join(captureDir(flow.root, flow.id), "key"));
+  const secrets = [flow.root, flow.id, key.toString("hex"), key.toString("base64"), key.toString("base64url"), "sessao-a", "sessao-b", process.env.PATH];
+  for (const value of secrets.filter(Boolean)) assert.ok(!text.includes(value), "a evidência não traz caminho, ID, chave, conteúdo nem ambiente");
+  assert.deepEqual(leaks(text), []);
+}
+
+test("I25-C46 diagnóstico do T8-C15: falha antes do commit mantém a prova vermelha e mostra a operação, a fase e o export sem as entradas perdidas", async () => {
+  const flow = await runConcurrentProducers("i25 c46 antes", injectedInB("SEGMENT_EIO", "1"));
+  const evidence = inspectProducers(flow);
+  const failure = failureOf(flow, evidence);
+  assertFailedWithEvidence(failure, "b", flow, evidence);
+  const { a, b } = evidence.producers;
+  assert.deepEqual([a.delivery, a.timing.failures], [{ bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0 }, []], failure.message);
+  const { code, committed, persisted, lost } = b.delivery;
+  assert.ok(code === "io_failure" && lost > 0 && committed + lost === 40 && persisted === committed, failure.message);
+  assert.deepEqual(b.timing.failures, ["rename segmento.tmp EIO (antes do commit)"], "a injeção aconteceu, sem nova tentativa");
+  // As entradas perdidas não estão no disco: o export só tem as confirmadas.
+  const total = 40 + committed;
+  assert.deepEqual(
+    evidence.capture,
+    {
+      export: { records: total, a: 40, b: committed, others: 0, repeated: 0 },
+      status: { state: "active", accepted: total, persisted: total },
+      files: { segments: 1, temporaries: 0 },
+      lock: { present: false },
+    },
+    failure.message,
+  );
+  assert.ok(failure.message.includes("falhas rename segmento.tmp EIO (antes do commit)"), failure.message);
+  assert.ok(failure.message.includes(`captura: export ${total} registros: a 40/40, b ${committed}/40, outros 0, repetidos 0`), failure.message);
+  assertNoLeak(flow, failure.message);
+});
+
+test("I25-C46 diagnóstico do T8-C15: confirmação perdida depois do commit mantém a prova vermelha e mostra que as entradas dadas como perdidas estão no export", async () => {
+  const flow = await runConcurrentProducers("i25 c46 depois", injectedInB("LOST_CONFIRMATION", "2"));
+  const evidence = inspectProducers(flow);
+  const failure = failureOf(flow, evidence);
+  assertFailedWithEvidence(failure, "b", flow, evidence);
+  const { a, b } = evidence.producers;
+  assert.deepEqual([a.delivery, a.timing.failures], [{ bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0 }, []], failure.message);
+  const { code, committed, persisted, lost } = b.delivery;
+  assert.ok(code === "io_failure" && lost > 0 && committed + lost === 40 && persisted === committed, failure.message);
+  // A liberação é o rename do `.lock` (C46 (u)): a injeção foi para ele.
+  assert.deepEqual(b.timing.failures, ["rename lock EIO (depois do commit)"], "a injeção aconteceu, sem nova tentativa");
+  // O commit aconteceu: as entradas dadas como perdidas estão no export.
+  assert.deepEqual(
+    evidence.capture,
+    {
+      export: { records: 80, a: 40, b: 40, others: 0, repeated: 0 },
+      status: { state: "active", accepted: 80, persisted: 80 },
+      files: { segments: 1, temporaries: 0 },
+      lock: { present: false },
+    },
+    failure.message,
+  );
+  assert.ok(failure.message.includes("falhas rename lock EIO (depois do commit)"), failure.message);
+  assert.ok(failure.message.includes("captura: export 80 registros: a 40/40, b 40/40, outros 0, repetidos 0"), failure.message);
+  assertNoLeak(flow, failure.message);
+});
+
+test("I25-C46 diagnóstico do T8-C15: com o lock preso, export e status saem indisponíveis com o código, sem contagem presumida", async () => {
+  const flow = await runConcurrentProducers("i25 c46 lock", injectedInB("LOCK_KEPT", "2"));
+  const evidence = inspectProducers(flow);
+  const failure = failureOf(flow, evidence);
+  const first = PRODUCERS.find((name) => flow.runs[name].status !== 0 || !isDeepStrictEqual(flow.runs[name].report.delivery, { bound: true, code: null, entries: 40, committed: 40, persisted: 40, lost: 0 }));
+  assertFailedWithEvidence(failure, first, flow, evidence);
+  const { b } = evidence.producers;
+  assert.deepEqual(b.delivery, { bound: true, code: "io_failure", entries: 40, committed: 0, persisted: 0, lost: 40 }, failure.message);
+  // O rename que libera falhou sem mover (C46 (u)): a limpeza confere o retirado,
+  // que não existe, e a posse fica indeterminada em vez de “fora do lock”.
+  assert.deepEqual(b.timing.failures, ["rename lock EIO (depois do commit)", `lstat lock.retirado ENOENT (${UNSURE_PLACE})`], "a injeção aconteceu, sem nova tentativa");
+  assert.deepEqual(
+    evidence.capture,
+    {
+      export: { unavailable: "lock_present" },
+      status: { unavailable: "lock_present" },
+      files: { segments: 1, temporaries: 0 },
+      lock: { present: true },
+    },
+    failure.message,
+  );
+  assert.ok(failure.message.includes("captura: export indisponível [lock_present]; status indisponível [lock_present]; pasta 1 segmento(s), 0 temporário(s); lock presente"), failure.message);
+  assertNoLeak(flow, failure.message);
 });
 
 test("T8-C16 delivery failure neutrality: lock ocupado, falha de E/S e confirmação perdida não prendem o agente, só dão código fechado e não reenviam", async (t) => {
@@ -594,11 +827,14 @@ test("T8-C16 delivery failure neutrality: SKILL_ME_CAPTURE_REPORT dentro do stor
 // io do store em processo com um roteiro: `busy` (1-based) são as criações do
 // `.lock` que falham com EEXIST sem tocar no disco; `stall(file, kind, stats)`
 // devolve uma promessa que segura aquela operação (ou null para seguir).
-// `lockUnlinks` conta as liberações reais do lock.
+// `lockReleases` conta as liberações completas do lock: o `rmdir` da reserva,
+// último passo depois do rename que libera (C46 (u)); antes era o `unlink` do
+// `.lock`, então as esperas continuam pelo fim real da liberação.
 function scriptedIo({ busy = [], stall = () => null }) {
   const real = createStoreIo();
-  const stats = { lockCreations: 0, lockUnlinks: 0 };
+  const stats = { lockCreations: 0, lockReleases: 0 };
   const isLock = (file) => path.basename(file) === ".lock";
+  const isReservation = (dir) => /^\.lock-release-[A-Za-z0-9]{6}$/.test(path.basename(dir));
   return {
     stats,
     io: {
@@ -612,9 +848,9 @@ function scriptedIo({ busy = [], stall = () => null }) {
         await stall(file, "read", stats);
         return real.readBounded(file, maxBytes);
       },
-      async unlink(file) {
-        await real.unlink(file);
-        if (isLock(file)) stats.lockUnlinks += 1;
+      async rmdir(dir) {
+        await real.rmdir(dir);
+        if (isReservation(dir)) stats.lockReleases += 1;
       },
     },
   };
@@ -652,7 +888,7 @@ test("T8-C16 delivery failure neutrality: commit cortado no prazo depois de obte
   // Liberado o disco, o commit que já tinha o lock termina: a entrada contada
   // como perdida está gravada uma vez — por isso o código não afirma o lock ocupado.
   disk.open();
-  await waitUntil(() => commit.stats.lockUnlinks === 2, { label: "commit abandonado terminar" });
+  await waitUntil(() => commit.stats.lockReleases === 2, { label: "commit abandonado terminar" });
   assert.deepEqual(exportOf(root, id).records.map((r) => r.envelope.ids.toolUseId), [expectedPseudonym(root, id, "prazo-commit")]);
   assertSegmentConsistent(root, id, "commit depois do prazo");
 });
@@ -673,7 +909,7 @@ test("T8-C16 delivery failure neutrality: abertura cortada no prazo depois de ob
   assert.deepEqual(delivery.report(), { bound: true, code: "delivery_timeout", entries: 1, committed: 0, persisted: 0, lost: 1 });
   assert.deepEqual([opening.stats.lockCreations, stateReads], [2, 1], "a repetição obteve o lock e parou na leitura");
   read.open();
-  await waitUntil(() => opening.stats.lockUnlinks === 1, { label: "abertura abandonada terminar" });
+  await waitUntil(() => opening.stats.lockReleases === 1, { label: "abertura abandonada terminar" });
   assert.deepEqual(snapshotTree(captureDir(root, id)), before, "abertura só lê");
 });
 
@@ -694,10 +930,108 @@ test("T8-C16 delivery failure neutrality: tentativa cortada no prazo antes de ob
   assert.equal(contended.stats.lockCreations, 3, "a repetição estava em curso no prazo");
   // Liberado o disco, a tentativa abandonada obtém o lock e o devolve sem mutação.
   lockDisk.open();
-  await waitUntil(() => contended.stats.lockUnlinks === 2, { label: "tentativa abandonada liberar o lock" });
+  await waitUntil(() => contended.stats.lockReleases === 2, { label: "tentativa abandonada liberar o lock" });
   assert.deepEqual(snapshotTree(captureDir(root, id)), before, "lock_present: nada gravado depois do prazo");
   assert.ok(!existsSync(path.join(storeDir(root), ".lock")), "lock liberado");
   assert.equal(statusOf(root, id).counters.persisted, 0);
+});
+
+// Prazo da entrega pelo relógio injetado (issue #25, refinamento do C46 (p);
+// linha "Abandono terminal no prazo da entrega" do Landing): a entrada é lida
+// com o relógio em 0, então o prazo da tentativa é ATTEMPT_MS nesse relógio. O
+// roteiro só move o relógio; o timer do prazo continua o real.
+const LOCK_DEADLINE = ATTEMPT_MS;
+
+test("I25-C46 prazo da entrega: depois de uma recusa do lock, a repetição abandonada pelo timer com o relógio ainda aquém do prazo é a última tentativa e não grava", async () => {
+  // Criação 1 do lock = abertura; 2 = commit ocupado; 3 = repetição parada antes de
+  // existir o lock, com o relógio 0,5 abaixo do prazo quando o timer dispara (o caso
+  // do T8-C16 no gate B final).
+  const root = scratch("i25 c46 prazo repeticao");
+  const id = startCapture(root);
+  const lockDisk = gate();
+  let now = 0;
+  const contended = scriptedIo({
+    busy: [2],
+    stall: (file, kind, stats) => {
+      if (kind !== "write" || path.basename(file) !== ".lock" || stats.lockCreations < 3) return null;
+      // Só com o defeito há a 4ª: ela leva o relógio ao prazo, para a entrega terminar.
+      now = stats.lockCreations === 3 ? LOCK_DEADLINE - 0.5 : LOCK_DEADLINE;
+      return lockDisk.promise;
+    },
+  });
+  const before = snapshotTree(captureDir(root, id));
+  const delivery = createCaptureDelivery({ root, id, agent: "claude", io: contended.io, clock: () => now });
+  assert.ok((await deliverOne(delivery, "prazo-relogio")) <= DELIVERY_DEADLINE_MS);
+  assert.deepEqual(delivery.report(), { bound: true, code: "lock_present", entries: 1, committed: 0, persisted: 0, lost: 1 });
+  assert.equal(contended.stats.lockCreations, 3, "nenhuma tentativa nova depois da abandonada");
+  lockDisk.open();
+  await waitUntil(() => contended.stats.lockReleases === 2, { label: "tentativa abandonada liberar o lock" });
+  assert.equal(contended.stats.lockCreations, 3);
+  assert.deepEqual(snapshotTree(captureDir(root, id)), before, "nada gravado depois do prazo");
+  assert.ok(!existsSync(path.join(storeDir(root), ".lock")), "lock liberado");
+  assert.equal(statusOf(root, id).counters.persisted, 0);
+});
+
+// io roteirizado que leva o relógio a `at` quando a criação real `creation` do
+// lock termina, antes de o store chamar o onLock. O timer do prazo é o real e o
+// roteiro não o controla: ele pode resolver a entrega antes (linha "Fim da
+// liberação esperado na prova do lock tardio" do Landing).
+function lockTakenAt(clock, { busy, creation, at }) {
+  const scripted = scriptedIo({ busy });
+  return {
+    stats: scripted.stats,
+    io: {
+      ...scripted.io,
+      async writeExclusive(file, data) {
+        await scripted.io.writeExclusive(file, data);
+        if (path.basename(file) === ".lock" && scripted.stats.lockCreations === creation) clock.now = at;
+      },
+    },
+  };
+}
+
+test("I25-C46 prazo da entrega: lock obtido com o relógio no prazo ou depois, antes do onLock, é devolvido sem gravar e sai com o motivo do prazo", async (t) => {
+  for (const [label, busy, creation, code] of [
+    ["sem recusa", [], 2, "delivery_timeout"],
+    ["depois de uma recusa", [2], 3, "lock_present"],
+  ]) {
+    for (const [moment, at] of [["no prazo", LOCK_DEADLINE], ["depois do prazo", LOCK_DEADLINE + 1]]) {
+      const name = `${label}, ${moment}`;
+      const root = scratch(`i25 c46 prazo tardio ${creation} ${at}`);
+      const id = startCapture(root);
+      const clock = { now: 0 };
+      const late = lockTakenAt(clock, { busy, creation, at });
+      const before = snapshotTree(captureDir(root, id));
+      const delivery = createCaptureDelivery({ root, id, agent: "claude", io: late.io, clock: () => clock.now });
+      await deliverOne(delivery, "prazo-tardio");
+      assert.deepEqual(delivery.report(), { bound: true, code, entries: 1, committed: 0, persisted: 0, lost: 1 }, name);
+      // A entrega pode voltar pelo timer com a liberação da tentativa ainda em
+      // curso (o agente não espera o disco), então as pós-condições valem depois
+      // do fim dela. Só o observado sai: 2 no retorno não diz quem resolveu a
+      // corrida, e 1 não diz por quê.
+      const releasedAtReturn = late.stats.lockReleases;
+      await waitUntil(() => late.stats.lockReleases === 2, { label: `${name}: a tentativa tardia devolver o próprio lock` });
+      t.diagnostic(`${name}: no retorno da entrega, ${releasedAtReturn} de 2 liberações concluídas; depois da espera, 2`);
+      assert.deepEqual([late.stats.lockCreations, late.stats.lockReleases], [creation, 2], `${name}: a abertura e a tentativa tardia devolveram o próprio lock`);
+      assert.deepEqual(snapshotTree(captureDir(root, id)), before, `${name}: nada gravado`);
+      assert.ok(!existsSync(path.join(storeDir(root), ".lock")), `${name}: lock liberado`);
+      assert.equal(statusOf(root, id).counters.persisted, 0, name);
+      assert.deepEqual(exportOf(root, id).records, [], name);
+    }
+  }
+});
+
+test("I25-C46 prazo da entrega: lock obtido com o relógio ainda aquém do prazo grava e confirma", async () => {
+  const root = scratch("i25 c46 prazo limite");
+  const id = startCapture(root);
+  const clock = { now: 0 };
+  const inTime = lockTakenAt(clock, { busy: [], creation: 2, at: LOCK_DEADLINE - 0.001 });
+  const delivery = createCaptureDelivery({ root, id, agent: "claude", io: inTime.io, clock: () => clock.now });
+  await deliverOne(delivery, "prazo-limite");
+  assert.deepEqual(delivery.report(), { bound: true, code: null, entries: 1, committed: 1, persisted: 1, lost: 0 });
+  assert.deepEqual([inTime.stats.lockCreations, inTime.stats.lockReleases], [2, 2]);
+  assert.deepEqual(exportOf(root, id).records.map((r) => r.envelope.ids.toolUseId), [expectedPseudonym(root, id, "prazo-limite")]);
+  assertSegmentConsistent(root, id, "commit no limite do prazo");
 });
 
 test("T8-C16 delivery failure neutrality: no hook real, lock obtido na repetição e disco parado aparecem como delivery_timeout no diagnóstico, sem prender o agente", async (t) => {
@@ -756,9 +1090,10 @@ test("T8-C16 delivery failure neutrality: no hook real, a tentativa só faz flus
       ["segmento.tmp", "state.json.tmp"],
       `${label}: flush do segmento e do state.json, nessa ordem, e nenhum outro`,
     );
+    // A liberação é o rename do `.lock` (C46 (u)), e cada uma reserva e remove a própria pasta.
     assert.deepEqual(
-      ["writeFile", "unlink"].map((name) => ops.filter(([op, kind]) => op === name && kind === "lock").length),
-      [2, 2],
+      [["writeFile", "lock"], ["rename", "lock"], ["mkdtemp", "lock.reserva"], ["rmdir", "lock.reserva"]].map(([name, file]) => ops.filter(([op, kind]) => op === name && kind === file).length),
+      [2, 2, 2, 2],
       `${label}: abertura e commit gravaram e liberaram o próprio lock`,
     );
   }

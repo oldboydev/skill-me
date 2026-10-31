@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { INTEGRATIONS_CLI, baseEnv, makeScratch, parseReport, runIntegrationsJson } from "./helpers/cli.mjs";
+import { pathToFileURL } from "node:url";
+import { INTEGRATIONS_CLI, REPO_ROOT, baseEnv, makeScratch, parseReport, runIntegrationsJson } from "./helpers/cli.mjs";
 import { CANARY_PATTERN, fixtureCase, loadFixture } from "./helpers/fixtures.mjs";
 import { readClaudeHandlers, readCodexHandlers, runClaudeHandler, runCodexHandler } from "./helpers/installed-hooks.mjs";
 import { snapshotTree } from "./helpers/tree.mjs";
@@ -84,6 +85,38 @@ test("I4-C36 hooks Claude e Codex: seis falhas do consumidor/entrada mantêm sa�
     assert.equal(outcomes.limite.report.counters.inputTooLarge, 1);
     assert.deepEqual(outcomes.limite.report.events, []);
   }
+});
+
+// I25-C46 (l) (gate C em 60bbda8; linha "Duração monotônica no apoio dos hooks
+// instalados" do Landing): no WSL o relógio civil recua ~1,8 s a cada ~30 s, e o
+// caso de stdin aberto acima saiu com `claude timeout: 209 ms`. Um processo de
+// prova isolado importa o apoio e recua só o próprio `Date.now` em 1.800 ms no
+// meio da mesma chamada; o hook instalado (o CLI do produto) roda sem injeção.
+const CLOCK_STEP_CHILD = `
+const [url, handler, cwd, env] = process.argv.slice(1);
+const { runClaudeHandler } = await import(url);
+const realNow = Date.now;
+let back = 0;
+Date.now = () => realNow() - back;
+setTimeout(() => (back = 1800), 200);
+const civilStart = Date.now();
+const run = await runClaudeHandler(JSON.parse(handler), undefined, { env: JSON.parse(env), cwd, stdinText: '{"hook_event_name":', keepStdinOpenMs: 1 });
+process.stdout.write(JSON.stringify({ elapsedMs: run.elapsedMs, civilMs: Date.now() - civilStart, stdinTimeout: run.report?.counters?.stdinTimeout ?? null, status: run.status }));
+`;
+const INSTALLED_HOOKS = pathToFileURL(path.join(REPO_ROOT, "tests", "integrations", "helpers", "installed-hooks.mjs")).href;
+
+test("I25-C46 apoio dos hooks instalados: com o relógio civil recuado no meio do caso de stdin aberto do I4-C36, a duração do apoio continua dentro da faixa do I4-C36", () => {
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", CLOCK_STEP_CHILD, INSTALLED_HOOKS, JSON.stringify(claude.handlers.PreToolUse.handler), claude.root, JSON.stringify(claude.env)], {
+    encoding: "utf8",
+    timeout: 60_000,
+    windowsHide: true,
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const outcome = JSON.parse(child.stdout);
+  assert.ok(outcome.civilMs < 1900, `o relógio civil do processo isolado recuou: ${outcome.civilMs} ms`);
+  assert.deepEqual([outcome.status, outcome.stdinTimeout], [0, 1], "o hook esperou o prazo de 2000 ms do stdin");
+  // A mesma faixa do I4-C36.
+  assert.ok(outcome.elapsedMs >= 1900 && outcome.elapsedMs < 6000, `claude timeout: ${outcome.elapsedMs} ms`);
 });
 
 test("I4-C38 wrapper: seis falhas da observação preservam o código do filho", async (t) => {

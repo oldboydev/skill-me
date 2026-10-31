@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { INTEGRATIONS_CLI, parseReport } from "./cli.mjs";
 import { FIXTURES_DIR, loadFixture } from "./fixtures.mjs";
+import { recordedProducer } from "./producer-runs.mjs";
 
 export const FAKE_CODEX = path.join(FIXTURES_DIR, "codex", "fake-codex.mjs");
 
@@ -29,8 +30,9 @@ export function probeOf(stderr) {
 // que chega, para provar repasse incremental. `stderrBytes` é o stderr sem
 // decodificação, para comparação byte a byte com o do filho.
 export function runWrapper({ args, entry = FAKE_CODEX, env, cwd, stdinText, reportFd = 3, closeReportFd = false, onLine, extraArgs = [] }) {
+  const recorded = recordedProducer("wrapper codex", env);
   return new Promise((resolve) => {
-    const childEnv = { ...env };
+    const childEnv = { ...recorded.env };
     if (reportFd !== null) childEnv.SKILL_ME_OBSERVER_REPORT_FD = String(reportFd);
     const wrapperArgs = [INTEGRATIONS_CLI, "run", "--agent", "codex", ...(entry ? ["--codex-entry", entry] : []), ...extraArgs, "--", ...args];
     const child = spawn(process.execPath, wrapperArgs, {
@@ -66,7 +68,7 @@ export function runWrapper({ args, entry = FAKE_CODEX, env, cwd, stdinText, repo
     }
     child.on("close", (status, signal) => {
       const stdout = Buffer.concat(stdoutChunks);
-      resolve({ status, signal, stdout, stderr, stderrBytes: Buffer.concat(stderrChunks), report: parseReport(fd3), child });
+      resolve(recorded.settle({ status, signal, stdout, stderr, stderrBytes: Buffer.concat(stderrChunks), report: parseReport(fd3), child }));
     });
   });
 }

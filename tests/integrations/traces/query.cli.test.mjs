@@ -2,13 +2,32 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { runPrivacyCommand } from "../../../src/integrations/privacy/command.mjs";
 import { makeScratch } from "../helpers/cli.mjs";
 import { claudePayload, execEvent, hermesRecord } from "../helpers/privacy-canaries.mjs";
 import { runPrivacy } from "../helpers/privacy-store.mjs";
-import { boundEnv, captureDir, capturesDir, exportOf, privacyOk, runHermesIngest, runHook, startCapture, statusOf, storeDir } from "../helpers/traces.mjs";
+import {
+  boundEnv,
+  captureDir,
+  capturesDir,
+  explainedUnless,
+  exportOf,
+  privacyOk,
+  recordProducersInEachTest,
+  runHermesIngest,
+  runHook,
+  startCapture,
+  statusOf,
+  storeDir,
+  timedEnv,
+} from "../helpers/traces.mjs";
 import { snapshotTree } from "../helpers/tree.mjs";
 import { runWrapper, writeScenario } from "../helpers/wrapper.mjs";
+
+// Evidência comum dos produtores quando um teste falha (issue #25, linha
+// "Evidência comum dos produtores e formatter legado" do Landing): helpers/traces.mjs.
+recordProducersInEachTest();
 
 // Provas S2 da issue #8 (C9–C11 e C14): `list`, `export` e ciclo de vida pelo
 // CLI real, sobre capturas alimentadas pelos produtores vinculados.
@@ -213,8 +232,20 @@ test("T8-C14 lifecycle remains authoritative: encerrada recusa entrega; delete/p
   const stopped = await startAt(root, t0);
   const disabled = await startAt(root, t0, ["--content"]);
   const active = await startAt(root, t0);
+  // Cada produtor com a pré-carga de tempos, num arquivo fora da raiz; a
+  // mensagem só ganha a evidência quando a entrega não vem como esperado (na CI
+  // do Windows a abertura de uma delas saiu com `delivery_timeout`, sem dado).
+  const times = scratch("t8 c14 tempos");
+  let timings = 0;
+  const deliver = async (label, id, start) => {
+    const timing = path.join(times, `${(timings += 1)}.ndjson`);
+    const run = await start(boundEnv(root, id, timedEnv(timing)));
+    return { run, flow: { root, id, produced: [{ label, run, timing }] } };
+  };
   for (const id of [stopped, disabled, active]) {
-    assert.deepEqual((await runHook("claude", claudePayload("pre_tool_bash"), { env: boundEnv(root, id) })).report.delivery.code, null);
+    const { run, flow } = await deliver("hook claude pre_tool_bash", id, (env) => runHook("claude", claudePayload("pre_tool_bash"), { env }));
+    const code = run.report?.delivery?.code;
+    assert.deepEqual(code, null, explainedUnless(code === null, "hook claude pre_tool_bash", flow));
   }
   assert.equal((await runPrivacyCommand({ argv: ["stop", "--root", root, "--capture", stopped], now: at(t0) })).exitCode, 0);
   const disabledBody = (await runPrivacyCommand({ argv: ["disable", "--root", root, "--capture", disabled], now: at(t0) })).body;
@@ -223,11 +254,12 @@ test("T8-C14 lifecycle remains authoritative: encerrada recusa entrega; delete/p
   // Produtores atrasados: código fechado, exit 0 e nenhum registro novo.
   for (const id of [stopped, disabled]) {
     const before = snapshotTree(captureDir(root, id));
-    const hook = await runHook("claude", claudePayload("post_tool_bash"), { env: boundEnv(root, id) });
-    const hermes = await runHermesIngest([hermesRecord("pre_tool_call")], { env: boundEnv(root, id) });
-    for (const run of [hook, hermes]) {
+    const hook = await deliver("hook claude post_tool_bash", id, (env) => runHook("claude", claudePayload("post_tool_bash"), { env }));
+    const hermes = await deliver("ingest hermes", id, (env) => runHermesIngest([hermesRecord("pre_tool_call")], { env }));
+    const refused = { bound: true, code: "capture_not_active", entries: 1, committed: 0, persisted: 0, lost: 1 };
+    for (const { run, flow } of [hook, hermes]) {
       assert.equal(run.status, 0);
-      assert.deepEqual(run.report.delivery, { bound: true, code: "capture_not_active", entries: 1, committed: 0, persisted: 0, lost: 1 });
+      assert.deepEqual(run.report?.delivery, refused, explainedUnless(isDeepStrictEqual(run.report?.delivery, refused), flow.produced[0].label, flow));
     }
     assert.deepEqual(snapshotTree(captureDir(root, id)), before, id);
     assert.equal(exportOf(root, id).records.length, 1);

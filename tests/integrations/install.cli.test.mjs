@@ -1372,7 +1372,8 @@ function describeHermesRun(home, [command, ...flags]) {
 function partialHermesRegistry(label) {
   const home = hermesTarget(label);
   const initial = snapshotTree(home, { withMtime: false });
-  assert.equal(cli(["install", "--agent", "hermes", "--target", home, "--apply"]).status, 0, label);
+  const installed = cli(["install", "--agent", "hermes", "--target", home, "--apply"]);
+  assert.equal(installed.status, 0, installed.status === 0 ? label : installEvidence(label, installed.report));
   const plugin = path.join(home, ...OWN_DIR.split("/"));
   const kwargs = path.join(plugin, "kwargs.json");
   const installedKwargs = readFileSync(kwargs);
@@ -1604,3 +1605,30 @@ test("I4-C34f Hermes: registro parcial de remoção anterior não autoriza apaga
   }
   assert.deepEqual(observed, expected);
 });
+
+// Mensagem da asserção da instalação de partialHermesRegistry quando ela não
+// sai 0 (I4-C34f saiu 5 sem dizer onde no D da S16;
+// .tasks/issue-25-hermes-install-diagnostic-plan.md, O3): o rótulo e só status,
+// códigos, passos e conflitos do relatório do filho — sem alvo, mudanças, bytes
+// ou mensagens. Ausente fica ausente, nunca [] ou 0. Nunca lança: uma exceção
+// aqui trocaria a falha da asserção. Mesma projeção do teste unitário, sem o
+// registro de rejeições (o filho não é instrumentado); os helpers ficam fora
+// do escopo da S17.
+function installEvidence(label, report) {
+  const text = (value) => (value === undefined || typeof value === "string" ? value : "<não é texto>");
+  const pick = (list, keys) => {
+    if (list === undefined) return undefined;
+    if (!Array.isArray(list)) return "<não é lista>";
+    return list.map((item) => Object.fromEntries(keys.flatMap((key) => (typeof item?.[key] === "string" ? [[key, item[key]]] : []))));
+  };
+  try {
+    return `${label} ${JSON.stringify({
+      status: text(report?.status),
+      errors: pick(report?.errors, ["code"]),
+      steps: pick(report?.steps, ["step", "state"]),
+      conflicts: pick(report?.conflicts, ["code", "file", "event"]),
+    })}`;
+  } catch {
+    return `${label} (evidência indisponível)`;
+  }
+}

@@ -54,7 +54,8 @@ const prose = (text) => text.replace(/\s+/g, " ");
 const codeBlocks = (text) => [...text.matchAll(/```([a-z]*)\n([\s\S]*?)```/g)].map(([, lang, body]) => ({ lang, lines: body.split("\n").filter(Boolean) }));
 const cells = (line) => line.slice(1, -1).split(" | ").map((cell) => cell.trim());
 
-const USAGE = section(README, "## Primeiro uso: observar sessões com `on` e `off`");
+// Desde a #25 o uso diário é o `skill-me <agente>`; o on/off segue como alternativa.
+const USAGE = section(README, "## Alternativa: observar todas as sessões com `on` e `off`");
 const PREPARE = section(USAGE, "### 1. Preparar uma vez");
 const NORMAL = section(USAGE, "### 2. Uso normal");
 const LIMITS = section(USAGE, "### 3. Limites reais");

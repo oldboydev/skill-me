@@ -126,4 +126,7 @@ test("I23-C17 modo automático respeita privacidade: conteúdo sensível, não s
   assert.ok(written.includes(authorizationFile(home)), "o on gravou o registro");
   assert.ok(written.includes(controlLockFile(home)), "setup, on e off tomaram o lock do home");
   assert.ok(!existsSync(controlLockFile(home)), "o lock do home não sobra");
+  // A liberação reserva uma pasta ao lado de cada lock (C46 (u)): nenhuma sobra.
+  assert.deepEqual(readdirSync(home).filter((name) => name.startsWith(`${path.basename(controlLockFile(home))}-release-`)), [], "nenhuma reserva do lock do home sobra");
+  assert.deepEqual(readdirSync(storeDir(root)).filter((name) => name.startsWith(".lock")), [], "nem o lock do store nem a reserva dele sobram");
 });

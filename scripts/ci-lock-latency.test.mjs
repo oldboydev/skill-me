@@ -1,0 +1,467 @@
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { after, test } from "node:test";
+import { createStoreIo } from "../src/integrations/privacy/fs.mjs";
+import {
+  BANDS_MS,
+  PHASE,
+  SCRIPT,
+  aggregatePhase,
+  createOwnDir,
+  measure,
+  measureCycles,
+  parseLines,
+  removeOwnDir,
+  resolveDestinations,
+  runPhase,
+  samePlace,
+  spawnWorker,
+  summarize,
+} from "./ci-lock-latency.mjs";
+
+// Provas do C50 (issue #25, AC9; linha "Medição comparativa do lock na CI
+// Windows" do Landing em .checks/issue-25-agent-launch.md). Os valores
+// esperados vêm do contrato do Landing. As fases rodam pela API exportada com
+// poucos ciclos; a medição completa (500 ciclos por produtor, 120 s) é a do job
+// manual no runner. Filhos de fixture são `node -e`; nenhum agente é iniciado.
+
+// Encerra os processos que a prova iniciou e que ainda rodam, e espera o close de
+// cada um. Um spawn que falhou já tem `exitCode` e fica de fora.
+const release = (children) =>
+  Promise.all(
+    children.map((child) => {
+      if (child.exitCode !== null || child.signalCode !== null) return undefined;
+      const closed = new Promise((resolve) => child.once("close", resolve));
+      child.kill();
+      return closed;
+    }),
+  );
+
+// Os processos das provas de interrupção ficam aqui, para o `after` não deixar
+// nenhum vivo também quando uma delas falha antes do próprio `finally`.
+const spawnedByTests = new Set();
+const registered = (child) => {
+  spawnedByTests.add(child);
+  return child;
+};
+
+const scratches = [];
+after(async () => {
+  await release([...spawnedByTests]);
+  for (const dir of scratches) rmSync(dir, { recursive: true, force: true });
+});
+const scratch = (label) => {
+  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), `skill-me lock latency ${label}-`)));
+  scratches.push(dir);
+  return dir;
+};
+
+// Esquema 2 (C50 (o)): a liberação é o rename do `.lock` para uma reserva própria.
+const RELEASE_OPERATIONS = ["reserva", "renomeacao", "remocaoRetirado", "pasta"];
+const ok = (ciclo) => ({ ciclo, tomada: 1.5, retirada: 0.3, liberacao: 0.5, criacao: 0.2, escrita: 0.1, fechamento: 0.05, reserva: 0.1, renomeacao: 0.1, remocaoRetirado: 0.1, pasta: 0.05, erro: null });
+const lines = (records) => records.map((record) => `${JSON.stringify(record)}\n`).join("");
+const fixture = (code) => (role) => spawn(process.execPath, ["-e", code], { stdio: [role === "carga" ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true });
+const forever = "setInterval(() => {}, 1000);";
+const readyForever = `process.stdout.write(${JSON.stringify('{"pronto":true}\n')}); ${forever}`;
+const UNAVAILABLE = { amostras: 0, indisponivel: "sem amostras" };
+
+const alive = (pid) => {
+  try {
+    return process.kill(pid, 0);
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    throw error;
+  }
+};
+
+// Troca o rmSync de node:fs só durante `run` (a mesma via da instrumentação do
+// produtor no script): para as pastas escolhidas, lança `code` com o caminho na
+// mensagem, como um erro real; sem `code`, um Error simples. As outras remoções
+// seguem pelo rmSync real. Nenhum erro do host é necessário.
+const fsCjs = createRequire(import.meta.url)("node:fs");
+async function withFailingRemoval(fails, code, run) {
+  const real = fsCjs.rmSync;
+  fsCjs.rmSync = function failingRmSync(target, options) {
+    if (!fails(target)) return real.call(this, target, options);
+    const error = new Error(`${code ?? "falha"}: remoção recusada (injetada), rmdir '${target}'`);
+    throw code === undefined ? error : Object.assign(error, { code, syscall: "rmdir", path: target });
+  };
+  syncBuiltinESMExports();
+  try {
+    return await run();
+  } finally {
+    fsCjs.rmSync = real;
+    syncBuiltinESMExports();
+  }
+}
+
+// Põe o RUNNER_TEMP do processo da prova só durante `run` e, no `finally`, o
+// devolve ao valor anterior ou à ausência. TEMP e TMP não mudam.
+async function withProcessRunnerTemp(value, run) {
+  const before = process.env.RUNNER_TEMP;
+  process.env.RUNNER_TEMP = value;
+  try {
+    return await run();
+  } finally {
+    if (before === undefined) delete process.env.RUNNER_TEMP;
+    else process.env.RUNNER_TEMP = before;
+  }
+}
+
+// Um processo alheio ao supervisor, iniciado pela prova, que tem de continuar vivo.
+const foreignProcess = () => {
+  const foreign = registered(spawn(process.execPath, ["-e", forever], { stdio: "ignore", windowsHide: true }));
+  const closed = new Promise((resolve) => foreign.on("close", resolve));
+  return {
+    pid: foreign.pid,
+    async stop() {
+      foreign.kill();
+      await closed;
+    },
+  };
+};
+
+test("C50 percentis e faixas: valores exatos por posição mais próxima, inclusive imediatamente abaixo de 600 e de 650", () => {
+  assert.deepEqual(summarize([700, 10, 650, 599.999, 20, 649.999, 600]), { amostras: 7, p50: 600, p99: 700, max: 700, ">=600": 4, ">=650": 2 });
+  assert.deepEqual(
+    summarize(Array.from({ length: 100 }, (_, i) => i + 1)),
+    { amostras: 100, p50: 50, p99: 99, max: 100, ">=600": 0, ">=650": 0 },
+    "zero medido, com amostras, é diferente de sem amostras",
+  );
+  assert.deepEqual(summarize([0.0004, 0.0006]), { amostras: 2, p50: 0, p99: 0.001, max: 0.001, ">=600": 0, ">=650": 0 }, "3 casas, contagem sobre o valor sem arredondar");
+  assert.deepEqual(BANDS_MS, [600, 650]);
+});
+
+test("C50 sem amostras: a métrica fica indisponível, nunca percentil ou contagem zero, também numa fase em que todos os ciclos tiveram erro", () => {
+  assert.deepEqual(summarize([]), UNAVAILABLE);
+  const failed = [1, 2].map((ciclo) => ({ ...Object.fromEntries(Object.keys(ok(ciclo)).map((key) => [key, null])), ciclo, erro: "EIO" }));
+  const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 1, cycles: 2, result: { durationMs: 1, timedOut: false, children: [{ role: "produtor", text: lines(failed), exit: { codigo: 0, sinal: null } }] } });
+  assert.deepEqual(phase.ciclos, { previstos: 2, concluidos: 2, comErro: 2, incompletos: 0 });
+  assert.deepEqual(
+    [phase.tomada, phase.retirada, phase.liberacao, phase.operacoes],
+    [UNAVAILABLE, UNAVAILABLE, UNAVAILABLE, Object.fromEntries(["criacao", "escrita", "fechamento", ...RELEASE_OPERATIONS].map((op) => [op, UNAVAILABLE]))],
+  );
+  assert.deepEqual(phase.erros, { lockPresent: 0, lockLost: 0, es: { EIO: 2 } });
+});
+
+test("C50 caminhos: o mesmo destino no Windows sem diferenciar maiúsculas nem separador final, distinto por volume, e exato no POSIX", () => {
+  assert.equal(samePlace("C:\\Temp", "c:\\temp\\", "win32"), true);
+  assert.equal(samePlace("C:\\Users\\R\\AppData\\Local\\Temp", "D:\\a\\_temp", "win32"), false);
+  assert.equal(samePlace("/tmp", "/tmp/", "linux"), true);
+  assert.equal(samePlace("/tmp", "/TMP", "linux"), false);
+
+  const real = { "C:\\Temp": "C:\\Temp", "D:\\a\\_temp": "D:\\a\\_temp", "c:\\temp\\": "C:\\Temp", "D:\\arquivo": "D:\\arquivo" };
+  const realpath = (dir) => {
+    if (!(dir in real)) throw Object.assign(new Error("ausente"), { code: "ENOENT" });
+    return real[dir];
+  };
+  const plan = (runnerTemp) => resolveDestinations({ tmpdir: "C:\\Temp", runnerTemp, platform: "win32", realpath, isDirectory: (dir) => dir !== "D:\\arquivo" });
+  const single = (motivo) => ({ comparacao: `não aplicável: ${motivo}`, runner: { indisponivel: motivo }, phases: [["A", "padrao", "C:\\Temp"]] });
+  const shape = (p) => ({ comparacao: p.comparacao, runner: p.destinos.runner, phases: p.phases.map(({ fase, destino, dir }) => [fase, destino, dir]) });
+  assert.deepEqual(shape(plan(undefined)), single("RUNNER_TEMP ausente"));
+  assert.deepEqual(shape(plan("")), single("RUNNER_TEMP ausente"));
+  assert.deepEqual(shape(plan("D:\\nada")), single("RUNNER_TEMP ilegível [ENOENT]"));
+  assert.deepEqual(shape(plan("D:\\arquivo")), single("RUNNER_TEMP não é pasta"));
+  assert.deepEqual(shape(plan("c:\\temp\\")), single("RUNNER_TEMP é o mesmo destino do temporário padrão"));
+  assert.deepEqual(shape(plan("D:\\a\\_temp")), {
+    comparacao: "A1/B/A2",
+    runner: { volume: "D:" },
+    phases: [
+      ["A1", "padrao", "C:\\Temp"],
+      ["B", "runner", "D:\\a\\_temp"],
+      ["A2", "padrao", "C:\\Temp"],
+    ],
+  });
+  assert.deepEqual(plan("D:\\a\\_temp").destinos.padrao, { volume: "C:" });
+});
+
+test("C50 caminhos reais: um link ou junção para o temporário padrão resolve para o mesmo destino, sem duas fases", () => {
+  const base = scratch("link");
+  const target = path.join(base, "padrao");
+  mkdirSync(target);
+  const link = path.join(base, "ligacao");
+  symlinkSync(target, link, "junction");
+  const plan = resolveDestinations({ tmpdir: target, runnerTemp: link });
+  assert.deepEqual([plan.comparacao, plan.phases.map((p) => p.fase)], ["não aplicável: RUNNER_TEMP é o mesmo destino do temporário padrão", ["A"]]);
+  const other = path.join(base, "outro");
+  mkdirSync(other);
+  assert.deepEqual(resolveDestinations({ tmpdir: target, runnerTemp: other }).phases.map((p) => p.fase), ["A1", "B", "A2"]);
+});
+
+test("C50 E/S: a remoção do lock com EIO dá EIO entre os erros de E/S e os ciclos seguintes saem com lock_present, separado; tomada e liberação só de ciclos sem erro", async () => {
+  // A liberação é o rename do `.lock` (C50 (o)): o EIO vai ao 1º, sem movê-lo, e
+  // o lock fica — o mesmo efeito do unlink que falhava no esquema 1.
+  const dir = scratch("eio");
+  const real = createStoreIo();
+  let failed = false;
+  const io = {
+    ...real,
+    async rename(from, to) {
+      if (!failed && path.basename(from) === ".lock") {
+        failed = true;
+        throw Object.assign(new Error("EIO injetado"), { code: "EIO" });
+      }
+      return real.rename(from, to);
+    },
+  };
+  const records = [];
+  await measureCycles({ lockPath: path.join(dir, ".lock"), cycles: 3, io, onCycle: (cycle) => records.push(cycle) });
+  assert.deepEqual(records.map((r) => r.erro), ["EIO", "lock_present", "lock_present"]);
+  const measured = (value) => (value === null ? null : typeof value);
+  assert.deepEqual(
+    records.map((r) => ["tomada", "retirada", "liberacao", ...RELEASE_OPERATIONS].map((key) => measured(r[key]))),
+    [
+      [null, null, null, "number", null, null, "number"],
+      [null, null, null, null, null, null, null],
+      [null, null, null, null, null, null, null],
+    ],
+    "só as operações concluídas contam: no 1º a reserva e o rmdir dela; nos ocupados, nada da liberação",
+  );
+  const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 1, cycles: 3, result: { durationMs: 1, timedOut: false, children: [{ role: "produtor", text: lines(records), exit: { codigo: 0, sinal: null } }] } });
+  assert.deepEqual([phase.ciclos, phase.erros, phase.tomada, phase.retirada, phase.liberacao], [{ previstos: 3, concluidos: 3, comErro: 3, incompletos: 0 }, { lockPresent: 2, lockLost: 0, es: { EIO: 1 } }, UNAVAILABLE, UNAVAILABLE, UNAVAILABLE]);
+
+  // Controle: o mesmo io sem falha dá três ciclos limpos, com tomada, retirada, liberação e as operações da liberação.
+  const clean = [];
+  await measureCycles({ lockPath: path.join(scratch("eio controle"), ".lock"), cycles: 3, io: real, onCycle: (cycle) => clean.push(cycle) });
+  assert.deepEqual(
+    clean.map((r) => [r.erro, ...["tomada", "retirada", "liberacao", ...RELEASE_OPERATIONS].map((key) => typeof r[key])]),
+    Array(3).fill([null, ...Array(7).fill("number")]),
+  );
+});
+
+test("C50 teto: produtores de fixture que nunca terminam são encerrados no teto, e um processo alheio continua vivo; nada vira zero", async () => {
+  const dir = scratch("teto");
+  const foreign = spawn(process.execPath, ["-e", forever], { stdio: "ignore", windowsHide: true });
+  const foreignClosed = new Promise((resolve) => foreign.on("close", resolve));
+  try {
+    const result = await runPhase({ dir, producers: 3, cycles: 4, loaders: 1, loadBytes: 1024, limitMs: 1_500, spawnChild: (role, own, value) => (role === "produtor" ? fixture(forever)(role) : spawnWorker(role, own, value)) });
+    assert.equal(result.timedOut, true);
+    assert.ok(result.children.every((child) => child.exit !== null), "os filhos do supervisor fecharam");
+    assert.equal(process.kill(foreign.pid, 0), true, "o processo alheio não foi encerrado");
+    const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 3, cycles: 4, result });
+    assert.deepEqual([phase.encerradaPeloTeto, phase.ciclos, phase.tomada, phase.operacoes.criacao], [true, { previstos: 12, concluidos: 0, comErro: 0, incompletos: 12 }, UNAVAILABLE, UNAVAILABLE]);
+    assert.deepEqual([phase.carga.processos, phase.carga.terminaram], [1, 0], "a carga encerrada no teto não traz relatório");
+  } finally {
+    foreign.kill();
+    await foreignClosed;
+  }
+});
+
+test("C50 término parcial: um produtor que conclui 2 de 3 ciclos e para fica com 2 concluídos e 1 incompleto, e as métricas têm 2 amostras", async () => {
+  const partial = `process.stdout.write(${JSON.stringify(lines([ok(1), { ...ok(2), tomada: 700 }]))}); ${forever}`;
+  const result = await runPhase({ dir: scratch("parcial"), producers: 1, cycles: 3, loaders: 0, loadBytes: 1024, limitMs: 1_500, spawnChild: fixture(partial) });
+  const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 1, cycles: 3, result });
+  assert.deepEqual([phase.encerradaPeloTeto, phase.ciclos], [true, { previstos: 3, concluidos: 2, comErro: 0, incompletos: 1 }]);
+  assert.deepEqual(phase.tomada, { amostras: 2, p50: 1.5, p99: 700, max: 700, ">=600": 1, ">=650": 1 });
+});
+
+test("C50 protocolo: linha incompleta, linha que não é JSON e objeto fora da forma contam como inválidas, nunca como ciclo", () => {
+  assert.deepEqual(parseLines(`{"ciclo":1\n${lines([ok(1)])}{"ciclo":2`), { records: [ok(1)], invalid: 2 });
+  const text = `${lines([ok(1), { ciclo: 2, tomada: "rápido" }, { fim: true, ciclos: 3 }])}não é json\n{"ciclo":3,"tom`;
+  const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 1, cycles: 3, result: { durationMs: 1, timedOut: false, children: [{ role: "produtor", text, exit: { codigo: 0, sinal: null } }] } });
+  assert.deepEqual([phase.ciclos, phase.linhasInvalidas, phase.tomada.amostras], [{ previstos: 3, concluidos: 1, comErro: 0, incompletos: 2 }, 3, 1]);
+});
+
+test("C50 limpeza: só remove a pasta criada por esta execução no destino, com o marcador e o nonce; recusa as outras sem apagar nada", () => {
+  const destination = scratch("limpeza");
+  const nonce = "0123456789abcdef";
+  const own = createOwnDir(destination, "A", nonce);
+  writeFileSync(path.join(own, "dado.bin"), "x");
+  const keep = (dir) => readdirSync(dir).sort();
+
+  const elsewhere = scratch("limpeza fora");
+  const outside = createOwnDir(elsewhere, "A", nonce);
+  assert.deepEqual(removeOwnDir(outside, { created: outside, destination, nonce }), { ok: false, motivo: "fora da árvore própria" });
+  assert.ok(existsSync(outside));
+
+  const unmarked = path.join(destination, "skill-me-lock-latency-A-sem-marcador");
+  mkdirSync(unmarked);
+  writeFileSync(path.join(unmarked, "alheio.txt"), "alheio");
+  assert.deepEqual(removeOwnDir(unmarked, { created: unmarked, destination, nonce }), { ok: false, motivo: "sem o marcador desta execução" });
+  const otherNonce = createOwnDir(destination, "B", "fedcba9876543210");
+  assert.deepEqual(removeOwnDir(otherNonce, { created: otherNonce, destination, nonce }), { ok: false, motivo: "sem o marcador desta execução" });
+
+  const link = path.join(destination, "skill-me-lock-latency-A-ligacao");
+  symlinkSync(own, link, "junction");
+  assert.deepEqual(removeOwnDir(link, { created: link, destination, nonce }), { ok: false, motivo: "não é uma pasta real" });
+  // Literal: no Windows, `path.relative` para outro volume devolve um caminho absoluto.
+  assert.deepEqual(removeOwnDir(path.join("pasta relativa", path.basename(own)), { created: own, destination, nonce }), { ok: false, motivo: "caminho relativo" });
+  assert.deepEqual(removeOwnDir(own, { created: otherNonce, destination, nonce }), { ok: false, motivo: "não é a pasta criada por esta execução" });
+  assert.deepEqual([keep(own), keep(unmarked)], [[".skill-me-lock-latency", "dado.bin"], ["alheio.txt"]], "nada apagado nas recusas");
+
+  assert.deepEqual(removeOwnDir(own, { created: own, destination, nonce }), { ok: true });
+  assert.ok(!existsSync(own));
+  assert.ok(existsSync(unmarked) && existsSync(otherNonce) && existsSync(outside), "as recusadas continuam");
+});
+
+test("C50 limpeza que falha: EBUSY, EPERM, ENOTEMPTY ou um erro sem código na remoção da pasta própria dão a falha com o código, sem caminho nem mensagem, e a pasta não é dada como removida", async () => {
+  const destination = scratch("limpeza falha");
+  const nonce = "0123456789abcdef";
+  for (const code of ["EBUSY", "EPERM", "ENOTEMPTY", undefined]) {
+    const dir = createOwnDir(destination, "A", nonce);
+    const outcome = await withFailingRemoval((target) => target === dir, code, () => removeOwnDir(dir, { created: dir, destination, nonce }));
+    assert.deepEqual(outcome, { ok: false, falha: code ?? "Error" });
+    assert.deepEqual(readdirSync(dir), [".skill-me-lock-latency"], "a pasta e o marcador continuam");
+  }
+});
+
+test("C50 limpeza que falha depois dos dados: a remoção da pasta de A1 lança EBUSY, e o relatório mantém A1, B e A2 com os dados e registra a falha", async () => {
+  const small = { producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 60_000 };
+  const standard = scratch("limpeza falha padrao");
+  const runner = scratch("limpeza falha runner");
+  const phaseA1 = (target) => path.dirname(target) === standard && path.basename(target).startsWith("skill-me-lock-latency-A1-");
+  const report = await withFailingRemoval(phaseA1, "EBUSY", () => measure({ phase: small, env: { RUNNER_TEMP: runner }, tmpdir: standard }));
+  assert.deepEqual(
+    [report.comparacao, report.fases.map((f) => [f.fase, f.destino, f.ciclos?.concluidos, f.interrompidaPorErro])],
+    ["A1/B/A2", [["A1", "padrao", 6, null], ["B", "runner", 6, null], ["A2", "padrao", 6, null]]],
+  );
+  assert.deepEqual(report.limpeza, { removidas: 2, recusadas: [], falhas: ["EBUSY"] });
+  const left = readdirSync(standard);
+  assert.equal(left.length, 1, "só a pasta de A1 ficou no destino padrão");
+  assert.match(left[0], /^skill-me-lock-latency-A1-/);
+  assert.ok(existsSync(path.join(standard, left[0], ".skill-me-lock-latency")), "a pasta de A1 continua, com o marcador");
+  assert.deepEqual(readdirSync(runner), [], "a pasta de B saiu");
+  const text = JSON.stringify(report);
+  for (const value of [standard, runner, "injetada"]) {
+    assert.ok(!text.includes(value) && !text.includes(JSON.stringify(value).slice(1, -1)), "nenhum caminho nem mensagem");
+  }
+});
+
+test("C50 início parcial: a pasta do 2º produtor não pode ser criada depois de a carga e o 1º produtor iniciarem; o supervisor encerra e espera só os seus filhos, e a fase sai com os incompletos e o código", async () => {
+  const dir = scratch("inicio parcial");
+  writeFileSync(path.join(dir, "produtor-2"), "");
+  const started = [];
+  const foreign = foreignProcess();
+  try {
+    const spawnChild = (role) => {
+      const child = registered(fixture(role === "carga" ? readyForever : forever)(role));
+      started.push(child);
+      return child;
+    };
+    const result = await runPhase({ dir, producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 30_000, spawnChild });
+    assert.deepEqual([result.timedOut, result.interruptedBy, result.children.map((child) => child.role)], [false, "EEXIST", ["carga", "produtor"]]);
+    assert.ok(result.children.every((child) => child.exit !== null), "os filhos registrados fecharam");
+    assert.deepEqual(started.map((child) => alive(child.pid)), [false, false], "os processos dos filhos já não existem");
+    assert.equal(alive(foreign.pid), true, "o processo alheio não foi encerrado");
+    const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 3, cycles: 2, result });
+    assert.deepEqual(
+      [phase.encerradaPeloTeto, phase.interrompidaPorErro, phase.ciclos, phase.tomada],
+      [false, "EEXIST", { previstos: 6, concluidos: 0, comErro: 0, incompletos: 6 }, UNAVAILABLE],
+    );
+  } finally {
+    await release(started);
+    await foreign.stop();
+  }
+});
+
+test("C50 erro assíncrono: o 2º produtor não inicia (ENOENT assíncrono); o processo não cai, o supervisor encerra e espera só os seus filhos, e a fase sai com os incompletos e o código", async () => {
+  const dir = scratch("erro assincrono");
+  const missing = path.join(dir, "nao-existe");
+  const started = [];
+  const foreign = foreignProcess();
+  try {
+    const spawnChild = (role, ownDir) => {
+      const child = registered(
+        role === "produtor" && path.basename(ownDir) === "produtor-2"
+          ? spawn(missing, [], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
+          : fixture(role === "carga" ? readyForever : forever)(role),
+      );
+      started.push(child);
+      return child;
+    };
+    const result = await runPhase({ dir, producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 30_000, spawnChild });
+    assert.deepEqual(
+      [result.timedOut, result.interruptedBy, result.children.map((child) => child.role)],
+      [false, "ENOENT", ["carga", "produtor", "produtor", "produtor"]],
+    );
+    assert.ok(result.children.every((child) => child.exit !== null), "os filhos registrados fecharam");
+    const ran = started.filter((child) => child.pid !== undefined);
+    assert.deepEqual(ran.map((child) => alive(child.pid)), [false, false, false], "os processos dos filhos já não existem");
+    assert.equal(alive(foreign.pid), true, "o processo alheio não foi encerrado");
+    const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 3, cycles: 2, result });
+    assert.deepEqual([phase.encerradaPeloTeto, phase.interrompidaPorErro, phase.ciclos], [false, "ENOENT", { previstos: 6, concluidos: 0, comErro: 0, incompletos: 6 }]);
+  } finally {
+    await release(started);
+    await foreign.stop();
+  }
+});
+
+test("C50 fronteira real: uma fase com os filhos reais do script (3 produtores de 5 ciclos, 3 cargas de 64 KiB com flush) termina sem teto e sem erro", async () => {
+  const result = await runPhase({ dir: scratch("real"), producers: 3, cycles: 5, loaders: 3, loadBytes: 64 * 1024, limitMs: 60_000 });
+  const phase = aggregatePhase({ fase: "A", destino: "padrao", producers: 3, cycles: 5, result });
+  assert.deepEqual([phase.encerradaPeloTeto, phase.ciclos, phase.erros, phase.linhasInvalidas], [false, { previstos: 15, concluidos: 15, comErro: 0, incompletos: 0 }, { lockPresent: 0, lockLost: 0, es: {} }, 0]);
+  assert.deepEqual(Object.keys(phase.operacoes), ["criacao", "escrita", "fechamento", ...RELEASE_OPERATIONS]);
+  for (const [name, metric] of [["tomada", phase.tomada], ["retirada", phase.retirada], ["liberacao", phase.liberacao], ...Object.entries(phase.operacoes)]) {
+    assert.equal(metric.amostras, 15, name);
+    assert.ok(metric.p50 <= metric.p99 && metric.p99 <= metric.max, name);
+  }
+  assert.deepEqual([phase.carga.processos, phase.carga.terminaram, phase.carga.erros], [3, 3, {}]);
+  assert.ok(phase.carga.escritas >= 3, "cada carga gravou ao menos uma vez antes da medição");
+  assert.deepEqual(phase.processos.produtores, Array(3).fill({ codigo: 0, sinal: null }));
+});
+
+test("C50 relatório: A1/B/A2 com o RUNNER_TEMP distinto, uma fase sem ele, e nenhum caminho, nonce ou variável de ambiente na saída", async () => {
+  const small = { producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 60_000 };
+  const standard = scratch("relatorio padrao");
+  const runner = scratch("relatorio runner");
+  const both = await measure({ phase: small, env: { RUNNER_TEMP: runner }, tmpdir: standard });
+  assert.deepEqual([both.skillMeLockLatency, both.namespace], [2, "individual: um lock por produtor; não mede disputa entre produtores"]);
+  assert.deepEqual([both.comparacao, both.fases.map((f) => [f.fase, f.destino, f.ciclos.concluidos])], ["A1/B/A2", [["A1", "padrao", 6], ["B", "runner", 6], ["A2", "padrao", 6]]]);
+  assert.deepEqual(both.limpeza, { removidas: 3, recusadas: [], falhas: [] });
+  assert.deepEqual([readdirSync(standard), readdirSync(runner)], [[], []], "as pastas da medição saíram");
+  const alone = await measure({ phase: small, env: {}, tmpdir: standard });
+  assert.deepEqual([alone.comparacao, alone.destinos.runner, alone.fases.map((f) => f.fase)], ["não aplicável: RUNNER_TEMP ausente", { indisponivel: "RUNNER_TEMP ausente" }, ["A"]]);
+  for (const report of [both, alone]) {
+    const text = JSON.stringify(report);
+    for (const value of [standard, runner, os.tmpdir(), process.env.PATH].filter(Boolean)) {
+      assert.ok(!text.includes(value) && !text.includes(JSON.stringify(value).slice(1, -1)), "nenhum caminho nem variável de ambiente");
+    }
+    assert.doesNotMatch(text, /[0-9a-f]{16}/, "nenhum nonce");
+  }
+});
+
+test("C50 fonte do RUNNER_TEMP: com a variável presente no processo, o planejamento sem valor e a medição com env {} não a herdam", async () => {
+  const small = { producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 60_000 };
+  const standard = scratch("fonte padrao");
+  const processRunner = scratch("fonte runner do processo");
+  const shape = (p) => ({ comparacao: p.comparacao, runner: p.destinos.runner, phases: p.phases.map(({ fase, destino, dir }) => [fase, destino, dir]) });
+  const absent = { comparacao: "não aplicável: RUNNER_TEMP ausente", runner: { indisponivel: "RUNNER_TEMP ausente" }, phases: [["A", "padrao", standard]] };
+  await withProcessRunnerTemp(processRunner, async () => {
+    assert.equal(process.env.RUNNER_TEMP, processRunner, "a variável está presente no processo");
+    assert.deepEqual(shape(resolveDestinations({ tmpdir: standard, runnerTemp: undefined })), absent, "runnerTemp undefined é ausente");
+    assert.deepEqual(shape(resolveDestinations({ tmpdir: standard })), absent, "sem a chave runnerTemp é ausente");
+    const report = await measure({ phase: small, env: {}, tmpdir: standard });
+    assert.deepEqual(
+      [report.comparacao, report.destinos.runner, report.fases.map((f) => [f.fase, f.destino, f.ciclos?.concluidos])],
+      ["não aplicável: RUNNER_TEMP ausente", { indisponivel: "RUNNER_TEMP ausente" }, [["A", "padrao", 6]]],
+    );
+    assert.deepEqual(readdirSync(processRunner), [], "nada no RUNNER_TEMP do processo");
+  });
+});
+
+test("C50 fonte do RUNNER_TEMP pelo padrão do CLI: sem env, a medição lê o RUNNER_TEMP do processo e, distinto, roda A1/B/A2 nele", async () => {
+  const small = { producers: 3, cycles: 2, loaders: 1, loadBytes: 1024, limitMs: 60_000 };
+  const standard = scratch("cli padrao");
+  const processRunner = scratch("cli runner do processo");
+  const report = await withProcessRunnerTemp(processRunner, () => measure({ phase: small, tmpdir: standard }));
+  assert.deepEqual(
+    [report.comparacao, report.fases.map((f) => [f.fase, f.destino, f.ciclos?.concluidos])],
+    ["A1/B/A2", [["A1", "padrao", 6], ["B", "runner", 6], ["A2", "padrao", 6]]],
+  );
+  assert.deepEqual(report.limpeza, { removidas: 3, recusadas: [], falhas: [] });
+  assert.deepEqual([readdirSync(standard), readdirSync(processRunner)], [[], []], "as pastas da medição saíram");
+  const text = JSON.stringify(report);
+  for (const value of [standard, processRunner]) {
+    assert.ok(!text.includes(value) && !text.includes(JSON.stringify(value).slice(1, -1)), "nenhum caminho");
+  }
+});
+
+test("C50 CLI: as constantes vinculantes e o uso inválido, sem medir", () => {
+  assert.deepEqual({ ...PHASE }, { producers: 3, cycles: 500, loaders: 3, loadBytes: 65_536, limitMs: 120_000 });
+  const usage = spawnSync(process.execPath, [SCRIPT, "--ciclos", "5"], { encoding: "utf8" });
+  assert.deepEqual([usage.status, usage.stdout, usage.stderr], [2, "", "uso: node scripts/ci-lock-latency.mjs\n"]);
+});
