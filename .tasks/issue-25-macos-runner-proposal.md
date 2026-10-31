@@ -34,3 +34,8 @@ Manter macos14 e aguardar00:00UTC/21:00BRT para executar os jobs cancelados ante
 O AC8 exige que os demais sistemas permaneçam iguais, e C48 confere a matriz literalmacos14. O pedido de rodadas necessárias não altera essa fonte vinculante. O AGENTS.md exige planejamento e aprovação explícita para decisões funcionais bloqueantes. Esta é uma exceção de imagem do runner, sem relaxar os testes ou seus prazos; a alternativa de esperar preserva o contrato atual.
 
 Falhas/rodadas/ready15 preservados. O incidenteS14 permanece: arquivo global preexistente Temp/x sobrescrito, sem cópia conhecida, impacto desconhecido; nunca ler/tocar/remover/restaurar e manter no resumo final. As matrizes e a medição já iniciadas no34b continuam para coletar o que puderem provar; não cancelar os jobs saudáveis para trocar a imagem.
+
+
+## Encerramento local S23 — 31/10/2026
+
+A aprovação6538188577 foi implementada pelo Claude: teste4581ee4 RED exato contra imagem14; workflow3e4d1ec GREEN com a imagem15. Root conferiu somente três substituições em dois arquivos, preservando os demais bytes. Autor governança27ABC verde; Verifier30 fresco PASS50/9 no5fd685b, governança27ABC e npmD1191/1171/0/20, com carryR29 explicitamente por identidade. Relatório literal e limitações em .checks/issue-25-agent-launch.verified.md. As descrições de implementação/provas pendentes acima são o plano anterior, preservado; o estado local agora é concluído. Formal16, CI/macOS15 real, medição e merge ainda pendem; rodadas necessárias e merge após gates já estão autorizados.

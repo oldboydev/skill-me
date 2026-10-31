@@ -1,3 +1,460 @@
+# Issue #25 — Verifier 30 PASS: 50/50 checks e 9/9 critérios
+
+Perfil light, rodada escopada. Claude fresco 78ab565a-8f99-4f41-b948-1604ae08db20, independente do autor, após a última fatia. Provas no HEAD 5fd685bc9b0d5f1b7c415a5134d8e3cb2ca8727b; base 63621c691f132dc8d591414269d36cfa18fca594. Root leu integralmente a análise e o fechamento; não executou esses testes.
+
+S23 aprovada: https://github.com/oldboydev/skill-me/issues/25#issuecomment-6538188577. Somente três literais em dois arquivos passam para macos-15. Testes, asserções, prazos e demais ambientes permanecem iguais. As referências históricas a macos-14 são governadas pelo adendo aprovado de AC8/C48.
+
+Provas frescas (tests/pass/fail/skip): governança completa A 27/27/0/0, B 27/27/0/0, C 27/26/0/1; npm test completo D 1191/1171/0/20. Quatro términos naturais 0, sem falhas ou cancelamentos. O skip de C é PowerShell Windows; os skips de D e subcasos de privilégio estão declarados no relatório. No D, 89 testes S21 + 16 originais do core e sete S22 foram conferidos por nome; as provas nativas Hermes e Python foram conferidas separadamente.
+
+Carry explícito do PASS29 em 4becf46: o mapa de todas as 256 fontes tem 254 iguais e somente as duas fontes de CI alteradas. O HEAD 34b usado como referência tem as mesmas 256 fontes do 4becf46. A análise anterior e os casos POSIX carregados não são alegados como nova leitura ou produto ABC fresco. A configuração foi conferida separadamente: somente teto 15→16 da issue 25 e aprovação acrescentada; global 2 e demais issues iguais.
+
+Leitura comprovada por entrega de linhas exatas: 15 fontes/vistas, 37 pares, 3622 linhas e EOF vazio. Fonte pública estimada por caracteres/2,5: 125854; estimativa planejada com reserva 148916/150000; runtime separado. Task e checklist históricos são vistas; comentários anteriores e originais do produto foram atribuídos ao R29. Isso comprova entrega do texto, não cognição.
+
+Auditoria externa do Root, somente metadados WSL: 2026-10-31T03:18:12.750Z a 2026-10-31T03:37:35.007Z, 12113/12113 entradas, zero diferenças/erros e mesmo alvo por string. Não cobre conteúdo, Windows, PowerShell, rede, temporários, proveniência, causalidade ou impacto global zero.
+
+Incidente S14 preservado: arquivo global preexistente Temp/x sobrescrito, conteúdo anterior sem cópia conhecida e impacto desconhecido. Nunca ler, tocar, remover, mover ou restaurar. Falhas, omissões e notas anteriores continuam preservadas; verdes posteriores não identificam causas físicas.
+
+PASS local ainda exige revisão Codex 16 ready/sufficient/9 met e fontes/contexto/referências frescos. Depois do push autorizado: cinco checks regulares verdes no PR e na execução manual, mais medição esquema 2 A1/B/A2 com 4500 ciclos no mesmo HEAD final, antes do merge já autorizado. macOS 15 real depende dessa CI. Sem publicação, deploy ou push na main. Relatório literal SHA256: 26c7429ac3d1083acf635ac408ad797d0122a069bc3963b9e469113e5b5fbdf5.
+
+---
+
+finalVerdict: PASS — Verificação independente 30: 4/4 gates válidos com término natural 0, 0 FAIL e 0 CANCEL; 50/50 checks e 9/9 ACs atendidos no escopo local deste Verifier
+
+# FECHAMENTO FINAL — Verificação independente 30
+
+- **Profile**: light · **Diff range**: `63621c691f132dc8d591414269d36cfa18fca594..5fd685bc9b0d5f1b7c415a5134d8e3cb2ca8727b`.
+- **Round**: 30, escopada (verify.md:272-302). A feature inteira é contada: C1–C50 e 9 ACs. Há **carry R29 explícito**, por identidade de blob.
+- **Verifier**: CLAUDE VERIFIER30, novo e independente. Não sou o autor S23 `c1af9363` nem o Verifier R29.
+- **Escopo do PASS**: é verificação independente local. **Não** declaro o formal 16, push, CI regular, job manual, medição esquema 2 A1/B/A2/4500 nem execução em macOS. Todos continuam condições de merge.
+- A análise pré-provas fica **intacta** abaixo da linha `---`, como foi escrita antes de qualquer execução. O Root a guarda byte a byte em `preanalysis-report.bin`.
+
+## F.1 Execuções (verificado em `5fd685b`)
+
+- Os **quatro comandos literais** do Root rodaram **uma vez cada**, em sequência e em primeiro plano. Cada um usou uma chamada Bash própria com timeout de 600000 ms.
+- Nenhum usou `run_in_background`, nenhum foi destacado e nenhum excedeu o limite; não precisei de TaskOutput. Cada comando só começou depois do `valid: true` do anterior.
+- Não rodei nenhum outro comando Bash. Depois dos gates usei só Read (logs, result e env do controlador) e este Edit.
+
+| Gate | Ambiente (de `*.env.txt` / `C.run.txt`) | UTC (`*-result.json`) | tests/pass/fail/cancelled/skipped | naturalExit / valid |
+|---|---|---|---|---|
+| A | checkout Windows, Node v24.22.1, npm 11.19.1, conc. 8, `RUNNER_TEMP`/TEMP isolados, status antes/depois `[]` | 03:23:10.898–03:23:24.235 | **27 / 27 / 0 / 0 / 0** | 0 / `true` |
+| B | clone `B-clone` com `autocrlf=true`, Node v24.13.0, npm 11.6.2, conc. 8, mesma tree `123cd760…` | 03:23:28.943–03:24:22.869 | **27 / 27 / 0 / 0 / 0** | 0 / `true` |
+| C | WSL, archive do commit `5fd685b` (sha256 `7f7eb0c7…`), tree `123cd760…`, 0 CR, Node v24.13.0, conc. 7, sem `sh` ao lado do node, sem agentes nem pwsh no PATH | 03:24:25.910–03:24:34.681 | **27 / 26 / 0 / 0 / 1** | 0 / `true` |
+| D | `npm test` completo, Windows, Node v24.22.1, Python 3.12.10, `MAX_PARALLEL_FILES` 8, status antes/depois `[]` | 03:24:37.526–03:33:34.683 | **1191 / 1171 / 0 / 0 / 20**: governança 27/27/0/0/0; core 105/105/0/0/0; doctor 417/410/0/0/7; integrações 642/629/0/0/13 | 0 / `true` |
+
+- **HEAD** `5fd685b…` antes e depois em A/B/D (`HEAD_depois`), e o mesmo commit/tree no archive C.
+- **Limpeza**: o `RUNNER_TEMP` ficou com 0 entradas depois e as raízes isoladas foram removidas, conferidas por dev/ino (`A.env.txt:11-13`, `B.env.txt:11-13`, `C.run.txt:12-13`, `D.env.txt:11-13`).
+- **Totais iguais ao D29** (1191/1171/0/20 com 27/105/417/642), o que é coerente com nenhum teste adicionado ou removido. Registro o medido; não converti a referência em expectativa.
+- **Nenhum `✖` nem `not ok`** em A, B, C ou D: li os logs por inteiro, `A.log` 1–37, `B.log` 1–37, `C.log` 1–36 e `D.log` 1–1306.
+
+## F.2 Identidade e carry (sem shell meu)
+
+- **Mapa** `identity-map.tsv`: 256 caminhos, 254 `=` e exatamente 2 `CHANGED`, `governance.yml` e `governance-ci.test.mjs`.
+- **Preflight do Root, atribuído a ele** (não executei nada disso):
+  - o TSV compara `34b808977ae81f15df913e4a84668a6c61e83dd9..5fd685b`;
+  - o Root conferiu que os 256 blobs de `34b8089` são **idênticos** aos de `4becf46` (HEAD do PASS29) e que `34b` foi só fechamento documental;
+  - em `code-review.config.json` contra `34b`, só mudou `roundOverrides."25".maxRounds` de 15 para 16, com a aprovação anterior preservada como prefixo e o acréscimo S23 no fim. As demais chaves, as outras issues e o global 2 estão iguais.
+  - Portanto a comparação efetiva é **R29 `4becf46` × `5fd685b`, com 2 deltas**.
+- **Delta de fonte**: 3 literais (`scoped-source-diff.patch`): `governance.yml:41` e `governance-ci.test.mjs:268`, `:393`, todos `macos-14` → `macos-15`. Nenhuma outra linha mudou.
+- **Blobs** que o env do controlador lista no HEAD, iguais ao mapa:
+  - `store.mjs` `72b138fc`, `fs.mjs` `b088a4ab`, `lock-release.unit` `ed76ae05`, `concurrency.cli` `38271e64`, `traces.mjs` `dc2668d9` e `ci-lock-latency.test` `955668ee` (`A.env.txt:7`, `B.env.txt:7`);
+  - no C, `traces.mjs` tem SHA256 `1f7ee30b…`, igual ao SHA256LF do R29 (`C.run.txt:5`).
+- **Consequência**: o carry R29 das citações em arquivos `=` é válido. Produto e testes funcionais são idênticos ao PASS29.
+
+## F.3 Nomes observados nos logs (não inferidos das contagens)
+
+- **Governança, em todos os gates**:
+  - `governance-C1 C3` ✔ (A:24 B:24 C:24 D:32);
+  - `governance-C48 integrações…` ✔ (A:26 B:26 C:26 D:34);
+  - `governance-C48 ramo Windows… pwsh real` ✔ (A:27 B:27 D:35, com `pwsh: C:\Program Files\PowerShell\7\pwsh.exe` em A:28 B:28 D:36); em C é skip com o motivo `# o ramo roda no pwsh do runner Windows; fora dele, só a estrutura (governance-C48 integrações)` (C:27);
+  - `governance-C49` ✔ (A:25 B:25 C:25 D:33);
+  - 18 `C50 …` ✔ (A:1-18 B:1-18 C:1-18 D:9-26);
+  - C2 ×4 e C4 ✔ (A/B/C:19-23, D:27-31).
+- **Core no D** (`D.log:49-153`), 105/105:
+  - os **16 originais**: C10 ×4 (`:49-52`), C11 ×3 (`:53-55`), C1–C9 (`:56-64`);
+  - os **89 `S21`** (`:65-153`: P1 ×10, P2 ×10, P3 ×27, P5 ×6, P6 ×34, P4 ×2), sem skip.
+- **S22**: os 7 `I4-C34p` P1–P4 e H1–H3 ✔ (`D:780-786`), mais C34k, C34l G1–G7, C34m, C34n e C34o ✔ (`D:759-779`).
+- **11 nativos Hermes** ✔ no D:
+  - I4-C18–C23 (`D:711-716`), I4-C37 (`:717`) e `I25-C40 harness nativa` (`:718`);
+  - os três `I23-C8` (`:719-721`), incluindo "pelo Python do sistema" (`:721`);
+  - também `I4-C35` ✔ (`:1210`).
+- **AC7/AC8**: T8-C15 ✔ (`D:1211`); T8-C16 ✔ ×9 (`D:1215`, `:1219`, `:1221`, `:1224`, `:1225`, `:1227`, `:1228`, `:1236`, `:1238`); I23-C10 ✔ (`D:927`).
+- **Skips, todos com motivo honesto**:
+  - D, integrações (13): I4-C15 (`:611`), I4-C25k (`:758`), I4-C25b (`:787`), I4-C25j (`:789`), I4-C25m macOS (`:790`), I4-C25l (`:967`), I25-C45 POSIX (`:828`), I25-C5 POSIX (`:830`), I25-C6 (`:832`), I25-C42 POSIX (`:836`), I25-C33 arranjo (`:854`), I25-C15 pty (`:882`) e T8-C4 POSIX (`:1287`);
+  - D, doctor (7): `:171`, `:188`, `:509`, `:510` e `:515-517` (FIFO/symlink POSIX, `# SKIP`);
+  - C (1): o pwsh Windows;
+  - A/B: 0.
+- **Subcasos de privilégio não executados** (symlink de arquivo exige privilégio neste Windows; declarados em `ℹ`, por exemplo `D:728`, `:735-755`, `:797-815`, `:899`, `:1222-1223`). O teste que os contém passou, e os subcasos são declarados como cobertos no Linux/WSL.
+
+## F.4 Checks — uma linha por check
+
+Legenda:
+- **D** = prova executada neste D em `5fd685b`; **ABC** = governança fresca em A/B/C.
+- **carry R29** = asserção citada no R29 §5/F.4, válida porque o blob é `=`.
+- **carry-exec R29** = execução só POSIX feita no gate C do R29 em `4becf46`, sem nova execução local nesta rodada.
+
+| Check | Claim | Asserção (file:line · expressão/valor) · origem | Prova (log:linha) | Resultado |
+|---|---|---|---|---|
+| C1 | `--help` 0/stdout; `private` | `command.cli:48-49`, `:65`, `:77` · `[0, SKILL_ME_HELP, ""]`, `private:true` · carry R29 | `I25-C1` D:824 | **PASS** |
+| C2 | args literais, sem shell | `command.cli:96-98` · `argv: LITERAL_ARGS` · carry | D:825 | **PASS** |
+| C3 | código repassado | `command.cli:105` · `{0:0, 7:7}` · carry | D:826 | **PASS** |
+| C4 | shim `codex.cmd`; outro `.cmd` 127 | `command.cli:130-133` · 127 `launcher_requires_shell`; `agent.unit` I25-C4 · carry | D:818-819, :827 | **PASS** |
+| C5 | sinal 1×, sai depois | `command.cli:228`, `:244-245` · `CTRL_C_EVENT → ["SIGINT"]` · carry | W D:831; P skip D:830 → carry-exec R29 C:344 | **PASS** |
+| C6 | SIGTERM só ao launcher, 1× | `command.cli:267` · `signals: ["SIGTERM"]` · carry | skip W D:832 (motivo); **carry-exec R29 C:346** | **PASS (carry-exec, blob igual)** |
+| C7 | agente ausente | `prepare.cli:93-94` · 127 `executable_not_found`, árvore igual · carry | D:871 | **PASS** |
+| C8 | prévia antes de escrever | `prepare.cli:122-126` · 500 / 8 MiB / 7 dias · carry | D:872-873 | **PASS** |
+| C9 | confirmação aplica | `prepare.cli:163-168` · carry | D:874 | **PASS** |
+| C10 | recusa | `prepare.cli:189-191` · 3 `setup_declined` · carry | D:875 | **PASS** |
+| C11 | raiz relativa | `prepare.cli:200` · 2 `root_not_absolute` · carry | D:876 | **PASS** |
+| C12 | sem terminal | `prepare.cli:223` · 3 `setup_required` · carry | D:877, :881 | **PASS** |
+| C13 | preparo concluído | `prepare.cli:238` · SHA-256 iguais · carry | D:878 | **PASS** |
+| C14 | falha do preparo | `prepare.cli:250` · 4/4/3 · carry | D:879 | **PASS** |
+| C15 | pty real | `prepare.cli:408` · carry | skip W D:882 (motivo); **carry-exec R29 C:396** | **PASS (carry-exec, blob igual)** |
+| C16 | execução aberta | `session.e2e:67` · carry | D:821, :888 | **PASS** |
+| C17 | formato persistido | `store.unit:79` · carry | D:895-898 | **PASS** |
+| C18 | execução indisponível | `session.e2e:111` · 3/4/5 sem caminho · carry | D:889 | **PASS** |
+| C19 | grava na corrente | `session.e2e:161` · carry | D:890 | **PASS** |
+| C20 | par inválido | `session.e2e:190-192` · `binding_invalid` · carry | D:891 | **PASS** |
+| C21 | autorização intacta | `session.e2e:208-211` · bytes iguais · carry | D:892 | **PASS** |
+| C22 | 503 → 500 + 3 | `session.e2e:230` · carry | D:893 | **PASS** |
+| C23 | 8 388 608 exatos | `session.e2e:282` · carry | D:894 | **PASS** |
+| C24 | sucessora após stop | `store.unit:168` · carry | D:900 | **PASS** |
+| C25 | encerramento e resumo | `end.e2e:80` `assert.equal(captures.length, 2)`; `:88-97` `assert.equal(result.stderr, [...].join("\n"))` · carry | D:841 | **PASS** |
+| C26 | nada gravado | `end.e2e:117` `assert.deepEqual(observed, expected)` · carry | D:842 | **PASS** |
+| C27 | revogação | `end.e2e:128` `deepEqual(late.report.delivery, {launch:true, code:"launch_ended", entries:1, committed:0, persisted:0, lost:1})`; `:129` · carry | D:843, :901-902 | **PASS** |
+| C28 | Hermes em voo; 1ª perdida | `end.e2e:171-175` `{persisted:3, states, status:0}`; `:202-203` `deepEqual(…, ["EIO"])` · carry | D:844-845 | **PASS** |
+| C29 | término por sinal | `command.cli:278` · carry | D:833 (no W: o código do agente); P carry-exec R29 | **PASS** |
+| C30 | falha de início | `command.cli:342` · 127/126 · carry | D:834 | **PASS** |
+| C31 | encerramento falha | `end.e2e:213-223`, `:252-264` · 6 `["active",true]` / 2 `["active",false]` · carry | D:846-847 | **PASS** |
+| C32 | simultâneas isoladas | `end.e2e:294-451`; `store.unit:715` · carry | D:848-852, :919-922 | **PASS** |
+| C33 | on/off durante | `end.e2e:477-482` `LAUNCHED(1)` ×3; `:501-509` · carry | D:853; arranjo P skip D:854 → carry-exec R29 C:367-368 | **PASS** |
+| C34 | `skill-me report` | `report.cli:159` · carry | D:883-886 | **PASS** |
+| C35 | report sem execução | `report.cli:252-259` · carry | D:887 | **PASS** |
+| C36 | ajuda | `command.cli:350` · 0/stdout, 2/stderr · carry | D:835 | **PASS** |
+| C37 | README/guias | `launch/docs.test:82` · carry | D:838-840 | **PASS** |
+| C38 | console Windows | `prepare.cli:355` · carry | D:880 | **PASS** |
+| C39 | 300 ms estáveis não concluem | `hermes-harness.unit:90` · carry | D:702-704 | **PASS** |
+| C40 | failed/timeout; 5000 ms; nativos | `hermes-harness.unit:220-327`; `hermes-plugin.native:336` · carry | D:705-706, :710, :713-714, :717, :718 | **PASS** |
+| C41 | sucessora não publicada | `end.e2e:547-760`; `store.unit:327-523` · carry | D:855-860, :903-913 | **PASS** |
+| C42 | cancelamento antes do agente | `agent.unit` I25-C42; `command.cli:424`, `:456` · carry | D:822-823, :837 (W, 130); P skip D:836 → carry-exec R29 C:336-337, :350 | **PASS** |
+| C43 | lock após abertura/encerramento + S16 | `end.e2e:831-1053`; `store.unit:562-600` · carry | D:861-870, :914-918 | **PASS** |
+| C44 | contagem fechada | `hermes-harness.unit:288`, `:291` · carry | D:707-709; I4-C22 D:715 | **PASS** |
+| C45 | PATH vazio | `agent.unit:132-146`; `command.cli:166-186` · carry | D:820, :829 (W); P skip D:828 → carry-exec R29 C:334, :342 | **PASS** |
+| C46 | T8-C15 2×40 = 80 + (a)–(u) + F1; T8-C16 exatamente 3 criações; 750/650; repetição só `EEXIST` | `delivery.mjs:12` `DELIVERY_DEADLINE_MS = 750`, `:17-18` `ATTEMPT_MS = 750 − 100` (= 650), `:19` `LOCK_RETRY_MS = 10`, `:100-102` só `lock_present` repete, `:72-104` `untilDeadline` (R29 §3 pack 1680-1682; §5 pack 1831-1835); `concurrency.cli:221-222`, `:233-236`, `:965-969`, `:1007` (T8-C15/T8-C16, valores 40/40/40/0 e `[creation, 2]` segundo o R29); `traces.mjs:233-249` `diskTrace` · carry R29 | T8-C15 D:1211; C46 (a)–(c) D:1212-1214; T8-C16 D:1215-1238; (o)/(p) D:1229-1243; (q) D:614-615; (l) D:694; (u) D:977-986; F1 D:930-931; demais D:1254, :1257-1262, :1265-1275, :1281-1285, :1297 | **PASS** |
+| C47 | I23-C10 + (a)–(d) | `agents.e2e:328-381`, `:428-449` · `io_failure` 1/0/0/1/0, `delivery_timeout`; `evidence.unit:150-225`; `control.cli:1071-1105` · carry | I23-C10 D:927; I25-C47 D:928-929, :945-946, :1263-1264 | **PASS** |
+| **C48** | matriz exata com macos-15; um ramo por sistema; 20/10/5/10; pwsh real | **fresca**: `governance-ci.test.mjs:265-269` `assert.deepEqual(tools.strategy.matrix.os, ["ubuntu-22.04","windows-latest","macos-15"])`; `:390-399` `assert.deepEqual(commands.slice(-2).map(runsOn), branches, os)` com `["macos-15",[true,false]]`; `:427-433` `verify["timeout-minutes"] === "${{ matrix.os == 'windows-latest' && 20 \|\| 10 }}"`, changes 5, ci 5, lock_diagnostics 10; `:553-582` pwsh 0→0, 17→1, inválidos `{status:1, npm:null}`; YAML `:41`, `:43` | ABC + D (acima); pwsh real A/B/D, skip C | **PASS** |
+| C49 | job manual | **fresca**: `:322-329` chaves exatas; `:330-334` nome/`if`/`windows-latest`/10/`contents: read`; `:337-348` mesmos `uses`, sem cache, 2 comandos; `:350-356` nenhum `needs`/`continue-on-error`; `:299-304` conjunto de jobs; `:359-362` `test:governance` | A:25 B:25 C:25 D:33 | **PASS** |
+| C50 | medição esquema 2 | `ci-lock-latency.test:146-412` · `[2, "individual: um lock por produtor; não mede disputa entre produtores"]` · carry (blob `955668ee` `=`) | 18 `C50` em A/B/C:1-18 e D:9-26 | **PASS** |
+
+**50/50 checks PASS.** Todos têm `file:line` localizado e prova nomeada ✔ nesta rodada.
+- A exceção são C6 e C15, que são só POSIX. A prova deles é a execução do gate C do R29 em `4becf46`, válida aqui por identidade dos blobs (`command.cli` `e0bbbc78`, `prepare.cli` `8d0a49db`, produto inteiro `=`). Também ficam com carry-exec os subcasos POSIX de C5, C29, C33, C42 e C45.
+- Isso decorre do recorte aprovado (`proposal:24`) e está declarado. **Não houve reexecução POSIX de produto nesta rodada.**
+
+## F.5 ACs (texto canônico atual: `binding-context.json:4`)
+
+| AC | Checks | Estado |
+|---|---|---|
+| AC1 | C1–C6, C45 | **met** (C6 e os subcasos POSIX por carry-exec R29) |
+| AC2 (+S19) | C7–C15, C38; I4-C34g–p | **met** (C15 por carry-exec R29; C34p/k/l/m/n/o ✔ no D) |
+| AC3 | C16–C24 | **met** |
+| AC4 | C25–C35, C41–C43 | **met** |
+| AC5 | C36–C37 | **met** |
+| AC6 | C39, C40, C44 + nativos | **met**; o gate completo D foi repetido com os 11 nativos ✔ |
+| AC7 | C46 | **met** (T8-C15 80 e T8-C16 3 criações ✔) |
+| AC8 (+S23) | C47, C48 | **met** (matriz exata `macos-15` em ABC + D; 20/10/5/10 iguais) |
+| AC9 (+S19/S21) | C49, C50 + core 105 | **met no escopo local**. A execução remota, a CI 5 PR + 5 manual e a medição esquema 2 continuam **condições de merge**, não declaradas aqui |
+
+**9/9 ACs met.** Nenhum unmet. O único escopo não verificável localmente é o remoto, que é condição de merge.
+
+## F.6 Metrologia, Swept e superfície S23
+
+- **Superfície S23 fresca**:
+  - a igualdade exata da matriz `["ubuntu-22.04","windows-latest","macos-15"]` passou em A/B/C/D;
+  - o RED do autor (`4581ee4`, 27/26/1/0, `deepStrictEqual` entre 14 e 15) está atribuído a ele, não é prova minha;
+  - não há asserção trocada por presença, e prazos, contagens e fixtures são iguais (27 testes de governança; pwsh `timeout: 60_000`).
+- **Swept existing**:
+  - as restrições de `delivery.mjs` (750/650/10, só `lock_present`, sem reenvio) e de transição/reenvio (#8) vêm por carry R29 por identidade (`observe/delivery.mjs`, `traces/delivery.mjs` e `store.mjs` `=`);
+  - o comportamento correspondente passou no D: T8-C16 (`:1215-1238`), "não reenviam" (`:1215`) e I23-C14 "falha de entrega não bloqueia agente" (`:932`).
+- **Concorrência**: min(CPU−1, 8) dá 8 em A/B/D e 7 em C (env).
+- **Prazos observados**: "651 ms da entrada ao fim da tentativa" (`D:1217`) e "669 ms do fim do stdin à saída" (`D:1216`), informativos, sem prazo novo.
+- **Source**: só as 3623/3623 linhas do pack, mais o plan e o index, dentro do `estimatedSourceWithReserve` de 148916 e abaixo de 150k. **Nenhuma leitura extra de originais**, Grep ou Glob nesta fase.
+- **Runtime**, contabilizado à parte: `A.log`, `B.log`, `C.log`, `D.log` (inteiros), `{A,B,C,D}-result.json`, `A.env.txt`, `B.env.txt`, `C.run.txt`, `D.env.txt` e este report.
+
+## F.7 Achados finais
+
+- **Bloqueantes: nenhum.** Sem fault injection, `Coverage` ou `Test policy` (perfil light).
+- **Observações não bloqueantes preservadas**: O-S22-1…4, R1 residual, O2, N1, N3, N4, S21-O1…O5, desempenho S19 AFTER, **O-S23-1** (a tabela de ramos não compara com a matriz; quem fixa a imagem é `:265`) e **O-S23-2** (fragmentos históricos "Max15inalterado" e "7 de governança").
+- **Nova, não bloqueante, O-S23-3**: os envs A/B dizem "arquivos de teste no alvo: integrações=68 + 2 de governança" (`A.env.txt:6`, `B.env.txt:6`), e `C.run.txt:9` diz o mesmo. É rótulo herdado do driver R24/R29. O comando efetivo (`A.env.txt:9`, `B.env.txt:9`, `C.run.txt:10`) é só o par de governança, e os 27 testes confirmam isso. Não afeta resultado.
+- **Limitações**:
+  - **macOS 15 real só na CI posterior ao ready.** Nenhum gate local roda macOS (I4-C25m skip `D:790`). **Não declaro** execução em macos-15 nem em macos-14, e nunca declaro CI.
+  - Os checks POSIX vêm por carry-exec R29 (F.4).
+  - Há uma amostra por gate, sem garantia futura.
+  - A/B/C/D são deste computador, não do runner.
+  - Os pilotos não foram conferidos.
+  - As causas históricas (FAIL28 K7d, D27, S20, CI 58, S17, S18/C34h/C34i, R25/R23/CI 066) continuam **DESCONHECIDAS**.
+
+## F.8 Processo e histórico
+
+- **Comandos**: exatamente os quatro literais, uma vez cada, em primeiro plano e em sequência, todos com término natural 0. 0 tarefas em segundo plano. Nenhum agente gerado. **Incidentes meus: nenhum.**
+- Não editei fonte, produto, teste, YAML, config, docs, `.verified` nem relatórios alheios. Não fiz commit, push, CI, formal, merge nem cleanup.
+- Não toquei o `Temp\x` global PREEXISTENTE (sobrescrito na S14, sem cópia conhecida, impacto desconhecido), nem TEMP global ou `/tmp` fora dos scratch do controlador. Restrições de ferramenta não são sandbox do SO.
+- **Histórico preservado, sem reclassificar**: PASS29, FAIL27/FAIL28 e todos os incidentes do R29 §9. O RED e o GREEN S23 do autor estão atribuídos. Este PASS não corrige nada retroativamente.
+- **A auditoria de metadados do Root e o formal Codex 16 estão pendentes.** Não declaro nenhum dos dois.
+- **Próximo** (Root, não declarado aqui): formal 16 `ready`/sufficient/9 met → push → CI 5 PR + 5 manual (inclui macos-15 real) → medição esquema 2 A1/B/A2/4500 no mesmo HEAD → merge já autorizado.
+
+**Encerrado: CLI natural 0, 0 processos em segundo plano.**
+
+---
+
+# Verificação independente 30 — ANÁLISE PRÉ-PROVAS (fontes lidas; provas NÃO executadas; nenhum PASS, nenhum FAIL)
+
+Títulos anteriores (preservados): "Verifier30 — Pending independent verification, no PASS yet."
+
+**Status da fase:** nenhum gate foi executado por mim. Nenhum dos checks C1–C50 e nenhum dos 9 ACs está declarado provado nesta fase. As tabelas abaixo dizem o que cada gate terá de mostrar.
+
+- **Verifier**: CLAUDE VERIFIER30, novo e independente. Não sou o autor S23 (`c1af9363`), nem o Verifier R29 (`d189c0dc…`), nem um revisor formal.
+- **Profile**: `light` (`AGENTS.md:146`), com handoff ligado (`:147`). Sem UI (passo 1), sem `Coverage`, sem `Test policy` e sem fault injection (verify.md:28-31).
+- **Diff range**: `63621c691f132dc8d591414269d36cfa18fca594..5fd685bc9b0d5f1b7c415a5134d8e3cb2ca8727b`.
+- **Round**: 30, escopada (verify.md:272-302). O escopo é a feature inteira: C1–C50 e 9 ACs. O delta desde R29 (`4becf46`) é lido de novo; o resto vem por **carry R29 explícito**, por identidade de blob.
+- **Processo nesta fase**: só Read nativo (plan, index, pack e este report) e Edit nativo deste `report.md`. Não usei Bash, PowerShell, Grep, Glob, Write, Agent, Task, rede, agente real, teste, sonda, commit, push, CI, formal, merge nem processo em segundo plano. Não editei fonte, produto, teste, config, docs nem `.verified`.
+
+## 1. Recibo de leitura
+
+- `read-plan.json` inteiro: 155 linhas, `budget` 150000, `estimatedSourceWithReserve` 148916, 37 chunks.
+- `required-sources-index.json` inteiro: 171 linhas, 15 fontes.
+- `required-sources-pack.md`: **3623/3623 linhas**, nos 37 pares exatos do plano. São `1/100, 101/100, …, 3501/100` (36 pares de 100) e `3601/23`, sem lacuna, sobreposição, truncamento nem par fora do plano. As linhas `n+offset|` foram remontadas antes de julgar.
+- **Fontes e faixas no pack** (SHA256 do índice; **não recalculados**, porque não há shell nesta fase):
+
+| Fonte | Forma | Pack |
+|---|---|---|
+| `AGENTS.md` (`4b718801…`) | inteira, 148 linhas | 2–150 |
+| `CLAUDE.md` (`eb925a21…`) | inteira, 7 | 152–159 |
+| `verify.md` (`b6786776…`) | inteira, 303 | 161–464 |
+| `.tasks/issue-25-macos-runner-proposal.md` (`d5ab8359…`) | inteira, 37 | 466–528 |
+| `.github/workflows/governance.yml` (`7c63b8de…`) | inteira, 112 | 530–642 |
+| `scripts/governance-ci.test.mjs` (`fa3acf03…`) | inteira, 589 | 644–1235 |
+| `package.json` (`ad6784c9…`) | inteira, 35 | 1237–1272 |
+| `code-review.config.json` (`997a46b4…`) | inteira, 61 | 1274–1353 |
+| `binding-context.json` (`fdad10ad…`) | inteira, 13 | 1355–1434 |
+| relatório R29 (`c2d64051…`) | inteiro, 440 | 1436–1999 |
+| relatório do autor S23 (`5778e8df…`) | inteiro, 113 | 2001–2134 |
+| `identity-map.tsv` (`f6b94cff…`) | inteiro, 256 entradas + EOF | 2136–2393 |
+| checklist (`5788ef55…`) | **vistas** `[153,1176]` e `[3242,3265]` | 2395–3559 |
+| task (`d304206c…`) | **vista** `[1220,1230]` | 3561–3584 |
+| `scoped-source-diff.patch` (`d410f21b…`) | inteiro, 36 | 3586–3622 |
+
+- **Não li os originais.** Também não li o checklist e a task fora das vistas, `ci-lock-latency*.mjs`, `ci-change-filter.mjs`, `ci-result.mjs`, o `feature.diff`, os arquivos de produto e os testes de produto. Não alego releitura deles.
+- As citações em arquivos fora do pack (`command.cli`, `prepare.cli`, `session.e2e`, `store.unit`, `end.e2e`, `report.cli`, `docs.test`, `hermes-*`, `agent.unit`, `concurrency.cli`, `delivery.unit`, `evidence.unit`, `agents.e2e`, `control.cli`, `ci-lock-latency.test`) são **carry R29**: a tabela F.4 e o §5 do relatório R29 (pack 1501–1554, 1761–1844). Elas valem porque o mapa marca esses blobs como `=`.
+- **Os 50 comentários anteriores da issue não foram relidos.** O `binding-context.json:11` diz "First50 exact prior context-round29.json at ready15/R29; not reread fresh". Li frescos o corpo completo da issue (9 ACs) e o único comentário novo, o S23 (`binding-context.json:4`, `:8`).
+- **CONTRIBUTING**: não está no pack. Não fiz Glob nesta fase. Vale o `AGENTS.md`, como em R26–R29 (constatação carregada do R29 §1, pack 1651).
+
+## 2. Delta desde R29: exatamente 2 arquivos de fonte e 3 literais
+
+**Mapa de identidade** (`identity-map.tsv`, 256 caminhos de `.github`, `package*`, `scripts`, `src` e `tests`):
+- 254 linhas trazem `=`.
+- Exatamente 2 trazem `CHANGED`:
+  - `.github/workflows/governance.yml`, `f24e82de…` → `cfdd1f90…` (`map:5`);
+  - `scripts/governance-ci.test.mjs`, `5313dba9…` → `d6285df9…` (`map:17`).
+- O arquivo não diz no próprio conteúdo quais commits compara. Atribuo a comparação R29 `4becf46` × HEAD `5fd685b` ao Root, conforme o briefing. Os índices do patch (`f24e82d..cfdd1f9`, `5313dba..d6285df`) coincidem com o mapa.
+
+**Coerência com o R29 F.2** (pack 1468–1476): os blobs "after" do R29 aparecem iguais no mapa.
+- `run.mjs` `12c422a6` (`map:75`), `install.cli` `df8b91b2` (`:210`), `end.e2e` `315252e5` (`:214`) e `install-apply.unit` `39c8afcb` (`:208`).
+- Core: README `89869e47` (`:12`), `review.mjs` `eb6b927c` (`:14`), `review.test.mjs` `3b6b4540` (`:15`), `cli.mjs` `c6a4abcd` (`:13`) e `schema.json` `b02001e2` (`:16`).
+- Também iguais: `ci-lock-latency.mjs` `3e005814` (`:9`), `ci-lock-latency.test.mjs` `955668ee` (`:10`), `ci-change-filter.mjs` (`:8`), `ci-result.mjs` (`:11`), `package.json` `8fd02fad` (`:7`) e `package-lock.json` (`:6`).
+- **Consequência**: o carry R29 das citações em arquivos `=` é válido pela identidade. O código de produto e os testes funcionais são idênticos ao PASS29.
+
+**Patch** (`scoped-source-diff.patch:1-36`):
+- `governance.yml:41`: `os: [ubuntu-22.04, windows-latest, macos-14]` → `os: [ubuntu-22.04, windows-latest, macos-15]`. É o único hunk do YAML.
+- `governance-ci.test.mjs:268`: `"macos-14",` → `"macos-15",`.
+- `governance-ci.test.mjs:393`: `["macos-14", [true, false]],` → `["macos-15", [true, false]],`.
+- Nenhuma outra linha mudou. Isso confere com a Landing S23 (relatório do autor `:22`, "2 arquivos e 3 literais") e com o plano (`proposal:13-14`).
+
+**Fora do mapa** (governança documental, não fonte de produto):
+- `code-review.config.json` `"25"` tem `maxRounds: 16` (`config:56`), como manda o item 4 do plano (`proposal:16`).
+- `light`, `ui` e `direct` continuam 2 (`config:6`, `:10`, `:14`), e as outras issues não mudaram.
+- O mapa não cobre esse arquivo, e não tenho o diff dele desde R29. Conferi só o estado atual.
+
+## 3. Fontes vinculantes × checklist (passo 3; o passo 1 não roda no light)
+
+- **Aprovação S23** (`binding-context.json:8`; issue `:4`, final do AC8 e parágrafo de 31/10/2026; `proposal:3`; `config:57`):
+  - a exceção altera **somente** `macos-14` → `macos-15` no workflow e nos dois literais;
+  - testes, asserções, prazos, contagens, concorrência e demais ambientes ficam iguais;
+  - continuam 9 critérios e 50 checks.
+- **Checklist**: o texto do C48 continua citando `macos-14` (`checklist:953`, `:971`). O acréscimo S23 (`checklist:3259`, igual a `task:1224`) diz que "governa as referências históricas a macos-14: o C48 agora exige exatamente `[ubuntu-22.04, windows-latest, macos-15]`". O plano manda manter o histórico literal (`proposal:15`). **Sem contradição**: o acréscimo é o texto vinculante atual, e a forma escolhida foi não reescrever o histórico.
+- **AC8 atual** (`binding-context.json:4`, offset 4140–4500): "Somente o orçamento total do job Windows … passa de 10 para 20 minutos; … demais jobs e sistemas permanecem iguais. Exceção S23 …: a imagem macos-14 passa para macos-15 na matriz e nos dois literais do teste de governança". O AC8 canônico citado no R29 §6 (pack 1881–1884) **não** tinha essa frase. O AC8 vinculante agora é o do contexto fresco, e eu o uso.
+- **AC9** (`binding-context.json:4`): os jobs regulares 20/10/5, o job manual de 10 min e os cinco checks ficam iguais. O workflow atual confere (§4).
+- **Ficam iguais**, pela leitura do YAML inteiro, como o plano exige (`proposal:18`):
+  - Node `24.13.0` (`yml:31`, `:50`, `:86`, `:109`);
+  - ações pinadas por SHA, `fetch-depth`, `persist-credentials`, `cache: npm` só no `verify` e `permissions`;
+  - `concurrency` `cancel-in-progress: true` (`yml:13-15`);
+  - comandos (`yml:52-57`), o ramo Windows (`yml:63-72`) e o job manual (`yml:96-111`).
+  - Não há arquitetura declarada no YAML: o arm64 do macOS é propriedade da imagem do runner, afirmada pelo plano com fonte externa, e não verifiquei isso (sem rede).
+
+## 4. Asserções atuais da superfície alterada (frescas, pack 644–1235 e 530–642)
+
+| Ponto | Asserção (`governance-ci.test.mjs:linha`) | Valor no YAML | Confere |
+|---|---|---|---|
+| Matriz exata | `:265-269` `assert.deepEqual(tools.strategy.matrix.os, ["ubuntu-22.04", "windows-latest", "macos-15"])` | `yml:41` `[ubuntu-22.04, windows-latest, macos-15]` | **sim**; igualdade exata e ordenada, não presença |
+| Runner | `:270` `assert.equal(tools["runs-on"], "${{ matrix.os }}")` | `yml:42` | sim |
+| Ramos por sistema | `:390-399`: `for [os, branches] of [["ubuntu-22.04",[true,false]], ["windows-latest",[false,true]], ["macos-15",[true,false]]]` → `assert.deepEqual(commands.slice(-2).map(runsOn), branches, os)`; `runsOn` aceita só `==`/`!=` (`:385-389`) | `yml:56` `matrix.os != 'windows-latest'`; `yml:63` `== 'windows-latest'` | sim |
+| Orçamentos | `:427-430` `verify["timeout-minutes"] === "${{ matrix.os == 'windows-latest' && 20 \|\| 10 }}"`; `:431` changes 5; `:432` ci 5; `:433` lock_diagnostics 10 | `yml:43`, `:21`, `:79`, `:100` | sim; o macos-15 recebe 10 pelo ramo `\|\| 10` |
+| Passos regulares | `:272-283` (C1/C3) e `:373-379` (C48 a) | `yml:52-57` | sim |
+| Ramo Windows | `:381-382`, `:402-426` | `yml:63-72` | sim |
+| pwsh real | `:436-588`; `timeout: 60_000` `:516`; 0→0, 17→1, 5 inválidos→1/`null` `:553-564`; aspas `:565-576`; finais `:577-582` | `yml:64-72` | sim; nenhum valor mudou no patch |
+| Job manual C49 | `:322-363` (chaves, nome, `if`, `windows-latest`, 10, `contents: read`, mesmos `uses`, sem cache, comandos, nenhum `needs`/`continue-on-error`); conjunto de jobs `:299-304`; `test:governance` `:359-362` | `yml:96-111`; `package.json:18` | sim |
+
+- **Contagem de testes de governança**:
+  - `governance-ci.test.mjs` tem 9 `test(` de topo: C2 em `:24`, `:71`, `:150`, `:167`; C4 em `:197`; C1/C3 em `:242`; C49 em `:316`; C48 em `:366` e `:436`.
+  - Com os 18 C50 do `ci-lock-latency.test.mjs` (contagem carry R29/autor), o total é **27**, igual aos 27 do autor e do D29.
+  - Nenhum teste foi removido, pulado ou renomeado. O patch não toca nome nenhum.
+  - O único `skip` continua o do pwsh fora do `win32` (`:439-441`).
+- **Sem enfraquecimento**:
+  - os dois literais trocam um valor por outro dentro de `deepEqual`, sem `includes`, `match`, presença nem tolerância;
+  - prazos (60 000 ms do pwsh; 20/10/5/10 min) e contagens não mudaram;
+  - as fixtures do C48 nativo continuam iguais.
+- **O RED atribuído ao autor** (relatório `:52-58`): no `4581ee4`, 27/26/1/0, natural 1. A única falha foi `governance-C1 C3` em `:265`, com `deepStrictEqual` entre atual `macos-14` e esperado `macos-15`, sem TypeError nem setup. Isso discrimina a matriz antiga. Não é prova minha.
+- **O-S23-1** (observação, não defeito): a tabela de ramos `:390-394` não é comparada com a matriz do YAML. Ela só alimenta `runsOn` com uma lista literal, e por isso o C48 passou no RED com o YAML ainda em 14 (o autor viu o mesmo, relatório `:60`). A cobertura do C48 por sistema fica completa porque `:265-269` fixa a mesma lista exata no C1/C3, no mesmo arquivo e no mesmo gate. A estrutura é anterior à S23, e o plano proíbe mudar a asserção. Não peço alteração.
+
+## 5. Tabela por check (uma linha por check; NENHUM é PASS nesta fase)
+
+Legenda:
+- **carry R29** = asserção e linha do R29 F.4/§5, válidas porque o mapa dá blob `=`.
+- **fresca** = lida por mim no pack, no HEAD `5fd685b`.
+- **Gates liberáveis**: governança 27 em A/B/C (G-A/G-B/G-C) e `npm test` completo D.
+- **Prova ABC de produto em 4becf46** = execução R29 carregada (A 774, B 774, C 774, D 1191), não reexecutada nem alegada como nova.
+
+| Check | Valor concreto | Asserção (file:line · expressão/valor) · origem | Prova nomeada a observar | Gate fresco |
+|---|---|---|---|---|
+| C1 | `[0, SKILL_ME_HELP, ""]`; `private:true` | `command.cli:48-49`, `:65`, `:77` · carry R29 | `I25-C1 ` | D |
+| C2 | `argv: LITERAL_ARGS` | `command.cli:96-98` · carry | `I25-C2 ` | D |
+| C3 | `{0:0, 7:7}` | `command.cli:105` · carry | `I25-C3 ` | D |
+| C4 | 127 `launcher_requires_shell` | `command.cli:130-133`; `agent.unit` I25-C4 · carry | `I25-C4 ` (W) | D |
+| C5 | `CTRL_C_EVENT → ["SIGINT"]` | `command.cli:228`, `:244-245` · carry | `I25-C5 ` (W em D; P só em C R29) | D (W) |
+| C6 | `signals: ["SIGTERM"]` | `command.cli:267` · carry | `I25-C6 ` (P) | **nenhum fresco** (skip W em D; último C em 4becf46) |
+| C7 | 127 `executable_not_found`, árvore igual | `prepare.cli:93-94` · carry | `I25-C7 ` | D |
+| C8 | 500 / 8 MiB / 7 dias | `prepare.cli:122-126` · carry | `I25-C8 ` | D |
+| C9 | aplicado + agente iniciado | `prepare.cli:163-168` · carry | `I25-C9 ` | D |
+| C10 | 3 `setup_declined` | `prepare.cli:189-191` · carry | `I25-C10 ` | D |
+| C11 | 2 `root_not_absolute` | `prepare.cli:200` · carry | `I25-C11 ` | D |
+| C12 | 3 `setup_required` | `prepare.cli:223` · carry | `I25-C12 ` | D |
+| C13 | SHA-256 iguais, sem prévia | `prepare.cli:238` · carry | `I25-C13 ` | D |
+| C14 | conflito 4 / inválida 3 | `prepare.cli:250` · carry | `I25-C14 ` | D |
+| C15 | pty: prévia/confirmação/recusa | `prepare.cli:408` · carry | `I25-C15 ` (P) | **nenhum fresco** (skip W) |
+| C16 | segmento 1, ponteiro, par | `session.e2e:67` · carry | `I25-C16 ` | D |
+| C17 | campos exatos e recusas | `store.unit:79` · carry | `I25-C17 ` | D |
+| C18 | 3/4/5 sem caminho | `session.e2e:111` · carry | `I25-C18 ` | D |
+| C19 | grava só na corrente | `session.e2e:161` · carry | `I25-C19 ` | D |
+| C20 | `binding_invalid` | `session.e2e:190-192` · carry | `I25-C20 ` | D |
+| C21 | bytes iguais on/off | `session.e2e:208-211` · carry | `I25-C21 ` | D |
+| C22 | 503 → 500 + 3 | `session.e2e:230` · carry | `I25-C22 ` | D |
+| C23 | 8 388 608 exatos | `session.e2e:282` · carry | `I25-C23 ` | D |
+| C24 | sucessora após stop | `store.unit:168` · carry | `I25-C24 ` | D |
+| C25 | 2 `stopped`, stderr de 5 linhas | `end.e2e:80` `assert.equal(captures.length, 2)`; `:88-97` · carry (fresca no R29) | `I25-C25 ` | D |
+| C26 | stderr literal ×3 | `end.e2e:117` `deepEqual(observed, expected)` · carry | `I25-C26 ` | D |
+| C27 | `{launch:true, code:"launch_ended", entries:1, committed:0, persisted:0, lost:1}` | `end.e2e:128-129`; `store.unit` · carry | `I25-C27 ` | D |
+| C28 | persisted 3; `["EIO"]` | `end.e2e:171-175`, `:195`, `:202-203` · carry | `I25-C28 ` | D |
+| C29 | `stopped`, mesmo sinal | `command.cli:278` · carry | `I25-C29 ` | D, onde rodar |
+| C30 | 127/126, 0 eventos | `command.cli:342` · carry | `I25-C30 ` | D |
+| C31 | 6 `["active",true]` / 2 `["active",false]` | `end.e2e:213-223`, `:252-264` · carry | `I25-C31 ` | D |
+| C32 | `["stopped","active"]`, `[1,1]` | `end.e2e:294-451`; `store.unit:715` · carry | `I25-C32 ` | D |
+| C33 | `LAUNCHED(1)` ×3; `spawn sh ENOENT` | `end.e2e:477-482`, `:501-509` · carry | `I25-C33 ` (arranjo P só em C R29) | D |
+| C34 | última execução; recuo de relógio | `report.cli:159` · carry | `I25-C34 ` | D |
+| C35 | 3 `no_launch_capture`/`not_configured` | `report.cli:252-259` · carry | `I25-C35 ` | D |
+| C36 | 0/stdout; 2/stderr | `command.cli:350` · carry | `I25-C36 ` | D |
+| C37 | textos exigidos | `launch/docs.test:82` · carry | `I25-C37 ` | D |
+| C38 | acento exato | `prepare.cli:355` · carry | `I25-C38 ` (W) | D |
+| C39 | pendente após 300 ms | `hermes-harness.unit:90` · carry | `I25-C39 ` | D |
+| C40 | 5000 ms; nativos | `hermes-harness.unit:220-327`; `hermes-plugin.native:336` · carry | `I25-C40 `, `harness nativa` | D (nativos com runtime local) |
+| C41 | `[[1,"stopped",500],[2,"stopped",0]]` | `end.e2e:547-760`; `store.unit:327-523` · carry | `I25-C41 ` | D |
+| C42 | agente não inicia | `agent.unit`; `command.cli:424`, `:456` · carry | `I25-C42 ` (W em D; P só em C R29) | D (W) |
+| C43 | `[5,false]`, K1–K3 | `end.e2e:831-1053`; `store.unit:562-600` · carry | `I25-C43 ` | D |
+| C44 | `failed`/`timeout`/`inactive` | `hermes-harness.unit:288`, `:291` · carry | `I25-C44 `, `I4-C22` | D |
+| C45 | PATH vazio | `agent.unit:132-146`; `command.cli:166-186` · carry | `I25-C45 ` (P de processo só em C R29) | D (W + unit) |
+| C46 | 2×40 = 80; T8-C16 exatamente 3; 750/650; `[creation, 2]` | linha C46 do §5 R29 (pack 1831–1835) · carry | `T8-C15`, `T8-C16`, `I25-C46 ` | D |
+| C47 | `io_failure` 1/0/0/1/0; `delivery_timeout` | `agents.e2e:328-381`, `:428-449`; `evidence.unit:150-225`; `control.cli:1071-1105` · carry | `I23-C10`, `I25-C47 ` | D |
+| **C48** | matriz `[ubuntu-22.04, windows-latest, macos-15]`; ramos `[t,f]/[f,t]/[t,f]`; 20/10 + 5/5/10; pwsh 0/17→1, inválidos→1/`null` | **fresca**: `governance-ci.test.mjs:265-269`, `:390-399`, `:427-433`, `:373-382`, `:402-426`, `:553-582` | `governance-C48 integrações…`, `governance-C48 ramo Windows…pwsh real` (W), `governance-C1 C3` | **G-A/G-B/G-C + D** |
+| C49 | campos exatos do job manual | **fresca** (o arquivo mudou; o C49 em si não): `:322-363`, `:299-304` | `governance-C49 ` | G-A/B/C + D |
+| C50 | `[2, "individual: um lock por produtor; não mede disputa entre produtores"]` etc. | `ci-lock-latency.test:146-412` · carry (blob `955668ee` `=`) | 18 `C50 ` | G-A/B/C + D |
+
+**Execução no POSIX** (a lacuna de carry precisa ser explícita):
+- C6, C15, os subcasos POSIX de C5/C29/C42/C45 e o arranjo do C33 têm a última execução no gate C do R29, em `4becf46`.
+- O D é Windows e os pula com motivo. O G-C roda só a governança.
+- Esses casos chegam ao `5fd685b` **só por identidade de blob** (produto e testes iguais), sem nova execução local POSIX.
+- Isso decorre do recorte aprovado (`proposal:24`, "proporcional à mudança de imagem/literais") e do briefing ("não solicitar testes extras… sem falha concreta"). Fica declarado como limitação.
+- verify.md:116 lembra que um verde num commit anterior não prova o atual. Aqui a mitigação é a identidade dos blobs, não uma execução nova. Não peço mais gates, porque não há falha concreta.
+
+## 6. ACs (texto canônico atual: `binding-context.json:4`, corpo completo)
+
+| AC | Checks | Delta desde R29 | Estado nesta fase |
+|---|---|---|---|
+| AC1 | C1–C6, C45 | nenhum | pendente D; POSIX por carry |
+| AC2 (+S19) | C7–C15, C38; I4-C34g–p | nenhum | pendente D |
+| AC3 | C16–C24 | nenhum | pendente D |
+| AC4 | C25–C35, C41–C43 | nenhum | pendente D |
+| AC5 | C36–C37 | nenhum | pendente D |
+| AC6 | C39, C40, C44 + nativos | nenhum | pendente D com nativos |
+| AC7 | C46 | nenhum | pendente D |
+| **AC8 (+S23)** | C47, **C48** | YAML `:41` + teste `:268`, `:393` | pendente G-A/B/C + D; texto × código **sem contradição** (§3, §4) |
+| AC9 (+S19/S21) | C49, C50 + core 105 | nenhum (a matriz não é parte do AC9; 20/10/5/10 iguais) | pendente G + D; a medição remota, a CI 5 PR + 5 manual e o formal 16 são condições de merge, não deste Verifier |
+
+## 7. Swept
+
+- **Linhas `existing`**: "transition não muda captura já `stopped`, e nenhuma entrega é reenviada (#8)" (`checklist:1156`), "falha de entrega nunca bloqueia o agente (#8)" (`:1160`) e "repetição só em `EEXIST`" (`:1175`).
+  - As restrições ficam em `delivery.mjs` (`DELIVERY_DEADLINE_MS = 750` `:12`, `ATTEMPT_MS` 650 `:17-18`, `LOCK_RETRY_MS = 10` `:19`, só `lock_present` repete `:100-102`, sem reenvio `:54-62`), conforme o R29 §3 (pack 1679–1683).
+  - O blob `observe/delivery.mjs` (`map:90`), `traces/delivery.mjs` (`:109`) e `store.mjs` (`:101`) estão `=`. **Carry R29**, sem releitura.
+- As demais linhas citam checks (fora `not in scope`) e seguem o veredito do check.
+- **Superfície nova S23**: a imagem do runner. Não pede linha Swept nova. Pela categoria external-dependency failure, a retirada da imagem macos-14 foi tratada por decisão do proprietário, e não por um check. Sem lacuna.
+
+## 8. Notas não bloqueantes preservadas (sem reclassificar nem pedir refatoração)
+
+- Do R29 F.6 e §7: O-S22-1…4, R1 residual (K10/K11/C34m com `renameSync` puro), O2, N1, N3, N4, S21-O1…O5 e o desempenho S19 AFTER (p50 18 → 38 ms, sem SLO).
+- Novas: **O-S23-1** (§4).
+- **O-S23-2**:
+  - o texto `approval` de `config:57` mantém o fragmento histórico "Max15inalterado" ao lado do `maxRounds: 16` atual e da frase S23 "Próxima revisão formal 16";
+  - o C50 (n) do checklist (`:1106`) ainda fala em "7 de governança", e hoje são 9 em `governance-ci.test.mjs`;
+  - os dois são registros históricos, sem efeito no valor nem no contrato.
+
+## 9. Limitações declaradas
+
+- **O macOS 15 real só existe na CI.** Os gates A/B/C/D são deste computador (Windows/WSL). Nenhum executa macOS: o I4-C25m e o ramo macOS só rodam na CI posterior ao ready. Não declaro execução em macos-15 nem em macos-14 neste HEAD. A arquitetura arm64 e a retirada em 02/11 vêm do plano com fonte externa, sem conferência minha.
+- **O ABC completo de produto é carry R29** (`4becf46`: A/B 774/761/0/13, C 774/752/0/22). Não alego novas execuções dele. Os gates frescos liberáveis são governança 27 A/B/C e `npm test` completo D.
+- Os SHA256 do índice e o mapa de blobs são do Root; não os recalculei.
+- Os 50 comentários anteriores vêm por carry (`binding-context.json:11`).
+- Os pilotos não foram lidos nem conferidos.
+- Causas históricas (FAIL28 K7d, D27, S20, CI 58, S17, S18/C34h/C34i, R25/R23/CI 066) continuam **DESCONHECIDAS**.
+- Sem fault injection, `Coverage` ou `Test policy`, porque o perfil é light.
+
+## 10. Achados pré-provas
+
+**Bloqueantes: nenhum encontrado pela leitura.** Isto não é PASS. Não há defeito com cenário/esperado/atual/impacto a relatar e não proponho correção.
+
+## 11. O que cada gate terá de mostrar (escrito ANTES de qualquer execução)
+
+- Uso só os comandos que o Root liberar: **governança 27 em A/B/C** e **`npm test` completo D**. Cada um roda uma vez, em sequência, em primeiro plano, sem `run_in_background` e sem repetir. Paro na primeira falha, omissão ou intervenção e preservo nome, motivo e números.
+- **G-A/G-B** (Windows):
+  - 27/27/0/0/0, natural 0;
+  - nomes ✔: `governance-C1 C3`, os dois `governance-C48` (o pwsh real com `pwsh.exe`), `governance-C49`, os 4 C2, o C4 e os 18 `C50`.
+- **G-C** (WSL): 27/26/0/0/1. O único skip permitido é o `governance-C48 ramo Windows… pwsh real`, com o motivo `:441`.
+- **D**:
+  - natural 0, 0 `✖`/`not ok`;
+  - governança 27/27, core 105 (89 `S21` + 16 originais), doctor e integrações com os nativos Hermes, I4-C35, I23-C8 pelo Python do sistema, T8-C15/T8-C16 e I23-C10;
+  - as contagens do D29 (1191/1171/0/20) são **referência, não expectativa**: como nenhum teste foi adicionado nem removido, espero os mesmos totais, mas registro só o que for medido;
+  - todo skip tem de ter o motivo de plataforma já conhecido.
+- **Critério do veredito**: PASS só se os gates forem válidos e verdes e cada check tiver prova nomeada ✔ (fresca ou declaradamente carry por identidade). Fica a ressalva dos casos POSIX e do macOS, que são só CI.
+
+## 12. Processo e histórico (preservados)
+
+- **Meu processo nesta fase**: Read de plan/index/pack/report e Edit deste `report.md`. **Incidentes meus: nenhum.** 0 processos em segundo plano.
+- **Incidente S14**: o `Temp\x` global PREEXISTENTE foi sobrescrito, SEM cópia conhecida e com impacto desconhecido. **Não li, não toquei, não removi, não movi e não restaurei.** Não toquei em TEMP global nem em `/tmp`. Restrições de ferramenta e TEMP próprio não são sandbox do SO.
+- **Histórico preservado literalmente**: o PASS29 (50/9 em `4becf46`) e os FAILs 27/28 com todos os incidentes do R29 §9; o RED e o GREEN do autor S23 são atribuídos. 29 verificações independentes e 15 formais estão consumidas. O formal 16 e o Verifier 30 rodam sob a autorização de "quantas rodadas necessárias" (`config:57`).
+- **Gates remotos pendentes**, não declarados aqui: PASS 30 → formal 16 `ready`/sufficient/9 met → push → CI 5 PR + 5 manual (inclui macos-15 real) → medição esquema 2 A1/B/A2/4500 no mesmo HEAD → merge já autorizado.
+
+**Fim da fase pré-provas: CLI 0/0, 0 processos em segundo plano.** Aguardo o Root conferir a cobertura de leitura e esta análise inteira antes de liberar os gates.
+
+
+---
+
+## Histórico anterior preservado byte a byte (555633 bytes)
+
 # Issue25 — verificação independente29 PASS (50/50, AC1–AC9 atendidos)
 
 Perfil light/handoff:on; Verifier Claude fresco sessãod189c0dc-39f3-48c1-9ff7-ef30c595dd0c, apósúltima fatia, provas no HEAD 4becf46ca8baf4590ab4b56becf355daa12c0282, base63621c691f132dc8d591414269d36cfa18fca594. Root leu a análise e o fechamento literal completos; não executou esses testes. Cópia fiel de39fontes/28092partes recebida integralmente e conferida por linhas exatas, sem presumir cognição; carryR26 explicitado por identidade das256fontes selecionadas e sete deltas, analisados novamente.
