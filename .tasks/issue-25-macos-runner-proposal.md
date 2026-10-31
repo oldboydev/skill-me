@@ -1,6 +1,6 @@
 # S23 proposta — migrar somente a imagem macOS da CI
 
-Estado: proposta concreta para decisão do proprietário. Nenhuma implementação, revisão substituta ou aprovação é declarada pela criação deste arquivo.
+Estado: aprovada explicitamente pelo proprietário em 31/10/2026: “Autorizar macOS 15 (recomendado)”, em resposta à pergunta S23 da conversa (call_5d41ef8f22364145a69d485b3f46b7b3). A aprovação autoriza a mudança descrita abaixo; implementação e provas ainda serão executadas. Rodadas necessárias e merge após PASS, ready, medição e CI verde já estavam autorizados.
 
 ## Problema demonstrado
 
