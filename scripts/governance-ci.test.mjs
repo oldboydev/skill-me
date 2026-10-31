@@ -265,7 +265,7 @@ test("governance-C1 C3 workflow sempre publica CI sem IA nem release", () => {
   assert.deepEqual(tools.strategy.matrix.os, [
     "ubuntu-22.04",
     "windows-latest",
-    "macos-14",
+    "macos-15",
   ]);
   assert.equal(tools["runs-on"], "$" + "{{ matrix.os }}");
   // O ramo de integrações do Windows (governance-C48) é o único passo fora desta lista.
@@ -390,7 +390,7 @@ test("governance-C48 integrações: um só passo por sistema da matriz, com o me
   for (const [os, branches] of [
     ["ubuntu-22.04", [true, false]],
     ["windows-latest", [false, true]],
-    ["macos-14", [true, false]],
+    ["macos-15", [true, false]],
   ])
     assert.deepEqual(
       commands.slice(-2).map((step) => runsOn(step, os)),
